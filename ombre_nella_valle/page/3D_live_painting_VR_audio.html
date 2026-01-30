@@ -4066,7 +4066,9 @@ const progScene = program(VS, FS_SCENE);
 </script>
 
 
-<!-- ODV: VR controls (robust mount + self-heal) -->
+
+
+<!-- ODV: VR CONTROLS v4 (QUIT + elegant animated panel toggle) -->
 <style>
   .odv-btn{
     border: 1px dashed rgba(255,255,255,.25);
@@ -4083,7 +4085,7 @@ const progScene = program(VS, FS_SCENE);
   }
   .odv-btn:hover{ background: rgba(0,0,0,.44); }
 
-  /* QUIT fixed, but only becomes interactive after "ready" */
+  /* QUIT fixed; hidden until "ready" */
   #odvQuitBtn{
     position: fixed;
     top: 16px;
@@ -4100,23 +4102,26 @@ const progScene = program(VS, FS_SCENE);
     pointer-events: auto;
   }
 
-  /* Toggle strip inside panel so it follows panel movement */
+  /* Toggle pill */
   .odv-panel-strip{
-    width: 100%;
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 10px;
-    margin: 0 0 10px 0;
-    padding: 0 2px 6px 2px;
+    padding: 0;
+    margin: 0;
+  }
+  /* Give the toggle some breathing room from the rest of the controls (open state only) */
+  .panel:not(.odv-collapsed) .odv-panel-strip{
+    padding: 2px 2px 10px;
+    margin-bottom: 8px;
   }
   .odv-toggle{
     height: 34px;
+    width: 34px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 0 12px;
+    padding: 0;
     border: 1px solid rgba(255,255,255,.18);
     background: rgba(0,0,0,.22);
     color: rgba(255,255,255,.88);
@@ -4125,53 +4130,48 @@ const progScene = program(VS, FS_SCENE);
     backdrop-filter: blur(10px);
     cursor: pointer;
     user-select: none;
+    transition: background .22s ease, border-color .22s ease, transform .22s ease;
   }
   .odv-toggle:hover{ background: rgba(0,0,0,.32); }
-  .odv-toggle .chev{ font-size: 14px; line-height: 1; opacity: .95; }
-  .odv-toggle .label{
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 11px;
-    letter-spacing: .10em;
-    text-transform: uppercase;
-    opacity: .9;
-    white-space: nowrap;
+  .odv-toggle .chev{ display:inline-block; font-size: 14px; line-height: 1; opacity: .95; transition: transform .45s cubic-bezier(.2,.8,.2,1), opacity .22s ease; }
+  .panel.odv-collapsed .odv-toggle .chev,
+  .panel.odv-collapsing .odv-toggle .chev{ transform: rotate(180deg); }
+
+  /* Panel wrapper: collapsed state removes the large background chrome (and any blur "ghost") */
+  .panel.odv-collapsed{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
-  /* Panel collapse */
-  .panel{ transition: transform .22s ease, opacity .22s ease; will-change: transform; }
-  .panel.odv-collapsed{ transform: translateY(calc(100% - 72px)); }
-
-  /* Small breathing room above the existing top buttons row */
-  .panel .topRow{ margin-top: 6px; }
-
-  /* One-time hint */
-  .odv-hint{
-    position: fixed;
-    z-index: 2147483646;
-    max-width: 280px;
-    padding: 10px 12px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.14);
-    background: rgba(0,0,0,.55);
-    color: rgba(255,255,255,.9);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 11px;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 18px 50px rgba(0,0,0,.22);
+  /* Lightweight open/close: transform + opacity only (no height/max-height animation) */
+  .odv-panel-body{
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity .26s ease, transform .32s cubic-bezier(.2,.8,.2,1);
+    will-change: opacity, transform;
+  }
+  .panel.odv-opening .odv-panel-body,
+  .panel.odv-collapsing .odv-panel-body{
     opacity: 0;
-    transform: translateY(6px);
-    transition: opacity .22s ease, transform .22s ease;
+    transform: translateY(10px);
     pointer-events: none;
   }
-  .odv-hint.is-on{ opacity: 1; transform: translateY(0); }
+  .panel.odv-collapsed .odv-panel-body{
+    display: none;
+  }
 </style>
 
 <script>
 (function(){
-  // Return / Quit
+  // -------- Return / Quit logic --------
   function getParam(name){
     try { return new URLSearchParams(location.search).get(name) || ''; }
     catch(e){ return ''; }
@@ -4200,23 +4200,30 @@ const progScene = program(VS, FS_SCENE);
     window.location.href = url;
   }
 
-  const STATE = { ready:false, panel:null, toggle:null, strip:null, quit:null };
-  const KEY = 'odv_vr_panel_collapsed_v5';
-  const HINT = 'odv_vr_panel_hint_seen_v5';
-
-  function findLoadingEl(){
-    return document.querySelector('[data-loading], .loading, .loadingScreen, #loading, #loader, .loader, .splash, .splashScreen');
-  }
+  // -------- Loading detection (best effort) --------
+  const LOADING_SELECTORS = [
+    '[data-loading]',
+    '.loading', '.loadingScreen', '#loading', '#loader', '.loader',
+    '.splash', '.splashScreen',
+    '[aria-busy="true"]'
+  ];
   function isLoadingVisible(){
-    const el = findLoadingEl();
-    if(!el) return false;
-    const cs = getComputedStyle(el);
-    if(cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-    const r = el.getBoundingClientRect();
-    return (r.width > 8 && r.height > 8);
+    for(const sel of LOADING_SELECTORS){
+      const el = document.querySelector(sel);
+      if(!el) continue;
+      const cs = getComputedStyle(el);
+      if(cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
+      const r = el.getBoundingClientRect();
+      if(r.width > 8 && r.height > 8) return true;
+    }
+    return false;
   }
 
-  function ensureQuit(){
+  // -------- UI mount helpers --------
+  const KEY = 'odv_vr_panel_collapsed_v4';
+  let panelRef = null;
+
+  function ensureQuitBtn(){
     let btn = document.getElementById('odvQuitBtn');
     if(!btn){
       btn = document.createElement('button');
@@ -4228,133 +4235,217 @@ const progScene = program(VS, FS_SCENE);
       document.body.appendChild(btn);
       window.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') doQuit(); });
     }
-    STATE.quit = btn;
     return btn;
   }
 
-  function syncToggle(collapsed){
-    const t = STATE.toggle || document.querySelector('.odv-toggle');
-    if(!t) return;
-    const chev = t.querySelector('.chev');
-    if(chev) chev.textContent = collapsed ? '▴' : '▾';
-    t.setAttribute('aria-label', collapsed ? 'Show panel' : 'Hide panel');
-    t.title = collapsed ? 'Show panel' : 'Hide panel';
+  function getPanel(){
+    return document.querySelector('.panel');
   }
 
-  function setCollapsed(on){
-    const p = STATE.panel || document.querySelector('.panel');
-    if(!p) return;
-    p.classList.toggle('odv-collapsed', !!on);
-    syncToggle(!!on);
-    try{ localStorage.setItem(KEY, on ? '1' : '0'); }catch(e){}
-  }
-
-  function ensurePanelAndToggle(){
-    const panel = document.querySelector('.panel');
-    if(!panel) return null;
-    STATE.panel = panel;
-
+  function ensureStripAndBody(panel){
+    // Ensure strip exists as first child of panel
     let strip = panel.querySelector('.odv-panel-strip');
     if(!strip){
       strip = document.createElement('div');
       strip.className = 'odv-panel-strip';
+      panel.insertBefore(strip, panel.firstChild);
+    }else if(panel.firstChild !== strip){
+      panel.insertBefore(strip, panel.firstChild);
+    }
 
-      const toggle = document.createElement('button');
+    // Ensure toggle exists inside strip
+    let toggle = strip.querySelector('.odv-toggle');
+    if(!toggle){
+      toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'odv-toggle';
-      toggle.innerHTML = '<span class="chev">▾</span><span class="label">Panel</span>';
-
+      toggle.innerHTML = '<span class="chev">▾</span>';
       strip.appendChild(toggle);
-
-      const topRow = panel.querySelector('.topRow');
-      if(topRow && topRow.parentNode) topRow.parentNode.insertBefore(strip, topRow);
-      else panel.insertBefore(strip, panel.firstChild);
-
-      toggle.addEventListener('click', ()=> setCollapsed(!panel.classList.contains('odv-collapsed')));
-
-      STATE.strip = strip;
-      STATE.toggle = toggle;
-
-      try{
-        if(localStorage.getItem(KEY) === '1'){
-          panel.classList.add('odv-collapsed');
-          syncToggle(true);
-        }else{
-          syncToggle(false);
-        }
-      }catch(e){
-        syncToggle(panel.classList.contains('odv-collapsed'));
-      }
     }else{
-      STATE.strip = strip;
-      STATE.toggle = strip.querySelector('.odv-toggle');
+      // Hardening: make sure it's a real button and stays clickable
+      toggle.type = 'button';
     }
-    return panel;
-  }
 
-  function showHintOnce(){
-    let seen = false;
-    try{ seen = localStorage.getItem(HINT) === '1'; }catch(e){}
-    if(seen) return;
-    const t = document.querySelector('.odv-toggle');
-    if(!t) return;
+    // Ensure body exists and holds all remaining elements (not strip)
+    let body = panel.querySelector('.odv-panel-body');
+    if(!body){
+      body = document.createElement('div');
+      body.className = 'odv-panel-body';
 
-    const hint = document.createElement('div');
-    hint.className = 'odv-hint';
-    hint.textContent = 'TIP: CLICK ▾ TO HIDE THE PANEL';
-    document.body.appendChild(hint);
-
-    const r = t.getBoundingClientRect();
-    hint.style.left = (Math.max(16, r.left)) + 'px';
-    hint.style.top = (r.bottom + 10) + 'px';
-
-    requestAnimationFrame(()=> hint.classList.add('is-on'));
-    setTimeout(()=> hint.classList.remove('is-on'), 2400);
-    setTimeout(()=> hint.remove(), 2800);
-
-    try{ localStorage.setItem(HINT, '1'); }catch(e){}
-  }
-
-  function setReady(on){
-    STATE.ready = !!on;
-    if(STATE.quit){
-      if(on) STATE.quit.classList.add('odv-ready');
-      else STATE.quit.classList.remove('odv-ready');
+      // move all children except strip into body
+      const kids = Array.from(panel.children);
+      for(const el of kids){
+        if(el === strip) continue;
+        body.appendChild(el);
+      }
+      panel.appendChild(body);
+    }else{
+      // Hardening: if something reconstructed the DOM, ensure strip is NOT inside body
+      if(body.contains(strip)){
+        body.removeChild(strip);
+        panel.insertBefore(strip, panel.firstChild);
+      }
     }
-    if(on) showHintOnce();
-  }
 
-  function mount(){
-    ensureQuit();
-    const panel = ensurePanelAndToggle();
-    if(!panel){ setReady(false); return; }
-    if(isLoadingVisible()) setReady(false);
-    else setReady(true);
-  }
+    const cleanupTransition = ()=>{
+      const bodyEl = panel.querySelector('.odv-panel-body');
+      if(bodyEl && bodyEl.__odvOnEnd){
+        bodyEl.removeEventListener('transitionend', bodyEl.__odvOnEnd);
+        bodyEl.__odvOnEnd = null;
+      }
+    };
 
-  // Initial delayed mount
-  const t0 = performance.now();
-  (function loop(){
-    mount();
-    if(performance.now() - t0 < 6000 && !STATE.ready){
-      requestAnimationFrame(loop);
+    const sync = ()=>{
+      const collapsed = panel.classList.contains('odv-collapsed') || panel.classList.contains('odv-collapsing');
+      toggle.setAttribute('aria-label', collapsed ? 'Open panel' : 'Collapse panel');
+      toggle.title = collapsed ? 'Open panel' : 'Collapse panel';
+    };
+
+    const setCollapsed = (nextCollapsed)=>{
+      const isCollapsed = panel.classList.contains('odv-collapsed');
+      const isCollapsing = panel.classList.contains('odv-collapsing');
+      const isOpening = panel.classList.contains('odv-opening');
+
+      // Allow cancellation if the user clicks mid-transition (prevents "stuck" states)
+      if(isCollapsing && !nextCollapsed){
+        cleanupTransition();
+        panel.classList.remove('odv-collapsing');
+        panel.classList.remove('odv-collapsed');
+        panel.classList.add('odv-opening');
+        try{ localStorage.setItem(KEY, '0'); }catch(e){}
+        sync();
+        requestAnimationFrame(()=>{ panel.classList.remove('odv-opening'); });
+        return;
+      }
+      if(isOpening && nextCollapsed){
+        // cancel opening and proceed to collapse
+        panel.classList.remove('odv-opening');
+      }
+
+      // Ignore redundant actions
+      if(nextCollapsed && (isCollapsed || isCollapsing)) return;
+      if(!nextCollapsed && (!isCollapsed && !isCollapsing)) return;
+
+      if(nextCollapsed){
+        cleanupTransition();
+        panel.classList.add('odv-collapsing');
+
+        const finalize = ()=>{
+          cleanupTransition();
+          panel.classList.remove('odv-collapsing');
+          panel.classList.add('odv-collapsed');
+          try{ localStorage.setItem(KEY, '1'); }catch(e){}
+          sync();
+        };
+
+        const bodyEl = panel.querySelector('.odv-panel-body');
+        if(bodyEl){
+          const onEnd = (ev)=>{
+            if(ev.target !== bodyEl) return;
+            if(ev.propertyName !== 'opacity') return;
+            finalize();
+          };
+          bodyEl.__odvOnEnd = onEnd;
+          bodyEl.addEventListener('transitionend', onEnd);
+          // fallback (in case transitionend doesn't fire)
+          setTimeout(()=>{ if(panel.classList.contains('odv-collapsing')) finalize(); }, 650);
+        }else{
+          finalize();
+        }
+      }else{
+        cleanupTransition();
+        panel.classList.remove('odv-collapsed');
+        panel.classList.remove('odv-collapsing');
+        panel.classList.add('odv-opening');
+        try{ localStorage.setItem(KEY, '0'); }catch(e){}
+        sync();
+        requestAnimationFrame(()=>{ panel.classList.remove('odv-opening'); });
+      }
+    };
+
+    if(!toggle.__odvBound){
+      let lastPD = 0;
+      const activate = (e)=>{
+        // Use pointerdown for reliability; prevent accidental drag/select
+        if(e){
+          e.preventDefault?.();
+          e.stopPropagation?.();
+        }
+        const effectivelyCollapsed = panel.classList.contains('odv-collapsed') || panel.classList.contains('odv-collapsing');
+        setCollapsed(!effectivelyCollapsed);
+      };
+
+      toggle.addEventListener('pointerdown', (e)=>{
+        lastPD = Date.now();
+        activate(e);
+      }, {passive:false});
+
+      // Click fallback (some browsers still emit click after pointerdown)
+      toggle.addEventListener('click', (e)=>{
+        if(Date.now() - lastPD < 450) return;
+        activate(e);
+      });
+
+      toggle.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter' || e.key === ' '){
+          e.preventDefault();
+          activate(e);
+        }
+      });
+
+      toggle.__odvBound = true;
     }
-  })();
 
-  // Self-heal on DOM churn
-  const obs = new MutationObserver(function(){
+    // FORCE START OPEN
+    try{ localStorage.setItem(KEY, '0'); }catch(e){}
+    cleanupTransition();
+    panel.classList.remove('odv-collapsed','odv-opening','odv-collapsing');
+    sync();
+  }
+
+  function setReady(btn, on){
+    if(on) btn.classList.add('odv-ready');
+    else btn.classList.remove('odv-ready');
+  }
+
+  function tryMount(){
+    const quit = ensureQuitBtn();
+    const panel = getPanel();
+    if(!panel){
+      setReady(quit, false);
+      return false;
+    }
+    panelRef = panel;
+    ensureStripAndBody(panel);
+    const ready = !isLoadingVisible();
+    setReady(quit, ready);
+    return ready;
+  }
+
+  // Poll briefly until ready (or timeout)
+  let attempts = 0;
+  const poll = setInterval(()=>{
+    attempts++;
+    const ready = tryMount();
+    if(ready || attempts > 80){
+      clearInterval(poll);
+    }
+  }, 200);
+
+  // Self-heal if UI rebuilds
+  const obs = new MutationObserver(()=>{
     const quitMissing = !document.getElementById('odvQuitBtn');
-    const panel = document.querySelector('.panel');
+    const panel = getPanel();
     const stripMissing = panel ? !panel.querySelector('.odv-panel-strip') : true;
 
-    if(quitMissing || stripMissing || (STATE.panel && panel && STATE.panel !== panel)){
-      STATE.panel = null; STATE.strip = null; STATE.toggle = null; STATE.quit = null;
-      requestAnimationFrame(mount);
+    if(quitMissing || stripMissing || (panelRef && panel && panelRef !== panel)){
+      panelRef = panel || null;
+      tryMount();
     }else{
-      // Update ready state on loading overlay changes
-      if(isLoadingVisible()) setReady(false); else setReady(true);
+      const quit = document.getElementById('odvQuitBtn');
+      if(quit) setReady(quit, !isLoadingVisible());
     }
   });
-  obs.observe(document.documentElement, {subtree:true, childList:true, attributes:true, attributeFilter:['style','class']});
+  obs.observe(document.body, {childList:true, subtree:true});
 })();
 </script>
