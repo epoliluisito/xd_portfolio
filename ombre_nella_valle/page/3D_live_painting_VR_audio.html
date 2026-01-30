@@ -576,6 +576,16 @@ const AudioEngine = (() => {
     // shimmer
     let shimmerBus=null, shimmerLP=null, shimmerGain=null;
 
+    // rumble bed (pressure / air weight)
+    let rumbleSrc=null, rumbleLP=null, rumbleBP=null, rumbleGain=null, rumbleSat=null;
+
+    // air tone (temperature / light)
+    let airA=null, airB=null, airMix=null, airBP=null, airGain=null, airPan=null, airLFO=null, airLFODepth=null;
+
+    // crackle (noise / particulates micro-events)
+    let crackleBus=null, crackleGain=null;
+    let crackleNext = 0;
+
     // rare event
     let eventCooldownUntil = 0;
 
@@ -677,6 +687,11 @@ const AudioEngine = (() => {
         droneA.detune.setTargetAtTime(-variant.detuneCents, now, 0.4);
         droneB.detune.setTargetAtTime(+variant.detuneCents, now, 0.4);
         droneSub.detune.setTargetAtTime(0, now, 0.4);
+        // keep high layer subtle
+        if (airA && airB){
+          airA.detune.setTargetAtTime(-variant.detuneCents*0.65, now, 0.4);
+          airB.detune.setTargetAtTime(+variant.detuneCents*0.65, now, 0.4);
+        }
       }
     }
 
@@ -769,6 +784,55 @@ const AudioEngine = (() => {
       shimmerGain.connect(dryBus);
       shimmerGain.connect(wetSend);
 
+      // ---- rumble bed ----
+      // Low, slow texture that makes Pressure / CO2 / PM2.5 audible without being "bassy".
+      rumbleSrc = ctx.createBufferSource();
+      rumbleSrc.buffer = noiseBuf;
+      rumbleSrc.loop = true;
+
+      rumbleBP = ctx.createBiquadFilter(); rumbleBP.type = "bandpass"; rumbleBP.frequency.value = 80; rumbleBP.Q.value = 0.65;
+      rumbleLP = ctx.createBiquadFilter(); rumbleLP.type = "lowpass";  rumbleLP.frequency.value = 150; rumbleLP.Q.value = 0.7;
+      rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0.0;
+      rumbleSat = makeWaveshaper(ctx, 0.32);
+
+      rumbleSrc.connect(rumbleBP);
+      rumbleBP.connect(rumbleLP);
+      rumbleLP.connect(rumbleGain);
+      rumbleGain.connect(rumbleSat);
+      rumbleSat.connect(dryBus);
+      rumbleSat.connect(wetSend);
+
+      // ---- air tone ----
+      // Gentle high layer so Temperature / Light have a clear effect even in still moments.
+      airA = ctx.createOscillator(); airA.type = "sine";
+      airB = ctx.createOscillator(); airB.type = "sine";
+
+      airMix = ctx.createGain(); airMix.gain.value = 0.0;
+      airBP  = ctx.createBiquadFilter(); airBP.type = "bandpass"; airBP.frequency.value = 900; airBP.Q.value = 0.85;
+      airGain = ctx.createGain(); airGain.gain.value = 0.0;
+      airPan = ctx.createStereoPanner();
+
+      // tiny spectral flutter (not chorusy)
+      airLFO = ctx.createOscillator(); airLFO.type = "sine"; airLFO.frequency.value = 0.06;
+      airLFODepth = ctx.createGain(); airLFODepth.gain.value = 10;
+      airLFO.connect(airLFODepth);
+      airLFODepth.connect(airBP.frequency);
+
+      airA.connect(airMix);
+      airB.connect(airMix);
+      airMix.connect(airBP);
+      airBP.connect(airGain);
+      airGain.connect(airPan);
+      airPan.connect(dryBus);
+      airPan.connect(wetSend);
+
+      // ---- crackle bus ----
+      crackleBus = ctx.createGain(); crackleBus.gain.value = 1.0;
+      crackleGain = ctx.createGain(); crackleGain.gain.value = 0.0;
+      crackleBus.connect(crackleGain);
+      crackleGain.connect(dryBus);
+      crackleGain.connect(wetSend);
+
       // ---- routing ----
       // wet path
       wetSend.connect(convolver);
@@ -787,8 +851,11 @@ const AudioEngine = (() => {
 
       // start sources
       noiseSrc.start();
+      rumbleSrc.start();
       droneA.start(); droneB.start(); droneSub.start();
+      airA.start(); airB.start();
       windPanLFO.start();
+      airLFO.start();
 
       reseed((Math.random()*1e9)>>>0);
     }
@@ -893,6 +960,47 @@ const AudioEngine = (() => {
 
       setTimeout(()=>{ try{ src.disconnect(); }catch(e){} }, 7000);
     }
+    function scheduleCrackle(density, temp, hum, pm25, now){
+      if (!ctx || !noiseBuf) return;
+
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+
+      // hotter = brighter + faster, humid = duller
+      const pr = lerp(0.60, 1.90, temp) * lerp(0.75, 1.10, 1.0-hum);
+      src.playbackRate.value = pr;
+
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = lerp(1400, 4200, temp) * lerp(0.85, 1.15, 1.0-hum);
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = lerp(2200, 7800, temp);
+      bp.Q.value = lerp(5.0, 12.0, clamp01(0.55 + 0.6*density));
+
+      const g = ctx.createGain();
+      g.gain.value = 0.0;
+
+      // amplitude: keep tiny; particulates raise likelihood, not loudness
+      const a = Math.min(0.12, 0.015 + 0.060*density);
+
+      // micro-envelope
+      g.gain.setValueAtTime(0.0, now);
+      g.gain.linearRampToValueAtTime(a, now + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0008, now + lerp(0.030, 0.090, clamp01(0.35 + pm25)));
+
+      src.connect(hp);
+      hp.connect(bp);
+      bp.connect(g);
+      g.connect(crackleBus);
+
+      src.start(now);
+      src.stop(now + 0.12);
+
+      setTimeout(()=>{ try{ src.disconnect(); hp.disconnect(); bp.disconnect(); g.disconnect(); }catch(e){} }, 1200);
+    }
+
 
     // perf: throttle internal update
     let lastUpdateTime = 0;
@@ -929,7 +1037,7 @@ const AudioEngine = (() => {
       const motionE = lastMotion * (userActive ? 1.15 : 0.95);
 
       // ---- tonal bed ----
-      const root = variant.rootHz * (0.90 + 0.20*temp) * (0.90 + 0.18*soil);
+      const root = variant.rootHz * (0.86 + 0.32*temp) * (0.86 + 0.26*soil) * (0.92 + 0.12*press);
       const heaviness = clamp01(0.55*co2 + 0.45*pm25);
       const bright = clamp01(0.70*light + 0.30*pres) * (1.0 - 0.45*hum);
 
@@ -975,11 +1083,52 @@ const AudioEngine = (() => {
         grainNext = now + minDt * lerp(0.75, 1.35, Math.random());
       }
 
+
+      // ---- air tone (temperature/light) ----
+      const thermal = temp;
+      const airBright = clamp01(0.65*bright + 0.35*(1.0-hum));
+      const airHz = lerp(520, 1380, thermal) * (0.85 + 0.35*airBright) * (0.92 + 0.16*pres);
+      airA.frequency.setTargetAtTime(airHz * (1.0 + 0.004*noi), now, 0.30);
+      airB.frequency.setTargetAtTime(airHz * (1.0 + 0.010*noi), now, 0.30);
+
+      // airy level: clearly responsive but still subtle
+      const airLvl = (0.003 + 0.030*airBright) * (0.35 + 0.65*thermal) * (0.65 + 0.55*pres) * (1.0 - 0.65*visc);
+      airMix.gain.setTargetAtTime(Math.min(0.08, airLvl), now, 0.20);
+
+      airBP.frequency.setTargetAtTime(lerp(680, 1600, thermal) * (0.85 + 0.35*airBright), now, 0.25);
+      airBP.Q.setTargetAtTime(lerp(0.7, 1.25, hum), now, 0.30);
+
+      // slight pan drift that reacts to wind
+      airPan.pan.setTargetAtTime(Math.sin(now*lerp(0.05,0.11,wind) + 0.7) * lerp(0.10,0.35,wind), now, 0.45);
+      airGain.gain.setTargetAtTime(1.0, now, 0.10);
+
+      // ---- rumble (pressure / heaviness) ----
+      const pressE = clamp01(press);
+      const rumbleCut = lerp(90, 210, 1.0-hum) * (0.85 + 0.35*soil);
+      rumbleLP.frequency.setTargetAtTime(rumbleCut, now, 0.35);
+      rumbleBP.frequency.setTargetAtTime(lerp(55, 115, pressE) * (0.85 + 0.35*soil), now, 0.35);
+
+      const rumbleLvl = (0.008 + 0.10*heaviness) * (0.30 + 0.75*pressE) * (0.75 + 0.40*(1.0-hum)) * (0.65 + 0.35*pres);
+      rumbleGain.gain.setTargetAtTime(Math.min(0.20, rumbleLvl), now, 0.28);
+
+      // ---- crackle (noise / PM2.5) ----
+      const particulate = clamp01(0.55*pm25 + 0.45*co2);
+      const crackleDensity = clamp01((0.05 + 0.85*noi) * (0.20 + 0.80*particulate) * (0.40 + 0.70*motionE) * (1.0 - 0.55*hum));
+      crackleGain.gain.setTargetAtTime(Math.min(0.10, 0.015 + 0.085*crackleDensity), now, 0.20);
+
+      if (crackleNext === 0) crackleNext = now + 0.35;
+      const cracklePerSec = 0.10 + 2.8*crackleDensity;
+      const crackleMinDt = 1.0 / Math.max(0.20, cracklePerSec);
+      if (now >= crackleNext){
+        scheduleCrackle(crackleDensity, temp, hum, pm25, now);
+        crackleNext = now + crackleMinDt * lerp(0.75, 1.40, Math.random());
+      }
+
       // ---- wet mix ----
-      const wet = variant.wetBase * (0.85 + 0.55*pres) * (0.85 + 0.35*(1.0-heaviness));
+      const wet = variant.wetBase * (0.85 + 0.55*pres) * (0.85 + 0.35*(1.0-heaviness)) * (0.88 + 0.22*press) * (0.92 + 0.16*temp);
       wetSend.gain.setTargetAtTime(Math.min(0.42, 0.12 + 0.55*wet), now, 0.30);
       wetGain.gain.setTargetAtTime(lerp(0.48, 0.72, pres), now, 0.35);
-      wetLP.frequency.setTargetAtTime(lerp(1500, 3200, bright), now, 0.40);
+      wetLP.frequency.setTargetAtTime(lerp(1400, 3600, clamp01(0.70*bright + 0.30*temp)), now, 0.40);
 
       // ---- rare event ----
       // Trigger only when the space is "alive" and motion/presence crest.
@@ -2288,6 +2437,16 @@ const AudioEngine = (() => {
     // shimmer
     let shimmerBus=null, shimmerLP=null, shimmerGain=null;
 
+    // rumble bed (pressure / air weight)
+    let rumbleSrc=null, rumbleLP=null, rumbleBP=null, rumbleGain=null, rumbleSat=null;
+
+    // air tone (temperature / light)
+    let airA=null, airB=null, airMix=null, airBP=null, airGain=null, airPan=null, airLFO=null, airLFODepth=null;
+
+    // crackle (noise / particulates micro-events)
+    let crackleBus=null, crackleGain=null;
+    let crackleNext = 0;
+
     // rare event
     let eventCooldownUntil = 0;
 
@@ -2389,6 +2548,11 @@ const AudioEngine = (() => {
         droneA.detune.setTargetAtTime(-variant.detuneCents, now, 0.4);
         droneB.detune.setTargetAtTime(+variant.detuneCents, now, 0.4);
         droneSub.detune.setTargetAtTime(0, now, 0.4);
+        // keep high layer subtle
+        if (airA && airB){
+          airA.detune.setTargetAtTime(-variant.detuneCents*0.65, now, 0.4);
+          airB.detune.setTargetAtTime(+variant.detuneCents*0.65, now, 0.4);
+        }
       }
     }
 
@@ -2481,6 +2645,55 @@ const AudioEngine = (() => {
       shimmerGain.connect(dryBus);
       shimmerGain.connect(wetSend);
 
+      // ---- rumble bed ----
+      // Low, slow texture that makes Pressure / CO2 / PM2.5 audible without being "bassy".
+      rumbleSrc = ctx.createBufferSource();
+      rumbleSrc.buffer = noiseBuf;
+      rumbleSrc.loop = true;
+
+      rumbleBP = ctx.createBiquadFilter(); rumbleBP.type = "bandpass"; rumbleBP.frequency.value = 80; rumbleBP.Q.value = 0.65;
+      rumbleLP = ctx.createBiquadFilter(); rumbleLP.type = "lowpass";  rumbleLP.frequency.value = 150; rumbleLP.Q.value = 0.7;
+      rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0.0;
+      rumbleSat = makeWaveshaper(ctx, 0.32);
+
+      rumbleSrc.connect(rumbleBP);
+      rumbleBP.connect(rumbleLP);
+      rumbleLP.connect(rumbleGain);
+      rumbleGain.connect(rumbleSat);
+      rumbleSat.connect(dryBus);
+      rumbleSat.connect(wetSend);
+
+      // ---- air tone ----
+      // Gentle high layer so Temperature / Light have a clear effect even in still moments.
+      airA = ctx.createOscillator(); airA.type = "sine";
+      airB = ctx.createOscillator(); airB.type = "sine";
+
+      airMix = ctx.createGain(); airMix.gain.value = 0.0;
+      airBP  = ctx.createBiquadFilter(); airBP.type = "bandpass"; airBP.frequency.value = 900; airBP.Q.value = 0.85;
+      airGain = ctx.createGain(); airGain.gain.value = 0.0;
+      airPan = ctx.createStereoPanner();
+
+      // tiny spectral flutter (not chorusy)
+      airLFO = ctx.createOscillator(); airLFO.type = "sine"; airLFO.frequency.value = 0.06;
+      airLFODepth = ctx.createGain(); airLFODepth.gain.value = 10;
+      airLFO.connect(airLFODepth);
+      airLFODepth.connect(airBP.frequency);
+
+      airA.connect(airMix);
+      airB.connect(airMix);
+      airMix.connect(airBP);
+      airBP.connect(airGain);
+      airGain.connect(airPan);
+      airPan.connect(dryBus);
+      airPan.connect(wetSend);
+
+      // ---- crackle bus ----
+      crackleBus = ctx.createGain(); crackleBus.gain.value = 1.0;
+      crackleGain = ctx.createGain(); crackleGain.gain.value = 0.0;
+      crackleBus.connect(crackleGain);
+      crackleGain.connect(dryBus);
+      crackleGain.connect(wetSend);
+
       // ---- routing ----
       // wet path
       wetSend.connect(convolver);
@@ -2499,8 +2712,11 @@ const AudioEngine = (() => {
 
       // start sources
       noiseSrc.start();
+      rumbleSrc.start();
       droneA.start(); droneB.start(); droneSub.start();
+      airA.start(); airB.start();
       windPanLFO.start();
+      airLFO.start();
 
       reseed((Math.random()*1e9)>>>0);
     }
@@ -2605,6 +2821,47 @@ const AudioEngine = (() => {
 
       setTimeout(()=>{ try{ src.disconnect(); }catch(e){} }, 7000);
     }
+    function scheduleCrackle(density, temp, hum, pm25, now){
+      if (!ctx || !noiseBuf) return;
+
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+
+      // hotter = brighter + faster, humid = duller
+      const pr = lerp(0.60, 1.90, temp) * lerp(0.75, 1.10, 1.0-hum);
+      src.playbackRate.value = pr;
+
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = lerp(1400, 4200, temp) * lerp(0.85, 1.15, 1.0-hum);
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = lerp(2200, 7800, temp);
+      bp.Q.value = lerp(5.0, 12.0, clamp01(0.55 + 0.6*density));
+
+      const g = ctx.createGain();
+      g.gain.value = 0.0;
+
+      // amplitude: keep tiny; particulates raise likelihood, not loudness
+      const a = Math.min(0.12, 0.015 + 0.060*density);
+
+      // micro-envelope
+      g.gain.setValueAtTime(0.0, now);
+      g.gain.linearRampToValueAtTime(a, now + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0008, now + lerp(0.030, 0.090, clamp01(0.35 + pm25)));
+
+      src.connect(hp);
+      hp.connect(bp);
+      bp.connect(g);
+      g.connect(crackleBus);
+
+      src.start(now);
+      src.stop(now + 0.12);
+
+      setTimeout(()=>{ try{ src.disconnect(); hp.disconnect(); bp.disconnect(); g.disconnect(); }catch(e){} }, 1200);
+    }
+
 
     // perf: throttle internal update
     let lastUpdateTime = 0;
@@ -2641,7 +2898,7 @@ const AudioEngine = (() => {
       const motionE = lastMotion * (userActive ? 1.15 : 0.95);
 
       // ---- tonal bed ----
-      const root = variant.rootHz * (0.90 + 0.20*temp) * (0.90 + 0.18*soil);
+      const root = variant.rootHz * (0.86 + 0.32*temp) * (0.86 + 0.26*soil) * (0.92 + 0.12*press);
       const heaviness = clamp01(0.55*co2 + 0.45*pm25);
       const bright = clamp01(0.70*light + 0.30*pres) * (1.0 - 0.45*hum);
 
@@ -2687,11 +2944,52 @@ const AudioEngine = (() => {
         grainNext = now + minDt * lerp(0.75, 1.35, Math.random());
       }
 
+
+      // ---- air tone (temperature/light) ----
+      const thermal = temp;
+      const airBright = clamp01(0.65*bright + 0.35*(1.0-hum));
+      const airHz = lerp(520, 1380, thermal) * (0.85 + 0.35*airBright) * (0.92 + 0.16*pres);
+      airA.frequency.setTargetAtTime(airHz * (1.0 + 0.004*noi), now, 0.30);
+      airB.frequency.setTargetAtTime(airHz * (1.0 + 0.010*noi), now, 0.30);
+
+      // airy level: clearly responsive but still subtle
+      const airLvl = (0.003 + 0.030*airBright) * (0.35 + 0.65*thermal) * (0.65 + 0.55*pres) * (1.0 - 0.65*visc);
+      airMix.gain.setTargetAtTime(Math.min(0.08, airLvl), now, 0.20);
+
+      airBP.frequency.setTargetAtTime(lerp(680, 1600, thermal) * (0.85 + 0.35*airBright), now, 0.25);
+      airBP.Q.setTargetAtTime(lerp(0.7, 1.25, hum), now, 0.30);
+
+      // slight pan drift that reacts to wind
+      airPan.pan.setTargetAtTime(Math.sin(now*lerp(0.05,0.11,wind) + 0.7) * lerp(0.10,0.35,wind), now, 0.45);
+      airGain.gain.setTargetAtTime(1.0, now, 0.10);
+
+      // ---- rumble (pressure / heaviness) ----
+      const pressE = clamp01(press);
+      const rumbleCut = lerp(90, 210, 1.0-hum) * (0.85 + 0.35*soil);
+      rumbleLP.frequency.setTargetAtTime(rumbleCut, now, 0.35);
+      rumbleBP.frequency.setTargetAtTime(lerp(55, 115, pressE) * (0.85 + 0.35*soil), now, 0.35);
+
+      const rumbleLvl = (0.008 + 0.10*heaviness) * (0.30 + 0.75*pressE) * (0.75 + 0.40*(1.0-hum)) * (0.65 + 0.35*pres);
+      rumbleGain.gain.setTargetAtTime(Math.min(0.20, rumbleLvl), now, 0.28);
+
+      // ---- crackle (noise / PM2.5) ----
+      const particulate = clamp01(0.55*pm25 + 0.45*co2);
+      const crackleDensity = clamp01((0.05 + 0.85*noi) * (0.20 + 0.80*particulate) * (0.40 + 0.70*motionE) * (1.0 - 0.55*hum));
+      crackleGain.gain.setTargetAtTime(Math.min(0.10, 0.015 + 0.085*crackleDensity), now, 0.20);
+
+      if (crackleNext === 0) crackleNext = now + 0.35;
+      const cracklePerSec = 0.10 + 2.8*crackleDensity;
+      const crackleMinDt = 1.0 / Math.max(0.20, cracklePerSec);
+      if (now >= crackleNext){
+        scheduleCrackle(crackleDensity, temp, hum, pm25, now);
+        crackleNext = now + crackleMinDt * lerp(0.75, 1.40, Math.random());
+      }
+
       // ---- wet mix ----
-      const wet = variant.wetBase * (0.85 + 0.55*pres) * (0.85 + 0.35*(1.0-heaviness));
+      const wet = variant.wetBase * (0.85 + 0.55*pres) * (0.85 + 0.35*(1.0-heaviness)) * (0.88 + 0.22*press) * (0.92 + 0.16*temp);
       wetSend.gain.setTargetAtTime(Math.min(0.42, 0.12 + 0.55*wet), now, 0.30);
       wetGain.gain.setTargetAtTime(lerp(0.48, 0.72, pres), now, 0.35);
-      wetLP.frequency.setTargetAtTime(lerp(1500, 3200, bright), now, 0.40);
+      wetLP.frequency.setTargetAtTime(lerp(1400, 3600, clamp01(0.70*bright + 0.30*temp)), now, 0.40);
 
       // ---- rare event ----
       // Trigger only when the space is "alive" and motion/presence crest.
