@@ -524,6 +524,16 @@
     isInteracting: false,
   };
 
+
+  // ----------------------------------------------------------
+  // External hook (non-invasive): expose camera state for optional modules
+  // ----------------------------------------------------------
+  try{
+    window.__SE_LIVEPAINTING__ = window.__SE_LIVEPAINTING__ || {};
+    // Expose ONLY what is needed for optional interaction layers.
+    window.__SE_LIVEPAINTING__.state = state;
+  }catch(e){}
+
   const controlsEl = document.getElementById("controls");
   const reseedBtn  = document.getElementById("reseedBtn");
   const manualBtn  = document.getElementById("manualBtn");
@@ -4167,6 +4177,97 @@ const progScene = program(VS, FS_SCENE);
   .panel.odv-collapsed .odv-panel-body{
     display: none;
   }
+
+  /* --- Maestro Mode (camera hand control) --- */
+  .odv-panel-strip{ gap: 10px; }
+
+  .odv-maestro-btn{
+    height: 34px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(155,255,190,.34);
+    background: rgba(0,0,0,.22);
+    color: rgba(238,242,247,.90);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    transition: background .18s ease, border-color .18s ease, transform .12s ease, opacity .18s ease;
+    white-space: nowrap;
+  }
+  .odv-maestro-btn:hover{ background: rgba(0,0,0,.30); }
+  .odv-maestro-btn:active{ transform: translateY(1px); }
+
+  /* Show only when panel is fully collapsed */
+  .panel.odv-collapsed .odv-maestro-btn{ display: inline-flex; }
+  .panel.odv-collapsing .odv-maestro-btn{ display: none; }
+
+  /* Active state */
+  .odv-maestro-btn.odv-on{
+    border-color: rgba(155,255,190,.58);
+    background:
+      radial-gradient(140% 160% at 20% 10%, rgba(155,255,190,.14), rgba(0,0,0,.22));
+    box-shadow: 0 0 0 1px rgba(155,255,190,.10) inset;
+  }
+
+  .odv-camera-ind{
+    display:none;
+    align-items:center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(0,0,0,.18);
+    color: rgba(238,242,247,.78);
+    font-size: 11px;
+    letter-spacing: .10em;
+    text-transform: uppercase;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    user-select:none;
+  }
+  .odv-camera-ind .dot{
+    width: 8px; height: 8px;
+    border-radius: 999px;
+    background: rgba(155,255,190,.92);
+    box-shadow: 0 0 14px rgba(155,255,190,.35);
+  }
+  .odv-maestro-active .odv-camera-ind{ display:flex; }
+
+  /* Small inline tip */
+  .odv-maestro-tip{
+    position: absolute;
+    left: 0;
+    bottom: 44px;
+    max-width: 280px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(0,0,0,.42);
+    color: rgba(238,242,247,.88);
+    font-size: 12px;
+    line-height: 1.3;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 18px 60px rgba(0,0,0,.40);
+    opacity: 0;
+    transform: translateY(6px);
+    pointer-events: none;
+    transition: opacity .22s ease, transform .26s cubic-bezier(.2,.8,.2,1);
+  }
+  .odv-maestro-tip.show{
+    opacity: 1;
+    transform: translateY(0);
+  }
+
 </style>
 
 <script>
@@ -4223,6 +4324,286 @@ const progScene = program(VS, FS_SCENE);
   const KEY = 'odv_vr_panel_collapsed_v4';
   let panelRef = null;
 
+  // -------- Maestro Mode (webcam hand control, opt-in) --------
+  const Maestro = {
+    active: false,
+    starting: false,
+    hands: null,
+    stream: null,
+    video: null,
+    timer: 0,
+    inFlight: false,
+    engaged: false,
+    base: null,
+    filt: {x:0.5, y:0.5, s:0.18},
+    prevApEnabled: null,
+  };
+
+  function seState(){
+    try{
+      return (window.__SE_LIVEPAINTING__ && window.__SE_LIVEPAINTING__.state) ? window.__SE_LIVEPAINTING__.state : null;
+    }catch(e){ return null; }
+  }
+
+  function setMaestroUI(on){
+    const panel = panelRef || getPanel();
+    if(!panel) return;
+    const btn = panel.querySelector('.odv-maestro-btn');
+    if(btn){
+      btn.classList.toggle('odv-on', !!on);
+      btn.textContent = on ? 'MAESTRO: ON' : 'ACTIVATE MAESTRO MODE';
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.title = on ? 'Disable Maestro Mode (Esc)' : 'Allow camera to control the world with your hands';
+    }
+    document.documentElement.classList.toggle('odv-maestro-active', !!on);
+  }
+
+  function showMaestroTip(msg, ms=2600){
+    const panel = panelRef || getPanel();
+    if(!panel) return;
+    const tip = panel.querySelector('.odv-maestro-tip');
+    if(!tip) return;
+    tip.textContent = msg;
+    tip.classList.add('show');
+    clearTimeout(tip.__t);
+    tip.__t = setTimeout(()=>{ tip.classList.remove('show'); }, ms);
+  }
+
+  function loadScriptOnce(srcUrl){
+    return new Promise((resolve, reject)=>{
+      const existing = document.querySelector('script[data-odv-src="'+srcUrl+'"]');
+      if(existing){ resolve(); return; }
+      const s = document.createElement('script');
+      s.src = srcUrl;
+      s.async = true;
+      s.defer = true;
+      s.dataset.odvSrc = srcUrl;
+      s.onload = ()=>resolve();
+      s.onerror = ()=>reject(new Error('Failed to load ' + srcUrl));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function ensureMediaPipe(){
+    // Load only when needed (keeps baseline perf unchanged)
+    await loadScriptOnce('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+  }
+
+  function ensureVideo(){
+    if(Maestro.video) return Maestro.video;
+    const v = document.createElement('video');
+    v.setAttribute('playsinline','');
+    v.muted = true;
+    v.autoplay = true;
+    v.style.position = 'fixed';
+    v.style.right = '0';
+    v.style.bottom = '0';
+    v.style.width = '1px';
+    v.style.height = '1px';
+    v.style.opacity = '0';
+    v.style.pointerEvents = 'none';
+    v.id = 'odvMaestroVideo';
+    document.body.appendChild(v);
+    Maestro.video = v;
+    return v;
+  }
+
+  function stopMaestroInternals(){
+    try{
+      if(Maestro.timer){ clearInterval(Maestro.timer); Maestro.timer = 0; }
+      Maestro.inFlight = false;
+      Maestro.engaged = false;
+      Maestro.base = null;
+      if(Maestro.hands && Maestro.hands.close){ try{ Maestro.hands.close(); }catch(e){} }
+      Maestro.hands = null;
+      if(Maestro.video){
+        try{ Maestro.video.pause(); }catch(e){}
+        try{ Maestro.video.srcObject = null; }catch(e){}
+      }
+      if(Maestro.stream){
+        try{ Maestro.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+      }
+      Maestro.stream = null;
+    }catch(e){}
+  }
+
+    function applyHandToCamera(cx, cy, size, mode){
+    const st = seState();
+    if(!st) return;
+
+    // Disable autopilot while Maestro is active
+    if(Maestro.prevApEnabled === null) Maestro.prevApEnabled = !!st.apEnabled;
+    st.apEnabled = false;
+
+    // Consider this "user input" so nothing else fights it.
+    st.lastUserInputMs = performance.now();
+
+    // Baseline reference at engagement start (prevents drift/jumps)
+    if(!Maestro.base) Maestro.base = {cx, cy, size, yaw: st.yaw, pitch: st.pitch, zoom: st.zoom};
+
+    // Relative deltas (normalized)
+    let dx = (cx - Maestro.base.cx);
+    let dy = (cy - Maestro.base.cy);
+    let ds = (size - Maestro.base.size);
+
+    // Deadzone to avoid micro-jitter moving the world
+    const dz = (mode === 'grab') ? 0.0035 : 0.0075;
+    if(Math.abs(dx) < dz) dx = 0;
+    if(Math.abs(dy) < dz) dy = 0;
+    if(Math.abs(ds) < dz) ds = 0;
+
+    // Sensitivity (soft = gentle, grab = expressive)
+    const yawGain   = (mode === 'grab') ? 2.75 : 1.55;
+    const pitchGain = (mode === 'grab') ? 1.95 : 1.05;
+    const zoomGain  = (mode === 'grab') ? 12.0 : 7.5;
+
+    const yaw   = Maestro.base.yaw   + (-dx * yawGain);     // left/right
+    const pitch = Maestro.base.pitch + ( dy * pitchGain);   // up/down
+    const zoom  = Maestro.base.zoom  + ( ds * zoomGain);    // push/pull
+
+    st.yaw = yaw;
+    st.pitch = Math.max(-1.25, Math.min(1.25, pitch));
+    st.zoom  = Math.max(1.25, Math.min(7.50, zoom));
+    st.yawVel = 0; st.pitchVel = 0; st.zoomVel = 0;
+  }
+
+    function onHandsResults(results){
+    const lms = results && results.multiHandLandmarks && results.multiHandLandmarks[0];
+    if(!lms || !lms.length){
+      Maestro.engaged = false;
+      Maestro.base = null;
+      Maestro.lastMode = null;
+      return;
+    }
+
+    // Bounding box
+    let minx=1, miny=1, maxx=0, maxy=0;
+    for(const p of lms){
+      if(p.x < minx) minx = p.x;
+      if(p.y < miny) miny = p.y;
+      if(p.x > maxx) maxx = p.x;
+      if(p.y > maxy) maxy = p.y;
+    }
+
+    // Use a stable center (middle MCP is usually steady) plus bbox fallback
+    const mid = lms[9] || null;
+    const cx = mid ? mid.x : ((minx + maxx) * 0.5);
+    const cy = mid ? mid.y : ((miny + maxy) * 0.5);
+    const size = Math.max(maxx - minx, maxy - miny);
+
+    // Pinch detection (index tip 8, thumb tip 4)
+    const t = lms[4], i = lms[8];
+    const pinch = (t && i) ? (Math.hypot(t.x - i.x, t.y - i.y) < 0.050) : false;
+
+    const mode = pinch ? 'grab' : 'soft';
+
+    // Smooth input (reduces jitter)
+    const a = 0.22;
+    Maestro.filt.x += (cx - Maestro.filt.x) * a;
+    Maestro.filt.y += (cy - Maestro.filt.y) * a;
+    Maestro.filt.s += (size - Maestro.filt.s) * a;
+
+    // Engage as soon as a hand exists; reset baseline on first engage or mode switch
+    if(!Maestro.engaged){
+      Maestro.engaged = true;
+      Maestro.base = null;
+      Maestro.lastMode = mode;
+    }else if(Maestro.lastMode !== mode){
+      Maestro.base = null;
+      Maestro.lastMode = mode;
+    }
+
+    applyHandToCamera(Maestro.filt.x, Maestro.filt.y, Maestro.filt.s, mode);
+  }
+
+  async function startMaestro(){
+    if(Maestro.active || Maestro.starting) return;
+    Maestro.starting = true;
+
+    const st = seState();
+    if(!st){
+      Maestro.starting = false;
+      showMaestroTip('Renderer not ready yet. Try again in a moment.');
+      return;
+    }
+
+    showMaestroTip('Allow camera to control the world with your hands.');
+    setMaestroUI(true);
+
+    try{
+      await ensureMediaPipe();
+      const v = ensureVideo();
+
+      // Request webcam permission (only when user opts in)
+      Maestro.stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'user' },
+        audio: false
+      });
+      v.srcObject = Maestro.stream;
+      await v.play().catch(()=>{});
+
+      // Init MediaPipe Hands (low complexity for perf)
+      Maestro.hands = new window.Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      Maestro.hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 0,
+        minDetectionConfidence: 0.55,
+        minTrackingConfidence: 0.55
+      });
+      Maestro.hands.onResults(onHandsResults);
+
+      Maestro.inFlight = false;
+
+      // Lightweight processing loop (~15 FPS)
+      Maestro.timer = setInterval(async ()=>{
+        if(!Maestro.active || !Maestro.hands || !Maestro.video) return;
+        if(Maestro.inFlight) return;
+        Maestro.inFlight = true;
+        try{
+          await Maestro.hands.send({ image: Maestro.video });
+        }catch(e){}
+        Maestro.inFlight = false;
+      }, 66);
+
+      Maestro.active = true;
+      Maestro.starting = false;
+
+      showMaestroTip("Move your hand to control the world. Pinch for a stronger 'grab'.");
+      setMaestroUI(true);
+
+    }catch(err){
+      Maestro.starting = false;
+      Maestro.active = false;
+      setMaestroUI(false);
+      stopMaestroInternals();
+      showMaestroTip('Camera permission denied or unavailable.');
+    }
+  }
+
+  function stopMaestro(){
+    if(!Maestro.active && !Maestro.starting) return;
+    Maestro.starting = false;
+    Maestro.active = false;
+
+    const st = seState();
+    if(st && Maestro.prevApEnabled !== null){
+      st.apEnabled = Maestro.prevApEnabled;
+    }
+    Maestro.prevApEnabled = null;
+
+    stopMaestroInternals();
+    setMaestroUI(false);
+    showMaestroTip('Maestro Mode off.', 1200);
+  }
+
+  function toggleMaestro(){
+    if(Maestro.active || Maestro.starting) stopMaestro();
+    else startMaestro();
+  }
+
+
   function ensureQuitBtn(){
     let btn = document.getElementById('odvQuitBtn');
     if(!btn){
@@ -4233,7 +4614,7 @@ const progScene = program(VS, FS_SCENE);
       btn.textContent = 'QUIT';
       btn.addEventListener('click', doQuit);
       document.body.appendChild(btn);
-      window.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') doQuit(); });
+      window.addEventListener('keydown', (e)=>{ if(e.key === 'Escape'){ if(Maestro.active || Maestro.starting){ e.preventDefault(); stopMaestro(); } else { doQuit(); } } });
     }
     return btn;
   }
@@ -4264,6 +4645,39 @@ const progScene = program(VS, FS_SCENE);
     }else{
       // Hardening: make sure it's a real button and stays clickable
       toggle.type = 'button';
+    }
+
+
+    // Ensure Maestro button exists inside strip (only visible when collapsed)
+    let maestroBtn = strip.querySelector('.odv-maestro-btn');
+    if(!maestroBtn){
+      maestroBtn = document.createElement('button');
+      maestroBtn.type = 'button';
+      maestroBtn.className = 'odv-maestro-btn';
+      maestroBtn.textContent = 'ACTIVATE MAESTRO MODE';
+      maestroBtn.title = 'Allow camera to control the world with your hands';
+      maestroBtn.setAttribute('aria-pressed', 'false');
+      // Insert before the chevron toggle (chevron stays at far right)
+      strip.insertBefore(maestroBtn, toggle);
+    }else{
+      maestroBtn.type = 'button';
+    }
+
+    // Camera-active indicator (shows when Maestro is active)
+    let camInd = strip.querySelector('.odv-camera-ind');
+    if(!camInd){
+      camInd = document.createElement('div');
+      camInd.className = 'odv-camera-ind';
+      camInd.innerHTML = '<span class="dot"></span><span>Camera active</span>';
+      strip.insertBefore(camInd, toggle);
+    }
+
+    // Inline tip (permission/explanation)
+    let tip = panel.querySelector('.odv-maestro-tip');
+    if(!tip){
+      tip = document.createElement('div');
+      tip.className = 'odv-maestro-tip';
+      panel.appendChild(tip);
     }
 
     // Ensure body exists and holds all remaining elements (not strip)
@@ -4362,6 +4776,23 @@ const progScene = program(VS, FS_SCENE);
         requestAnimationFrame(()=>{ panel.classList.remove('odv-opening'); });
       }
     };
+
+
+    // Bind Maestro button (robust: only once)
+    if(!maestroBtn.__odvBound){
+      let lastPDm = 0;
+      const act = (e)=>{
+        if(e){
+          e.preventDefault?.();
+          e.stopPropagation?.();
+        }
+        toggleMaestro();
+      };
+      maestroBtn.addEventListener('pointerdown', (e)=>{ lastPDm = Date.now(); act(e); }, {passive:false});
+      maestroBtn.addEventListener('click', (e)=>{ if(Date.now() - lastPDm < 450) return; act(e); });
+      maestroBtn.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); act(e); } });
+      maestroBtn.__odvBound = true;
+    }
 
     if(!toggle.__odvBound){
       let lastPD = 0;
