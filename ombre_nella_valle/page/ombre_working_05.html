@@ -2046,22 +2046,52 @@ nodes.forEach((el) => {
 </section>
 </main>
 <script>
-    (function(){
-      const sel = '.snap-container';
-      function goTop(){
-        const c = document.querySelector(sel);
-        if(!c) return;
-        c.scrollTop = 0;
-      }
-      try{ if('scrollRestoration' in history) history.scrollRestoration = 'manual'; }catch(e){}
-      window.addEventListener('load', () => {
-        // make sure we land on block 1
-        goTop();
-        setTimeout(goTop, 60);
-        setTimeout(goTop, 220);
-      });
-    })();
-  </script>
+(function(){
+  const sel = '.snap-container';
+
+  function getContainer(){
+    return document.querySelector(sel);
+  }
+
+  function goTop(){
+    const c = getContainer();
+    if(!c) return;
+    c.scrollTop = 0;
+  }
+
+  function goHash(){
+    const c = getContainer();
+    if(!c) return false;
+    const h = location.hash || '';
+    if(!h) return false;
+    const el = document.querySelector(h);
+    if(!el) return false;
+
+    // Sections are direct children; offsetTop is reliable here.
+    c.scrollTop = el.offsetTop;
+    return true;
+  }
+
+  try{ if('scrollRestoration' in history) history.scrollRestoration = 'manual'; }catch(e){}
+
+  window.addEventListener('load', () => {
+    const did = goHash();
+    if(!did){
+      // default: land on block 1
+      goTop();
+      setTimeout(goTop, 60);
+      setTimeout(goTop, 220);
+    }else{
+      // re-apply after layout settles (fonts/images)
+      setTimeout(goHash, 60);
+      setTimeout(goHash, 220);
+    }
+  });
+
+  // If someone manually edits the hash, follow it.
+  window.addEventListener('hashchange', () => { goHash(); });
+})();
+</script>
 <script>
     (function(){
       const container = document.querySelector('.snap-container');
@@ -3157,7 +3187,13 @@ if(t.layer === 0 && reinforce > 0.55){
     }catch(err){}
 
     // Fallback when not embedded
-    window.location.href = url;
+    
+    // Fallback when not embedded: include return target + hash in query params
+    const base = (url || '').split('?')[0];
+    const retUrl = encodeURIComponent(location.href.split('#')[0]);
+    const h = encodeURIComponent(ret || '#page_block_06');
+    window.location.href = base + "?return=" + retUrl + "&hash=" + h;
+
   });
 
   // Parent notifies us when the sim has closed; return to the block that launched it.
