@@ -546,439 +546,268 @@
   const renderSlider = document.getElementById("renderSlider");
   const renderVal    = document.getElementById("renderVal");
 const AudioEngine = (() => {
+    // Ambient Engine v3 — cinematic, non-strident, gesture-responsive
+    // Public API: ensure(), setOn(bool), setVolume(0..1), update(values), reseed(seed)
     let ctx = null;
 
-    // Master + user volume
-    let master = null;      // on/off fade
-    let masterGain = null;  // user volume
+    // master staging
+    let master = null;      // on/off fade (0..1)
+    let masterGain = null;  // user volume (0..1)
     let limiter = null;
 
-    // Buses
-    let bodyBus=null, choirBus=null, shimmerBus=null, airBus=null, wetSend=null, wetReturn=null;
+    // buses
+    let dryBus = null;
+    let wetSend = null;
+    let wetReturn = null;
 
-    // Reverb
-    let convolver=null, wetLP=null, wetHS=null, wetGain=null;
+    // reverb
+    let convolver = null;
+    let wetLP = null;
+    let wetHP = null;
+    let wetGain = null;
 
-    // Shared noise bed
-    let noiseBuf=null, noiseSrc=null;
+    // tonal bed
+    let droneA=null, droneB=null, droneSub=null;
+    let droneMix=null, droneLP=null, droneSat=null;
 
-    // --- BODY: sub + breath + ceremonial thump ---
-    let subA=null, subB=null, subLP=null, subGain=null;
-    let breathLFO=null, breathLFOGain=null;
-    let bodyPulseGain=null;
-    let earthResBP=null, earthResGain=null;
-    let bodyBreathGain=null;
+    // wind bed
+    let noiseBuf=null, noiseSrc=null, windBP=null, windHP=null, windGain=null, windPan=null, windPanLFO=null;
 
-    // --- AIR currents (wind/humidity/pm25) ---
-    let airBP=null, airHP=null, airGain=null, airPan=null, airPanLFO=null, airPanLFORange=null;
+    // shimmer
+    let shimmerBus=null, shimmerLP=null, shimmerGain=null;
 
-    // --- CHOIR (formant pad, pre-linguistic) ---
-    // --- HARMONY (cosmos singing when balanced) ---
-    let harmony1=null, harmony2=null, harmony3=null, harmonyGain=null, harmonyLP=null;
+    // rare event
+    let eventCooldownUntil = 0;
 
-    let choirA=null, choirB=null, choirGain=null;
-    let choirDet=null, choirDetGain=null;
-    let f1=null, f2=null, f3=null, choirLP=null;
-    let choirBreathGain=null;
+    // state
+    let isOn = false;
+    let userVolume = 0.55;
 
-    // --- SHIMMER (dust grains) ---
-    let grainNext=0;
-
-    // --- MELODY (delayed "cosmos singing" line) ---
-    let melodyIn=null, melodyLP=null, melodyChDelay=null, melodyChLFO=null, melodyChDepth=null;
-    let melodyDelay=null, melodyFB=null, melodyFBLP=null, melodyOut=null, melodyPan=null;
-    let melodyNext=0;
-
-    // --- WATER (karplus-ish droplets / watery resonance) ---
-    let waterIn=null, waterDelay=null, waterFB=null, waterLP2=null, waterOut=null, waterPan=null;
-    let waterNext=0;
-
-    // --- GESTURE / MOTION FX (interaction-responsive whooshes + spark) ---
-    let whooshBP=null, whooshGain=null, whooshHP=null;
-    let prevUserActive=false;
-    let gestureCooldown=0;
-    let lastMotion=0;
-
-
-
-    // Threshold events
-    let nextThreshold=0;
-    let thresholdUntil=0;
-
-    // State
-    let isOn=false;
-    let userVolume=0.72;
-    let lastUpdateTime=0;
-
-    // Per-reseed personality
-    let variant = {
+    // variation per seed
+    const variant = {
       rootHz: 58,
-      subHz: 36,
-      breathHz: 0.055,
-      formants: [420, 760, 1180],
-      threshBase: 70,
-      threshJitter: 55,
+      detuneCents: 6,
+      scale: [0, 2, 5, 7, 9, 10],   // ambiguous (no clear 3rd)
+      wetBase: 0.26,
+      shimmerBase: 0.010,
+      windBase: 0.10
     };
 
-    const clamp01 = (x)=>Math.max(0,Math.min(1,x));
-    const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
-    const lerp = (a,b,t)=>a+(b-a)*t;
+    // helpers
+    const clamp01 = (x) => Math.max(0, Math.min(1, x || 0));
+    const lerp = (a,b,t) => a + (b-a) * t;
 
-    function hash01(n){
-      const x = Math.sin(n) * 43758.5453123;
-      return x - Math.floor(x);
+    function hash01(x){
+      // deterministic-ish 0..1
+      const s = Math.sin(x * 12.9898) * 43758.5453;
+      return s - Math.floor(s);
     }
 
-    function makeNoiseBuffer(c, seconds=2.0){
-      const sr = c.sampleRate;
-      const len = Math.floor(sr * seconds);
-      const buf = c.createBuffer(1, len, sr);
-      const d = buf.getChannelData(0);
-      let lp = 0.0;
-      for (let i=0;i<len;i++){
-        const w = (Math.random()*2-1);
-        lp = lp*0.985 + w*0.015; // a touch of pink-ish drift
-        d[i] = (w*0.55 + lp*1.1);
+    function makeNoiseBuffer(ac, seconds=2.0){
+      const sr = ac.sampleRate;
+      const n = Math.max(1, Math.floor(seconds * sr));
+      const b = ac.createBuffer(1, n, sr);
+      const d = b.getChannelData(0);
+      let x = 0;
+      for (let i=0;i<n;i++){
+        // slightly colored noise (random walk)
+        x = 0.98*x + (Math.random()*2-1) * 0.08;
+        d[i] = x;
       }
-      return buf;
+      return b;
     }
 
-    function makeImpulseResponse(c, seconds=3.8, decay=2.35){
-      // Stereo-ish IR: shaped noise with exponential decay
-      const sr = c.sampleRate;
-      const len = Math.floor(sr * seconds);
-      const buf = c.createBuffer(2, len, sr);
+    function makeImpulseResponse(ac, seconds=3.0, decay=2.3){
+      const sr = ac.sampleRate;
+      const n = Math.max(1, Math.floor(seconds * sr));
+      const b = ac.createBuffer(2, n, sr);
       for (let ch=0; ch<2; ch++){
-        const d = buf.getChannelData(ch);
-        let lp = 0.0;
-        for (let i=0;i<len;i++){
-          const t = i / sr;
-          const env = Math.exp(-t * decay);
-          const w = (Math.random()*2-1);
-          lp = lp*0.96 + w*0.04;
-          const air = w*0.25 + lp*0.75;
-          d[i] = air * env * (1.0 + (ch?0.03:-0.03));
+        const d = b.getChannelData(ch);
+        for (let i=0;i<n;i++){
+          const t = i / n;
+          // denser early reflections, long tail, no "ping"
+          const e = Math.pow(1 - t, decay);
+          const r = (Math.random()*2 - 1);
+          d[i] = r * e * (0.78 + 0.22*Math.sin(6.283*(t*3.5 + ch*0.17)));
         }
       }
-      return buf;
+      return b;
+    }
+
+    function makeWaveshaper(ac, amount=0.65){
+      const n = 1024;
+      const curve = new Float32Array(n);
+      for (let i=0;i<n;i++){
+        const x = (i/(n-1))*2 - 1;
+        // soft saturation
+        curve[i] = Math.tanh(x * (1.5 + 6.0*amount)) / Math.tanh(1.5 + 6.0*amount);
+      }
+      const ws = ac.createWaveShaper();
+      ws.curve = curve;
+      ws.oversample = "2x";
+      return ws;
     }
 
     function reseed(seed){
-      const r0 = hash01(seed * 0.00013 + 1.7);
-      const r1 = hash01(seed * 0.00017 + 2.9);
-      const r2 = hash01(seed * 0.00019 + 4.1);
+      seed = (seed >>> 0) || ((Math.random()*1e9)>>>0);
 
-      // "Ceremonial earth" ranges
-      variant.rootHz  = lerp(46, 74, r0);        // low chant bed
-      variant.subHz   = lerp(30, 44, r1);        // felt
-      variant.breathHz= lerp(0.038, 0.075, r2);  // 13..26s cycles
+      // Roots stay low; keep it "grounded"
+      const v0 = hash01(seed*0.00037 + 1.1);
+      const v1 = hash01(seed*0.00041 + 2.2);
+      const v2 = hash01(seed*0.00053 + 3.3);
 
-      const v0 = hash01(seed * 0.00023 + 5.2);
-      const v1 = hash01(seed * 0.00029 + 9.7);
-      const v2 = hash01(seed * 0.00031 + 6.9);
+      variant.rootHz = lerp(46, 70, v0);
+      variant.detuneCents = lerp(3, 11, v1);
+      variant.wetBase = lerp(0.22, 0.34, v2);
+      variant.shimmerBase = lerp(0.008, 0.014, hash01(seed*0.00059 + 4.4));
+      variant.windBase = lerp(0.08, 0.14, hash01(seed*0.00067 + 5.5));
 
-      // Formants (vowel-ish, but never stable)
-      const baseF1 = lerp(360, 520, v0);
-      variant.formants = [
-        baseF1,
-        baseF1 + lerp(260, 360, v1),
-        baseF1 + lerp(640, 820, v2)
+      // Slightly different ambiguous scales
+      const scales = [
+        [0, 2, 5, 7, 9, 10],
+        [0, 1, 5, 7, 8, 10],
+        [0, 2, 4, 7, 9, 11],
+        [0, 3, 5, 7, 10, 11] // has 3, but still unstable
       ];
+      variant.scale = scales[(seed % scales.length) | 0];
 
-      variant.threshBase   = lerp(55, 85, hash01(seed*0.00037 + 1.1));
-      variant.threshJitter = lerp(45, 75, hash01(seed*0.00041 + 2.2));
-
-      lastUpdateTime = 0;
-      grainNext = 0;
-      nextThreshold = 0;
-      thresholdUntil = 0;
+      // Apply immediately if running
+      if (ctx && droneA && droneB && droneSub){
+        const now = ctx.currentTime;
+        droneA.detune.setTargetAtTime(-variant.detuneCents, now, 0.4);
+        droneB.detune.setTargetAtTime(+variant.detuneCents, now, 0.4);
+        droneSub.detune.setTargetAtTime(0, now, 0.4);
+      }
     }
 
     function ensure(){
       if (ctx) return;
+
       ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-      // Master
-      master = ctx.createGain();
-      masterGain = ctx.createGain();
+      // ---- master chain ----
+      master = ctx.createGain();          // on/off fade
+      masterGain = ctx.createGain();      // user volume
       master.gain.value = 0.0;
       masterGain.gain.value = userVolume;
 
       limiter = ctx.createDynamicsCompressor();
       limiter.threshold.value = -18;
       limiter.knee.value = 18;
-      limiter.ratio.value = 3.2;
+      limiter.ratio.value = 3.0;
       limiter.attack.value = 0.012;
-      limiter.release.value = 0.25;
+      limiter.release.value = 0.28;
 
-      // Buses
-      bodyBus = ctx.createGain(); bodyBus.gain.value = 1.0;
-      choirBus = ctx.createGain(); choirBus.gain.value = 1.0;
-      shimmerBus = ctx.createGain(); shimmerBus.gain.value = 1.0;
-      airBus = ctx.createGain(); airBus.gain.value = 1.0;
+      dryBus = ctx.createGain(); dryBus.gain.value = 1.0;
+      wetSend = ctx.createGain(); wetSend.gain.value = 0.18;
+      wetReturn = ctx.createGain(); wetReturn.gain.value = 0.30;
 
-      // Wet routing
-      wetSend = ctx.createGain(); wetSend.gain.value = 0.22;
-      wetReturn = ctx.createGain(); wetReturn.gain.value = 0.32;
-
-      // Reverb
+      // ---- reverb ----
       convolver = ctx.createConvolver();
-      convolver.buffer = makeImpulseResponse(ctx, 3.8, 2.35);
+      convolver.buffer = makeImpulseResponse(ctx, 3.9, 2.45);
 
       wetLP = ctx.createBiquadFilter();
       wetLP.type = "lowpass";
-      wetLP.frequency.value = 2200;
+      wetLP.frequency.value = 2600;
 
-      wetHS = ctx.createBiquadFilter();
-      wetHS.type = "highshelf";
-      wetHS.frequency.value = 1200;
-      wetHS.gain.value = -3.0;
+      wetHP = ctx.createBiquadFilter();
+      wetHP.type = "highpass";
+      wetHP.frequency.value = 90;
 
       wetGain = ctx.createGain();
-      wetGain.gain.value = 0.55;
+      wetGain.gain.value = 0.58;
 
-      // Noise bed
+      // ---- tonal bed ----
+      droneA = ctx.createOscillator(); droneA.type = "sine";
+      droneB = ctx.createOscillator(); droneB.type = "triangle";
+      droneSub = ctx.createOscillator(); droneSub.type = "sine";
+
+      droneMix = ctx.createGain(); droneMix.gain.value = 0.0;
+      droneLP = ctx.createBiquadFilter(); droneLP.type = "lowpass"; droneLP.frequency.value = 520;
+      droneSat = makeWaveshaper(ctx, 0.55);
+
+      droneA.connect(droneMix);
+      droneB.connect(droneMix);
+      droneSub.connect(droneMix);
+
+      droneMix.connect(droneLP);
+      droneLP.connect(droneSat);
+      droneSat.connect(dryBus);
+      droneSat.connect(wetSend);
+
+      // ---- wind bed ----
       noiseBuf = makeNoiseBuffer(ctx, 2.0);
       noiseSrc = ctx.createBufferSource();
       noiseSrc.buffer = noiseBuf;
       noiseSrc.loop = true;
 
-      // ---------------- BODY ----------------
-      subA = ctx.createOscillator(); subA.type="sine";
-      subB = ctx.createOscillator(); subB.type="sine";
-      subLP = ctx.createBiquadFilter(); subLP.type="lowpass"; subLP.frequency.value = 180;
-      subGain = ctx.createGain(); subGain.gain.value = 0.0; // set in update
+      windBP = ctx.createBiquadFilter(); windBP.type = "bandpass"; windBP.frequency.value = 320; windBP.Q.value = 0.7;
+      windHP = ctx.createBiquadFilter(); windHP.type = "highpass"; windHP.frequency.value = 90;
+      windGain = ctx.createGain(); windGain.gain.value = 0.0;
 
-      // Breath modulation
-      breathLFO = ctx.createOscillator(); breathLFO.type="sine";
-      breathLFOGain = ctx.createGain(); breathLFOGain.gain.value = 0.14;
-      bodyPulseGain = ctx.createGain(); bodyPulseGain.gain.value = 0.72;
+      windPan = ctx.createStereoPanner();
+      windPanLFO = ctx.createOscillator(); windPanLFO.type = "sine";
+      const windPanAmt = ctx.createGain(); windPanAmt.gain.value = 0.55;
 
-      breathLFO.connect(breathLFOGain);
-      breathLFOGain.connect(bodyPulseGain.gain);
+      windPanLFO.connect(windPanAmt);
+      windPanAmt.connect(windPan.pan);
 
-      // Earth resonance (soil)
-      earthResBP = ctx.createBiquadFilter(); earthResBP.type="bandpass"; earthResBP.frequency.value = 140; earthResBP.Q.value = 0.9;
-      earthResGain = ctx.createGain(); earthResGain.gain.value = 0.0;
+      noiseSrc.connect(windBP);
+      windBP.connect(windHP);
+      windHP.connect(windGain);
+      windGain.connect(windPan);
+      windPan.connect(dryBus);
+      windPan.connect(wetSend);
 
-      subA.connect(subLP); subB.connect(subLP);
-      subLP.connect(bodyPulseGain);
-      bodyPulseGain.connect(subGain);
-      subGain.connect(earthResBP);
-      earthResBP.connect(earthResGain);
-      earthResGain.connect(bodyBus);
-      subGain.connect(bodyBus);
+      // ---- shimmer ----
+      shimmerBus = ctx.createGain(); shimmerBus.gain.value = 1.0;
+      shimmerLP = ctx.createBiquadFilter(); shimmerLP.type = "lowpass"; shimmerLP.frequency.value = 5200;
+      shimmerGain = ctx.createGain(); shimmerGain.gain.value = 0.0;
 
-      // Breath noise into body
-      const bodyBreathBP = ctx.createBiquadFilter();
-      bodyBreathBP.type = "bandpass";
-      bodyBreathBP.frequency.value = 420;
-      bodyBreathBP.Q.value = 0.7;
-      bodyBreathGain = ctx.createGain();
-      bodyBreathGain.gain.value = 0.0;
-      noiseSrc.connect(bodyBreathBP);
-      bodyBreathBP.connect(bodyBreathGain);
-      bodyBreathGain.connect(bodyBus);
-
-      // ---------------- AIR ----------------
-      airBP = ctx.createBiquadFilter(); airBP.type="bandpass"; airBP.frequency.value = 900; airBP.Q.value = 1.1;
-      airHP = ctx.createBiquadFilter(); airHP.type="highpass"; airHP.frequency.value = 140;
-      airGain = ctx.createGain(); airGain.gain.value = 0.0;
-      airPan = ctx.createStereoPanner(); airPan.pan.value = 0.0;
-
-      airPanLFO = ctx.createOscillator(); airPanLFO.type="sine"; airPanLFO.frequency.value = 0.06;
-      airPanLFORange = ctx.createGain(); airPanLFORange.gain.value = 0.42;
-      airPanLFO.connect(airPanLFORange);
-      airPanLFORange.connect(airPan.pan);
-
-      noiseSrc.connect(airHP);
-      airHP.connect(airBP);
-      airBP.connect(airGain);
-      airGain.connect(airPan);
-      airPan.connect(airBus);
-
-      // ---------------- MOTION WHOOSH (shares noise bed) ----------------
-      whooshHP = ctx.createBiquadFilter(); whooshHP.type = "highpass"; whooshHP.frequency.value = 220;
-      whooshBP = ctx.createBiquadFilter(); whooshBP.type = "bandpass"; whooshBP.frequency.value = 900; whooshBP.Q.value = 0.75;
-      whooshGain = ctx.createGain(); whooshGain.gain.value = 0.0;
-
-      noiseSrc.connect(whooshHP);
-      whooshHP.connect(whooshBP);
-      whooshBP.connect(whooshGain);
-      // direct + wet (so it feels like space moves)
-      whooshGain.connect(airBus);
-      whooshGain.connect(wetSend);
-
-      // ---------------- CHOIR ----------------
-      choirA = ctx.createOscillator(); choirA.type="triangle";
-      choirB = ctx.createOscillator(); choirB.type="sawtooth";
-      choirGain = ctx.createGain(); choirGain.gain.value = 0.0;
-
-      choirDet = ctx.createOscillator(); choirDet.type="sine"; choirDet.frequency.value = 0.12;
-      choirDetGain = ctx.createGain(); choirDetGain.gain.value = 3.0;
-      choirDet.connect(choirDetGain);
-      choirDetGain.connect(choirB.detune);
-
-      // Formants in parallel
-      f1 = ctx.createBiquadFilter(); f1.type="bandpass"; f1.Q.value = 10.0;
-      f2 = ctx.createBiquadFilter(); f2.type="bandpass"; f2.Q.value = 12.0;
-      f3 = ctx.createBiquadFilter(); f3.type="bandpass"; f3.Q.value = 14.0;
-      choirLP = ctx.createBiquadFilter(); choirLP.type="lowpass"; choirLP.frequency.value = 1800;
-
-      const choirSum = ctx.createGain(); choirSum.gain.value = 0.65;
-
-
-      // ---------------- HARMONY ----------------
-      // A consonant, breathy overtone cluster that emerges when the system is "balanced".
-      harmony1 = ctx.createOscillator(); harmony1.type = "sine";
-      harmony2 = ctx.createOscillator(); harmony2.type = "sine";
-      harmony3 = ctx.createOscillator(); harmony3.type = "sine";
-
-      const harmSum = ctx.createGain(); harmSum.gain.value = 0.9;
-      harmonyLP = ctx.createBiquadFilter(); harmonyLP.type = "lowpass"; harmonyLP.frequency.value = 1400;
-      const harmonyHP = ctx.createBiquadFilter(); harmonyHP.type = "highpass"; harmonyHP.frequency.value = 120;
-      harmonyGain = ctx.createGain(); harmonyGain.gain.value = 0.0;
-
-      harmony1.connect(harmSum); harmony2.connect(harmSum); harmony3.connect(harmSum);
-      harmSum.connect(harmonyLP);
-      harmonyLP.connect(harmonyHP);
-      harmonyHP.connect(harmonyGain);
-      // Feed into the choir pre-formant path for a human-adjacent "cosmos singing" quality.
-      harmonyGain.connect(choirSum);
-      choirA.connect(choirSum); choirB.connect(choirSum);
-
-      // ---------------- MELODY (delayed "cosmos singing") ----------------
-      // Shared FX chain: gentle lowpass -> watery chorus -> long delay cloud
-      melodyIn = ctx.createGain(); melodyIn.gain.value = 0.0;
-
-      melodyLP = ctx.createBiquadFilter(); melodyLP.type="lowpass"; melodyLP.frequency.value = 1400;
-
-      // watery chorus (modulated short delay)
-      melodyChDelay = ctx.createDelay(0.05); melodyChDelay.delayTime.value = 0.018;
-      melodyChLFO = ctx.createOscillator(); melodyChLFO.type="sine"; melodyChLFO.frequency.value = 0.12;
-      melodyChDepth = ctx.createGain(); melodyChDepth.gain.value = 0.004;
-      melodyChLFO.connect(melodyChDepth);
-      melodyChDepth.connect(melodyChDelay.delayTime);
-
-      // main delay
-      melodyDelay = ctx.createDelay(1.25); melodyDelay.delayTime.value = 0.62;
-      melodyFB = ctx.createGain(); melodyFB.gain.value = 0.42;
-      melodyFBLP = ctx.createBiquadFilter(); melodyFBLP.type="lowpass"; melodyFBLP.frequency.value = 1600;
-
-      melodyPan = ctx.createStereoPanner(); melodyPan.pan.value = 0.0;
-      melodyOut = ctx.createGain(); melodyOut.gain.value = 0.0;
-
-      // routing
-      melodyIn.connect(melodyLP);
-      melodyLP.connect(melodyChDelay);
-      melodyChDelay.connect(melodyDelay);
-      melodyDelay.connect(melodyPan);
-      melodyPan.connect(melodyOut);
-
-      // feedback loop
-      melodyDelay.connect(melodyFBLP);
-      melodyFBLP.connect(melodyFB);
-      melodyFB.connect(melodyDelay);
-
-      // send: a touch dry + wet
-      melodyOut.connect(choirBus);
-      melodyOut.connect(wetSend);
-
-      melodyChLFO.start();
-
-      // ---------------- WATER (droplets / resonant cave water) ----------------
-      waterIn = ctx.createGain(); waterIn.gain.value = 0.0;
-
-      waterDelay = ctx.createDelay(0.25); waterDelay.delayTime.value = 0.065; // ~15Hz.. (set per drop)
-      waterFB = ctx.createGain(); waterFB.gain.value = 0.86;
-      waterLP2 = ctx.createBiquadFilter(); waterLP2.type="lowpass"; waterLP2.frequency.value = 1900;
-
-      waterPan = ctx.createStereoPanner(); waterPan.pan.value = 0.0;
-      waterOut = ctx.createGain(); waterOut.gain.value = 0.0;
-
-      // loop
-      waterIn.connect(waterDelay);
-      waterDelay.connect(waterLP2);
-      waterLP2.connect(waterFB);
-      waterFB.connect(waterDelay);
-
-      waterDelay.connect(waterPan);
-      waterPan.connect(waterOut);
-
-      waterOut.connect(shimmerBus);
-      waterOut.connect(wetSend);
-
-      // Breathiness into choir
-      choirBreathGain = ctx.createGain(); choirBreathGain.gain.value = 0.0;
-      const choirBreathBP = ctx.createBiquadFilter(); choirBreathBP.type="bandpass"; choirBreathBP.frequency.value = 1200; choirBreathBP.Q.value = 1.6;
-      noiseSrc.connect(choirBreathBP);
-      choirBreathBP.connect(choirBreathGain);
-      choirBreathGain.connect(choirSum);
-
-      choirSum.connect(f1); choirSum.connect(f2); choirSum.connect(f3);
-
-      const choirMix = ctx.createGain(); choirMix.gain.value = 1.0;
-      f1.connect(choirMix); f2.connect(choirMix); f3.connect(choirMix);
-
-      choirMix.connect(choirLP);
-      choirLP.connect(choirGain);
-      choirGain.connect(choirBus);
-
-      // ---------------- SHIMMER BUS ----------------
-      const shimmerLP = ctx.createBiquadFilter();
-      shimmerLP.type = "lowpass";
-      shimmerLP.frequency.value = 5200;
       shimmerBus.connect(shimmerLP);
+      shimmerLP.connect(shimmerGain);
+      shimmerGain.connect(dryBus);
+      shimmerGain.connect(wetSend);
 
-      // ---------------- ROUTING ----------------
-      // dry
-      bodyBus.connect(master);
-      choirBus.connect(master);
-      airBus.connect(master);
-      shimmerLP.connect(master);
-
-      // wet sends
-      bodyBus.connect(wetSend);
-      choirBus.connect(wetSend);
-      airBus.connect(wetSend);
-      shimmerLP.connect(wetSend);
-
+      // ---- routing ----
+      // wet path
       wetSend.connect(convolver);
-      convolver.connect(wetLP);
-      wetLP.connect(wetHS);
-      wetHS.connect(wetGain);
+      convolver.connect(wetHP);
+      wetHP.connect(wetLP);
+      wetLP.connect(wetGain);
       wetGain.connect(wetReturn);
+
+      // final chain
+      dryBus.connect(master);
       wetReturn.connect(master);
 
-      // master chain
       master.connect(masterGain);
       masterGain.connect(limiter);
       limiter.connect(ctx.destination);
 
-      // Start sources
+      // start sources
       noiseSrc.start();
-      subA.start(); subB.start();
-      breathLFO.start();
-      airPanLFO.start();
-      choirA.start(); choirB.start();
-      choirDet.start();
-      harmony1.start(); harmony2.start(); harmony3.start();
+      droneA.start(); droneB.start(); droneSub.start();
+      windPanLFO.start();
 
       reseed((Math.random()*1e9)>>>0);
     }
 
     function setOn(on){
-      if (!ctx) return;
+      ensure();
+      // fire-and-forget resume (gesture chain is handled outside too)
+      if (ctx && ctx.state === "suspended"){ ctx.resume().catch(()=>{}); }
+
       isOn = !!on;
       const now = ctx.currentTime;
+
       master.gain.cancelScheduledValues(now);
       master.gain.setValueAtTime(master.gain.value, now);
-      master.gain.linearRampToValueAtTime(isOn ? 1.0 : 0.0, now + 0.35);
+      master.gain.linearRampToValueAtTime(isOn ? 1.0 : 0.0, now + (isOn ? 0.38 : 0.22));
 
+      // Reset event pacing on enable
       if (isOn){
-        nextThreshold = now + 6.0;
-        thresholdUntil = 0.0;
-        grainNext = now + 0.25;
+        eventCooldownUntil = now + 3.5;
       }
     }
 
@@ -990,187 +819,90 @@ const AudioEngine = (() => {
       masterGain.gain.setTargetAtTime(userVolume, now, 0.08);
     }
 
-    function triggerDrum(intensity, now){
-      intensity = clamp01(intensity);
+    function scheduleShimmer(density, brightness, wind, now){
+      if (!ctx || !noiseBuf) return;
 
-      const o = ctx.createOscillator();
-      o.type = "sine";
-      const o2 = ctx.createOscillator();
-      o2.type = "triangle";
-
-      const g = ctx.createGain();
-      g.gain.value = 0.0;
-
-      const bp = ctx.createBiquadFilter();
-      bp.type = "bandpass";
-      bp.frequency.value = 95;
-      bp.Q.value = 0.7;
-
-      const lp = ctx.createBiquadFilter();
-      lp.type = "lowpass";
-      lp.frequency.value = 520;
-
-      // skin noise
-      const n = ctx.createBufferSource();
-      n.buffer = noiseBuf;
-      n.loop = false;
-      const ng = ctx.createGain();
-      ng.gain.value = 0.0;
-      const nBP = ctx.createBiquadFilter();
-      nBP.type = "bandpass";
-      nBP.frequency.value = 480;
-      nBP.Q.value = 2.4;
-
-      o.connect(bp); o2.connect(bp);
-      bp.connect(lp);
-      lp.connect(g);
-
-      n.connect(nBP); nBP.connect(ng);
-
-      // Route: body + reverb
-      g.connect(bodyBus);
-      ng.connect(bodyBus);
-      g.connect(wetSend);
-      ng.connect(wetSend);
-
-      const a = 0.18 + 0.32*intensity;
-      const t = 0.18 + 0.22*intensity;
-
-      o.frequency.setValueAtTime(120 - 25*intensity, now);
-      o.frequency.exponentialRampToValueAtTime(50, now + 0.16);
-      o2.frequency.setValueAtTime(62 - 10*intensity, now);
-      o2.frequency.exponentialRampToValueAtTime(45, now + 0.20);
-
-      g.gain.setValueAtTime(0.0, now);
-      g.gain.linearRampToValueAtTime(a, now + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0008, now + t);
-
-      ng.gain.setValueAtTime(0.0, now);
-      ng.gain.linearRampToValueAtTime(0.035 + 0.055*intensity, now + 0.008);
-      ng.gain.exponentialRampToValueAtTime(0.0006, now + 0.12 + 0.08*intensity);
-
-      o.start(now); o2.start(now); n.start(now);
-      o.stop(now + 0.6); o2.stop(now + 0.6); n.stop(now + 0.25);
-
-      setTimeout(()=>{ try{ o.disconnect(); o2.disconnect(); n.disconnect(); }catch(e){} }, 900);
-    }
-
-
-    function triggerMelody(freq, amp, now){
-      // Sparse, delayed melodic "call" that blends with the cave.
-      if (!ctx || !melodyIn || !melodyOut) return;
-      amp = clamp01(amp);
-
-      const o = ctx.createOscillator();
-      o.type = "triangle";
-      const o2 = ctx.createOscillator();
-      o2.type = "sine";
-
-      const g = ctx.createGain();
-      g.gain.value = 0.0;
-
-      // slight detune + octave support
-      o.frequency.setValueAtTime(freq, now);
-      o2.frequency.setValueAtTime(freq * 2.0, now);
-      o.detune.setValueAtTime((Math.random()*2-1)*6.0, now);
-      o2.detune.setValueAtTime((Math.random()*2-1)*5.0, now);
-
-      const lp = ctx.createBiquadFilter();
-      lp.type = "lowpass";
-      lp.frequency.value = 1200;
-      lp.Q.value = 0.35;
-
-      o.connect(g); o2.connect(g);
-      g.connect(lp);
-      lp.connect(melodyIn);
-
-      // envelope (slow attack + long decay, feels "sung")
-      g.gain.setValueAtTime(0.0, now);
-      g.gain.linearRampToValueAtTime(0.10 * amp, now + 0.06);
-      g.gain.exponentialRampToValueAtTime(0.0008, now + 2.2);
-
-      o.start(now); o2.start(now);
-      o.stop(now + 2.25); o2.stop(now + 2.25);
-
-      setTimeout(()=>{ try{ o.disconnect(); o2.disconnect(); g.disconnect(); lp.disconnect(); }catch(e){} }, 2600);
-    }
-
-    function triggerWater(dropHz, amp, now){
-      // Karplus-ish droplet: noise burst excites a short delay loop.
-      if (!ctx || !waterIn || !waterOut || !noiseBuf) return;
-      amp = clamp01(amp);
-
-      // Map dropHz to delay time
-      const dt = 1.0 / clamp(dropHz, 140, 780);
-      waterDelay.delayTime.setTargetAtTime(clamp(dt, 0.012, 0.09), now, 0.02);
-
-      // brief excitation burst
-      const n = ctx.createBufferSource();
-      n.buffer = noiseBuf;
-      n.loop = false;
-
-      const bp = ctx.createBiquadFilter();
-      bp.type = "bandpass";
-      bp.frequency.value = clamp(dropHz*1.8, 260, 2200);
-      bp.Q.value = 2.2;
-
-      const g = ctx.createGain();
-      g.gain.value = 0.0;
-
-      n.connect(bp);
-      bp.connect(g);
-      g.connect(waterIn);
-
-      g.gain.setValueAtTime(0.0, now);
-      g.gain.linearRampToValueAtTime(0.22 * amp, now + 0.008);
-      g.gain.exponentialRampToValueAtTime(0.0007, now + 0.28);
-
-      n.start(now);
-      n.stop(now + 0.06);
-
-      setTimeout(()=>{ try{ n.disconnect(); bp.disconnect(); g.disconnect(); }catch(e){} }, 600);
-    }
-
-    function scheduleGrain(density, brightness, wind, now){
-      // Sparse high shimmer "dust" — insects/embers/spirits.
+      // Create a tiny grain from the shared noise buffer, then filter it.
       const src = ctx.createBufferSource();
       src.buffer = noiseBuf;
-      src.loop = false;
+
+      // Pitch-ish by playbackRate, but still noisy
+      const pr = lerp(0.45, 1.55, brightness) * lerp(0.78, 1.22, 1.0-wind);
+      src.playbackRate.value = pr;
 
       const hp = ctx.createBiquadFilter();
       hp.type = "highpass";
-      hp.frequency.value = lerp(900, 1900, brightness);
+      hp.frequency.value = lerp(900, 2200, brightness);
 
       const bp = ctx.createBiquadFilter();
       bp.type = "bandpass";
-      bp.frequency.value = lerp(2200, 5200, brightness);
-      bp.Q.value = lerp(2.4, 6.5, clamp01(density*0.85));
+      bp.frequency.value = lerp(1800, 5200, brightness);
+      bp.Q.value = lerp(2.2, 6.8, clamp01(density*0.9));
 
       const p = ctx.createStereoPanner();
-      p.pan.value = (Math.random()*2-1) * lerp(0.35, 0.85, wind);
+      p.pan.value = (Math.random()*2-1) * lerp(0.25, 0.80, wind);
 
       const g = ctx.createGain();
       g.gain.value = 0.0;
 
       src.connect(hp); hp.connect(bp); bp.connect(g); g.connect(p); p.connect(shimmerBus);
 
-      const dur = lerp(0.04, 0.11, Math.random());
-      const amp = (0.006 + 0.020*density) * (0.55 + 0.45*brightness);
+      const dur = lerp(0.045, 0.11, Math.random());
+      const amp = (0.005 + 0.018*density) * (0.55 + 0.45*brightness);
 
       g.gain.setValueAtTime(0.0, now);
-      g.gain.linearRampToValueAtTime(amp, now + 0.008);
-      g.gain.exponentialRampToValueAtTime(0.0003, now + dur);
+      g.gain.linearRampToValueAtTime(amp, now + 0.010);
+      g.gain.exponentialRampToValueAtTime(0.00025, now + dur);
 
       src.start(now);
       src.stop(now + dur + 0.02);
+
       setTimeout(()=>{ try{ src.disconnect(); }catch(e){} }, 350);
     }
 
+    function triggerEvent(now, energy, rootHz){
+      // A low, distant "gong" using filtered noise + resonant bandpass (no sharp click)
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = Math.max(60, Math.min(420, rootHz * lerp(1.0, 2.2, Math.random())));
+      bp.Q.value = lerp(6.0, 12.0, 0.35 + 0.65*energy);
+
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = lerp(420, 1200, energy);
+
+      const g = ctx.createGain();
+      g.gain.value = 0.0;
+
+      src.connect(bp); bp.connect(lp); lp.connect(g);
+      g.connect(dryBus);
+      g.connect(wetSend);
+
+      const a = lerp(0.035, 0.11, energy);
+      const t = lerp(2.4, 4.2, 1.0-energy);
+
+      g.gain.setValueAtTime(0.0, now);
+      g.gain.linearRampToValueAtTime(a, now + 0.030);
+      g.gain.exponentialRampToValueAtTime(0.00035, now + t);
+
+      src.start(now);
+      src.stop(now + t + 0.12);
+
+      setTimeout(()=>{ try{ src.disconnect(); }catch(e){} }, 7000);
+    }
+
+    // perf: throttle internal update
+    let lastUpdateTime = 0;
+    let lastMotion = 0;
+    let grainNext = 0;
+
     function update(v){
       if (!ctx || !isOn) return;
-      const now = ctx.currentTime;
 
-      // throttle to ~30Hz
+      const now = ctx.currentTime;
       if (lastUpdateTime && (now - lastUpdateTime) < (1/30)) return;
       lastUpdateTime = now;
 
@@ -1186,201 +918,76 @@ const AudioEngine = (() => {
       const press = clamp01(v.pressure ?? 0.5);
       const soil  = clamp01(v.soil ?? 0.45);
 
-      // Camera / interaction motion (used to make sound feel "inhabited")
+      // motion energy (camera velocities)
       const camYawVel   = (v.camYawVel ?? 0);
       const camPitchVel = (v.camPitchVel ?? 0);
       const camZoomVel  = (v.camZoomVel ?? 0);
       const userActive  = !!v.userActive;
 
-      // Map camera velocities to a 0..1 "gesture energy".
-      // Normal autopilot stays subtle; hand interaction becomes expressive.
       const motionRaw = clamp01(Math.abs(camYawVel)*14 + Math.abs(camPitchVel)*10 + Math.abs(camZoomVel)*8);
       lastMotion = lerp(lastMotion, motionRaw, 0.25);
-      const motionE = lastMotion;
-      const motionBoost = 1.0 + 0.35*motionE;
+      const motionE = lastMotion * (userActive ? 1.15 : 0.95);
 
-      // Motion whoosh (noise that follows movement)
-      if (whooshGain && whooshBP){
-        const w = clamp01(motionE*1.08) * (userActive ? 1.0 : 0.62);
-        whooshGain.gain.setTargetAtTime(0.11 * w * (0.65 + 0.55*wind) * (0.60 + 0.50*pres) * (1.0 - 0.25*pm25), now, 0.06);
-        whooshBP.frequency.setTargetAtTime(lerp(480, 1900, clamp01(0.20 + 0.80*motionE)) * (0.85 + 0.35*light), now, 0.08);
-      }
+      // ---- tonal bed ----
+      const root = variant.rootHz * (0.90 + 0.20*temp) * (0.90 + 0.18*soil);
+      const heaviness = clamp01(0.55*co2 + 0.45*pm25);
+      const bright = clamp01(0.70*light + 0.30*pres) * (1.0 - 0.45*hum);
 
-      // A small "spark" when the user takes control (rate-limited)
-      if (userActive && !prevUserActive && now > gestureCooldown){
-        const g = clamp01(0.20 + 0.80*pres) * (0.60 + 0.40*light) * (1.0 - 0.20*pm25);
-        // a quick pair: water droplet + airy note
-        triggerWater( lerp(320, 840, light) * lerp(0.92, 1.06, temp), g, now + 0.01);
-        triggerMelody( (variant.rootHz * lerp(5.8, 8.8, light)) * lerp(0.96, 1.05, temp), g, now + 0.02);
-        scheduleGrain( clamp01(0.45 + 0.55*noi), light, wind, now + 0.03);
-        gestureCooldown = now + lerp(0.45, 1.2, 1.0 - pres);
-      }
-      prevUserActive = userActive;
+      const subHz = Math.max(22, root * 0.5);
+      const hzA = root * (1.0 + 0.006*noi);
+      const hzB = root * (2.0 + 0.010*noi);
 
-      // Global intensity (presence + a bit of light)
-      const intensity = clamp01(0.14 + 0.72*pres + 0.18*light);
+      droneSub.frequency.setTargetAtTime(subHz, now, 0.30);
+      droneA.frequency.setTargetAtTime(hzA, now, 0.30);
+      droneB.frequency.setTargetAtTime(hzB, now, 0.30);
 
-      // Oxygen/heaviness (co2 makes slower + muffled)
-      const heaviness = clamp01(0.20 + 0.80*co2);
+      // Loudness: presence opens, humidity dulls, "heaviness" increases sub but reduces mid
+      const droneLvl = (0.06 + 0.16*pres) * (0.85 + 0.35*(1.0-hum)) * (1.0 - 0.40*heaviness);
+      droneMix.gain.setTargetAtTime(Math.max(0.0, droneLvl), now, 0.22);
 
-      // ---------------- BODY ----------------
-      const subHz = variant.subHz * lerp(0.88, 1.12, temp);
-      const beat = lerp(0.35, 1.0, press); // pressure drives thumpiness
-      subA.frequency.setTargetAtTime(subHz, now, 0.12);
-      subB.frequency.setTargetAtTime(subHz * (1.0 + lerp(0.004, 0.018, beat)), now, 0.12);
+      // Filter: light/presence open, humidity closes
+      const lpHz = 320 + 820*bright + 260*motionE;
+      droneLP.frequency.setTargetAtTime(Math.max(220, Math.min(1800, lpHz)), now, 0.22);
 
-      // Breath cycle varies with co2 (heavy = slower)
-      const breathHz = variant.breathHz * lerp(1.12, 0.78, heaviness);
-      breathLFO.frequency.setTargetAtTime(breathHz, now, 0.5);
+      // ---- wind bed ----
+      const windiness = (variant.windBase + 0.55*wind) * (0.65 + 0.55*(1.0-hum));
+      const windLvl = windiness * (0.35 + 0.65*(1.0-heaviness));
+      windGain.gain.setTargetAtTime(Math.min(0.22, 0.02 + 0.18*windLvl), now, 0.20);
 
-      // Body gain: presence + pressure, damped by dust
-      const bodyLvl = (0.08 + 0.34*intensity) * (0.72 + 0.28*beat) * (1.0 - 0.22*pm25);
-      subGain.gain.setTargetAtTime(bodyLvl, now, 0.08);
+      windBP.frequency.setTargetAtTime(lerp(160, 760, clamp01(wind*0.90 + motionE*0.55)), now, 0.25);
+      windBP.Q.setTargetAtTime(lerp(0.55, 1.15, hum), now, 0.28);
+      windHP.frequency.setTargetAtTime(lerp(70, 170, hum), now, 0.25);
 
-      // Breathiness: humidity + presence (soft)
-      bodyBreathGain.gain.setTargetAtTime((0.004 + 0.035*hum) * (0.55 + 0.65*pres), now, 0.25);
+      windPanLFO.frequency.setTargetAtTime(lerp(0.015, 0.10, wind) * (0.8 + 0.6*motionE), now, 0.35);
 
-      // Soil resonance
-      earthResGain.gain.setTargetAtTime(0.02 + 0.18*soil*intensity, now, 0.12);
-      earthResBP.frequency.setTargetAtTime(lerp(110, 180, soil), now, 0.18);
+      // ---- shimmer ----
+      const visc = clamp01(0.55*hum + 0.25*heaviness + 0.20*soil);
+      const shimmerDensity = Math.pow(bright, 1.2) * (0.08 + 0.70*pres) * (1.0 - 0.55*visc);
+      const grainsPerSec = 0.12 + 2.0*shimmerDensity * (0.75 + 0.55*motionE);
 
-      // ---------------- AIR ----------------
-      const airLvl = (0.01 + 0.11*hum + 0.16*wind) * (0.55 + 0.65*intensity) * (0.85 + 0.55*pm25);
-      airGain.gain.setTargetAtTime(airLvl * motionBoost, now, 0.15);
+      shimmerGain.gain.setTargetAtTime(Math.min(0.12, variant.shimmerBase + 0.09*shimmerDensity), now, 0.18);
+      shimmerLP.frequency.setTargetAtTime(lerp(2600, 7200, bright) * (0.80 + 0.40*(1.0-hum)), now, 0.22);
 
-      airPanLFO.frequency.setTargetAtTime(lerp(0.035, 0.12, wind), now, 0.25);
-      airPanLFORange.gain.setTargetAtTime(lerp(0.25, 0.90, wind), now, 0.25);
-      airBP.frequency.setTargetAtTime(lerp(520, 1650, hum) * (0.85 + 0.45*pm25), now, 0.2);
-
-      // ---------------- SPACE (reverb tone) ----------------
-      wetLP.frequency.setTargetAtTime(lerp(1600, 3400, light) * (1.0 - 0.35*pm25) * lerp(1.0, 0.78, heaviness), now, 0.25);
-      wetHS.gain.setTargetAtTime(lerp(-6.0, 1.5, light) - 3.0*pm25, now, 0.25);
-
-      const baseWet = lerp(0.38, 0.76, hum) * (0.70 + 0.55*intensity);
-      wetGain.gain.setTargetAtTime(baseWet * (0.92 + 0.18*motionE), now, 0.35);
-
-      // ---------------- CHOIR ----------------
-      const root = variant.rootHz * lerp(0.92, 1.10, temp) * (1.0 + 0.0035*Math.sin(now*0.035 + variant.rootHz));
-      choirA.frequency.setTargetAtTime(root, now, 0.25);
-      choirB.frequency.setTargetAtTime(root * lerp(1.47, 1.53, 0.25 + 0.5*noi), now, 0.25);
-
-      const choirLvl = (0.01 + 0.22*pres) * (1.0 - 0.35*heaviness) * (1.0 - 0.28*pm25);
-      choirGain.gain.setTargetAtTime(choirLvl, now, 0.18);
-
-      const vowel = clamp01(0.15 + 0.55*hum + 0.20*noi);
-      f1.frequency.setTargetAtTime(variant.formants[0] * lerp(0.92, 1.18, vowel), now, 0.35);
-      f2.frequency.setTargetAtTime(variant.formants[1] * lerp(0.90, 1.20, vowel), now, 0.35);
-      f3.frequency.setTargetAtTime(variant.formants[2] * lerp(0.88, 1.16, vowel), now, 0.35);
-
-      choirLP.frequency.setTargetAtTime(lerp(1400, 2400, 1.0 - heaviness) * (0.85 + 0.35*light), now, 0.25);
-      choirBreathGain.gain.setTargetAtTime((0.002 + 0.030*hum) * (0.35 + 0.75*pres) * (1.0 - 0.25*pm25), now, 0.25);
-
-      // ---------------- HARMONY (balance => consonant "cosmos") ----------------
-      // Balance metric: when many elements are near equilibrium, the world "sings".
-      const arr = [light,temp,hum,wind,noi,pres,co2,pm25,press,soil];
-      let mean = 0.0;
-      for (let i=0;i<arr.length;i++) mean += arr[i];
-      mean /= arr.length;
-      let v2 = 0.0;
-      for (let i=0;i<arr.length;i++){ const d = arr[i]-mean; v2 += d*d; }
-      v2 /= arr.length;
-      const balance = clamp01(1.0 - v2*4.8);
-
-      const harmonyAmt = Math.pow(balance, 2.4) * (0.10 + 0.90*pres) * (1.0 - 0.35*pm25) * (0.55 + 0.45*light);
-      harmonyGain.gain.setTargetAtTime(0.18 * harmonyAmt, now, 0.35);
-      harmonyLP.frequency.setTargetAtTime(lerp(1000, 2400, light) * (0.85 + 0.30*(1.0-heaviness)), now, 0.35);
-
-      // Just-intonation-ish triad (minor->major third via Temperature)
-      const third = lerp(6/5, 5/4, clamp01((temp-0.35)/0.30));
-      const fifth = 3/2;
-      const baseHz = root * 0.50 * lerp(0.96, 1.05, hum);
-      const drift = 1.0 + (noi - 0.5) * 0.010;
-      harmony1.frequency.setTargetAtTime(baseHz * drift, now, 0.45);
-      harmony2.frequency.setTargetAtTime(baseHz * third * drift, now, 0.45);
-      harmony3.frequency.setTargetAtTime(baseHz * fifth * drift, now, 0.45);
-
-      // ---------------- MELODY (more explicit "singing") ----------------
-      // When balance is high, a delayed melodic line emerges (still sparse).
-      const sing = Math.pow(balance, 3.2) * (0.20 + 0.80*pres) * (1.0 - 0.30*pm25) * (0.55 + 0.45*light) * (1.0 - 0.35*heaviness);
-      melodyOut.gain.setTargetAtTime(0.26 * sing * (0.90 + 0.35*motionE), now, 0.35);
-
-      // watery chorus depth + delay time respond strongly to humidity / wind
-      melodyChDepth.gain.setTargetAtTime(lerp(0.0025, 0.010, hum) * (0.65 + 0.35*wind), now, 0.35);
-      melodyDelay.delayTime.setTargetAtTime(lerp(0.48, 0.82, hum) * lerp(0.92, 1.08, wind), now, 0.45);
-      melodyFB.gain.setTargetAtTime(lerp(0.28, 0.62, hum) * (0.80 + 0.45*pres), now, 0.35);
-      melodyLP.frequency.setTargetAtTime(lerp(900, 2200, light) * (1.0 - 0.32*pm25) * (0.85 + 0.25*(1.0-heaviness)), now, 0.35);
-      melodyFBLP.frequency.setTargetAtTime(lerp(900, 1800, light) * (1.0 - 0.40*pm25), now, 0.35);
-      melodyPan.pan.setTargetAtTime(lerp(-0.35, 0.35, wind), now, 0.65);
-
-      // schedule notes (irregular, but more active when "aligned")
-      const notesPerSec = lerp(0.05, 0.55, clamp01(sing*1.25)) * lerp(0.85, 1.35, press) * lerp(0.85, 1.20, wind);
-      if (melodyNext === 0) melodyNext = now + 1.0;
-      if (now >= melodyNext && notesPerSec > 0.06){
-        // earth mode scale (minor pentatonic-ish) with slight temperature influence
-        const degrees = [1.0, 6/5, 4/3, 3/2, 9/5, 2.0];
-        const pick = degrees[Math.floor(Math.random()*degrees.length)];
-        const octave = (Math.random() < 0.18 ? 2.0 : 1.0);
-        const base = root * lerp(3.2, 5.0, light) * lerp(0.92, 1.08, temp);
-        const drift2 = 1.0 + (noi - 0.5) * 0.020;
-        const f = base * pick * octave * drift2;
-        triggerMelody(f, sing, now + 0.01);
-
-        const dt = 1.0 / Math.max(0.06, notesPerSec);
-        melodyNext = now + dt * lerp(0.85, 1.35, Math.random());
-      }
-
-      // ---------------- WATER (more watery feeling) ----------------
-      const waterAmt = Math.pow(hum, 1.45) * (0.22 + 0.78*pres) * (0.45 + 0.55*balance) * (1.0 - 0.28*heaviness);
-      waterOut.gain.setTargetAtTime(0.22 * waterAmt * (1.0 - 0.30*pm25), now, 0.35);
-      waterFB.gain.setTargetAtTime(lerp(0.72, 0.92, hum) * lerp(0.90, 1.05, soil), now, 0.35);
-      waterLP2.frequency.setTargetAtTime(lerp(1100, 2600, light) * (0.75 + 0.25*hum) * (1.0 - 0.30*pm25), now, 0.35);
-      waterPan.pan.setTargetAtTime(lerp(-0.25, 0.25, wind), now, 0.75);
-
-      const dropsPerSec = lerp(0.02, 0.75, clamp01(waterAmt*1.2)) * lerp(0.80, 1.25, wind);
-      if (waterNext === 0) waterNext = now + 1.2;
-      if (now >= waterNext && dropsPerSec > 0.05){
-        const dhz = lerp(220, 680, 0.25 + 0.75*Math.random()) * lerp(0.92, 1.08, light) * lerp(0.95, 1.05, temp);
-        triggerWater(dhz, waterAmt, now + 0.005);
-        const dt = 1.0 / Math.max(0.05, dropsPerSec);
-        waterNext = now + dt * lerp(0.85, 1.35, Math.random());
-      }
-
-
-      // ---------------- SHIMMER grains ----------------
-      const grainDensity = clamp01(0.05 + 0.55*noi + 0.35*pm25 + 0.25*light) * (1.0 - 0.50*heaviness);
-      const grainsPerSec = lerp(0.2, 3.2, grainDensity) * lerp(0.6, 1.25, wind);
-
-      if (grainNext === 0) grainNext = now + 0.2;
+      if (grainNext === 0) grainNext = now + 0.25;
       const minDt = 1.0 / Math.max(0.25, grainsPerSec);
       if (now >= grainNext){
-        scheduleGrain(grainDensity, light, wind, now);
-        grainNext = now + minDt * lerp(0.7, 1.3, Math.random());
+        scheduleShimmer(shimmerDensity, bright, wind, now);
+        grainNext = now + minDt * lerp(0.75, 1.35, Math.random());
       }
 
-      // Shimmer bus overall level
-      const shimmerLvl = (0.012 + 0.10*grainDensity) * (0.60 + 0.55*intensity);
-      shimmerBus.gain.setTargetAtTime(shimmerLvl * (0.85 + 0.30*motionE), now, 0.18);
+      // ---- wet mix ----
+      const wet = variant.wetBase * (0.85 + 0.55*pres) * (0.85 + 0.35*(1.0-heaviness));
+      wetSend.gain.setTargetAtTime(Math.min(0.42, 0.12 + 0.55*wet), now, 0.30);
+      wetGain.gain.setTargetAtTime(lerp(0.48, 0.72, pres), now, 0.35);
+      wetLP.frequency.setTargetAtTime(lerp(1500, 3200, bright), now, 0.40);
 
-      // ---------------- THRESHOLDS (rare revelations) ----------------
-      if (nextThreshold === 0) nextThreshold = now + 8.0;
-      const tScale = lerp(1.10, 0.78, pres) * lerp(0.85, 1.25, heaviness) * lerp(0.9, 1.15, wind);
-      if (now >= nextThreshold){
-        const dur = lerp(6.0, 12.0, hash01((now+variant.rootHz)*0.73));
-        thresholdUntil = now + dur;
-
-        const drumI = clamp01(0.35 + 0.55*press + 0.35*pres);
-        triggerDrum(drumI, now + 0.02);
-
-        nextThreshold = now + (variant.threshBase + Math.random()*variant.threshJitter) * tScale;
-      }
-
-      const inThresh = now < thresholdUntil;
-      if (inThresh){
-        // Open the cave: more wet, more choir clarity, air recedes (no accumulation)
-        wetGain.gain.setTargetAtTime(baseWet * 1.18, now, 0.25);
-        choirGain.gain.setTargetAtTime(Math.min(0.34, choirLvl * 1.55 + 0.03), now, 0.25);
-        airGain.gain.setTargetAtTime(airLvl * 0.65, now, 0.25);
-        harmonyGain.gain.setTargetAtTime(Math.max(harmonyGain.gain.value, 0.18 * (0.75 + 0.85*pres)), now, 0.25);
+      // ---- rare event ----
+      // Trigger only when the space is "alive" and motion/presence crest.
+      const eventEnergy = clamp01(0.55*pres + 0.25*motionE + 0.20*press);
+      const allow = (now > eventCooldownUntil);
+      if (allow && eventEnergy > 0.86 && Math.random() < 0.06){
+        triggerEvent(now + 0.02, eventEnergy, root);
+        eventCooldownUntil = now + lerp(9.0, 18.0, 1.0-eventEnergy);
       }
     }
 
@@ -1393,7 +1000,8 @@ const AudioEngine = (() => {
       get ctx(){ return ctx; },
       get isOn(){ return isOn; }
     };
-})();
+  })();
+
 
   function setSoundButtonUI(on){
     if (!soundBtn) return;
@@ -2650,747 +2258,448 @@ state.yawVel   *= 0.90;
   const renderSlider = document.getElementById("renderSlider");
   const renderVal    = document.getElementById("renderVal");
 const AudioEngine = (() => {
+    // Ambient Engine v3 — cinematic, non-strident, gesture-responsive
+    // Public API: ensure(), setOn(bool), setVolume(0..1), update(values), reseed(seed)
     let ctx = null;
 
-    // Master + user volume
-    let master = null;      // on/off fade
-    let masterGain = null;  // user volume
+    // master staging
+    let master = null;      // on/off fade (0..1)
+    let masterGain = null;  // user volume (0..1)
+    let limiter = null;
 
-    // Spatial drift
-    let pan = null, lfo = null, lfoGain = null;
+    // buses
+    let dryBus = null;
+    let wetSend = null;
+    let wetReturn = null;
 
-    // Core drone
-    let droneA = null, droneB = null, subOsc = null;
-    let droneFilter = null, droneGain = null;
+    // reverb
+    let convolver = null;
+    let wetLP = null;
+    let wetHP = null;
+    let wetGain = null;
 
-    // Dense medium (noise)
-    let noiseSrc = null, noiseFilter = null, noiseGain = null;
+    // tonal bed
+    let droneA=null, droneB=null, droneSub=null;
+    let droneMix=null, droneLP=null, droneSat=null;
 
-    // Pressure field (beating / phase interference) + rare blooms
-    let pfA = null, pfB = null, pfMix = null;
-    let pfBP = null, pfLP = null, pfGain = null;
-    let eventGain = null;
-    let lastUpdateTime = 0;
-    let nextEventTime = 0;
-    let eventActiveUntil = 0;
+    // wind bed
+    let noiseBuf=null, noiseSrc=null, windBP=null, windHP=null, windGain=null, windPan=null, windPanLFO=null;
 
-    // Body layer (viscous, gravitational)
-    let bodyA = null, bodyB = null, bodyGain = null;
-    let bodyBP = null, bodyLP = null, bodyDrive = null, bodyDriveGain = null;
+    // shimmer
+    let shimmerBus=null, shimmerLP=null, shimmerGain=null;
 
-    // Underwater layer (humidity-driven) — derived from noise
-    let waterBP = null, waterGain = null;
-    let waterDelay = null, waterFB = null, waterWet = null;
-    let waterLFO = null, waterLFOGain = null;
+    // rare event
+    let eventCooldownUntil = 0;
 
-    // Shared space (dark diffusion)
-    let delay = null, fb = null, wet = null, wetLP = null;
-
-    // Subtle tonal “guiding thread” (neutral/ambiguous)
-    let motifOsc = null, motifGain = null;
-    let motifBP = null, motifLP = null;
-    let nextMotifTime = 0;
-    let lastMotifNote = -1;
-
-// Rhythm layer (sub/underwater beats)
-let kickOsc = null, kickGain = null;
-let hatBP = null, hatGain = null;
-let nextBeatTime = 0;
-let beatStep = 0;
-
-// Shimmer layer (underwater glass / FM)
-let fmCar = null, fmMod = null, fmModGain = null;
-let shimmerHP = null, shimmerGain = null;
-
-// Extra space: lightweight convolution + gentle limiter
-let conv = null, convGain = null;
-let comp = null;
-
+    // state
     let isOn = false;
     let userVolume = 0.55;
 
-    // Per-reseed personality (very light)
-    let variant = {
-      droneRatio: 1.0,
-      subRatio: 0.5,
-      delayBase: 0.22,
-      motifRootHz: 110.0,
-      motifOctMix: 0.55
+    // variation per seed
+    const variant = {
+      rootHz: 58,
+      detuneCents: 6,
+      scale: [0, 2, 5, 7, 9, 10],   // ambiguous (no clear 3rd)
+      wetBase: 0.26,
+      shimmerBase: 0.010,
+      windBase: 0.10
     };
 
-    function hash01(n){
-      const x = Math.sin(n) * 43758.5453123;
-      return x - Math.floor(x);
-    }
-    const clamp01 = (x)=>Math.max(0,Math.min(1,x));
-    const lerp = (a,b,t)=>a+(b-a)*t;
+    // helpers
+    const clamp01 = (x) => Math.max(0, Math.min(1, x || 0));
+    const lerp = (a,b,t) => a + (b-a) * t;
 
-    function makeNoiseBuffer(c){
-      const sr = c.sampleRate;
-      const len = sr * 2;
-      const buf = c.createBuffer(1, len, sr);
-      const data = buf.getChannelData(0);
-      let s = 0.0;
-      for (let i=0;i<len;i++){
-        const w = (Math.random()*2-1);
-        s = s*0.98 + w*0.02;
-        data[i] = (w*0.55 + s*1.15);
+    function hash01(x){
+      // deterministic-ish 0..1
+      const s = Math.sin(x * 12.9898) * 43758.5453;
+      return s - Math.floor(s);
+    }
+
+    function makeNoiseBuffer(ac, seconds=2.0){
+      const sr = ac.sampleRate;
+      const n = Math.max(1, Math.floor(seconds * sr));
+      const b = ac.createBuffer(1, n, sr);
+      const d = b.getChannelData(0);
+      let x = 0;
+      for (let i=0;i<n;i++){
+        // slightly colored noise (random walk)
+        x = 0.98*x + (Math.random()*2-1) * 0.08;
+        d[i] = x;
       }
-      return buf;
+      return b;
+    }
+
+    function makeImpulseResponse(ac, seconds=3.0, decay=2.3){
+      const sr = ac.sampleRate;
+      const n = Math.max(1, Math.floor(seconds * sr));
+      const b = ac.createBuffer(2, n, sr);
+      for (let ch=0; ch<2; ch++){
+        const d = b.getChannelData(ch);
+        for (let i=0;i<n;i++){
+          const t = i / n;
+          // denser early reflections, long tail, no "ping"
+          const e = Math.pow(1 - t, decay);
+          const r = (Math.random()*2 - 1);
+          d[i] = r * e * (0.78 + 0.22*Math.sin(6.283*(t*3.5 + ch*0.17)));
+        }
+      }
+      return b;
+    }
+
+    function makeWaveshaper(ac, amount=0.65){
+      const n = 1024;
+      const curve = new Float32Array(n);
+      for (let i=0;i<n;i++){
+        const x = (i/(n-1))*2 - 1;
+        // soft saturation
+        curve[i] = Math.tanh(x * (1.5 + 6.0*amount)) / Math.tanh(1.5 + 6.0*amount);
+      }
+      const ws = ac.createWaveShaper();
+      ws.curve = curve;
+      ws.oversample = "2x";
+      return ws;
     }
 
     function reseed(seed){
-      // Deterministic-ish variations from seed
-      const r0 = hash01(seed * 0.00013 + 1.7);
-      const r1 = hash01(seed * 0.00017 + 2.9);
-      const r2 = hash01(seed * 0.00019 + 4.1);
+      seed = (seed >>> 0) || ((Math.random()*1e9)>>>0);
 
-      variant.droneRatio = lerp(0.92, 1.08, r0);
-      variant.subRatio   = lerp(0.42, 0.62, r1);
-      variant.delayBase  = lerp(0.18, 0.28, r2);
+      // Roots stay low; keep it "grounded"
+      const v0 = hash01(seed*0.00037 + 1.1);
+      const v1 = hash01(seed*0.00041 + 2.2);
+      const v2 = hash01(seed*0.00053 + 3.3);
 
-      // Neutral/ambiguous root: around ~90..140 Hz
-      variant.motifRootHz = lerp(92, 138, hash01(seed * 0.00023 + 5.2));
-      variant.motifOctMix = lerp(0.42, 0.72, hash01(seed * 0.00029 + 9.7));
+      variant.rootHz = lerp(46, 70, v0);
+      variant.detuneCents = lerp(3, 11, v1);
+      variant.wetBase = lerp(0.22, 0.34, v2);
+      variant.shimmerBase = lerp(0.008, 0.014, hash01(seed*0.00059 + 4.4));
+      variant.windBase = lerp(0.08, 0.14, hash01(seed*0.00067 + 5.5));
 
-      // Reset timers so events don’t “carry over” strangely
-      lastUpdateTime = 0;
-      nextEventTime = 0;
-      eventActiveUntil = 0;
-      nextMotifTime = 0;
-      lastMotifNote = -1;
-      nextBeatTime = 0;
-      beatStep = 0;
+      // Slightly different ambiguous scales
+      const scales = [
+        [0, 2, 5, 7, 9, 10],
+        [0, 1, 5, 7, 8, 10],
+        [0, 2, 4, 7, 9, 11],
+        [0, 3, 5, 7, 10, 11] // has 3, but still unstable
+      ];
+      variant.scale = scales[(seed % scales.length) | 0];
+
+      // Apply immediately if running
+      if (ctx && droneA && droneB && droneSub){
+        const now = ctx.currentTime;
+        droneA.detune.setTargetAtTime(-variant.detuneCents, now, 0.4);
+        droneB.detune.setTargetAtTime(+variant.detuneCents, now, 0.4);
+        droneSub.detune.setTargetAtTime(0, now, 0.4);
+      }
     }
 
     function ensure(){
       if (ctx) return;
+
       ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-      master = ctx.createGain();
-      masterGain = ctx.createGain();
+      // ---- master chain ----
+      master = ctx.createGain();          // on/off fade
+      masterGain = ctx.createGain();      // user volume
       master.gain.value = 0.0;
       masterGain.gain.value = userVolume;
 
-      pan = ctx.createStereoPanner();
-      lfo = ctx.createOscillator();
-      lfoGain = ctx.createGain();
-      lfo.type = "sine";
-      lfo.frequency.value = 0.05;
-      lfoGain.gain.value = 0.35;
-      lfo.connect(lfoGain);
-      lfoGain.connect(pan.pan);
+      limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -18;
+      limiter.knee.value = 18;
+      limiter.ratio.value = 3.0;
+      limiter.attack.value = 0.012;
+      limiter.release.value = 0.28;
 
-      // Core drone
-      droneFilter = ctx.createBiquadFilter();
-      droneFilter.type = "lowpass";
-      droneFilter.frequency.value = 900;
+      dryBus = ctx.createGain(); dryBus.gain.value = 1.0;
+      wetSend = ctx.createGain(); wetSend.gain.value = 0.18;
+      wetReturn = ctx.createGain(); wetReturn.gain.value = 0.30;
 
-      droneGain = ctx.createGain();
-      droneGain.gain.value = 0.16;
-
-      droneA = ctx.createOscillator();
-      droneB = ctx.createOscillator();
-      subOsc = ctx.createOscillator();
-      droneA.type = "sine";
-      droneB.type = "triangle";
-      subOsc.type = "sine";
-
-      // Dense medium
-      noiseFilter = ctx.createBiquadFilter();
-      noiseFilter.type = "bandpass";
-      noiseFilter.frequency.value = 520;
-      noiseFilter.Q.value = 0.9;
-
-      noiseGain = ctx.createGain();
-      noiseGain.gain.value = 0.0;
-
-      noiseSrc = ctx.createBufferSource();
-      noiseSrc.buffer = makeNoiseBuffer(ctx);
-      noiseSrc.loop = true;
-
-      // Underwater layer (from noise)
-      waterBP = ctx.createBiquadFilter();
-      waterBP.type = "bandpass";
-      waterBP.frequency.value = 420;
-      waterBP.Q.value = 12.0;
-
-      waterGain = ctx.createGain();
-      waterGain.gain.value = 0.0;
-
-      waterDelay = ctx.createDelay(0.2);
-      waterDelay.delayTime.value = 0.045;
-
-      waterFB = ctx.createGain();
-      waterFB.gain.value = 0.22;
-
-      waterWet = ctx.createGain();
-      waterWet.gain.value = 0.0;
-
-      waterLFO = ctx.createOscillator();
-      waterLFO.type = "sine";
-      waterLFO.frequency.value = 0.18;
-
-      waterLFOGain = ctx.createGain();
-      waterLFOGain.gain.value = 0.010; // seconds
-
-      waterLFO.connect(waterLFOGain);
-      waterLFOGain.connect(waterDelay.delayTime);
-
-      // Pressure field: two close tones (beating) shaped warm + low
-      pfA = ctx.createOscillator();
-      pfB = ctx.createOscillator();
-      pfA.type = "sine";
-      pfB.type = "sine";
-
-      pfMix = ctx.createGain();
-      pfMix.gain.value = 0.55;
-
-      pfBP = ctx.createBiquadFilter();
-      pfBP.type = "bandpass";
-      pfBP.frequency.value = 190;
-      pfBP.Q.value = 1.4;
-
-      pfLP = ctx.createBiquadFilter();
-      pfLP.type = "lowpass";
-      pfLP.frequency.value = 1200;
-
-      pfGain = ctx.createGain();
-      pfGain.gain.value = 0.0;
-
-      eventGain = ctx.createGain();
-      eventGain.gain.value = 1.0; // multiplier for rare blooms
-
-      // Body layer: warm dominant pad
-      bodyA = ctx.createOscillator();
-      bodyB = ctx.createOscillator();
-      bodyA.type = "triangle";
-      bodyB.type = "sine";
-
-      bodyBP = ctx.createBiquadFilter();
-      bodyBP.type = "bandpass";
-      bodyBP.frequency.value = 220;
-      bodyBP.Q.value = 0.8;
-
-      bodyLP = ctx.createBiquadFilter();
-      bodyLP.type = "lowpass";
-      bodyLP.frequency.value = 1200;
-
-      bodyDrive = ctx.createWaveShaper();
-      const driveCurve = new Float32Array(1024);
-      for (let i=0;i<1024;i++){
-        const x = (i/1023)*2 - 1;
-        driveCurve[i] = Math.tanh(x*1.65);
-      }
-      bodyDrive.curve = driveCurve;
-      bodyDrive.oversample = "2x";
-
-      bodyDriveGain = ctx.createGain();
-      bodyDriveGain.gain.value = 0.55;
-
-      bodyGain = ctx.createGain();
-      bodyGain.gain.value = 0.0;
-
-      // Shared space (dark diffusion)
-      delay = ctx.createDelay(1.2);
-      delay.delayTime.value = 0.22;
-
-      fb = ctx.createGain();
-      fb.gain.value = 0.28;
+      // ---- reverb ----
+      convolver = ctx.createConvolver();
+      convolver.buffer = makeImpulseResponse(ctx, 3.9, 2.45);
 
       wetLP = ctx.createBiquadFilter();
       wetLP.type = "lowpass";
-      wetLP.frequency.value = 1800;
+      wetLP.frequency.value = 2600;
 
-      wet = ctx.createGain();
-      wet.gain.value = 0.16;
+      wetHP = ctx.createBiquadFilter();
+      wetHP.type = "highpass";
+      wetHP.frequency.value = 90;
 
-      // Motif (subtle guidance, neutral/ambiguous)
-      motifOsc = ctx.createOscillator();
-      motifOsc.type = "sine";
+      wetGain = ctx.createGain();
+      wetGain.gain.value = 0.58;
 
-      motifBP = ctx.createBiquadFilter();
-      motifBP.type = "bandpass";
-      motifBP.frequency.value = 520;
-      motifBP.Q.value = 1.2;
+      // ---- tonal bed ----
+      droneA = ctx.createOscillator(); droneA.type = "sine";
+      droneB = ctx.createOscillator(); droneB.type = "triangle";
+      droneSub = ctx.createOscillator(); droneSub.type = "sine";
 
-      motifLP = ctx.createBiquadFilter();
-      motifLP.type = "lowpass";
-      motifLP.frequency.value = 900;
+      droneMix = ctx.createGain(); droneMix.gain.value = 0.0;
+      droneLP = ctx.createBiquadFilter(); droneLP.type = "lowpass"; droneLP.frequency.value = 520;
+      droneSat = makeWaveshaper(ctx, 0.55);
 
-      motifGain = ctx.createGain();
-      motifGain.gain.value = 0.0;
+      droneA.connect(droneMix);
+      droneB.connect(droneMix);
+      droneSub.connect(droneMix);
 
-      // Wiring
+      droneMix.connect(droneLP);
+      droneLP.connect(droneSat);
+      droneSat.connect(dryBus);
+      droneSat.connect(wetSend);
 
-// Rhythm (kick + hats) — always running, shaped by envelopes
-kickOsc = ctx.createOscillator();
-kickOsc.type = "sine";
-kickGain = ctx.createGain();
-kickGain.gain.value = 0.00001;
+      // ---- wind bed ----
+      noiseBuf = makeNoiseBuffer(ctx, 2.0);
+      noiseSrc = ctx.createBufferSource();
+      noiseSrc.buffer = noiseBuf;
+      noiseSrc.loop = true;
 
-hatBP = ctx.createBiquadFilter();
-hatBP.type = "bandpass";
-hatBP.frequency.value = 5200;
-hatBP.Q.value = 0.7;
+      windBP = ctx.createBiquadFilter(); windBP.type = "bandpass"; windBP.frequency.value = 320; windBP.Q.value = 0.7;
+      windHP = ctx.createBiquadFilter(); windHP.type = "highpass"; windHP.frequency.value = 90;
+      windGain = ctx.createGain(); windGain.gain.value = 0.0;
 
-hatGain = ctx.createGain();
-hatGain.gain.value = 0.00001;
+      windPan = ctx.createStereoPanner();
+      windPanLFO = ctx.createOscillator(); windPanLFO.type = "sine";
+      const windPanAmt = ctx.createGain(); windPanAmt.gain.value = 0.55;
 
-// Shimmer (FM) — muted, “underwater glass”
-fmCar = ctx.createOscillator();
-fmCar.type = "sine";
-fmMod = ctx.createOscillator();
-fmMod.type = "sine";
-fmModGain = ctx.createGain();
-fmModGain.gain.value = 0.0;
-fmMod.connect(fmModGain);
-fmModGain.connect(fmCar.frequency);
+      windPanLFO.connect(windPanAmt);
+      windPanAmt.connect(windPan.pan);
 
-shimmerHP = ctx.createBiquadFilter();
-shimmerHP.type = "highpass";
-shimmerHP.frequency.value = 260;
-shimmerHP.Q.value = 0.7;
+      noiseSrc.connect(windBP);
+      windBP.connect(windHP);
+      windHP.connect(windGain);
+      windGain.connect(windPan);
+      windPan.connect(dryBus);
+      windPan.connect(wetSend);
 
-shimmerGain = ctx.createGain();
-shimmerGain.gain.value = 0.0;
+      // ---- shimmer ----
+      shimmerBus = ctx.createGain(); shimmerBus.gain.value = 1.0;
+      shimmerLP = ctx.createBiquadFilter(); shimmerLP.type = "lowpass"; shimmerLP.frequency.value = 5200;
+      shimmerGain = ctx.createGain(); shimmerGain.gain.value = 0.0;
 
-// Tiny convolution reverb (generated impulse) + gentle limiter
-conv = ctx.createConvolver();
-convGain = ctx.createGain();
-convGain.gain.value = 0.08;
+      shimmerBus.connect(shimmerLP);
+      shimmerLP.connect(shimmerGain);
+      shimmerGain.connect(dryBus);
+      shimmerGain.connect(wetSend);
 
-comp = ctx.createDynamicsCompressor();
-comp.threshold.value = -22;
-comp.knee.value = 22;
-comp.ratio.value = 4;
-comp.attack.value = 0.01;
-comp.release.value = 0.22;
+      // ---- routing ----
+      // wet path
+      wetSend.connect(convolver);
+      convolver.connect(wetHP);
+      wetHP.connect(wetLP);
+      wetLP.connect(wetGain);
+      wetGain.connect(wetReturn);
 
-// Build a short impulse response (dark, underwater)
-(function(){
-  try{
-    const sr = ctx.sampleRate;
-    const dur = 0.85;
-    const len = Math.floor(sr * dur);
-    const ir = ctx.createBuffer(2, len, sr);
-    for (let ch=0; ch<2; ch++){
-      const d = ir.getChannelData(ch);
-      let s = 0;
-      for (let i=0; i<len; i++){
-        const t = i / len;
-        // noise + slight random walk, exponential decay
-        const w = (Math.random()*2 - 1);
-        s = s*0.985 + w*0.015;
-        const decay = Math.pow(1.0 - t, 2.6);
-        // darker tail
-        d[i] = (0.65*w + 1.05*s) * decay * (0.92 + 0.08*Math.random());
-      }
-    }
-    conv.buffer = ir;
-  }catch(_){}
-})();
+      // final chain
+      dryBus.connect(master);
+      wetReturn.connect(master);
 
-      droneA.connect(droneFilter);
-      droneB.connect(droneFilter);
-      subOsc.connect(droneFilter);
-      droneFilter.connect(droneGain);
-
-      noiseSrc.connect(noiseFilter);
-      noiseFilter.connect(noiseGain);
-
-      // Water wiring (parallel from noiseSrc)
-      noiseSrc.connect(waterBP);
-      waterBP.connect(waterGain);
-      waterGain.connect(waterDelay);
-      waterDelay.connect(waterWet);
-      waterWet.connect(pan);
-      waterDelay.connect(waterFB);
-      waterFB.connect(waterDelay);
-
-      // Pressure field wiring (no piercing)
-      pfA.connect(pfBP);
-      pfB.connect(pfMix);
-      pfMix.connect(pfBP);
-      pfBP.connect(pfLP);
-      pfLP.connect(pfGain);
-
-      // Body wiring
-      bodyA.connect(bodyBP);
-      bodyB.connect(bodyBP);
-      bodyBP.connect(bodyLP);
-      bodyLP.connect(bodyDriveGain);
-      bodyDriveGain.connect(bodyDrive);
-      bodyDrive.connect(bodyGain);
-
-      // Motif wiring
-      motifOsc.connect(motifBP);
-      motifBP.connect(motifLP);
-      motifLP.connect(motifGain);
-
-// Rhythm wiring
-kickOsc.connect(kickGain);
-
-// Hats borrow the existing noise source (already looped)
-noiseSrc.connect(hatBP);
-hatBP.connect(hatGain);
-
-// Shimmer wiring
-fmCar.connect(shimmerHP);
-shimmerHP.connect(shimmerGain);
-
-
-      const mix = ctx.createGain();
-      mix.gain.value = 1.0;
-
-      droneGain.connect(mix);
-      noiseGain.connect(mix);
-      bodyGain.connect(mix);
-      pfGain.connect(eventGain);
-      eventGain.connect(mix);
-      motifGain.connect(mix);
-
-kickGain.connect(mix);
-hatGain.connect(mix);
-shimmerGain.connect(mix);
-
-// Convolution (dark room) — parallel
-mix.connect(conv);
-conv.connect(convGain);
-convGain.connect(pan);
-
-
-      // dry
-      mix.connect(pan);
-
-      // wet
-      mix.connect(delay);
-      delay.connect(wetLP);
-      wetLP.connect(wet);
-      wet.connect(pan);
-
-      // feedback
-      delay.connect(fb);
-      fb.connect(delay);
-
-      pan.connect(master);
       master.connect(masterGain);
-      masterGain.connect(comp);
-      comp.connect(ctx.destination);
+      masterGain.connect(limiter);
+      limiter.connect(ctx.destination);
 
-      // Start
-      droneA.start(); droneB.start(); subOsc.start();
-      pfA.start(); pfB.start();
+      // start sources
       noiseSrc.start();
-      bodyA.start(); bodyB.start();
-      motifOsc.start();
-      kickOsc.start();
-      fmCar.start();
-      fmMod.start();
-      lfo.start();
-      waterLFO.start();
-
-      // Prime
-      droneA.frequency.value = 66;
-      droneB.frequency.value = 66 * 1.005;
-      subOsc.frequency.value = 33;
-
-      pfA.frequency.value = 128;
-      pfB.frequency.value = 129.3;
-
-      bodyA.frequency.value = 54;
-      bodyB.frequency.value = 27;
-
-      motifOsc.frequency.value = 220;
-
-kickOsc.frequency.value = 55;
-fmCar.frequency.value = 220;
-fmMod.frequency.value = 0.17;
-
+      droneA.start(); droneB.start(); droneSub.start();
+      windPanLFO.start();
 
       reseed((Math.random()*1e9)>>>0);
-      isOn = false;
     }
 
     function setOn(on){
       ensure();
-      if (ctx.state === "suspended") ctx.resume();
+      // fire-and-forget resume (gesture chain is handled outside too)
+      if (ctx && ctx.state === "suspended"){ ctx.resume().catch(()=>{}); }
+
+      isOn = !!on;
       const now = ctx.currentTime;
 
-      if (on && !isOn){
-        master.gain.cancelScheduledValues(now);
-        master.gain.setValueAtTime(master.gain.value, now);
-        master.gain.setTargetAtTime(1.0, now, 0.25);
-        isOn = true;
-      } else if (!on && isOn){
-        master.gain.cancelScheduledValues(now);
-        master.gain.setValueAtTime(master.gain.value, now);
-        master.gain.setTargetAtTime(0.0, now, 0.18);
-        isOn = false;
+      master.gain.cancelScheduledValues(now);
+      master.gain.setValueAtTime(master.gain.value, now);
+      master.gain.linearRampToValueAtTime(isOn ? 1.0 : 0.0, now + (isOn ? 0.38 : 0.22));
+
+      // Reset event pacing on enable
+      if (isOn){
+        eventCooldownUntil = now + 3.5;
       }
     }
 
-    function setVolume(v01){
-      userVolume = clamp01(v01);
+    function setVolume(v){
+      userVolume = clamp01(v);
       if (!ctx) return;
       const now = ctx.currentTime;
       masterGain.gain.cancelScheduledValues(now);
       masterGain.gain.setTargetAtTime(userVolume, now, 0.08);
     }
 
-    function triggerMotif(now, p){
-      // Neutral/ambiguous scale: no 3rd (avoids major/minor)
-      const scale = [0, 2, 5, 7, 9, 10];
+    function scheduleShimmer(density, brightness, wind, now){
+      if (!ctx || !noiseBuf) return;
 
-      // Choose a step different from last
-      let idx = (Math.random()*scale.length) | 0;
-      if (idx === lastMotifNote) idx = (idx + 1 + ((Math.random()*2)|0)) % scale.length;
-      lastMotifNote = idx;
+      // Create a tiny grain from the shared noise buffer, then filter it.
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
 
-      const light    = p.light;
-      const temp     = p.temperature;
-      const hum      = p.humidity;
-      const presence = p.presence;
-      const pressure = p.pressure;
-      const soil     = p.soil;
-      const pm25     = p.pm25;
+      // Pitch-ish by playbackRate, but still noisy
+      const pr = lerp(0.45, 1.55, brightness) * lerp(0.78, 1.22, 1.0-wind);
+      src.playbackRate.value = pr;
 
-      const root = variant.motifRootHz * (0.92 + 0.20*temp) * (0.92 + 0.18*soil);
-      const semis = scale[idx];
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = lerp(900, 2200, brightness);
 
-      // Occasionally lift an octave, but keep muffled
-      const oct = (Math.random() < variant.motifOctMix) ? 1.0 : 2.0;
-      const hz = root * Math.pow(2, semis/12) * oct;
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = lerp(1800, 5200, brightness);
+      bp.Q.value = lerp(2.2, 6.8, clamp01(density*0.9));
 
-      motifOsc.frequency.cancelScheduledValues(now);
-      motifOsc.frequency.setValueAtTime(motifOsc.frequency.value, now);
-      motifOsc.frequency.exponentialRampToValueAtTime(Math.max(20, hz), now + 0.06);
+      const p = ctx.createStereoPanner();
+      p.pan.value = (Math.random()*2-1) * lerp(0.25, 0.80, wind);
 
-      // Tone shaping: thick medium, never bright
-      const visc = clamp01(0.55*hum + 0.45*pm25);
-      const bpHz = 220 + 420*(0.25 + light*0.75) + 180*soil;
-      motifBP.frequency.setTargetAtTime(bpHz, now, 0.20);
-      motifBP.Q.setTargetAtTime(lerp(0.9, 1.8, pressure), now, 0.22);
+      const g = ctx.createGain();
+      g.gain.value = 0.0;
 
-      const lpHz = (520 + light*1400 + temp*450) * (1.0 - 0.55*visc);
-      motifLP.frequency.setTargetAtTime(Math.max(420, Math.min(2200, lpHz)), now, 0.24);
+      src.connect(hp); hp.connect(bp); bp.connect(g); g.connect(p); p.connect(shimmerBus);
 
-      // Envelope: slow, seductive, slightly uncanny
-      const a = lerp(1.2, 3.2, 1.0 - pressure);
-      const d = lerp(7.0, 15.0, hum) * (0.85 + 0.35*pressure);
+      const dur = lerp(0.045, 0.11, Math.random());
+      const amp = (0.005 + 0.018*density) * (0.55 + 0.45*brightness);
 
-      const peak = Math.min(0.060, (0.014 + 0.045*presence) * (0.55 + 0.35*light) * (0.85 + 0.25*pressure));
-      motifGain.gain.cancelScheduledValues(now);
-      motifGain.gain.setValueAtTime(motifGain.gain.value, now);
-      motifGain.gain.linearRampToValueAtTime(peak, now + a);
-      motifGain.gain.linearRampToValueAtTime(0.0, now + a + d);
+      g.gain.setValueAtTime(0.0, now);
+      g.gain.linearRampToValueAtTime(amp, now + 0.010);
+      g.gain.exponentialRampToValueAtTime(0.00025, now + dur);
+
+      src.start(now);
+      src.stop(now + dur + 0.02);
+
+      setTimeout(()=>{ try{ src.disconnect(); }catch(e){} }, 350);
     }
 
-    function update(p){
+    function triggerEvent(now, energy, rootHz){
+      // A low, distant "gong" using filtered noise + resonant bandpass (no sharp click)
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuf;
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = Math.max(60, Math.min(420, rootHz * lerp(1.0, 2.2, Math.random())));
+      bp.Q.value = lerp(6.0, 12.0, 0.35 + 0.65*energy);
+
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = lerp(420, 1200, energy);
+
+      const g = ctx.createGain();
+      g.gain.value = 0.0;
+
+      src.connect(bp); bp.connect(lp); lp.connect(g);
+      g.connect(dryBus);
+      g.connect(wetSend);
+
+      const a = lerp(0.035, 0.11, energy);
+      const t = lerp(2.4, 4.2, 1.0-energy);
+
+      g.gain.setValueAtTime(0.0, now);
+      g.gain.linearRampToValueAtTime(a, now + 0.030);
+      g.gain.exponentialRampToValueAtTime(0.00035, now + t);
+
+      src.start(now);
+      src.stop(now + t + 0.12);
+
+      setTimeout(()=>{ try{ src.disconnect(); }catch(e){} }, 7000);
+    }
+
+    // perf: throttle internal update
+    let lastUpdateTime = 0;
+    let lastMotion = 0;
+    let grainNext = 0;
+
+    function update(v){
       if (!ctx || !isOn) return;
+
       const now = ctx.currentTime;
-
-      const light    = p.light;
-      const temp     = p.temperature;
-      const hum      = p.humidity;
-      const wind     = p.wind;
-      const noiseLvl = p.noise;
-      const presence = p.presence;
-      const co2      = p.co2;
-      const pm25     = p.pm25;
-      const pressure = p.pressure;
-      const soil     = p.soil;
-
-      const energy = lerp(0.20, 1.0, presence);
-
-      // Dominant body layer
-      const bodyAmt = Math.pow(presence, 1.15) * (0.10 + 0.55*(0.35 + temp*0.65));
-      bodyGain.gain.setTargetAtTime(bodyAmt, now, 0.10);
-
-      const bodyBase = (38 + temp*28) * (0.90 + soil*0.20);
-      bodyA.frequency.setTargetAtTime(bodyBase * (0.90 + 0.20*pressure), now, 0.16);
-      bodyB.frequency.setTargetAtTime(bodyBase * (0.50 + 0.06*wind), now, 0.16);
-
-      bodyBP.frequency.setTargetAtTime(110 + temp*220 + soil*140, now, 0.16);
-      bodyBP.Q.setTargetAtTime(lerp(0.6, 1.2, 1.0-soil), now, 0.18);
-      bodyLP.frequency.setTargetAtTime(650 + light*1500, now, 0.16);
-
-      // Drone base + sub
-      const base = lerp(48, 92, temp) * (0.95 + soil*0.12) * variant.droneRatio;
-      const sub  = base * variant.subRatio;
-
-      // Micro-beating (pressure)
-      const det = lerp(-6, 6, pressure);
-      droneA.detune.setTargetAtTime(det, now, 0.08);
-      droneB.detune.setTargetAtTime(-det*0.7, now, 0.08);
-
-      droneA.frequency.setTargetAtTime(base, now, 0.10);
-      droneB.frequency.setTargetAtTime(base * (1.006 + wind*0.010) * (1.0 + 0.06*light - 0.04*noiseLvl), now, 0.10);
-      subOsc.frequency.setTargetAtTime(sub, now, 0.12);
-
-      // Gravitational warmth: low-passed and damped by viscosity
-      const cutoff = 220 + Math.pow(light, 1.35)*2400 + temp*700;
-      const viscDamp = clamp01(0.45*hum + 0.25*pm25 + 0.25*noiseLvl);
-      droneFilter.frequency.setTargetAtTime(cutoff * (1.0 - 0.38*viscDamp), now, 0.14);
-
-      const droneLvl = (0.08 + 0.34*energy) * (0.65 + 0.45*light);
-      droneGain.gain.setTargetAtTime(droneLvl, now, 0.10);
-
-      // Dense medium texture
-      const nLvl = (0.005 + 0.18*noiseLvl + 0.22*pm25) * (0.25 + 1.05*energy);
-      noiseGain.gain.setTargetAtTime(nLvl, now, 0.08);
-
-      const nFreq = 180 + hum*1400 + pm25*620 + soil*180;
-      noiseFilter.frequency.setTargetAtTime(nFreq, now, 0.10);
-      noiseFilter.Q.setTargetAtTime(lerp(0.6, 1.3, 1.0-hum), now, 0.18);
-
-      // Pressure field (unsettling & seductive): low-focused phase interference
-      const dominance = Math.min(1.0, bodyAmt*1.35);
-      const pressureAmt = (0.02 + 0.22*Math.pow(presence, 1.35)) * (0.55 + 0.45*pressure) * (0.85 + 0.25*(1.0-dominance));
-      pfGain.gain.setTargetAtTime(pressureAmt, now, 0.18);
-
-      const gravBase = (46 + temp*34) * (0.92 + soil*0.18);
-      const beatHz = lerp(0.6, 6.0, pressure) * (0.7 + 0.6*presence);
-      pfA.frequency.setTargetAtTime(gravBase * variant.droneRatio, now, 0.22);
-      pfB.frequency.setTargetAtTime((gravBase + beatHz) * variant.droneRatio, now, 0.22);
-      pfMix.gain.setTargetAtTime(lerp(0.25, 0.85, pressure) * (0.55 + 0.75*presence), now, 0.22);
-
-      const visc = clamp01(0.55*hum + 0.35*pm25 + 0.30*noiseLvl);
-      pfBP.frequency.setTargetAtTime(lerp(130, 260, temp) + pressure*40, now, 0.20);
-      pfBP.Q.setTargetAtTime(lerp(0.9, 2.1, pressure), now, 0.20);
-      const edge = (0.10 + 0.35*light) * (1.0 - 0.65*visc);
-      const lpHz = 520 + temp*900 + edge*900;
-      pfLP.frequency.setTargetAtTime(lpHz, now, 0.22);
-
-      // Rare threshold blooms (slow swell/collapse)
-      if (lastUpdateTime === 0) lastUpdateTime = now;
+      if (lastUpdateTime && (now - lastUpdateTime) < (1/30)) return;
       lastUpdateTime = now;
 
-      if (now > nextEventTime){
-        const baseGap = lerp(16.0, 7.5, presence);
-        const jitter  = lerp(10.0, 3.5, presence);
-        nextEventTime = now + baseGap + Math.random()*jitter;
+      // Read values (0..1)
+      const light = clamp01(v.light ?? 0.7);
+      const temp  = clamp01(v.temperature ?? 0.6);
+      const hum   = clamp01(v.humidity ?? 0.4);
+      const wind  = clamp01(v.wind ?? 0.3);
+      const noi   = clamp01(v.noise ?? 0.2);
+      const pres  = clamp01(v.presence ?? 0.45);
+      const co2   = clamp01(v.co2 ?? 0.45);
+      const pm25  = clamp01(v.pm25 ?? 0.15);
+      const press = clamp01(v.pressure ?? 0.5);
+      const soil  = clamp01(v.soil ?? 0.45);
 
-        if (presence > 0.18){
-          const dur = lerp(7.0, 12.0, hum) * (0.85 + 0.35*pressure);
-          eventActiveUntil = now + dur;
+      // motion energy (camera velocities)
+      const camYawVel   = (v.camYawVel ?? 0);
+      const camPitchVel = (v.camPitchVel ?? 0);
+      const camZoomVel  = (v.camZoomVel ?? 0);
+      const userActive  = !!v.userActive;
 
-          const peak = 1.0 + (0.35 + 0.55*presence) * (0.35 + 0.65*pressure);
-          eventGain.gain.cancelScheduledValues(now);
-          eventGain.gain.setValueAtTime(eventGain.gain.value, now);
-          eventGain.gain.linearRampToValueAtTime(peak, now + dur*0.28);
-          eventGain.gain.linearRampToValueAtTime(1.0, now + dur);
-        }
+      const motionRaw = clamp01(Math.abs(camYawVel)*14 + Math.abs(camPitchVel)*10 + Math.abs(camZoomVel)*8);
+      lastMotion = lerp(lastMotion, motionRaw, 0.25);
+      const motionE = lastMotion * (userActive ? 1.15 : 0.95);
+
+      // ---- tonal bed ----
+      const root = variant.rootHz * (0.90 + 0.20*temp) * (0.90 + 0.18*soil);
+      const heaviness = clamp01(0.55*co2 + 0.45*pm25);
+      const bright = clamp01(0.70*light + 0.30*pres) * (1.0 - 0.45*hum);
+
+      const subHz = Math.max(22, root * 0.5);
+      const hzA = root * (1.0 + 0.006*noi);
+      const hzB = root * (2.0 + 0.010*noi);
+
+      droneSub.frequency.setTargetAtTime(subHz, now, 0.30);
+      droneA.frequency.setTargetAtTime(hzA, now, 0.30);
+      droneB.frequency.setTargetAtTime(hzB, now, 0.30);
+
+      // Loudness: presence opens, humidity dulls, "heaviness" increases sub but reduces mid
+      const droneLvl = (0.06 + 0.16*pres) * (0.85 + 0.35*(1.0-hum)) * (1.0 - 0.40*heaviness);
+      droneMix.gain.setTargetAtTime(Math.max(0.0, droneLvl), now, 0.22);
+
+      // Filter: light/presence open, humidity closes
+      const lpHz = 320 + 820*bright + 260*motionE;
+      droneLP.frequency.setTargetAtTime(Math.max(220, Math.min(1800, lpHz)), now, 0.22);
+
+      // ---- wind bed ----
+      const windiness = (variant.windBase + 0.55*wind) * (0.65 + 0.55*(1.0-hum));
+      const windLvl = windiness * (0.35 + 0.65*(1.0-heaviness));
+      windGain.gain.setTargetAtTime(Math.min(0.22, 0.02 + 0.18*windLvl), now, 0.20);
+
+      windBP.frequency.setTargetAtTime(lerp(160, 760, clamp01(wind*0.90 + motionE*0.55)), now, 0.25);
+      windBP.Q.setTargetAtTime(lerp(0.55, 1.15, hum), now, 0.28);
+      windHP.frequency.setTargetAtTime(lerp(70, 170, hum), now, 0.25);
+
+      windPanLFO.frequency.setTargetAtTime(lerp(0.015, 0.10, wind) * (0.8 + 0.6*motionE), now, 0.35);
+
+      // ---- shimmer ----
+      const visc = clamp01(0.55*hum + 0.25*heaviness + 0.20*soil);
+      const shimmerDensity = Math.pow(bright, 1.2) * (0.08 + 0.70*pres) * (1.0 - 0.55*visc);
+      const grainsPerSec = 0.12 + 2.0*shimmerDensity * (0.75 + 0.55*motionE);
+
+      shimmerGain.gain.setTargetAtTime(Math.min(0.12, variant.shimmerBase + 0.09*shimmerDensity), now, 0.18);
+      shimmerLP.frequency.setTargetAtTime(lerp(2600, 7200, bright) * (0.80 + 0.40*(1.0-hum)), now, 0.22);
+
+      if (grainNext === 0) grainNext = now + 0.25;
+      const minDt = 1.0 / Math.max(0.25, grainsPerSec);
+      if (now >= grainNext){
+        scheduleShimmer(shimmerDensity, bright, wind, now);
+        grainNext = now + minDt * lerp(0.75, 1.35, Math.random());
       }
-      if (now > eventActiveUntil){
-        eventGain.gain.setTargetAtTime(1.0, now, 0.6);
-      }
 
-      // Space (humidity / viscosity)
-      const wetAmt = lerp(0.04, 0.42, hum) * (0.60 + 0.70*energy);
-      wet.gain.setTargetAtTime(wetAmt, now, 0.14);
+      // ---- wet mix ----
+      const wet = variant.wetBase * (0.85 + 0.55*pres) * (0.85 + 0.35*(1.0-heaviness));
+      wetSend.gain.setTargetAtTime(Math.min(0.42, 0.12 + 0.55*wet), now, 0.30);
+      wetGain.gain.setTargetAtTime(lerp(0.48, 0.72, pres), now, 0.35);
+      wetLP.frequency.setTargetAtTime(lerp(1500, 3200, bright), now, 0.40);
 
-      const fbAmt = lerp(0.14, 0.55, hum) * (0.75 + 0.35*presence);
-      fb.gain.setTargetAtTime(fbAmt, now, 0.16);
-
-      delay.delayTime.setTargetAtTime(variant.delayBase * lerp(0.80, 1.25, hum), now, 0.16);
-
-      // Underwater layer (humidity)
-      const waterAmt = Math.pow(hum, 1.6) * (0.10 + 0.40*energy);
-      waterGain.gain.setTargetAtTime(waterAmt, now, 0.10);
-
-      const wFreq = 240 + hum*820 + wind*140 + pm25*120;
-      waterBP.frequency.setTargetAtTime(wFreq, now, 0.12);
-      waterBP.Q.setTargetAtTime(lerp(7.0, 18.0, hum), now, 0.12);
-
-      const wDelay = 0.028 + hum*0.040;
-      waterDelay.delayTime.setTargetAtTime(wDelay, now, 0.14);
-
-      waterFB.gain.setTargetAtTime(lerp(0.10, 0.32, hum) * (0.85 + 0.25*presence), now, 0.14);
-      waterWet.gain.setTargetAtTime(waterAmt * 0.85, now, 0.10);
-
-      waterLFO.frequency.setTargetAtTime(lerp(0.10, 0.55, wind), now, 0.18);
-      waterLFOGain.gain.setTargetAtTime(0.006 + hum*0.018, now, 0.18);
-
-      wetLP.frequency.setTargetAtTime(lerp(900, 4200, light), now, 0.16);
-// -------------------------
-// Rhythm + shimmer (adds “fascination” without harshness)
-// -------------------------
-// Tempo derives mostly from wind + presence; stays slow/cinematic.
-const tempoBpm = (42 + 58*wind) * (0.55 + 0.75*presence);
-const beatDur = 60.0 / Math.max(30, Math.min(120, tempoBpm));
-
-// Schedule a little ahead to avoid jitter
-if (nextBeatTime === 0) { nextBeatTime = now + 0.25; beatStep = 0; }
-
-const schedAhead = 0.20;
-while (nextBeatTime < now + schedAhead){
-  const step = beatStep % 8; // 8-step loop
-  const downbeat = (step === 0);
-  const intensity = clamp01(0.20 + 0.70*presence + 0.25*pressure);
-
-  // Kick pattern: always on 0, sometimes on 4 depending on CO2/pressure
-  const kickOn = downbeat || (step === 4 && (co2 > 0.35 || pressure > 0.55) && Math.random() < 0.85);
-
-  if (kickOn){
-    const t = nextBeatTime;
-    const kPeak = Math.max(0.0001, (0.012 + 0.070*intensity) * (0.55 + 0.55*(1.0-viscDamp)));
-    kickGain.gain.cancelScheduledValues(t);
-    kickGain.gain.setValueAtTime(0.00001, t);
-    kickGain.gain.exponentialRampToValueAtTime(kPeak, t + 0.006);
-    kickGain.gain.exponentialRampToValueAtTime(0.00001, t + 0.22);
-
-    const f0 = 42 + 52*intensity + 18*soil;
-    kickOsc.frequency.cancelScheduledValues(t);
-    kickOsc.frequency.setValueAtTime(f0*2.2, t);
-    kickOsc.frequency.exponentialRampToValueAtTime(f0, t + 0.08);
-    kickOsc.frequency.exponentialRampToValueAtTime(Math.max(28, f0*0.62), t + 0.22);
-  }
-
-  // Hats / pulses: more when noise/pm25 rise (as “static rain”)
-  const hatOn = (step % 2 === 1) || (noiseLvl > 0.35 && Math.random() < 0.65);
-  if (hatOn){
-    const t = nextBeatTime + (downbeat ? 0.0 : (-0.012 + Math.random()*0.024));
-    const hPeak = Math.max(0.0001, (0.002 + 0.022*(0.30 + 0.70*intensity)) * (0.25 + 0.85*(noiseLvl + pm25)*0.5));
-    hatGain.gain.cancelScheduledValues(t);
-    hatGain.gain.setValueAtTime(0.00001, t);
-    hatGain.gain.exponentialRampToValueAtTime(hPeak, t + 0.002);
-    hatGain.gain.exponentialRampToValueAtTime(0.00001, t + 0.055);
-
-    const hf = 3600 + light*3600 + wind*1200 - hum*1400;
-    hatBP.frequency.setValueAtTime(Math.max(1800, Math.min(8200, hf)), t);
-    hatBP.Q.setValueAtTime(0.6 + 1.1*pressure, t);
-  }
-
-  beatStep++;
-  nextBeatTime += beatDur;
-}
-
-// Shimmer evolves with light + “liveness”, stays muffled by humidity/viscosity
-const sh = Math.pow(light, 1.25) * (0.10 + 0.75*presence) * (1.0 - 0.55*visc);
-shimmerGain.gain.setTargetAtTime(Math.min(0.10, 0.010 + 0.085*sh), now, 0.18);
-
-const carHz = (220 + 520*light + 140*soil) * (0.85 + 0.25*pressure);
-const modHz = 0.09 + 0.65*wind + 0.35*noiseLvl;
-fmCar.frequency.setTargetAtTime(Math.max(90, Math.min(1200, carHz)), now, 0.20);
-fmMod.frequency.setTargetAtTime(modHz, now, 0.25);
-fmModGain.gain.setTargetAtTime((6 + 54*light) * (0.25 + 0.75*presence) * (1.0 - 0.60*visc), now, 0.22);
-
-shimmerHP.frequency.setTargetAtTime(180 + 680*light*(1.0 - 0.55*hum), now, 0.22);
-
-
-      // Motion (wind)
-      lfo.frequency.setTargetAtTime(lerp(0.02, 0.45, wind), now, 0.18);
-      lfoGain.gain.setTargetAtTime(lerp(0.10, 0.75, wind), now, 0.18);
-
-      // Motif scheduling: sparse, “handrail” without becoming a tune
-      const motifRate = (0.10 + 0.70*presence) * (0.55 + 0.45*pressure);
-      if (nextMotifTime === 0) nextMotifTime = now + lerp(4.0, 10.0, 1.0-motifRate);
-      if (now > nextMotifTime){
-        triggerMotif(now, p);
-        const baseGap = lerp(18.0, 7.5, motifRate);  // seconds
-        const jitter  = lerp(14.0, 5.0, motifRate);  // seconds
-        nextMotifTime = now + baseGap + Math.random()*jitter;
+      // ---- rare event ----
+      // Trigger only when the space is "alive" and motion/presence crest.
+      const eventEnergy = clamp01(0.55*pres + 0.25*motionE + 0.20*press);
+      const allow = (now > eventCooldownUntil);
+      if (allow && eventEnergy > 0.86 && Math.random() < 0.06){
+        triggerEvent(now + 0.02, eventEnergy, root);
+        eventCooldownUntil = now + lerp(9.0, 18.0, 1.0-eventEnergy);
       }
     }
 
@@ -3404,6 +2713,7 @@ shimmerHP.frequency.setTargetAtTime(180 + 680*light*(1.0 - 0.55*hum), now, 0.22)
       get isOn(){ return isOn; }
     };
   })();
+
 
   function setSoundButtonUI(on){
     if (!soundBtn) return;
