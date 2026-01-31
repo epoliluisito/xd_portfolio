@@ -1,0 +1,1372 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>3D Live Painting — Sensor Entanglement (v6 outer-field boosted)</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; overflow:hidden; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    #app { position:fixed; inset:0; }
+    canvas { position:absolute; inset:0; width:100%; height:100%; display:block; background:#000; }
+
+    .panel{
+      position:absolute; left:24px; top:24px; width:320px;
+      background: rgba(18,18,18,0.72);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: rgba(255,255,255,0.92);
+      padding: 14px 14px 12px 14px;
+      user-select:none;
+    }
+    .topRow { display:flex; gap:10px; margin-bottom: 12px; }
+    button{
+      appearance:none; -webkit-appearance:none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(40,40,40,0.7);
+      color: rgba(255,255,255,0.92);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+      cursor:pointer;
+      transition: transform .05s ease, background .15s ease, border-color .15s ease;
+    }
+    button:active { transform: translateY(1px); }
+    button.primary{
+      background:
+        radial-gradient(120% 160% at 20% 10%, rgba(90,160,255,0.65), rgba(35,80,200,0.35)),
+        rgba(40,40,40,0.7);
+      border-color: rgba(120,180,255,0.45);
+      box-shadow: 0 0 0 1px rgba(70,130,255,0.12) inset;
+    }
+    button.toggleOn{
+      background:
+        radial-gradient(120% 160% at 20% 10%, rgba(110,255,210,0.20), rgba(40,40,40,0.7));
+      border-color: rgba(110,255,210,0.35);
+    }
+
+    .sectionTitle{ font-size:12px; opacity:0.85; margin: 4px 0 10px 0; }
+    .control{ display:grid; grid-template-columns: 1fr; gap:6px; margin: 10px 0; }
+    .labelRow{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+    .labelRow .name{ font-size:14px; }
+    .labelRow .val{ font-size:12px; opacity:0.80; font-variant-numeric: tabular-nums; }
+    input[type="range"]{ width:100%; accent-color:#9bbcff; cursor:pointer; }
+    input[type="range"][disabled]{ cursor:not-allowed; opacity:0.55; }
+
+    .minictrl{
+      position:absolute; right:24px; bottom:24px;
+      display:flex; align-items:center; gap:10px;
+      background: rgba(18,18,18,0.62);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 10px 12px;
+      user-select:none;
+      color: rgba(255,255,255,0.9);
+    }
+    .minictrl .tag{ font-size:12px; opacity:0.85; margin-right:4px; }
+    .minibtn{
+      width: 38px; height: 34px;
+      display:grid; place-items:center;
+      padding:0;
+      border-radius:8px;
+      font-size:18px; line-height:1;
+    }
+    .status{
+      position:absolute; right:24px; top:24px;
+      padding: 10px 12px;
+      background: rgba(10,10,10,0.55);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      color: rgba(255,255,255,0.82);
+      font-size: 12px;
+      user-select:none;
+      min-width: 160px;
+      text-align:right;
+      font-variant-numeric: tabular-nums;
+    }
+    .kbd{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; padding:2px 6px; border:1px solid rgba(255,255,255,0.14); border-radius:6px; background: rgba(255,255,255,0.06); }
+
+    @media (max-width: 860px){
+      .panel{ left:14px; top:14px; width: min(86vw, 320px); }
+      .minictrl{ right:14px; bottom:14px; }
+      .status{ right:14px; top:14px; }
+    }
+  
+/* --- Audio controls --- */
+.audioRow{
+  margin-top: 10px;
+  padding: 10px 12px 6px 12px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  display: grid;
+  grid-template-columns: 70px 1fr 56px;
+  gap: 10px;
+  align-items: center;
+  opacity: 0.92;
+}
+.audioLabel{
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.72);
+}
+.audioRow input[type="range"]{ width: 100%; }
+.audioVal{
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  text-align: right;
+}
+button.on{
+  box-shadow: 0 0 0 1px rgba(120,190,255,0.35) inset, 0 0 18px rgba(90,160,255,0.18);
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+
+  <div class="panel">
+    <div class="topRow">
+      <button id="reseedBtn" class="primary" title="Generate a new warm-start state">RESEED</button>
+      <button id="manualBtn" title="Toggle manual control mode">Manual Mode</button>
+      <button id="soundBtn" title="Toggle ambient sound">Sound: Off</button>
+    </div>
+    <div class="sectionTitle">Environmental Controls</div>
+    <div class="audioRow">
+      <div class="audioLabel">Volume</div>
+      <input id="volSlider" type="range" min="0" max="100" value="55"/>
+      <div id="volVal" class="audioVal">55%</div>
+    </div>
+    <div id="controls"></div>
+  </div>
+
+  <div class="status" id="status">FPS — · Q —</div>
+
+  <div class="minictrl">
+    <span class="tag">ZOOM</span>
+    <button class="minibtn" id="zoomOutBtn" title="Zoom out">−</button>
+    <button class="minibtn" id="zoomInBtn" title="Zoom in">+</button>
+    <span class="tag" style="margin-left:10px;">ROTATE</span>
+    <button class="minibtn" id="rotLeftBtn" title="Rotate left">◀</button>
+    <button class="minibtn" id="rotRightBtn" title="Rotate right">▶</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // -------------------------
+  // UI + parameters
+  // -------------------------
+  const PARAMS = [
+    { key:"light",        name:"Light",         def:0.70 },
+    { key:"temperature",  name:"Temperature",   def:0.58 },
+    { key:"humidity",     name:"Humidity",      def:0.44 },
+    { key:"wind",         name:"Wind",          def:0.30 },
+    { key:"noise",        name:"Noise Level",   def:0.24 },
+    { key:"presence",     name:"Presence",      def:0.45 },
+    { key:"co2",          name:"CO2",           def:0.44 },
+    { key:"pm25",         name:"PM2.5",         def:0.14 },
+    { key:"pressure",     name:"Pressure",      def:0.52 },
+    { key:"soil",         name:"Soil Moisture", def:0.44 },
+  ];
+
+  const state = {
+    manual: false,
+    seed: (Math.random() * 1e9) >>> 0,
+    timeOffset: 65 + Math.random() * 80, // warm start
+    values: Object.fromEntries(PARAMS.map(p => [p.key, p.def])),
+    targets: Object.fromEntries(PARAMS.map(p => [p.key, p.def])),
+
+    yaw: -0.55,
+    pitch: 0.28,
+    yawVel: 0,
+    pitchVel: 0,
+    zoom: 2.25,
+    zoomVel: 0,
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+
+    lastUI: 0,
+
+    // Performance: adaptive internal resolution
+    quality: 0.74,          // 0.45..1.0 (render scale)
+    fpsSmoothed: 60,
+  };
+
+  const controlsEl = document.getElementById("controls");
+  const reseedBtn  = document.getElementById("reseedBtn");
+  const manualBtn  = document.getElementById("manualBtn");
+
+  // --- Audio (WebAudio) ---
+  const soundBtn  = document.getElementById("soundBtn");
+  const volSlider = document.getElementById("volSlider");
+  const volVal    = document.getElementById("volVal");
+
+  const AudioEngine = (() => {
+    let ctx = null;
+
+    let master = null;      // on/off fade
+    let masterGain = null;  // user volume
+
+    // Drone
+    let droneA = null, droneB = null, subOsc = null;
+    let droneFilter = null, droneGain = null;
+
+    // Air / noise
+    let noiseSrc = null, noiseFilter = null, noiseGain = null;
+
+    // Shimmer
+    let shimCar = null, shimMod = null, shimModGain = null;
+    let shimHP = null, shimGain = null;
+
+    // Motion + space
+    let pan = null, lfo = null, lfoGain = null;
+    let delay = null, fb = null, wet = null, wetLP = null;
+
+    let isOn = false;
+    let userVolume = 0.55;
+
+
+    let variant = { droneRatio: 1.0, subRatio: 0.5, shimmerRatio: 1.0, delayBase: 0.22, noiseColor: 1.0 };
+    function hash01(n){ const x = Math.sin(n) * 43758.5453123; return x - Math.floor(x); }
+    const clamp01 = (x)=>Math.max(0,Math.min(1,x));
+    const lerp = (a,b,t)=>a+(b-a)*t;
+
+    function makeNoiseBuffer(c){
+      const sr = c.sampleRate;
+      const len = sr * 2;
+      const buf = c.createBuffer(1, len, sr);
+      const data = buf.getChannelData(0);
+      let s = 0.0;
+      for (let i=0;i<len;i++){
+        const w = (Math.random()*2-1);
+        s = s*0.98 + w*0.02;
+        data[i] = (w*0.6 + s*1.2);
+      }
+      return buf;
+    }
+
+    function ensure(){
+      if (ctx) return;
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+      master = ctx.createGain();
+      masterGain = ctx.createGain();
+      master.gain.value = 0.0;
+      masterGain.gain.value = userVolume;
+
+      pan = ctx.createStereoPanner();
+      lfo = ctx.createOscillator();
+      lfoGain = ctx.createGain();
+      lfo.type = "sine";
+      lfo.frequency.value = 0.05;
+      lfoGain.gain.value = 0.35;
+      lfo.connect(lfoGain);
+      lfoGain.connect(pan.pan);
+
+      droneFilter = ctx.createBiquadFilter();
+      droneFilter.type = "lowpass";
+      droneFilter.frequency.value = 900;
+
+      droneGain = ctx.createGain();
+      droneGain.gain.value = 0.18;
+
+      droneA = ctx.createOscillator();
+      droneB = ctx.createOscillator();
+      subOsc = ctx.createOscillator();
+
+      droneA.type = "sine";
+      droneB.type = "triangle";
+      subOsc.type = "sine";
+
+      noiseFilter = ctx.createBiquadFilter();
+      noiseFilter.type = "bandpass";
+      noiseFilter.frequency.value = 520;
+      noiseFilter.Q.value = 0.9;
+
+      noiseGain = ctx.createGain();
+      noiseGain.gain.value = 0.0;
+
+      noiseSrc = ctx.createBufferSource();
+      noiseSrc.buffer = makeNoiseBuffer(ctx);
+      noiseSrc.loop = true;
+
+      shimCar = ctx.createOscillator();
+      shimCar.type = "sine";
+      shimMod = ctx.createOscillator();
+      shimMod.type = "sine";
+      shimModGain = ctx.createGain();
+      shimModGain.gain.value = 40;
+
+      shimHP = ctx.createBiquadFilter();
+      shimHP.type = "highpass";
+      shimHP.frequency.value = 350;
+
+      shimGain = ctx.createGain();
+      shimGain.gain.value = 0.0;
+
+      delay = ctx.createDelay(1.2);
+      delay.delayTime.value = 0.22;
+
+      fb = ctx.createGain();
+      fb.gain.value = 0.28;
+
+      wetLP = ctx.createBiquadFilter();
+      wetLP.type = "lowpass";
+      wetLP.frequency.value = 1800;
+
+      wet = ctx.createGain();
+      wet.gain.value = 0.16;
+
+      // Wiring
+      droneA.connect(droneFilter);
+      droneB.connect(droneFilter);
+      subOsc.connect(droneFilter);
+      droneFilter.connect(droneGain);
+
+      noiseSrc.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+
+      shimMod.connect(shimModGain);
+      shimModGain.connect(shimCar.frequency);
+      shimCar.connect(shimHP);
+      shimHP.connect(shimGain);
+
+      const mix = ctx.createGain();
+      mix.gain.value = 1.0;
+
+      droneGain.connect(mix);
+      noiseGain.connect(mix);
+      shimGain.connect(mix);
+
+      // dry
+      mix.connect(pan);
+
+      // wet
+      mix.connect(delay);
+      delay.connect(wetLP);
+      wetLP.connect(wet);
+      wet.connect(pan);
+
+      // feedback
+      delay.connect(fb);
+      fb.connect(delay);
+
+      pan.connect(master);
+      master.connect(masterGain);
+      masterGain.connect(ctx.destination);
+
+      // Start
+      droneA.start(); droneB.start(); subOsc.start();
+      shimCar.start(); shimMod.start();
+      noiseSrc.start();
+      lfo.start();
+
+      // Prime
+      droneA.frequency.value = 66;
+      droneB.frequency.value = 66 * 1.005;
+      subOsc.frequency.value = 33;
+      shimCar.frequency.value = 520;
+      shimMod.frequency.value = 0.12;
+
+      isOn = false;
+    }
+
+    function setOn(on){
+      ensure();
+      if (ctx.state === "suspended") ctx.resume();
+      const now = ctx.currentTime;
+
+      if (on && !isOn){
+        master.gain.cancelScheduledValues(now);
+        master.gain.setValueAtTime(master.gain.value, now);
+        master.gain.setTargetAtTime(1.0, now, 0.25);
+        isOn = true;
+      } else if (!on && isOn){
+        master.gain.cancelScheduledValues(now);
+        master.gain.setValueAtTime(master.gain.value, now);
+        master.gain.setTargetAtTime(0.0, now, 0.18);
+        isOn = false;
+      }
+    }
+
+    function setVolume(v01){
+      userVolume = clamp01(v01);
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      masterGain.gain.cancelScheduledValues(now);
+      masterGain.gain.setTargetAtTime(userVolume, now, 0.08);
+    }
+
+    function update(p){
+      if (!ctx || !isOn) return;
+      const now = ctx.currentTime;
+
+      const light    = p.light;
+      const temp     = p.temperature;
+      const hum      = p.humidity;
+      const wind     = p.wind;
+      const noiseLvl = p.noise;
+      const presence = p.presence;
+      const co2      = p.co2;
+      const pm25     = p.pm25;
+      const pressure = p.pressure;
+      const soil     = p.soil;
+
+      const energy = lerp(0.20, 1.0, presence);
+
+      // Tonal center (temp) + grounding (soil)
+      const base = lerp(48, 92, temp) * (0.95 + soil*0.12) * variant.droneRatio;
+      const sub  = base * variant.subRatio;
+
+      // Micro-beating (pressure)
+      const det = lerp(-6, 6, pressure);
+      droneA.detune.setTargetAtTime(det, now, 0.08);
+      droneB.detune.setTargetAtTime(-det*0.7, now, 0.08);
+
+      droneA.frequency.setTargetAtTime(base, now, 0.10);
+      droneB.frequency.setTargetAtTime(base * (1.006 + wind*0.010) * (1.0 + 0.06*light - 0.04*noiseLvl), now, 0.10);
+      subOsc.frequency.setTargetAtTime(sub, now, 0.12);
+
+      // Brightness (light) + warmth (temp)
+      const cutoff = 140 + Math.pow(light, 1.6)*8200 + temp*1100;
+      droneFilter.frequency.setTargetAtTime(cutoff, now, 0.12);
+
+      // Drone level (presence = energy)
+      const droneLvl = (0.08 + 0.34*energy) * (0.65 + 0.45*light);
+      droneGain.gain.setTargetAtTime(droneLvl, now, 0.10);
+
+      // Air texture (humidity/PM2.5/noise)
+      const nLvl = (0.005 + 0.18*noiseLvl + 0.22*pm25) * (0.25 + 1.05*energy);
+      noiseGain.gain.setTargetAtTime(nLvl, now, 0.08);
+
+      const nFreq = 180 + hum*1400 + pm25*620 + soil*180;
+      noiseFilter.frequency.setTargetAtTime(nFreq, now, 0.10);
+      noiseFilter.Q.setTargetAtTime(lerp(0.6, 1.3, 1.0-hum), now, 0.18);
+
+      // Shimmer (light + CO2)
+      const shimLvl = (0.00 + 0.22*light + 0.14*co2) * (0.18 + 1.05*energy);
+      shimGain.gain.setTargetAtTime(shimLvl, now, 0.14);
+
+      const shimFreq = (220 + light*2600 + (temp-0.5)*520 + co2*520) * variant.shimmerRatio;
+      shimCar.frequency.setTargetAtTime(shimFreq, now, 0.20);
+
+      shimMod.frequency.setTargetAtTime(lerp(0.04, 0.22, wind), now, 0.20);
+      shimModGain.gain.setTargetAtTime(lerp(20, 120, light) * (0.6 + 0.6*co2), now, 0.22);
+
+      shimHP.frequency.setTargetAtTime(lerp(220, 720, light), now, 0.20);
+
+      // Space (humidity)
+      const wetAmt = lerp(0.04, 0.42, hum) * (0.60 + 0.70*energy);
+      wet.gain.setTargetAtTime(wetAmt, now, 0.14);
+
+      const fbAmt = lerp(0.14, 0.55, hum) * (0.75 + 0.35*presence);
+      fb.gain.setTargetAtTime(fbAmt, now, 0.16);
+
+      delay.delayTime.setTargetAtTime(variant.delayBase * lerp(0.80, 1.25, hum), now, 0.16);
+      wetLP.frequency.setTargetAtTime(lerp(900, 4200, light), now, 0.16);
+
+      // Motion (wind)
+      lfo.frequency.setTargetAtTime(lerp(0.02, 0.45, wind), now, 0.18);
+      lfoGain.gain.setTargetAtTime(lerp(0.10, 0.75, wind), now, 0.18);
+    }
+
+    return { ensure, setOn, setVolume, update, reseed, get ctx(){ return ctx; }, get isOn(){ return isOn; } };
+  })();
+
+  function setSoundButtonUI(on){
+    if (!soundBtn) return;
+    soundBtn.textContent = on ? "Sound: On" : "Sound: Off";
+    soundBtn.classList.toggle("on", on);
+  }
+
+  if (volSlider && volVal){
+    const updateVolUI = () => {
+      const v = Number(volSlider.value || 0);
+      volVal.textContent = `${v}%`;
+      AudioEngine.setVolume(v/100);
+    };
+    volSlider.addEventListener("input", updateVolUI);
+    updateVolUI();
+  }
+
+  if (soundBtn){
+    soundBtn.addEventListener("click", async () => {
+      AudioEngine.ensure();
+      if (AudioEngine.ctx && AudioEngine.ctx.state === "suspended"){
+        try { await AudioEngine.ctx.resume(); } catch(e){}
+      }
+      const next = !AudioEngine.isOn;
+      AudioEngine.setOn(next);
+      setSoundButtonUI(next);
+      if (next && AudioEngine && AudioEngine.reseed) { AudioEngine.reseed(state.seed); }
+    });
+  }
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomInBtn  = document.getElementById("zoomInBtn");
+  const rotLeftBtn = document.getElementById("rotLeftBtn");
+  const rotRightBtn= document.getElementById("rotRightBtn");
+  const statusEl   = document.getElementById("status");
+  const sliders = new Map();
+
+  function fmt(v){ return (v*100).toFixed(0).padStart(3," ") + "%"; }
+  function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+
+  function buildControls(){
+    controlsEl.innerHTML = "";
+    for (const p of PARAMS){
+      const wrap = document.createElement("div");
+      wrap.className = "control";
+      wrap.innerHTML = `
+        <div class="labelRow">
+          <div class="name">${p.name}</div>
+          <div class="val" id="val_${p.key}">${fmt(state.values[p.key])}</div>
+        </div>
+        <input id="rng_${p.key}" type="range" min="0" max="1" step="0.001" value="${state.values[p.key]}">
+      `;
+      controlsEl.appendChild(wrap);
+
+      const rng = wrap.querySelector(`#rng_${p.key}`);
+      const val = wrap.querySelector(`#val_${p.key}`);
+
+      rng.addEventListener("input", () => {
+        const x = Number(rng.value);
+        state.values[p.key] = x;
+        state.targets[p.key] = x;
+        val.textContent = fmt(x);
+      });
+
+      sliders.set(p.key, { rng, val });
+    }
+    syncManualUI();
+  }
+
+  function syncManualUI(){
+    manualBtn.classList.toggle("toggleOn", state.manual);
+    for (const p of PARAMS){
+      const s = sliders.get(p.key);
+      if (!s) continue;
+      s.rng.disabled = !state.manual;
+      s.rng.style.accentColor = state.manual ? "#9bbcff" : "#7c7c7c";
+    }
+  }
+
+  function reseed(){
+    state.seed = (Math.random() * 1e9) >>> 0;
+    state.timeOffset = 55 + Math.random() * 110;
+
+    // Bias toward readable, "shapely" starts
+    for (const p of PARAMS){
+      let t = 0.22 + 0.62 * Math.random();
+      if (p.key === "pm25") t = 0.04 + 0.28 * Math.random();   // keep it clear
+      if (p.key === "light") t = 0.50 + 0.45 * Math.random();
+      if (p.key === "humidity") t = 0.20 + 0.65 * Math.random();
+      if (p.key === "presence") t = 0.18 + 0.70 * Math.random();
+      if (p.key === "wind") t = 0.10 + 0.60 * Math.random();
+
+      state.targets[p.key] = clamp(t, 0, 1);
+      if (!state.manual) state.values[p.key] = state.targets[p.key];
+
+      const s = sliders.get(p.key);
+      if (s){
+        s.rng.value = state.values[p.key];
+        s.val.textContent = fmt(state.values[p.key]);
+      }
+    }
+    if (AudioEngine && AudioEngine.isOn && AudioEngine.reseed) { AudioEngine.reseed(state.seed); }
+}
+
+  reseedBtn.addEventListener("click", reseed);
+  manualBtn.addEventListener("click", () => { state.manual = !state.manual; syncManualUI(); });
+
+  zoomOutBtn.addEventListener("click", () => state.zoomVel += 0.20);
+  zoomInBtn.addEventListener("click", () => state.zoomVel -= 0.20);
+  rotLeftBtn.addEventListener("click", () => state.yawVel -= 0.08);
+  rotRightBtn.addEventListener("click", () => state.yawVel += 0.08);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "r" || e.key === "R") reseed();
+    if (e.key === "m" || e.key === "M") { state.manual = !state.manual; syncManualUI(); }
+  });
+
+  buildControls();
+
+  // -------------------------
+  // WebGL2 setup (FAST path)
+  // -------------------------
+  const canvas = document.getElementById("gl");
+  const gl = canvas.getContext("webgl2", {
+    antialias: false,
+    alpha: false,
+    preserveDrawingBuffer: false,
+    depth: false,
+    stencil: false,
+    powerPreference: "high-performance"
+  });
+  if (!gl) { alert("WebGL2 not supported."); return; }
+
+  // Fullscreen triangle
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+      const info = gl.getShaderInfoLog(sh);
+      console.error(info);
+      throw new Error(info);
+    }
+    return sh;
+  }
+  function program(vsSrc, fsSrc){
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+    gl.bindAttribLocation(p, 0, "aPos");
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
+      const info = gl.getProgramInfoLog(p);
+      console.error(info);
+      throw new Error(info);
+    }
+    return p;
+  }
+  function uni(p, name){ return gl.getUniformLocation(p, name); }
+
+  const VS = `#version 300 es
+  precision highp float;
+  layout(location=0) in vec2 aPos;
+  out vec2 vUv;
+  void main(){
+    vUv = aPos * 0.5 + 0.5;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+  }`;
+
+  // FAST SCENE: fewer fbm octaves, surface-biased density -> readable "object"
+  const FS_SCENE = `#version 300 es
+  precision highp float;
+  in vec2 vUv;
+  out vec4 fragColor;
+
+  uniform vec2 uRes;
+  uniform float uTime;
+  uniform float uSeed;
+  uniform vec3 uCamRot;
+  uniform float uZoom;
+  uniform float uParams[10];
+
+  float hash13(vec3 p3){
+    p3  = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+
+  // Very cheap value noise
+  float vnoise(vec3 x){
+    vec3 p = floor(x);
+    vec3 f = fract(x);
+    f = f*f*(3.0-2.0*f);
+
+    float n000 = hash13(p+vec3(0,0,0));
+    float n100 = hash13(p+vec3(1,0,0));
+    float n010 = hash13(p+vec3(0,1,0));
+    float n110 = hash13(p+vec3(1,1,0));
+    float n001 = hash13(p+vec3(0,0,1));
+    float n101 = hash13(p+vec3(1,0,1));
+    float n011 = hash13(p+vec3(0,1,1));
+    float n111 = hash13(p+vec3(1,1,1));
+
+    float nx00 = mix(n000,n100,f.x);
+    float nx10 = mix(n010,n110,f.x);
+    float nx01 = mix(n001,n101,f.x);
+    float nx11 = mix(n011,n111,f.x);
+
+    float nxy0 = mix(nx00,nx10,f.y);
+    float nxy1 = mix(nx01,nx11,f.y);
+
+    return mix(nxy0,nxy1,f.z);
+  }
+
+  float fbm3(vec3 p){
+    float f = 0.0;
+    float a = 0.5;
+    f += a * vnoise(p); p *= 2.02; a *= 0.5;
+    f += a * vnoise(p); p *= 2.02; a *= 0.5;
+    f += a * vnoise(p);
+    return f;
+  }
+
+  vec3 pal(float t, vec3 a, vec3 b, vec3 c, vec3 d){
+    return a + b*cos(6.28318*(c*t + d));
+  }
+
+  mat3 rotY(float a){ float s=sin(a), c=cos(a); return mat3(c,0,-s, 0,1,0, s,0,c); }
+  mat3 rotX(float a){ float s=sin(a), c=cos(a); return mat3(1,0,0, 0,c,s, 0,-s,c); }
+
+  bool boxHit(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float t0, out float t1){
+    vec3 inv = 1.0 / rd;
+    vec3 tbot = inv*(bmin - ro);
+    vec3 ttop = inv*(bmax - ro);
+    vec3 tmin = min(ttop, tbot);
+    vec3 tmax = max(ttop, tbot);
+    t0 = max(max(tmin.x, tmin.y), tmin.z);
+    t1 = min(min(tmax.x, tmax.y), tmax.z);
+    return t1 > max(t0, 0.0);
+  }
+
+  // Gyroid-esque field (reads as mycelial surface)
+  float gyroid(vec3 p){
+    return sin(p.x)*cos(p.y) + sin(p.y)*cos(p.z) + sin(p.z)*cos(p.x);
+  }
+
+  // Cheap "tendril" distance field from a few seeded directions (very light)
+  float tendrilField(vec3 p, float seed){
+    // create 3 pseudo-random direction vectors
+    vec3 d1 = normalize(vec3(hash13(vec3(seed,1.1,2.2)) - 0.5, hash13(vec3(seed,3.3,4.4)) - 0.5, hash13(vec3(seed,5.5,6.6)) - 0.5));
+    vec3 d2 = normalize(vec3(hash13(vec3(seed,7.7,8.8)) - 0.5, hash13(vec3(seed,9.9,1.2)) - 0.5, hash13(vec3(seed,2.3,3.4)) - 0.5));
+    vec3 d3 = normalize(vec3(hash13(vec3(seed,4.5,5.6)) - 0.5, hash13(vec3(seed,6.7,7.8)) - 0.5, hash13(vec3(seed,8.9,9.1)) - 0.5));
+
+    // distance to lines through origin along these directions (cross product magnitude)
+    float l1 = length(cross(p, d1));
+    float l2 = length(cross(p, d2));
+    float l3 = length(cross(p, d3));
+
+    // modulate thickness along the line via low-freq noise
+    float n = fbm3(p*0.65 + seed*7.0);
+    float thickness = mix(0.080, 0.200, n); // thicker far-field threads
+    float f = min(min(l1, l2), l3);
+    return exp(-f / (thickness * 0.78));
+  }
+
+  // Outgrowth filaments that emanate from the core (A): curved tendrils, low cost.
+  float outgrowth(vec3 p, float seed){
+    vec3 d1 = normalize(vec3(hash13(vec3(seed,11.1,12.2)) - 0.5, hash13(vec3(seed,13.3,14.4)) - 0.5, hash13(vec3(seed,15.5,16.6)) - 0.5));
+    vec3 d2 = normalize(vec3(hash13(vec3(seed,17.7,18.8)) - 0.5, hash13(vec3(seed,19.9,11.2)) - 0.5, hash13(vec3(seed,12.3,13.4)) - 0.5));
+    vec3 d3 = normalize(vec3(hash13(vec3(seed,14.5,15.6)) - 0.5, hash13(vec3(seed,16.7,17.8)) - 0.5, hash13(vec3(seed,18.9,19.1)) - 0.5));
+    vec3 dirs[3] = vec3[3](d1,d2,d3);
+
+    float best = 0.0;
+    for (int i=0;i<3;i++){
+      vec3 d = dirs[i];
+
+      float bend = fbm3(p*0.55 + seed*31.0 + float(i)*7.1) - 0.5;
+      vec3 db = normalize(d + vec3(bend*0.35, bend*0.18, -bend*0.28));
+
+      float l = length(cross(p, db));
+      float along = dot(p, db);
+      float gate = smoothstep(-0.10, 0.35, along);
+
+      float n = fbm3(p*0.80 + seed*13.0 + float(i)*3.3);
+      float thick = mix(0.030, 0.090, n) * (0.75 + 0.25*smoothstep(0.2, 1.6, abs(along)));
+
+      float f = exp(-l / thick) * gate;
+
+      float cut = smoothstep(0.55, 0.95, fbm3(p*0.90 + seed*41.0 + float(i)*9.0));
+      f *= cut;
+
+      best = max(best, f);
+    }
+    return best;
+  }
+
+  void main(){
+    vec2 uv = vUv * 2.0 - 1.0;
+    uv.x *= uRes.x / uRes.y;
+
+    float light      = clamp(uParams[0], 0.0, 1.0);
+    float temp       = clamp(uParams[1], 0.0, 1.0);
+    float hum        = clamp(uParams[2], 0.0, 1.0);
+    float wind       = clamp(uParams[3], 0.0, 1.0);
+    float noiseLvl   = clamp(uParams[4], 0.0, 1.0);
+    float presence   = clamp(uParams[5], 0.0, 1.0);
+    float co2        = clamp(uParams[6], 0.0, 1.0);
+    float pm25       = clamp(uParams[7], 0.0, 1.0);
+    float pressure   = clamp(uParams[8], 0.0, 1.0);
+    float soil       = clamp(uParams[9], 0.0, 1.0);
+
+    float seed = uSeed * 0.000000001;
+    float t = uTime;
+
+    mat3 R = rotY(uCamRot.x) * rotX(uCamRot.y);
+
+    vec3 ro = R * vec3(0.0, 0.0, uZoom);
+    vec3 rd = normalize(R * vec3(uv, -1.55));
+
+    float tA, tB;
+    if (!boxHit(ro, rd, vec3(-2.35), vec3(2.35), tA, tB)) { fragColor = vec4(0,0,0,1); return; }
+
+    float t0 = max(tA, 0.0);
+    float t1 = tB;
+    float dist = t1 - t0;
+
+    // Keep it fast: modest steps
+    int STEPS = 54;
+    float dt = dist / float(STEPS);
+
+    float swirl = mix(0.10, 1.10, wind);
+    float warpAmp = mix(0.10, 0.55, noiseLvl) * (0.55 + 0.45*pressure);
+    float haze = pm25;
+
+    // --- Color hierarchy ---
+    // Primary hue drivers: temperature (warm/cool), presence (event intensity), wind (flow)
+    float primaryShift = (temp - 0.5) * 0.58 + (presence - 0.5) * 0.14 + (wind - 0.5) * 0.10;
+
+    // Secondary accents (subtle):
+    // CO2 -> cyan/teal iridescence, Soil -> green-gold tint, Pressure -> violet shift, Humidity -> milky lift
+    float co2Tint = (co2 - 0.5) * 0.16;
+    float prTint  = (pressure - 0.5) * 0.10;
+
+    vec3 a = vec3(0.10, 0.10, 0.12);
+    vec3 b = vec3(0.70, 0.66, 0.72);
+    vec3 c = vec3(1.00, 1.00, 1.00);
+    vec3 dPal = vec3(0.02 + primaryShift, 0.18 + primaryShift*0.45, 0.36 - primaryShift*0.22);
+
+    // Core silhouette
+    float coreR = mix(0.64, 0.94, 0.55 + 0.45*sin(t*0.07 + seed*3.0));
+    coreR += 0.05*sin(t*0.21 + seed*9.0);
+
+    // Zoom-dependent context: when you zoom out, reveal the broader field
+    float zoomOut = smoothstep(2.05, 6.60, uZoom); // 0 close, 1 far (reveals context when zooming out)
+
+    vec3 col = vec3(0.0);
+    float trans = 1.0;
+    float vig = smoothstep(1.15, 0.18, length(uv));
+
+    for (int i=0; i<118; i++){
+      if (i >= STEPS) break;
+      float ti = t0 + (float(i) + 0.35) * dt;
+      vec3 p = ro + rd * ti;
+
+      float r = length(p);
+      float core = smoothstep(1.22, coreR, r);  // 1 inside-ish
+      core = pow(core, 1.35);
+
+      // Flow warp (cheap)
+      float tw = t * (0.12 + 0.18*swirl);
+      vec3 q = p;
+      vec3 w = vec3(
+        fbm3(q*2.2 + vec3(0.0,0.0,tw) + seed*7.0),
+        fbm3(q*2.2 + vec3(5.2,1.7,tw*0.9) + seed*3.0),
+        fbm3(q*2.2 + vec3(2.1,4.3,tw*1.1) + seed*5.0)
+      );
+      q += (w - 0.5) * warpAmp;
+
+      // --- HERO: mycelial shell around an iso-surface ---
+      float g = gyroid(q * (2.8 + 1.2*soil) + vec3(0.0, tw*0.35, 0.0));
+      float n = fbm3(q * 3.4 + seed*11.0);
+      float field = g * 0.55 + (n - 0.5) * 0.85;
+
+      // Shell density (thin strands)
+      float shell = exp(-abs(field) * (7.0 + 7.0*(1.0-hum))); // thinner when less humid
+      shell *= (0.10 + 1.25*core);
+
+      // Presence: event emphasis
+      float events = smoothstep(0.78, 1.0, fbm3(q*5.2 + vec3(0.0, tw, 0.0)));
+      events *= (0.35 + 1.20*presence);
+
+      float densCore = (shell * (0.85 + 0.35*events));
+      densCore = min(densCore, 2.2);
+
+      // A) Outgrowth filaments emanating from the core (quiet, reveals on zoom out)
+      float zoomOut_local = smoothstep(2.05, 6.60, uZoom);
+      float og = outgrowth(q * (0.65 + 0.35*wind), seed*1000.0);
+      float outsideOG = smoothstep(coreR*1.05, coreR*1.60, r);
+      float densOut = og * outsideOG * pow(zoomOut_local, 0.90) * (0.18 + 0.85*presence);
+      densOut = min(densOut, 0.65);
+
+
+      // --- CONTEXT: outward-reaching tendrils (quiet, visible mainly when zoomed out) ---
+      float outside = smoothstep(coreR*1.05, coreR*1.60, r); // 0 in core, 1 outside (true outer field)
+      float tend = tendrilField(q * (0.42 + 0.22*wind), seed*1000.0);
+      // make it sparser and calmer
+      float tendNoise = smoothstep(0.30, 0.95, fbm3(q*1.10 + seed*19.0));
+      float fieldGain = (0.55 + 1.35*wind) * (0.45 + 1.10*presence);
+      float densField = tend * tendNoise * outside * pow(zoomOut, 0.95) * fieldGain * 2.35;
+      densField = min(densField, 1.55);
+
+      float dens = densCore + densField + densOut;
+
+      // Deep-field particulate context (very faint; mainly visible when zoomed out)
+      float dust = smoothstep(0.985, 1.0, hash13(floor(q*8.0) + seed*777.0));
+      dens += dust * zoomOut * outside * (0.02 + 0.06*presence);
+
+      // Absorption: haze increases absorption (prevents veil)
+      float absorb = mix(1.10, 1.85, 1.0-light) * (0.75 + 0.75*haze);
+      float alpha = 1.0 - exp(-dens * absorb * dt * 1.10);
+
+      // --- Color: base + hierarchical accents ---
+      float tcol = field*0.25 + n*0.85 + primaryShift;
+
+      vec3 base = pal(tcol, a, b, c, dPal);
+
+      // Thermal tint (primary)
+      vec3 ember = vec3(1.18, 0.55, 0.18);
+      vec3 ice   = vec3(0.25, 0.70, 1.10);
+      vec3 thermal = mix(ice, ember, smoothstep(0.18, 0.82, temp));
+      base = mix(base, base*thermal, 0.42);
+
+      // Secondary accents (subtle hierarchy)
+      // CO2: teal edge shimmer
+      vec3 teal = vec3(0.25, 0.95, 0.90);
+      float edge = smoothstep(0.02, 0.22, abs(field)); // more on shell edges
+      base = mix(base, base + teal * edge * co2Tint, 0.55);
+
+      // Soil: green-gold growth tint, more in outer field
+      vec3 growth = vec3(0.75, 0.95, 0.35);
+      base += growth * (soil - 0.5) * (0.10 + 0.22*zoomOut) * (0.35 + 0.65*outside);
+
+      // Pressure: slight violet displacement
+      vec3 vio = vec3(0.75, 0.45, 1.05);
+      base += vio * prTint * (0.06 + 0.10*events);
+
+      // PM2.5 desaturates (already) and cools slightly (secondary)
+      base = mix(base, base*vec3(0.90,0.95,1.05), pm25*0.20);
+
+      // Humidity: gentle milky lift of midtones
+      base = mix(base, base + vec3(0.20) * hum, 0.08);
+
+      // Emission: keep hero punchy, context quieter
+      float glow = mix(1.00, 2.25, light) * (0.85 + 0.55*presence);
+      float heroBoost = 0.70 + 0.55*core;        // strong in core
+      float fieldQuiet = mix(0.55, 0.85, 1.0 - outside) + outside * zoomOut * 0.10; // quiet but present outside when zoomed out
+      vec3 emit = base * (dens * glow) * (0.45 + 0.55*vig) * heroBoost * fieldQuiet;
+
+      // Outgrowth tint (slightly cyan/warm) so emanation reads when zoomed out
+      vec3 outCol = mix(vec3(0.06, 0.14, 0.22), vec3(0.10, 0.40, 0.55), 0.65 + 0.20*co2);
+      outCol += vec3(0.10, 0.06, 0.02) * (temp - 0.5) * 0.35;
+      emit += outCol * densOut * (0.55 + 0.55*light) * (0.35 + 0.75*zoomOut_local) * 0.85;
+
+
+      // Explicit outer-field glow: makes distant tendrils readable when zoomed out
+      float fieldMask = clamp(densField / (densCore + densField + 1e-4), 0.0, 1.0);
+      vec3 fieldBase = mix(vec3(0.06, 0.10, 0.16), vec3(0.14, 0.26, 0.52), 0.65 + 0.20*co2);
+      // let soil/pressure tint the outer field very subtly
+      fieldBase += vec3(0.10, 0.16, 0.06) * (soil - 0.5) * 0.20;
+      fieldBase += vec3(0.10, 0.02, 0.14) * (pressure - 0.5) * 0.12;
+      float fieldGlow = (0.85 + 0.55*light) * (0.55 + 0.65*presence);
+      emit += fieldBase * densField * fieldGlow * (0.55 + 0.65*zoomOut) * (0.35 + 0.65*vig) * (0.35 + 0.65*outside);
+      // occasional distant nodes
+      float node = smoothstep(0.992, 1.0, hash13(floor(q*6.0) + seed*913.0));
+      emit += fieldBase * node * zoomOut * outside * (0.15 + 0.85*presence) * 0.85;
+
+      // "Ocean of air" micro-specks
+      float speck = smoothstep(0.985, 1.0, hash13(floor(q*18.0) + seed*200.0));
+      emit += speck * base * (0.25 + 0.90*presence) * 0.75;
+
+      col += trans * (emit * alpha);
+      trans *= (1.0 - alpha);
+      if (trans < 0.04) break;
+    }
+
+    // Tone map
+    float exposure = (mix(1.08, 2.05, light) * (0.92 + 0.48*presence)) * 1.12;
+    col = vec3(1.0) - exp(-col * exposure);
+
+    // Sat: higher haze -> less sat
+    float sat = mix(1.06, 0.86, pm25);
+    float luma = dot(col, vec3(0.2126,0.7152,0.0722));
+    col = mix(vec3(luma), col, sat);
+
+    col *= (0.80 + 0.20*vig);
+
+    fragColor = vec4(max(col, 0.0), 1.0);
+  }`;
+// Tiny highlight bloom (single-pass, cheap). This avoids the "blur everything" trap.
+  const FS_COMP = `#version 300 es
+  precision highp float;
+  in vec2 vUv;
+  out vec4 fragColor;
+
+  uniform sampler2D uScene;
+  uniform vec2 uRes;
+  uniform float uTime;
+  uniform float uLight;
+  uniform float uPresence;
+  uniform float uZoom;
+  uniform float uSeed;
+
+  float hash12(vec2 p){
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+
+  // ultra-cheap smooth noise from hashed grid
+  float n2(vec2 x){
+    vec2 p = floor(x);
+    vec2 f = fract(x);
+    f = f*f*(3.0-2.0*f);
+    float a = hash12(p + vec2(0,0));
+    float b = hash12(p + vec2(1,0));
+    float c = hash12(p + vec2(0,1));
+    float d = hash12(p + vec2(1,1));
+    return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+  }
+
+  void main(){
+    vec3 c = texture(uScene, vUv).rgb;
+
+    // 3-tap cheap bloom (local highlights)
+    vec2 px = 1.0 / uRes;
+    vec3 b = c;
+    b += texture(uScene, vUv + px*vec2( 1.0, 0.0)).rgb;
+    b += texture(uScene, vUv + px*vec2( 0.0, 1.0)).rgb;
+    b *= 0.3333;
+
+    float l = dot(c, vec3(0.2126,0.7152,0.0722));
+    float m = smoothstep(0.64, 0.92, l);
+    float bloomAmt = (0.16 + 0.28*uLight) * (0.35 + 0.65*uPresence);
+    vec3 col = c + b * m * bloomAmt;
+
+    // B) "Ocean of air" medium: subtle drifting particulate, reveals mainly when zooming out
+    float zoomOut = smoothstep(2.25, 7.20, uZoom);
+    float seed = uSeed * 0.000000001;
+
+    vec2 uv = vUv*2.0 - 1.0;
+    uv.x *= uRes.x / uRes.y;
+
+    // slow flow
+    vec2 flow = vec2(
+      n2(uv*1.2 + vec2(0.0, uTime*0.03 + seed*9.0)),
+      n2(uv*1.2 + vec2(3.4, uTime*0.028 + seed*5.0))
+    ) - 0.5;
+    uv += flow * (0.20 + 0.32*zoomOut);
+
+    // sparse dust specks
+    float dust = smoothstep(0.985, 1.0, hash12(floor((uv + 1.3) * 140.0) + seed*200.0));
+    float mist = n2(uv*2.3 + vec2(uTime*0.02, seed*7.0));
+    float medium = (dust*0.65 + mist*0.20) * zoomOut * (0.12 + 0.22*uPresence);
+
+    // keep it contextual: suppress where hero is bright
+    float heroMask = 1.0 - smoothstep(0.22, 0.62, l);
+
+    vec3 airCol = mix(vec3(0.01, 0.03, 0.05), vec3(0.04, 0.08, 0.14), 0.65);
+    airCol += vec3(0.02, 0.05, 0.03) * (0.35 + 0.65*uPresence);
+
+    col += airCol * medium * heroMask;
+
+    // vignette
+    float vig = smoothstep(1.35, 0.22, length(uv));
+    col *= (0.86 + 0.14*vig);
+    // global lift (kept subtle)
+    col *= 1.08;
+
+    // subtle grain
+    float g = hash12(vUv * uRes + uTime*60.0) - 0.5;
+    col += g * 0.010;
+
+    col = pow(max(col, 0.0), vec3(0.90));
+    fragColor = vec4(col, 1.0);
+  }`;
+const progScene = program(VS, FS_SCENE);
+  const progComp  = program(VS, FS_COMP);
+
+  const uScene = {
+    uRes: uni(progScene, "uRes"),
+    uTime: uni(progScene, "uTime"),
+    uSeed: uni(progScene, "uSeed"),
+    uCamRot: uni(progScene, "uCamRot"),
+    uZoom: uni(progScene, "uZoom"),
+    uParams: uni(progScene, "uParams[0]"),
+  };
+  const uComp = {
+    uScene: uni(progComp, "uScene"),
+    uRes: uni(progComp, "uRes"),
+    uTime: uni(progComp, "uTime"),
+    uLight: uni(progComp, "uLight"),
+    uPresence: uni(progComp, "uPresence"),
+    uZoom: uni(progComp, "uZoom"),
+    uSeed: uni(progComp, "uSeed"),
+  };
+
+  // Single offscreen target (RGBA8) rendered at adaptive scale, then composed to full screen.
+  let rtW=0, rtH=0;
+  let sceneTex=null, sceneFbo=null;
+
+  function makeTex(width, height){
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return t;
+  }
+  function makeFbo(tex){
+    const f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (ok !== gl.FRAMEBUFFER_COMPLETE) throw new Error("FBO incomplete: " + ok);
+    return f;
+  }
+
+  function resizeRT(){
+    const dpr = Math.min(0.9, window.devicePixelRatio || 1); // cap DPR for performance
+    const cw = Math.max(2, Math.floor(canvas.clientWidth  * dpr));
+    const ch = Math.max(2, Math.floor(canvas.clientHeight * dpr));
+    canvas.width = cw; canvas.height = ch;
+    gl.viewport(0,0,cw,ch);
+
+    const scale = clamp(state.quality, 0.45, 1.0);
+    const tw = Math.max(2, Math.floor(cw * scale));
+    const th = Math.max(2, Math.floor(ch * scale));
+
+    if (tw === rtW && th === rtH && sceneTex && sceneFbo) return;
+
+    rtW = tw; rtH = th;
+    sceneTex = makeTex(rtW, rtH);
+    sceneFbo = makeFbo(sceneTex);
+  }
+
+  window.addEventListener("resize", () => resizeRT(), { passive:true });
+  resizeRT();
+
+  function drawFull(){
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+  }
+
+  // Orbit controls (damped)
+  canvas.addEventListener("pointerdown", (e) => {
+    state.dragging = true;
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!state.dragging) return;
+    const dx = e.clientX - state.lastX;
+    const dy = e.clientY - state.lastY;
+    state.lastX = e.clientX;
+    state.lastY = e.clientY;
+    state.yawVel   += dx * 0.00082;
+    state.pitchVel += dy * 0.00082;
+  });
+  canvas.addEventListener("pointerup", () => { state.dragging = false; });
+  canvas.addEventListener("pointercancel", () => { state.dragging = false; });
+
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    state.zoomVel += (e.deltaY > 0 ? 1 : -1) * 0.12;
+  }, { passive:false });
+
+  // -------------------------
+  // Sensor simulation (auto mode)
+  // -------------------------
+  let nextTargetAt = 0;
+
+  function updateAuto(nowSec){
+    if (state.manual) return;
+
+    if (nowSec > nextTargetAt){
+      nextTargetAt = nowSec + 2.2 + Math.random()*3.6;
+      for (const p of PARAMS){
+        const cur = state.targets[p.key];
+        const drift = (Math.random() - 0.5) * 0.26;
+        const pull  = (0.5 - cur) * 0.06;
+        let t = cur + drift + pull;
+
+        if (p.key === "pm25") t = clamp(t, 0.00, 0.55);
+        if (p.key === "light") t = clamp(t, 0.18, 0.95);
+        if (p.key === "humidity") t = clamp(t, 0.08, 0.95);
+        if (p.key === "wind") t = clamp(t, 0.02, 0.90);
+
+        state.targets[p.key] = clamp(t, 0, 1);
+      }
+    }
+
+    const smoothing = 1.0 - Math.pow(0.001, 1/60);
+    for (const p of PARAMS){
+      const k = p.key;
+      state.values[k] += (state.targets[k] - state.values[k]) * smoothing * 0.16;
+    }
+
+    if (nowSec - state.lastUI > 0.12){
+      state.lastUI = nowSec;
+      for (const p of PARAMS){
+        const s = sliders.get(p.key);
+        if (!s) continue;
+        s.rng.value = state.values[p.key];
+        s.val.textContent = fmt(state.values[p.key]);
+      }
+    }
+  }
+
+  // -------------------------
+  // FPS adaptive quality
+  // -------------------------
+  let lastFrame = performance.now();
+  function updateQuality(now){
+    const dt = Math.max(0.0001, (now - lastFrame) * 0.001);
+    lastFrame = now;
+    const fps = 1.0 / dt;
+    state.fpsSmoothed = state.fpsSmoothed * 0.92 + fps * 0.08;
+
+    // Target ~55fps. If slow, reduce internal scale; if fast, increase.
+    const target = 58;
+    if (state.fpsSmoothed < target - 4) state.quality = clamp(state.quality - 0.04, 0.45, 1.0);
+    if (state.fpsSmoothed > target + 12) state.quality = clamp(state.quality + 0.01, 0.45, 1.0);
+
+    statusEl.textContent = `FPS ${state.fpsSmoothed.toFixed(0)} · Q ${(state.quality*100).toFixed(0)}%`;
+  }
+
+  // -------------------------
+  // Render loop
+  // -------------------------
+  let t0 = performance.now();
+
+  function render(now){
+    updateQuality(now);
+    resizeRT();
+
+    const nowSec = (now - t0) * 0.001;
+    updateAuto(nowSec);
+
+    // audio follows the live sensor state (manual + auto)
+    AudioEngine.update(state.values);
+
+    state.yawVel   *= 0.90;
+    state.pitchVel *= 0.90;
+    state.zoomVel  *= 0.86;
+
+    state.yaw   += state.yawVel;
+    state.pitch += state.pitchVel;
+    state.pitch = clamp(state.pitch, -1.25, 1.25);
+
+    state.zoom += state.zoomVel;
+    state.zoom = clamp(state.zoom, 1.25, 7.50);
+
+    // 1) Scene to RT (lower res)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFbo);
+    gl.viewport(0,0,rtW,rtH);
+    gl.clearColor(0,0,0,1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(progScene);
+    gl.uniform2f(uScene.uRes, rtW, rtH);
+    gl.uniform1f(uScene.uTime, nowSec + state.timeOffset);
+    gl.uniform1f(uScene.uSeed, state.seed);
+    gl.uniform3f(uScene.uCamRot, state.yaw, state.pitch, 0.0);
+    gl.uniform1f(uScene.uZoom, state.zoom);
+
+    const arr = new Float32Array(PARAMS.length);
+    for (let i=0;i<PARAMS.length;i++) arr[i] = state.values[PARAMS[i].key];
+    gl.uniform1fv(uScene.uParams, arr);
+
+    drawFull();
+
+    // 2) Composite to full canvas
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0,0,canvas.width, canvas.height);
+    gl.useProgram(progComp);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+    gl.uniform1i(uComp.uScene, 0);
+    gl.uniform2f(uComp.uRes, canvas.width, canvas.height);
+    gl.uniform1f(uComp.uTime, nowSec);
+    gl.uniform1f(uComp.uLight, state.values.light);
+    gl.uniform1f(uComp.uPresence, state.values.presence);
+        gl.uniform1f(uComp.uZoom, state.zoom);
+    gl.uniform1f(uComp.uSeed, state.seed);
+
+    drawFull();
+
+    requestAnimationFrame(render);
+  }
+
+  reseed();
+  requestAnimationFrame(render);
+
+})();
+</script>
+
+<!-- ODV: Quit / Return button -->
+<button id="odvQuitBtn" type="button" aria-label="Quit simulation"
+style="
+  position:fixed; bottom:16px; left:16px; z-index:2147483647;
+  border: 1px dashed rgba(255,255,255,.25);
+  background: rgba(0,0,0,.35);
+  color: rgba(255,255,255,.92);
+  border-radius: 999px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+">QUIT</button>
+
+<script>
+(function(){
+  function getParam(name){
+    try { return new URLSearchParams(location.search).get(name) || ''; }
+    catch(e){ return ''; }
+  }
+
+  function normalizeHash(h){
+    if(!h) return '#page_block_06';
+    return h.startsWith('#') ? h : ('#' + h);
+  }
+
+  function buildReturnUrl(){
+    const ret = getParam('return');
+    const hash = normalizeHash(getParam('hash') || '#page_block_06');
+
+    if(ret){
+      return ret.includes('#') ? ret : (ret + hash);
+    }
+
+    const ref = (document.referrer || '');
+    if(ref){
+      return ref.includes('#') ? ref : (ref + hash);
+    }
+
+    return 'ombre_working_05.html' + hash;
+  }
+
+  function quit(){
+    const url = buildReturnUrl();
+    try{
+      if(window.opener && !window.opener.closed){
+        window.opener.location.href = url;
+        window.close();
+        return;
+      }
+    }catch(e){}
+    window.location.href = url;
+  }
+
+  const btn = document.getElementById('odvQuitBtn');
+  if(btn) btn.addEventListener('click', quit);
+  window.addEventListener('keydown', function(e){
+    if(e.key === 'Escape') quit();
+  });
+})();
+</script>
+
+</body>
+</html>
