@@ -318,13 +318,13 @@
   z-index: 50;
 }
 .se-mobile-hud .mBtn{
-  height: 70px;
-  padding: 0 24px;
+  height: 56px;
+  padding: 0 20px;
   border-radius: 999px;
   border: 1px solid rgba(155,255,190,.28);
   background: rgba(255,255,255,.06);
   color: rgba(238,242,247,.92);
-  font-size: 15px;
+  font-size: 12px;
   letter-spacing: .08em;
   text-transform: uppercase;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -408,8 +408,8 @@
   #odvQuitBtn{
     top: calc(12px + env(safe-area-inset-top, 0px));
     left: calc(12px + env(safe-area-inset-left, 0px));
-    padding: 18px 20px;
-    font-size: 16px;
+    padding: 14px 16px;
+    font-size: 13px;
   }
 }
 
@@ -461,8 +461,8 @@
 .se-mobile #odvQuitBtn {
     top: calc(12px + env(safe-area-inset-top, 0px));
     left: calc(12px + env(safe-area-inset-left, 0px));
-    padding: 18px 20px;
-    font-size: 16px;
+    padding: 14px 16px;
+    font-size: 13px;
   }
 
 </style>
@@ -1384,6 +1384,9 @@ const sliders = new Map();
   function fmt(v){ return (v).toFixed(2); }
   function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
   function lerp(a,b,t){ return a + (b - a) * t; }
+  const ORBIT_K = (__SE_IS_MOBILE ? 0.00115 : 0.00082);
+  const PITCH_CLAMP = (__SE_IS_MOBILE ? 1.45 : 1.25);
+
   // -------------------------
   // Autopilot helpers (no snap)
   // -------------------------
@@ -1394,7 +1397,7 @@ const sliders = new Map();
   }
   function anchorAutopilot(){
     // Anchor autopilot to the *current* user view (no snap)
-    state.apBasePitch = clamp(state.pitch, -1.25, 1.25);
+    state.apBasePitch = clamp(state.pitch, -PITCH_CLAMP, PITCH_CLAMP);
     state.apBaseZoom  = clamp(state.zoom, 1.25, 7.50);
     state.apPhase = 0.0;
     state.apZoomPhase = 0.0;
@@ -1547,6 +1550,13 @@ function getRenderProfile(){
   // WebGL2 setup (FAST path)
   // -------------------------
   const canvas = document.getElementById("gl");
+  // Mobile: prevent scroll/gesture from stealing orbit drag
+  if (typeof __SE_IS_MOBILE !== "undefined" && __SE_IS_MOBILE){
+    canvas.style.touchAction = "none";
+    canvas.style.webkitUserSelect = "none";
+    canvas.style.userSelect = "none";
+  }
+
   const gl = canvas.getContext("webgl2", {
     antialias: false,
     alpha: false,
@@ -2229,6 +2239,7 @@ const progScene = program(VS, FS_SCENE);
 
   // Orbit controls (damped)
   canvas.addEventListener("pointerdown", (e) => {
+    if (typeof __SE_IS_MOBILE !== "undefined" && __SE_IS_MOBILE) { try{ e.preventDefault(); }catch(_){ } }
     state.dragging = true;
     state.lastX = e.clientX;
     state.lastY = e.clientY;
@@ -2236,13 +2247,14 @@ const progScene = program(VS, FS_SCENE);
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener("pointermove", (e) => {
+    if (typeof __SE_IS_MOBILE !== "undefined" && __SE_IS_MOBILE) { try{ e.preventDefault(); }catch(_){ } }
     if (!state.dragging) return;
     const dx = e.clientX - state.lastX;
     const dy = e.clientY - state.lastY;
     state.lastX = e.clientX;
     state.lastY = e.clientY;
-    state.yawVel   += dx * 0.00082;
-    state.pitchVel += dy * 0.00082;
+    state.yawVel   += dx * ORBIT_K;
+    state.pitchVel += dy * ORBIT_K;
   
     markUserInteraction(350);});
   canvas.addEventListener("pointerup", () => { endOrbitInteraction(); });
@@ -2374,7 +2386,7 @@ state.yawVel   *= 0.90;
 
     state.yaw   += state.yawVel;
     state.pitch += state.pitchVel;
-    state.pitch = clamp(state.pitch, -1.25, 1.25);
+    state.pitch = clamp(state.pitch, -PITCH_CLAMP, PITCH_CLAMP);
 
     state.zoom += state.zoomVel;
     state.zoom = clamp(state.zoom, 1.25, 7.50);
@@ -2399,7 +2411,7 @@ state.yawVel   *= 0.90;
       const apPitch = state.apBasePitch + state.apPitchAmp * Math.sin(state.apPhase);
       const k = 1.0 - Math.exp(-dt * 2.6);
       state.pitch = lerp(state.pitch, apPitch, k);
-      state.pitch = clamp(state.pitch, -1.25, 1.25);
+      state.pitch = clamp(state.pitch, -PITCH_CLAMP, PITCH_CLAMP);
 
       // Zoom breathing (subtle)
       state.apZoomPhase += dt * state.apZoomSpeed;
@@ -3906,8 +3918,8 @@ const progScene = program(VS, FS_SCENE);
     const dy = e.clientY - state.lastY;
     state.lastX = e.clientX;
     state.lastY = e.clientY;
-    state.yawVel   += dx * 0.00082;
-    state.pitchVel += dy * 0.00082;
+    state.yawVel   += dx * ORBIT_K;
+    state.pitchVel += dy * ORBIT_K;
   
     markUserInteraction(350);});
   canvas.addEventListener("pointerup", () => { endOrbitInteraction(); });
@@ -4018,7 +4030,7 @@ state.yawVel   *= 0.90;
 
     state.yaw   += state.yawVel;
     state.pitch += state.pitchVel;
-    state.pitch = clamp(state.pitch, -1.25, 1.25);
+    state.pitch = clamp(state.pitch, -PITCH_CLAMP, PITCH_CLAMP);
 
     state.zoom += state.zoomVel;
     state.zoom = clamp(state.zoom, 1.25, 7.50);
@@ -4043,7 +4055,7 @@ state.yawVel   *= 0.90;
       const apPitch = state.apBasePitch + state.apPitchAmp * Math.sin(state.apPhase);
       const k = 1.0 - Math.exp(-dt * 2.6);
       state.pitch = lerp(state.pitch, apPitch, k);
-      state.pitch = clamp(state.pitch, -1.25, 1.25);
+      state.pitch = clamp(state.pitch, -PITCH_CLAMP, PITCH_CLAMP);
 
       // Zoom breathing (subtle)
       state.apZoomPhase += dt * state.apZoomSpeed;
