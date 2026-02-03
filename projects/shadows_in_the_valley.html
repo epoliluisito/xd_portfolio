@@ -1998,6 +1998,19 @@
         const nodes = Array.from(document.querySelectorAll("[data-matrix][data-final]"));
         const baseDelay = 600; // start as panel finishes
 
+        // Mobile: avoid the "forming" scramble (can feel jumpy); show final values immediately.
+        const isMobile = window.matchMedia("(max-width: 820px), (hover: none) and (pointer: coarse)").matches;
+        if(isMobile){
+          const metaEl = document.querySelector('aside.meta');
+          if(metaEl) metaEl.classList.add('forming');
+          nodes.forEach((el) => {
+            const final = el.getAttribute("data-final") || "";
+            el.textContent = final;
+            el.classList.add("forming");
+          });
+          return;
+        }
+
         
         const metaEl = document.querySelector('aside.meta');
         if(metaEl){
@@ -3622,6 +3635,224 @@ if(t.layer === 0 && reinforce > 0.55){
       document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') close(); });
     })();
   </script>
+
+
+<script>
+/* ----------------------------------------------------------
+   MOBILE SOFT-PAGING BETWEEN BLOCKS (NO CSS SNAP)
+   Behavior:
+   - At the end/start of a block, briefly "hold" (brake) the scroll.
+   - Requires a second scroll gesture to advance to the next/prev block top.
+   Mobile-only (<=820px).
+----------------------------------------------------------- */
+(function(){
+  const mq = window.matchMedia ? window.matchMedia('(max-width: 820px)') : {matches:false};
+  if(!mq.matches) return;
+
+  const container = document.querySelector('.snap-container');
+  if(!container) return;
+
+  // Top-level page blocks inside the scroll container
+  const blocks = Array.from(container.children).filter(el => el && el.classList && el.classList.contains('snap-block'));
+  if(blocks.length < 2) return;
+
+  const HOLD_MS = 850;           // "pause" duration at boundaries
+  const EDGE_PX = 26;            // boundary detection threshold
+  const GESTURE_PX = 18;         // delta required to count as a new intent
+  const PROGRAMMATIC_MS = 850;   // smooth scroll settle time
+
+  let lastScrollTop = container.scrollTop;
+  let locked = false;
+  let lockUntil = 0;
+  let lockScrollTop = 0;
+
+  let armed = false;
+  let armedDir = null; // 'down'|'up'
+  let armedIndex = -1;
+
+  let isProgrammatic = false;
+
+  // Touch intent detection
+  let touchY0 = null;
+
+  function now(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
+
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+  function getActiveIndex(st){
+    // find the block whose midpoint is closest to the viewport midpoint
+    const mid = st + container.clientHeight * 0.5;
+    let bestI = 0;
+    let bestD = Infinity;
+    for(let i=0;i<blocks.length;i++){
+      const b = blocks[i];
+      const top = b.offsetTop;
+      const h = b.offsetHeight;
+      const bm = top + h*0.5;
+      const d = Math.abs(bm - mid);
+      if(d < bestD){ bestD = d; bestI = i; }
+    }
+    return bestI;
+  }
+
+  function boundaryFor(i, dir){
+    const b = blocks[i];
+    if(!b) return null;
+    if(dir === 'down'){
+      const end = b.offsetTop + b.offsetHeight;
+      const lockTop = Math.max(0, end - container.clientHeight);
+      return { lockTop, edge: end - EDGE_PX };
+    }else{
+      const start = b.offsetTop;
+      const lockTop = start;
+      return { lockTop, edge: start + EDGE_PX };
+    }
+  }
+
+  function setLock(top){
+    locked = true;
+    lockUntil = now() + HOLD_MS;
+    lockScrollTop = clamp(top, 0, container.scrollHeight - container.clientHeight);
+    // freeze at boundary (avoid overscroll jitter)
+    container.scrollTop = lockScrollTop;
+  }
+
+  function clearLock(){
+    locked = false;
+    lockUntil = 0;
+  }
+
+  function arm(dir, idx){
+    armed = true;
+    armedDir = dir;
+    armedIndex = idx;
+  }
+
+  function disarm(){
+    armed = false;
+    armedDir = null;
+    armedIndex = -1;
+  }
+
+  function gotoIndex(idx){
+    idx = clamp(idx, 0, blocks.length - 1);
+    const top = blocks[idx].offsetTop;
+    isProgrammatic = true;
+    disarm();
+    clearLock();
+    container.scrollTo({ top, behavior: 'smooth' });
+    window.setTimeout(() => { isProgrammatic = false; }, PROGRAMMATIC_MS);
+  }
+
+  function tryArmFromScroll(st, dir){
+    const idx = getActiveIndex(st);
+    const b = blocks[idx];
+    if(!b) return;
+
+    if(dir === 'down'){
+      const end = b.offsetTop + b.offsetHeight;
+      const viewBottom = st + container.clientHeight;
+      if(viewBottom >= end - EDGE_PX){
+        // hold at the end, then require a new gesture to go next
+        arm('down', idx);
+        setLock(Math.max(0, end - container.clientHeight));
+      }
+    }else if(dir === 'up'){
+      const start = b.offsetTop;
+      if(st <= start + EDGE_PX){
+        arm('up', idx);
+        setLock(start);
+      }
+    }
+  }
+
+  // Freeze scroll during the hold interval (brake)
+  container.addEventListener('scroll', () => {
+    const st = container.scrollTop;
+    const dir = (st > lastScrollTop) ? 'down' : (st < lastScrollTop ? 'up' : null);
+    lastScrollTop = st;
+
+    if(isProgrammatic) return;
+
+    const t = now();
+
+    if(locked){
+      if(t < lockUntil){
+        if(container.scrollTop !== lockScrollTop){
+          container.scrollTop = lockScrollTop;
+        }
+        return;
+      }else{
+        clearLock();
+        // after the hold, we stay armed and wait for a new gesture intent
+        return;
+      }
+    }
+
+    if(!dir) return;
+
+    // Only arm when approaching edges; avoid repeated arming spam
+    if(!armed){
+      tryArmFromScroll(st, dir);
+    }
+  }, { passive: true });
+
+  // Gesture intent: second scroll
+  container.addEventListener('touchstart', (e) => {
+    if(!e.touches || !e.touches.length) return;
+    touchY0 = e.touches[0].clientY;
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (e) => {
+    if(!armed || touchY0 == null || isProgrammatic) return;
+    if(locked) {
+      // still in hold period: prevent the scroll from fighting the lock
+      if(e.cancelable) e.preventDefault();
+      return;
+    }
+    if(!e.touches || !e.touches.length) return;
+
+    const y = e.touches[0].clientY;
+    const dy = y - touchY0;
+
+    // finger up (dy < 0) indicates scroll down
+    if(armedDir === 'down' && dy < -GESTURE_PX){
+      if(e.cancelable) e.preventDefault();
+      const next = Math.min(blocks.length - 1, armedIndex + 1);
+      gotoIndex(next);
+      touchY0 = y; // reset
+    }
+    // finger down (dy > 0) indicates scroll up
+    if(armedDir === 'up' && dy > GESTURE_PX){
+      if(e.cancelable) e.preventDefault();
+      const prev = Math.max(0, armedIndex - 1);
+      gotoIndex(prev);
+      touchY0 = y; // reset
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', () => { touchY0 = null; }, { passive: true });
+  container.addEventListener('touchcancel', () => { touchY0 = null; }, { passive: true });
+
+  // For small-screen devices with wheel input (rare, but safe)
+  container.addEventListener('wheel', (e) => {
+    if(!armed || isProgrammatic) return;
+    if(locked){
+      if(e.cancelable) e.preventDefault();
+      return;
+    }
+    const d = e.deltaY;
+    if(armedDir === 'down' && d > 0){
+      if(e.cancelable) e.preventDefault();
+      gotoIndex(Math.min(blocks.length - 1, armedIndex + 1));
+    }else if(armedDir === 'up' && d < 0){
+      if(e.cancelable) e.preventDefault();
+      gotoIndex(Math.max(0, armedIndex - 1));
+    }
+  }, { passive: false });
+
+})();
+</script>
 
 </body>
 </html>
