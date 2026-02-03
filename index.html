@@ -240,10 +240,7 @@
       position: fixed;
       left: 50%;
       top: 56%;
-      --wave-x: 0px;
-      --wave-y: 0px;
-      --wave-r: 0deg;
-      transform: translate(-50%, -50%) translate(var(--wave-x), var(--wave-y)) rotate(var(--wave-r));
+      transform: translate(-50%, -50%);
       text-decoration: none;
       letter-spacing: .02em;
       text-transform: none;
@@ -740,71 +737,12 @@ let pointerRaw = { x: 0.5, y: 0.5 };
         let hasLast = false; // prevents first-move ghost stroke
         // Title ripple (drifted link emits same ripples, softly)
         const titleEl = document.getElementById('floatingLink');
-        const waveTitleEls = Array.from(document.querySelectorAll('.floating-link'));
-        const waveState = new WeakMap(); // el -> {x,y,r}
-        function lerp(a,b,t){ return a + (b-a)*t; }
         function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 
         // Track pointer idleness: when the user stops moving, we accelerate damping.
         let lastMoveStamp = performance.now();
         function markMove(){ lastMoveStamp = performance.now(); }
 
-        // CPU-side wave sampling (approx. mirrors shader heightField) for title buoyancy.
-        function smoothstep(e0, e1, x){
-          const t = clamp((x - e0) / (e1 - e0), 0, 1);
-          return t*t*(3 - 2*t);
-        }
-        function heightAt(uv, t, resW, resH){
-          let h = 0.0;
-
-          const k = 48.0;
-          const propagate = 1.05;
-          const spatialDecay = 0.36;
-          const frontSoft = 0.014;
-
-          const aspect = resW / resH;
-
-          // Only cursor points (title slots are 0..TITLE_MAX-1; cursor starts at TITLE_MAX)
-          for(let i=TITLE_MAX;i<MAX;i++){
-            const idx = i*4;
-            const px = points[idx + 0];
-            const py = points[idx + 1];
-            const t0 = points[idx + 2];
-            const s  = points[idx + 3];
-            if(s === 0.0) continue;
-
-            const age = Math.max(0.0, t - t0);
-
-            let dx = uv.x - px;
-            let dy = uv.y - py;
-            dx *= aspect;
-            const dist = Math.hypot(dx, dy);
-
-            const travel = age * propagate;
-            const gate = smoothstep(0.0, frontSoft, travel - dist);
-            const phase = (dist - travel) * k;
-
-            const tdec = 1.10;
-            const env = Math.exp(-dist/spatialDecay) * Math.exp(-age/tdec);
-
-            const core = 1.0 - Math.exp(-Math.pow(dist/0.010, 2.0));
-
-            const wakeAge = 4.2;
-            const dragAge = 0.14;
-            const wakeEnv = Math.exp(-dist/0.110) * Math.exp(-age/wakeAge);
-            const dragEnv = Math.exp(-dist/0.070) * Math.exp(-age/dragAge);
-            const wakeAmp = 0.17;
-
-            h += wakeEnv * core * s * wakeAmp;
-            h += dragEnv * core * s * wakeAmp * 0.85;
-            h += Math.sin(phase) * env * gate * core * s * 0.45;
-          }
-
-          // Ambient swell (very subtle)
-          h += 0.006 * Math.sin(uv.x*5.6 + t*0.18);
-
-          return h;
-        }
 
         let lastTitle = { x: 0.5, y: 0.5, t: 0.0 };
         let hasTitle = false;
@@ -961,49 +899,6 @@ let pointerRaw = { x: 0.5, y: 0.5 };
           gl.uniform1f(uHoverLoc, hasPointer);
 
           gl.uniform4fv(uPointsLoc, points);
-
-          // Make titles feel like they "float" on the surface (subtle buoyancy).
-          // Uses a cheap CPU-side approximation of the shader height field.
-          if(waveTitleEls.length){
-            const resW = canvas.width, resH = canvas.height;
-            const px = 1.0 / resW, py = 1.0 / resH;
-
-            // Slightly reduce title motion when the pointer is idle (helps it settle faster).
-            const idleFade = 1.0 - Math.min(0.65, Math.max(0.0, (idleSeconds - 2.0) / 1.2));
-
-            for(const el of waveTitleEls){
-              if(!el || el.offsetParent === null) continue;
-
-              const r = el.getBoundingClientRect();
-              const uv = {
-                x: (r.left + r.width*0.5) / window.innerWidth,
-                y: 1.0 - (r.top + r.height*0.5) / window.innerHeight
-              };
-
-              const hc = heightAt(uv, t, resW, resH);
-              const hx = heightAt({x: uv.x + px, y: uv.y}, t, resW, resH);
-              const hy = heightAt({x: uv.x, y: uv.y + py}, t, resW, resH);
-
-              const sx = (hx - hc) * 3.2;
-              const sy = (hy - hc) * 3.2;
-
-              // Map wave -> pixels/rotation (kept conservative to avoid readability issues)
-              const ampPx = 220.0;
-              const targetY = clamp(-hc * ampPx, -28, 28) * idleFade;
-              const targetX = clamp(-sx * 44.0, -14, 14) * idleFade;
-              const targetR = clamp(sx * 95.0, -6.0, 6.0) * idleFade;
-
-              const st = waveState.get(el) || { x:0, y:0, r:0 };
-              st.x = lerp(st.x, targetX, 0.12);
-              st.y = lerp(st.y, targetY, 0.12);
-              st.r = lerp(st.r, targetR, 0.10);
-              waveState.set(el, st);
-
-              el.style.setProperty('--wave-x', st.x.toFixed(2) + 'px');
-              el.style.setProperty('--wave-y', st.y.toFixed(2) + 'px');
-              el.style.setProperty('--wave-r', st.r.toFixed(2) + 'deg');
-            }
-          }
 
           gl.drawArrays(gl.TRIANGLES, 0, 6);
 
