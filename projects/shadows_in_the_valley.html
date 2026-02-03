@@ -2753,6 +2753,12 @@ window.addEventListener('load', () => {
 
     let W=1,H=1,DPR=1;
     let warmStartAt = performance.now();
+    // Auto-homeostasis: keep the field legible over time
+    let lastReseedAt = performance.now();
+    const MAX_EVOLUTION_MS = 180000;          // hard cap: ~3 minutes
+    const MAX_EDGES_BEFORE_RESEED = 26000;    // soft cap: reseed if it gets too dense early
+    const MIN_MS_BEFORE_EDGE_RESEED = 45000;  // avoid immediate reseeds right after start
+
     function warmRamp(){
       // 0..1 ramp for the first seconds after landing/reseed (keeps starts thin/legible)
       const t = (performance.now() - warmStartAt) / 3200;
@@ -2819,6 +2825,7 @@ function applyDecay(dt){
     function reseedNetwork(resetInk=true){
       seed = Math.floor(Math.random()*1e9);
       warmStartAt = performance.now();
+      lastReseedAt = warmStartAt;
       tips = [];
       nodes = [];
       edgesCount = 0;
@@ -3341,10 +3348,17 @@ if(t.layer === 0 && reinforce > 0.55){
         lastDecay = now;
 
         const p = growthParams();
-        const stepEvery = lerp(170, 70, p.pNorm);
+        const stepEvery = lerp(170, 70, p.pNorm) * 2.0; // 50% slower evolution
         if(now - lastGrowth > stepEvery){
           lastGrowth = now;
           stepGrowth();
+        }
+
+        // Auto reseed: prevent the system from collapsing into an unreadable blob
+        const sinceReseed = now - lastReseedAt;
+        if(sinceReseed > MAX_EVOLUTION_MS || (sinceReseed > MIN_MS_BEFORE_EDGE_RESEED && edgesCount > MAX_EDGES_BEFORE_RESEED)){
+          reseedNetwork(true);
+          prefillInk();
         }
       }
 
