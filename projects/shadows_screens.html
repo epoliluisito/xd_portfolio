@@ -125,13 +125,119 @@ button.on{
   box-shadow: 0 0 0 1px rgba(120,190,255,0.35) inset, 0 0 18px rgba(90,160,255,0.18);
 }
 
+
+/* ----------------------------------------------------------
+   MOBILE UI (reduced controls) — does NOT affect desktop
+----------------------------------------------------------- */
+#seMobileHud{
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 2147483646;
+  display: none; /* enabled via .se-mobile */
+  gap: 10px;
+  align-items: center;
+  user-select: none;
+}
+.sePillBtn{
+  appearance:none; -webkit-appearance:none;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(18,18,18,0.62);
+  color: rgba(255,255,255,0.92);
+  border-radius: 999px;
+  padding: 10px 14px;
+  min-height: 40px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.40);
+}
+.sePillBtn:active{ transform: translateY(1px); }
+.sePillPrimary{
+  background:
+    radial-gradient(120% 160% at 20% 10%, rgba(90,160,255,0.65), rgba(35,80,200,0.35)),
+    rgba(18,18,18,0.62);
+  border-color: rgba(120,180,255,0.45);
+  box-shadow: 0 0 0 1px rgba(70,130,255,0.12) inset, 0 18px 60px rgba(0,0,0,0.40);
+}
+.sePillOn{
+  background:
+    radial-gradient(120% 160% at 20% 10%, rgba(110,255,210,0.20), rgba(18,18,18,0.62));
+  border-color: rgba(110,255,210,0.35);
+  box-shadow: 0 0 0 1px rgba(110,255,210,0.16) inset, 0 18px 60px rgba(0,0,0,0.40);
+}
+
+/* Mobile mode: hide full panel + minicontrols + status; keep QUIT */
+.se-mobile .panel,
+.se-mobile .minictrl,
+.se-mobile .status{
+  display: none !important;
+}
+.se-mobile #seMobileHud{
+  display: flex;
+}
+
+/* Mobile QUIT button sizing to match VR mobile (v9) */
+.se-mobile #odvQuitBtn{
+  padding: 10px 12px !important;
+  min-height: 40px !important;
+  font-size: 12px !important;
+  letter-spacing: .12em !important;
+  border-radius: 999px !important;
+}
+
+/* Landscape (mobile): hide SOUND/RESEED completely (no “ghost”) */
+.se-landscape #seMobileHud{
+  display: none !important;
+}
+
+/* Improve touch orbit reliability on iOS (mobile only) */
+.se-mobile canvas{
+  touch-action: none;
+}
+
 </style>
 </head>
 <body>
+
+<script>
+(function(){
+  function isMobile(){
+    try{
+      return matchMedia('(pointer: coarse)').matches || innerWidth <= 720 ||
+        /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
+    }catch(e){ return innerWidth <= 720; }
+  }
+  function setClasses(){
+    const root = document.documentElement;
+    const mobile = isMobile();
+    root.classList.toggle('se-mobile', !!mobile);
+    const landscape = mobile && innerWidth > innerHeight;
+    root.classList.toggle('se-landscape', !!landscape);
+    const vp = document.querySelector('meta[name="viewport"]');
+    if (vp && !/viewport-fit=cover/.test(vp.content)) {
+      vp.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    }
+  }
+  addEventListener('resize', setClasses, {passive:true});
+  addEventListener('orientationchange', setClasses, {passive:true});
+  setClasses();
+})();
+</script>
+
 <div id="app">
   <canvas id="gl"></canvas>
 
-  <div class="panel">
+  
+<!-- Mobile-only HUD (reduced controls: SOUND / RESEED) -->
+<div id="seMobileHud" aria-hidden="true">
+  <button id="seMobileSoundBtn" type="button" class="sePillBtn">SOUND: OFF</button>
+  <button id="seMobileReseedBtn" type="button" class="sePillBtn sePillPrimary">RESEED</button>
+</div>
+<div class="panel">
     <div class="topRow">
       <button id="reseedBtn" class="primary" title="Generate a new warm-start state">RESEED</button>
       <button id="manualBtn" title="Toggle manual control mode">Manual Mode</button>
@@ -487,7 +593,13 @@ button.on{
     if (!soundBtn) return;
     soundBtn.textContent = on ? "Sound: On" : "Sound: Off";
     soundBtn.classList.toggle("on", on);
+  // Mirror state to mobile HUD if present
+  const msb = document.getElementById("seMobileSoundBtn");
+  if (msb){
+    msb.textContent = on ? "SOUND: ON" : "SOUND: OFF";
+    msb.classList.toggle("sePillOn", on);
   }
+}
 
   if (volSlider && volVal){
     const updateVolUI = () => {
@@ -510,7 +622,29 @@ button.on{
       setSoundButtonUI(next);
       if (next && AudioEngine && AudioEngine.reseed) { AudioEngine.reseed(state.seed); }
     });
-  }
+  
+// --- Mobile HUD wiring (SOUND / RESEED) ---
+const mobileSoundBtn  = document.getElementById("seMobileSoundBtn");
+const mobileReseedBtn = document.getElementById("seMobileReseedBtn");
+
+if (mobileSoundBtn){
+  mobileSoundBtn.addEventListener("click", async () => {
+    AudioEngine.ensure();
+    if (AudioEngine.ctx && AudioEngine.ctx.state === "suspended"){
+      try { await AudioEngine.ctx.resume(); } catch(e){}
+    }
+    const next = !AudioEngine.isOn;
+    AudioEngine.setOn(next);
+    setSoundButtonUI(next); // also mirrors to mobile via hook below
+    if (next && AudioEngine && AudioEngine.reseed) { AudioEngine.reseed(state.seed); }
+  }, { passive:false });
+}
+
+if (mobileReseedBtn){
+  mobileReseedBtn.addEventListener("click", () => reseed(), { passive:true });
+}
+
+}
   const zoomOutBtn = document.getElementById("zoomOutBtn");
   const zoomInBtn  = document.getElementById("zoomInBtn");
   const rotLeftBtn = document.getElementById("rotLeftBtn");
@@ -1150,12 +1284,14 @@ const progScene = program(VS, FS_SCENE);
 
   // Orbit controls (damped)
   canvas.addEventListener("pointerdown", (e) => {
+    if (document.documentElement.classList.contains("se-mobile")) { try{ e.preventDefault(); }catch(_e){} }
     state.dragging = true;
     state.lastX = e.clientX;
     state.lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener("pointermove", (e) => {
+    if (document.documentElement.classList.contains("se-mobile")) { try{ e.preventDefault(); }catch(_e){} }
     if (!state.dragging) return;
     const dx = e.clientX - state.lastX;
     const dy = e.clientY - state.lastY;
@@ -1333,12 +1469,17 @@ style="
   }
 
   function buildReturnUrl(){
-    const ret = getParam('return');
-    const hash = normalizeHash(getParam('hash') || '#page_block_06');
-
-    if(ret){
-      return ret.includes('#') ? ret : (ret + hash);
-    }
+  const ret = getParam('return');
+  const hash = '#page_block_06';
+  if (ret){
+    return ret.replace(/#.*$/, '') + hash;
+  }
+  const ref = (document.referrer || '');
+  if (ref){
+    return ref.replace(/#.*$/, '') + hash;
+  }
+  return 'shadows_in_the_valley.html' + hash;
+}
 
     const ref = (document.referrer || '');
     if(ref){
