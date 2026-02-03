@@ -306,8 +306,8 @@
   bottom: calc(16px + var(--ss-safe-bottom, 0px));
   transform: translateX(-50%);
   display: none;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 12px 14px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,.14);
   background: rgba(0,0,0,.35);
@@ -316,13 +316,13 @@
   z-index: 50;
 }
 .se-mobile-hud .mBtn{
-  height: 40px;
-  padding: 0 14px;
+  height: 52px;
+  padding: 0 18px;
   border-radius: 999px;
   border: 1px solid rgba(155,255,190,.28);
   background: rgba(255,255,255,.06);
   color: rgba(238,242,247,.92);
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: .08em;
   text-transform: uppercase;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -353,12 +353,55 @@
 
 /* Mobile breakpoint: hide full control panel, show reduced HUD */
 @media (max-width: 720px), (pointer: coarse){
+  /* Hide full desktop panel; show reduced HUD */
   .se-root .panel{ display: none !important; }
-  .se-mobile-hud{ display: flex; }
-  .se-mobile-note{ display: block; }
-  #loadingOverlay .loadingCard{ width: min(92vw, 520px); }
-  #loadingOverlay .loadingTitle{ font-size: 14px; }
-  #loadingOverlay .loadingFoot{ font-size: 12px; opacity: .70; }
+  .se-mobile-hud{
+    display: flex;
+    padding: 12px 14px;
+    gap: 12px;
+  }
+  .se-mobile-note{
+    display: block;
+    font-size: 13px;
+    line-height: 1.38;
+    padding: 12px 14px;
+  }
+
+  /* Loading overlay: mobile-friendly typography + scroll safety */
+  #loadingOverlay{
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  }
+  #loadingOverlay .loadingCard{
+    width: min(92vw, 560px);
+    max-height: calc(88vh - env(safe-area-inset-top, 0px));
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 20px 18px 18px;
+  }
+  #loadingOverlay .loadingTitle{ font-size: 15px; letter-spacing: .16em; }
+  #loadingOverlay .loadingSub{ font-size: 16px; line-height: 1.35; }
+  #loadingOverlay .loadingHint{ font-size: 13px; line-height: 1.4; opacity: .78; }
+  #loadingOverlay .loadingLede{ font-size: 16px; line-height: 1.5; }
+  #loadingOverlay .loadingKicker{ font-size: 12px; }
+  #loadingOverlay .loadingList{ font-size: 14px; line-height: 1.6; padding-left: 18px; }
+  #loadingOverlay .loadingNote{ font-size: 14px; line-height: 1.6; }
+  #loadingOverlay .loadingPct{ font-size: 13px; }
+  #loadingOverlay .loadingStart{
+    font-size: 13px;
+    padding: 14px 14px;
+    border-radius: 16px;
+    min-height: 54px;
+  }
+  #loadingOverlay .loadingFoot{ font-size: 13px; opacity: .72; }
+
+  /* QUIT: larger + safe-area aware */
+  #odvQuitBtn{
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    padding: 14px 16px;
+    font-size: 13px;
+  }
 }
 
 </style>
@@ -594,6 +637,17 @@
     interactingUntil: 0,
     isInteracting: false,
   };
+
+
+  // Mobile defaults: reduce internal resolution for smoother playback.
+  (function(){
+    const isMobile = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth <= 720);
+    if(isMobile){
+      state.renderBias = 0.34;   // favor performance on mobile
+      state.quality = 0.72;      // lower render scale baseline
+    }
+  })();
+
 
 
   // ----------------------------------------------------------
@@ -1300,7 +1354,7 @@ const sliders = new Map();
 
 function getRenderProfile(){
     const t = clamp(state.renderBias, 0, 1);
-    return {
+    const prof = {
       minQ: lerp(0.52, 0.72, t),
       maxQ: lerp(0.78, 0.98, t),
       dprLo: lerp(0.90, 1.20, t),
@@ -1311,6 +1365,19 @@ function getRenderProfile(){
       stepsMax: Math.round(lerp(58, 86, t)),
       interactStepsCap: Math.round(lerp(48, 74, t)),
     };
+    const isMobile = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth <= 720);
+    if(isMobile){
+      prof.minQ = Math.max(0.38, prof.minQ * 0.88);
+      prof.maxQ = Math.max(prof.minQ + 0.08, prof.maxQ * 0.86);
+      prof.dprLo = Math.min(prof.dprLo, 0.85);
+      prof.dprHi = Math.min(prof.dprHi, 1.0);
+      prof.interactDprCap = Math.min(prof.interactDprCap, 0.85);
+      prof.interactScaleCap = Math.min(prof.interactScaleCap, 0.78);
+      prof.stepsMin = Math.max(20, Math.round(prof.stepsMin * 0.72));
+      prof.stepsMax = Math.max(prof.stepsMin + 8, Math.round(prof.stepsMax * 0.72));
+      prof.interactStepsCap = Math.max(prof.stepsMin + 6, Math.round(prof.interactStepsCap * 0.70));
+    }
+    return prof;
   }
 
   function buildControls(){
@@ -2414,6 +2481,17 @@ state.yawVel   *= 0.90;
     renderBias: 0.82,      // 0..1 (0=perf, 1=beauty)
   };
 
+
+  // Mobile defaults: reduce internal resolution for smoother playback.
+  (function(){
+    const isMobile = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth <= 720);
+    if(isMobile){
+      state.renderBias = 0.34;   // favor performance on mobile
+      state.quality = 0.72;      // lower render scale baseline
+    }
+  })();
+
+
   const controlsEl = document.getElementById("controls");
   const reseedBtn  = document.getElementById("reseedBtn");
   const manualBtn  = document.getElementById("manualBtn");
@@ -3070,7 +3148,7 @@ const AudioEngine = (() => {
   function lerp(a,b,t){ return a + (b - a) * t; }
   function getRenderProfile(){
     const t = clamp(state.renderBias, 0, 1);
-    return {
+    const prof = {
       minQ: lerp(0.52, 0.72, t),
       maxQ: lerp(0.78, 0.98, t),
       dprLo: lerp(0.90, 1.20, t),
@@ -3081,6 +3159,19 @@ const AudioEngine = (() => {
       stepsMax: Math.round(lerp(58, 86, t)),
       interactStepsCap: Math.round(lerp(48, 74, t)),
     };
+    const isMobile = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (window.innerWidth <= 720);
+    if(isMobile){
+      prof.minQ = Math.max(0.38, prof.minQ * 0.88);
+      prof.maxQ = Math.max(prof.minQ + 0.08, prof.maxQ * 0.86);
+      prof.dprLo = Math.min(prof.dprLo, 0.85);
+      prof.dprHi = Math.min(prof.dprHi, 1.0);
+      prof.interactDprCap = Math.min(prof.interactDprCap, 0.85);
+      prof.interactScaleCap = Math.min(prof.interactScaleCap, 0.78);
+      prof.stepsMin = Math.max(20, Math.round(prof.stepsMin * 0.72));
+      prof.stepsMax = Math.max(prof.stepsMin + 8, Math.round(prof.stepsMax * 0.72));
+      prof.interactStepsCap = Math.max(prof.stepsMin + 6, Math.round(prof.interactStepsCap * 0.70));
+    }
+    return prof;
   }
 
   function buildControls(){
@@ -4116,6 +4207,24 @@ state.yawVel   *= 0.90;
   .odv-maestro-tip.show{
     opacity: 1;
     transform: translateY(0);
+  }
+
+
+  @media (max-width: 720px), (pointer: coarse){
+    .odv-btn{
+      padding: 14px 16px;
+      font-size: 13px;
+      min-height: 50px;
+    }
+    #odvQuitBtn{
+      top: calc(12px + env(safe-area-inset-top, 0px));
+      left: calc(12px + env(safe-area-inset-left, 0px));
+    }
+    /* If the desktop panel toggle ever appears on touch devices, make it tappable */
+    .odv-toggle{
+      height: 44px;
+      width: 44px;
+    }
   }
 
 </style>
