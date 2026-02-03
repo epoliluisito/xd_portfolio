@@ -3641,10 +3641,10 @@ if(t.layer === 0 && reinforce > 0.55){
 /* ----------------------------------------------------------
    MOBILE SOFT-PAGING BETWEEN BLOCKS (NO CSS SNAP)
    Behavior (mobile-only):
-   - When the user *tries* to scroll past the end/start of a block, we "hold" briefly.
-   - The next scroll gesture advances to the next/prev block top via smooth scroll.
+   - When the user tries to scroll past the end/start of a block, we "hold" briefly.
+   - After the hold, the user must scroll again; then we smooth-scroll to the next/prev block top.
    Notes:
-   - This is intent-driven (wheel/touch) to avoid locking at load when a block is exactly 100vh.
+   - Uses scroll-position + direction (works reliably on iOS where touch events can be inconsistent in scroll containers).
 ----------------------------------------------------------- */
 (function(){
   const mq = window.matchMedia ? window.matchMedia('(max-width: 820px)') : {matches:false};
@@ -3657,20 +3657,24 @@ if(t.layer === 0 && reinforce > 0.55){
   if(blocks.length < 2) return;
 
   const HOLD_MS = 850;         // brake duration at boundaries
-  const EDGE_PX = 24;          // boundary proximity threshold
-  const GESTURE_PX = 18;       // movement required to count as intent
+  const EDGE_PX = 28;          // boundary proximity threshold
+  const STOP_ARM_MS = 140;     // how long scroll must be still after hold before we accept "second gesture"
   const PROGRAMMATIC_MS = 950; // smooth scroll settle time
 
   let armed = false;
-  let armedDir = null;  // 'down' | 'up'
+  let armedDir = null;   // 'down' | 'up'
   let armedIndex = -1;
 
   let locked = false;
   let lockUntil = 0;
   let lockTop = 0;
 
+  let afterHold = false;
+  let stopTimer = null;
+  let stoppedSinceHold = false;
+
   let isProgrammatic = false;
-  let touchY0 = null;
+  let lastSt = container.scrollTop;
 
   function now(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -3694,7 +3698,6 @@ if(t.layer === 0 && reinforce > 0.55){
   function blockEndLockTop(i){
     const b = blocks[i];
     const end = b.offsetTop + b.offsetHeight;
-    // maximum scrollTop while still showing the end of this block
     return Math.max(b.offsetTop, end - container.clientHeight);
   }
 
@@ -3703,6 +3706,12 @@ if(t.layer === 0 && reinforce > 0.55){
     lockUntil = now() + HOLD_MS;
     lockTop = clamp(top, 0, Math.max(0, container.scrollHeight - container.clientHeight));
     container.scrollTop = lockTop;
+
+    // require scroll to come to rest after the hold before accepting the next gesture
+    afterHold = true;
+    stoppedSinceHold = false;
+    if(stopTimer) clearTimeout(stopTimer);
+    stopTimer = null;
   }
 
   function clearLock(){
@@ -3720,126 +3729,113 @@ if(t.layer === 0 && reinforce > 0.55){
     armed = false;
     armedDir = null;
     armedIndex = -1;
+    afterHold = false;
+    stoppedSinceHold = false;
+    if(stopTimer) clearTimeout(stopTimer);
+    stopTimer = null;
   }
 
   function gotoIndex(idx){
     idx = clamp(idx, 0, blocks.length - 1);
     const top = blocks[idx].offsetTop;
+
     isProgrammatic = true;
     disarm();
     clearLock();
+
     container.scrollTo({ top, behavior: 'smooth' });
-    window.setTimeout(() => { isProgrammatic = false; }, PROGRAMMATIC_MS);
+    window.setTimeout(() => {
+      isProgrammatic = false;
+      lastSt = container.scrollTop;
+    }, PROGRAMMATIC_MS);
   }
 
-  // Keep the scroll frozen during the hold window
   container.addEventListener('scroll', () => {
-    if(isProgrammatic) return;
+    if(isProgrammatic) { lastSt = container.scrollTop; return; }
 
+    const t = now();
+    let st = container.scrollTop;
+
+    // During hold: pin scrollTop
     if(locked){
-      const t = now();
       if(t < lockUntil){
-        if(container.scrollTop !== lockTop) container.scrollTop = lockTop;
+        if(st !== lockTop) container.scrollTop = lockTop;
+        lastSt = lockTop;
+        return;
       }else{
-        clearLock(); // remain armed, await next gesture
+        clearLock(); // keep armed, move into "await second gesture"
+        st = container.scrollTop;
+        lastSt = st;
+        return;
       }
     }
-  }, { passive: true });
 
-  function handleIntent(dir){
-    if(isProgrammatic) return false;
+    const dir = st - lastSt;
+    lastSt = st;
 
-    // If we're currently holding, consume intent until the hold expires
-    if(locked){
-      const t = now();
-      if(t < lockUntil) return true;
-      clearLock();
+    // If we've just finished a hold, wait for scrolling to settle before allowing next jump
+    if(afterHold && !stoppedSinceHold){
+      if(Math.abs(dir) < 0.5){
+        if(!stopTimer){
+          stopTimer = window.setTimeout(() => {
+            stoppedSinceHold = true;
+            stopTimer = null;
+          }, STOP_ARM_MS);
+        }
+      }else{
+        // still moving: keep waiting
+        if(stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+      }
     }
 
-    const st = container.scrollTop;
+    // Ignore tiny jitter
+    if(Math.abs(dir) < 0.5) return;
+
     const idx = getActiveIndex(st);
+    const startAt = blockStartTop(idx);
+    const lockAt  = blockEndLockTop(idx);
 
-    if(dir === 'down'){
-      const lockAt = blockEndLockTop(idx);
-      const near = st >= (lockAt - EDGE_PX);
-      if(!near){
-        if(armed && armedDir === 'down') disarm();
-        return false;
-      }
-
-      // First intent at boundary -> hold
-      if(!armed){
+    // If not armed: arm+hold when user tries to move past boundary
+    if(!armed){
+      if(dir > 0 && idx < blocks.length - 1 && st >= (lockAt - EDGE_PX)){
         arm('down', idx);
         setLock(lockAt);
-        return true;
+        lastSt = lockAt;
+        return;
       }
-
-      // Second intent after hold -> advance
-      if(armedDir === 'down'){
-        gotoIndex(Math.min(blocks.length - 1, idx + 1));
-        return true;
-      }
-      return false;
-    }
-
-    if(dir === 'up'){
-      const startAt = blockStartTop(idx);
-      const near = st <= (startAt + EDGE_PX);
-      if(!near){
-        if(armed && armedDir === 'up') disarm();
-        return false;
-      }
-
-      if(!armed){
+      if(dir < 0 && idx > 0 && st <= (startAt + EDGE_PX)){
         arm('up', idx);
         setLock(startAt);
-        return true;
+        lastSt = startAt;
+        return;
       }
-
-      if(armedDir === 'up'){
-        gotoIndex(Math.max(0, idx - 1));
-        return true;
-      }
-      return false;
+      return;
     }
 
-    return false;
-  }
+    // Armed: advance only after user has stopped once since the hold
+    if(afterHold && !stoppedSinceHold) return;
 
-  // Touch: interpret finger motion direction as scroll intent
-  container.addEventListener('touchstart', (e) => {
-    if(!e.touches || !e.touches.length) return;
-    touchY0 = e.touches[0].clientY;
+    if(armedDir === 'down'){
+      // moved away upwards -> cancel
+      if(st < (lockAt - EDGE_PX * 3)) { disarm(); return; }
+      if(dir > 0 && idx < blocks.length - 1 && st > (lockAt + EDGE_PX)){
+        gotoIndex(armedIndex + 1);
+      }else if(dir < 0){
+        disarm();
+      }
+      return;
+    }
+
+    if(armedDir === 'up'){
+      if(st > (startAt + EDGE_PX * 3)) { disarm(); return; }
+      if(dir < 0 && idx > 0 && st < (startAt - EDGE_PX)){
+        gotoIndex(armedIndex - 1);
+      }else if(dir > 0){
+        disarm();
+      }
+      return;
+    }
   }, { passive: true });
-
-  container.addEventListener('touchmove', (e) => {
-    if(touchY0 == null || isProgrammatic) return;
-    if(!e.touches || !e.touches.length) return;
-
-    const y = e.touches[0].clientY;
-    const dy = y - touchY0;
-
-    if(Math.abs(dy) < GESTURE_PX) return;
-
-    // finger up (dy < 0) => user wants to scroll down
-    const dir = (dy < 0) ? 'down' : 'up';
-    const consumed = handleIntent(dir);
-    if(consumed && e.cancelable) e.preventDefault();
-
-    // update baseline so repeated gestures remain responsive
-    touchY0 = y;
-  }, { passive: false });
-
-  container.addEventListener('touchend', () => { touchY0 = null; }, { passive: true });
-  container.addEventListener('touchcancel', () => { touchY0 = null; }, { passive: true });
-
-  // Wheel: for devices that emit wheel events
-  container.addEventListener('wheel', (e) => {
-    const dir = (e.deltaY > 0) ? 'down' : (e.deltaY < 0 ? 'up' : null);
-    if(!dir) return;
-    const consumed = handleIntent(dir);
-    if(consumed && e.cancelable) e.preventDefault();
-  }, { passive: false });
 
 })();
 </script>
