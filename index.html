@@ -274,31 +274,7 @@
       }
     }
 
-  
-    /* Mobile nav (CSS fallback): checkbox-driven open/close (more reliable on iOS) */
-    .nav-state{
-      position: fixed;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
-      left: -9999px;
-      top: -9999px;
-    }
-    .nav-backdrop{
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,.55);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .18s ease;
-      z-index: 9998; /* below panel (10000) and header (9999) */
-      -webkit-tap-highlight-color: transparent;
-    }
-    /* Open states: support both JS class and CSS checkbox */
-    .nav-state:checked ~ .nav-backdrop{ opacity: 1; pointer-events: auto; }
-    .nav-state:checked ~ .nav-panel{ transform: translateX(0); }
-</style>
+  </style>
 </head>
 
 <body>
@@ -314,9 +290,9 @@
           <a href="https://www.enricopoli.com/about" data-key="about">ABOUT</a>
         </nav>
 
-        <label class="nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" for="navState" role="button">
+        <button class="nav-toggle" id="navToggle" type="button" aria-label="Open menu" aria-expanded="false">
           MENU
-        </label>
+        </button>
       </div>
     </div>
   </header>
@@ -328,14 +304,8 @@
   </main>
 
 
-  
-
-  <!-- Mobile-nav state (CSS-driven, JS-free) -->
-  <input class="nav-state" type="checkbox" id="navState" aria-hidden="true" />
-  <label class="nav-backdrop" for="navState" aria-hidden="true"></label>
-
-<aside class="nav-panel" id="navPanel" aria-hidden="true">
-    <label class="nav-panel__close" id="navClose" for="navState" role="button">CLOSE</label>
+  <aside class="nav-panel" id="navPanel" aria-hidden="true">
+    <button class="nav-panel__close" id="navClose" type="button">CLOSE</button>
     <a href="/" data-key="xd">XD</a>
     <a href="https://www.enricopoli.com/films" data-key="films">FILMS</a>
     <a href="https://www.enricopoli.com/_-dream-log" data-key="dreamlog">_ DREAM LOG</a>
@@ -347,20 +317,55 @@
     (function(){
       // Active state: XD
       document.querySelectorAll('[data-key="xd"]').forEach(a => a.classList.add('is-active'));
-      // Mobile panel (sync aria only; open/close is CSS-driven via #navState)
+
+      // Mobile panel
       const t = document.getElementById('navToggle');
       const p = document.getElementById('navPanel');
-      const s = document.getElementById('navState');
-      function sync(){
-        const open = !!(s && s.checked);
-        if(p) p.setAttribute('aria-hidden', open ? 'false' : 'true');
-        if(t) t.setAttribute('aria-expanded', open ? 'true' : 'false');
+      const c = document.getElementById('navClose');
+
+      function open(){
+        p.classList.add('is-open');
+        p.setAttribute('aria-hidden','false');
+        t.setAttribute('aria-expanded','true');
       }
-      if(s) s.addEventListener('change', sync);
-      sync();
+      function close(){
+        p.classList.remove('is-open');
+        p.setAttribute('aria-hidden','true');
+        t.setAttribute('aria-expanded','false');
+      }
+      let touchUsed = false;
+      function toggle(e){
+        if(e && e.type === 'touchstart'){
+          e.preventDefault();
+          touchUsed = true;
+        } else if(e && e.type === 'click' && touchUsed){
+          touchUsed = false;
+          return; // skip ghost click after touch
+        }
+        (p.classList.contains('is-open') ? close() : open());
+      }
+      function handleClose(e){
+        if(e && e.type === 'touchstart'){
+          e.preventDefault();
+          touchUsed = true;
+        } else if(e && e.type === 'click' && touchUsed){
+          touchUsed = false;
+          return;
+        }
+        close();
+      }
+      if(t){
+        t.addEventListener('click', toggle);
+        t.addEventListener('touchstart', toggle, {passive:false});
+      }
+      if(c){
+        c.addEventListener('click', handleClose);
+        c.addEventListener('touchstart', handleClose, {passive:false});
+      }
+      document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') close(); });
+    
 
       /* ----------------------------------------------------------
-
          Floating link drift (subtle, clickable)
       ----------------------------------------------------------- */
       (function(){
