@@ -3639,12 +3639,12 @@ if(t.layer === 0 && reinforce > 0.55){
 
 <script>
 /* ----------------------------------------------------------
-   // MOBILE SOFT PAGING START
-   Mobile-only “soft paging” between blocks inside .snap-container (NO CSS SNAP)
-
-   Why this works on iOS:
-   - iOS Safari often emits NO scroll events when the user "pushes" past a boundary (rubber-band).
-   - So we use scroll+rAF for normal movement AND touchmove as an *intent* signal at boundaries.
+   MOBILE SOFT-PAGING BETWEEN BLOCKS (NO CSS SNAP)
+   Behavior (mobile-only):
+   - When the user tries to scroll past the end/start of a block, we "hold" briefly.
+   - After the hold, the user must scroll again; then we smooth-scroll to the next/prev block top.
+   Notes:
+   - Uses scroll-position + direction (works reliably on iOS where touch events can be inconsistent in scroll containers).
 ----------------------------------------------------------- */
 (function(){
   const mq = window.matchMedia ? window.matchMedia('(max-width: 820px)') : {matches:false};
@@ -3653,86 +3653,47 @@ if(t.layer === 0 && reinforce > 0.55){
   const container = document.querySelector('.snap-container');
   if(!container) return;
 
-  // Ensure canvases do not hijack vertical scrolling on iOS.
-  // (No layout change; just touch-action hint.)
-  try{ container.querySelectorAll('canvas').forEach(c => { c.style.touchAction = 'pan-y'; }); }catch(e){}
-
-  // Prefer explicit page_block_* sections if present; otherwise fall back to all top-level snap blocks.
-  let blocks = Array.from(container.querySelectorAll('section[id^="page_block_"]'));
-  if(!blocks.length) blocks = Array.from(container.querySelectorAll('section.snap-block'));
+  const blocks = Array.from(container.children).filter(el => el && el.classList && el.classList.contains('snap-block'));
   if(blocks.length < 2) return;
 
-  const EDGE_PX = 36;               // boundary threshold (24–48px)
-  const HOLD_MS = 780;              // 600–900ms “brake”
-  const SECOND_WINDOW_MS = 900;     // time window for second intent after hold
-  const HYSTERESIS_MS = 500;        // ignore boundary detection after paging
-  const PROGRAMMATIC_MS = 1200;     // ignore scroll handler during smooth scroll
+  const HOLD_MS = 850;         // brake duration at boundaries
+  const EDGE_PX = 28;          // boundary proximity threshold
+  const STOP_ARM_MS = 140;     // how long scroll must be still after hold before we accept "second gesture"
+  const PROGRAMMATIC_MS = 950; // smooth scroll settle time
 
-  const prefersReduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-
-  const now = () => (window.performance && performance.now) ? performance.now() : Date.now();
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-  // State machine: 'idle' | 'armed' | 'paging'
-  let mode = 'idle';
-  let armedDir = null;
+  let armed = false;
+  let armedDir = null;   // 'down' | 'up'
   let armedIndex = -1;
-  let armedGestureAtArm = 0;
 
-  let holdUntil = 0;
-  let armExpires = 0;
+  let locked = false;
+  let lockUntil = 0;
   let lockTop = 0;
-  let hysteresisUntil = 0;
 
-  let pagingUntil = 0;
-  let pagingTarget = null;
+  let afterHold = false;
+  let stopTimer = null;
+  let stoppedSinceHold = false;
 
+  let isProgrammatic = false;
   let lastSt = container.scrollTop;
-  let rafPending = false;
 
-  // Gesture tracking: a “second intent” is a NEW touch sequence after the hold.
-  let gestureId = 0;
-  let currentGesture = 0;
-  container.addEventListener('touchstart', () => {
-    gestureId += 1;
-    currentGesture = gestureId;
-  }, {passive:true});
+  function now(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
 
-  function getActiveIndex(){
-    const cr = container.getBoundingClientRect();
-    const h = container.clientHeight || (cr.bottom - cr.top);
-    const mid = h * 0.5;
-
-    // 1) Prefer the block that contains the container's midline
+  function getActiveIndex(st){
+    const mid = st + container.clientHeight * 0.5;
+    let bestI = 0, bestD = Infinity;
     for(let i=0;i<blocks.length;i++){
-      const r = blocks[i].getBoundingClientRect();
-      const top = r.top - cr.top;
-      const bottom = r.bottom - cr.top;
-      if(top <= mid && bottom >= mid) return i;
+      const b = blocks[i];
+      const bm = b.offsetTop + b.offsetHeight * 0.5;
+      const d = Math.abs(bm - mid);
+      if(d < bestD){ bestD = d; bestI = i; }
     }
-
-    // 2) Fallback: closest block top to container top
-    let best = 0, bestD = Infinity;
-    for(let i=0;i<blocks.length;i++){
-      const r = blocks[i].getBoundingClientRect();
-      const top = r.top - cr.top;
-      const d = Math.abs(top);
-      if(d < bestD){ bestD = d; best = i; }
-    }
-    return best;
+    return bestI;
   }
 
-  function getRelRect(i){
-    const cr = container.getBoundingClientRect();
-    const r = blocks[i].getBoundingClientRect();
-    return {
-      top: r.top - cr.top,
-      bottom: r.bottom - cr.top,
-      contH: container.clientHeight || (cr.bottom - cr.top)
-    };
+  function blockStartTop(i){
+    return blocks[i].offsetTop;
   }
-
-  function blockStartTop(i){ return blocks[i].offsetTop; }
 
   function blockEndLockTop(i){
     const b = blocks[i];
@@ -3740,175 +3701,508 @@ if(t.layer === 0 && reinforce > 0.55){
     return Math.max(b.offsetTop, end - container.clientHeight);
   }
 
+  function setLock(top){
+    locked = true;
+    lockUntil = now() + HOLD_MS;
+    lockTop = clamp(top, 0, Math.max(0, container.scrollHeight - container.clientHeight));
+    container.scrollTop = lockTop;
+
+    // require scroll to come to rest after the hold before accepting the next gesture
+    afterHold = true;
+    stoppedSinceHold = false;
+    if(stopTimer) clearTimeout(stopTimer);
+    stopTimer = null;
+  }
+
+  function clearLock(){
+    locked = false;
+    lockUntil = 0;
+  }
+
+  function arm(dir, idx){
+    armed = true;
+    armedDir = dir;
+    armedIndex = idx;
+  }
+
   function disarm(){
-    mode = 'idle';
+    armed = false;
     armedDir = null;
     armedIndex = -1;
-    armedGestureAtArm = 0;
-    holdUntil = 0;
-    armExpires = 0;
+    afterHold = false;
+    stoppedSinceHold = false;
+    if(stopTimer) clearTimeout(stopTimer);
+    stopTimer = null;
   }
 
-  function beginPaging(targetTop){
-    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    const top = clamp(targetTop, 0, maxTop);
+  function gotoIndex(idx){
+    idx = clamp(idx, 0, blocks.length - 1);
+    const top = blocks[idx].offsetTop;
 
-    mode = 'paging';
-    pagingUntil = now() + PROGRAMMATIC_MS;
-    pagingTarget = top;
+    isProgrammatic = true;
+    disarm();
+    clearLock();
 
-    container.scrollTo({ top, behavior: prefersReduced ? 'auto' : 'smooth' });
+    container.scrollTo({ top, behavior: 'smooth' });
+    window.setTimeout(() => {
+      isProgrammatic = false;
+      lastSt = container.scrollTop;
+    }, PROGRAMMATIC_MS);
   }
 
-  function tick(forcedDir, touchEvent){
+  container.addEventListener('scroll', () => {
+    if(isProgrammatic) { lastSt = container.scrollTop; return; }
+
     const t = now();
     let st = container.scrollTop;
 
-    // direction: from scroll delta OR forced (touch intent)
-    const delta = st - lastSt;
-    let dir = forcedDir || (delta > 0.5 ? 'down' : (delta < -0.5 ? 'up' : null));
-
-    // Programmatic scroll: ignore boundary logic
-    if(mode === 'paging'){
-      if(t > pagingUntil || (pagingTarget != null && Math.abs(st - pagingTarget) <= 2)){
-        mode = 'idle';
-        hysteresisUntil = t + HYSTERESIS_MS;
-        pagingTarget = null;
-        lastSt = container.scrollTop;
+    // During hold: pin scrollTop
+    if(locked){
+      if(t < lockUntil){
+        if(st !== lockTop) container.scrollTop = lockTop;
+        lastSt = lockTop;
+        return;
       }else{
+        clearLock(); // keep armed, move into "await second gesture"
+        st = container.scrollTop;
         lastSt = st;
+        return;
+      }
+    }
+
+    const dir = st - lastSt;
+    lastSt = st;
+
+    // If we've just finished a hold, wait for scrolling to settle before allowing next jump
+    if(afterHold && !stoppedSinceHold){
+      if(Math.abs(dir) < 0.5){
+        if(!stopTimer){
+          stopTimer = window.setTimeout(() => {
+            stoppedSinceHold = true;
+            stopTimer = null;
+          }, STOP_ARM_MS);
+        }
+      }else{
+        // still moving: keep waiting
+        if(stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+      }
+    }
+
+    // Ignore tiny jitter
+    if(Math.abs(dir) < 0.5) return;
+
+    const idx = getActiveIndex(st);
+    const startAt = blockStartTop(idx);
+    const lockAt  = blockEndLockTop(idx);
+
+    // If not armed: arm+hold when user tries to move past boundary
+    if(!armed){
+      if(dir > 0 && idx < blocks.length - 1 && st >= (lockAt - EDGE_PX)){
+        arm('down', idx);
+        setLock(lockAt);
+        lastSt = lockAt;
+        return;
+      }
+      if(dir < 0 && idx > 0 && st <= (startAt + EDGE_PX)){
+        arm('up', idx);
+        setLock(startAt);
+        lastSt = startAt;
+        return;
       }
       return;
     }
 
-    // Hysteresis after paging
-    if(t < hysteresisUntil){
-      lastSt = st;
+    // Armed: advance only after user has stopped once since the hold
+    if(afterHold && !stoppedSinceHold) return;
+
+    if(armedDir === 'down'){
+      // moved away upwards -> cancel
+      if(st < (lockAt - EDGE_PX * 3)) { disarm(); return; }
+      if(dir > 0 && idx < blocks.length - 1 && st > (lockAt + EDGE_PX)){
+        gotoIndex(armedIndex + 1);
+      }else if(dir < 0){
+        disarm();
+      }
       return;
     }
 
-    const idx = getActiveIndex();
-    const rr = getRelRect(idx);
-
-    const atTop = Math.abs(rr.top) <= EDGE_PX;
-    const atBottom = Math.abs(rr.bottom - rr.contH) <= EDGE_PX;
-
-    const hasPrev = idx > 0;
-    const hasNext = idx < blocks.length - 1;
-
-    // During hold: pin scrollTop AND (if touchmove) prevent rubber-band.
-    if(mode === 'armed' && t < holdUntil){
-      if(container.scrollTop !== lockTop) container.scrollTop = lockTop;
-      if(touchEvent && touchEvent.cancelable && dir === armedDir) touchEvent.preventDefault();
-      lastSt = lockTop;
+    if(armedDir === 'up'){
+      if(st > (startAt + EDGE_PX * 3)) { disarm(); return; }
+      if(dir < 0 && idx > 0 && st < (startAt - EDGE_PX)){
+        gotoIndex(armedIndex - 1);
+      }else if(dir > 0){
+        disarm();
+      }
       return;
     }
+  }, { passive: true });
 
-    // Armed, post-hold: require a NEW gesture in same direction within window.
-    if(mode === 'armed'){
-      if(t > armExpires){ disarm(); lastSt = st; return; }
+})();
+</script>
 
-      // Cancel if user reverses away
-      if(armedDir === 'down' && dir === 'up'){ disarm(); lastSt = st; return; }
-      if(armedDir === 'up' && dir === 'down'){ disarm(); lastSt = st; return; }
 
-      // Same gesture keeps resisting toward crossing boundary
-      if(currentGesture === armedGestureAtArm && dir === armedDir){
-        if(container.scrollTop !== lockTop) container.scrollTop = lockTop;
-        if(touchEvent && touchEvent.cancelable) touchEvent.preventDefault();
-        lastSt = lockTop;
+
+<script>
+/* ----------------------------------------------------------
+   // MOBILE SOFT PAGING START
+   Mobile-only “soft paging” between blocks inside the *actual* scroll container.
+   - Desktop unchanged.
+   - Primary signal: container scroll + rAF
+   - iOS intent signal at boundaries: touchstart/touchmove (NOT wheel)
+----------------------------------------------------------- */
+(function(){
+  function ready(fn){
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, {once:true});
+    else fn();
+  }
+
+  ready(function(){
+    var mq = window.matchMedia && window.matchMedia('(max-width: 820px)');
+    if(!mq || !mq.matches) return;
+
+    // --------------------------
+    // Find the real scroller (mobile can differ depending on CSS/layout)
+    // --------------------------
+    function isScrollable(el){
+      if(!el) return false;
+      var cs = getComputedStyle(el);
+      if(!cs) return false;
+      var oy = cs.overflowY;
+      if(!(oy === 'auto' || oy === 'scroll')) return false;
+      return (el.scrollHeight - el.clientHeight) > 8;
+    }
+
+    function findScroller(){
+      var direct = document.querySelector('.snap-container');
+      if(direct && isScrollable(direct)) return direct;
+
+      // Prefer an ancestor of a snap-block.
+      var firstBlock = document.querySelector('section.snap-block');
+      if(firstBlock){
+        var p = firstBlock.parentElement;
+        while(p && p !== document.body){
+          if(isScrollable(p)) return p;
+          p = p.parentElement;
+        }
+      }
+
+      // Fallback: best candidate that contains snap blocks.
+      var blocks = Array.prototype.slice.call(document.querySelectorAll('section.snap-block'));
+      var candidates = Array.prototype.slice.call(document.querySelectorAll('main, div'));
+      var best = null, bestScore = -1;
+      for(var i=0;i<candidates.length;i++){
+        var el = candidates[i];
+        if(!isScrollable(el)) continue;
+        // must contain at least 2 snap blocks
+        var count = 0;
+        for(var j=0;j<blocks.length;j++){
+          if(el.contains(blocks[j])) count++;
+          if(count >= 2) break;
+        }
+        if(count < 2) continue;
+        var score = (el.scrollHeight - el.clientHeight);
+        if(score > bestScore){ bestScore = score; best = el; }
+      }
+      return best || direct;
+    }
+
+    var container = findScroller();
+    if(!container) return;
+
+    // Blocks: use existing structure (your file uses .snap-block sections)
+    var blocks = Array.prototype.slice.call(container.querySelectorAll('section.snap-block'));
+    if(blocks.length < 2) return;
+
+    // Ensure vertical scroll isn't blocked by canvases (mobile only)
+    Array.prototype.slice.call(container.querySelectorAll('canvas')).forEach(function(cv){
+      try{ cv.style.touchAction = 'pan-y'; }catch(e){}
+    });
+
+    var prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // Tunables
+    var THRESH = 40;                // px: boundary zone
+    var LOCK_PEEK = 10;             // px: show a tiny "peek" past boundary while braking
+    var HOLD_MS = 820;              // ms: gentle brake duration
+    var SECOND_WINDOW_MS = 1400;    // ms: accept second intent within this window
+    var POST_PAGE_GUARD_MS = 520;   // ms: hysteresis after paging
+    var PAGE_TIMEOUT_MS = 1200;     // ms: safety unlock if smooth scroll doesn't settle
+
+    var State = { IDLE:'idle', ARMED:'armed', PAGING:'paging' };
+    var state = State.IDLE;
+
+    var lastScrollTop = container.scrollTop;
+    var lastDir = 0;                 // +1 down, -1 up
+
+    var rafPending = false;
+
+    // Touch-derived intent (critical for iOS at boundaries)
+    var gestureId = 0;
+    var touchActive = false;
+    var lastTouchY = 0;
+    var pendingIntentDir = 0;        // set by touchmove
+
+    // Paging control / hysteresis
+    var ignoreUntil = 0;
+    var armed = null;                // {dir, fromIdx, targetIdx, targetTop, lockTop, ts, gestureId}
+    var pagingTimer = null;
+
+    // Cache of block tops (within container) – refreshed on resize and occasionally.
+    var tops = [];
+
+    function now(){ return performance.now(); }
+
+    function measureTops(){
+      var cr = container.getBoundingClientRect();
+      tops = blocks.map(function(b){
+        var r = b.getBoundingClientRect();
+        return (r.top - cr.top) + container.scrollTop;
+      });
+    }
+
+    // Initial measurement + after images load (common in your blocks)
+    measureTops();
+    window.addEventListener('resize', function(){
+      // delay to let Safari settle viewport chrome changes
+      setTimeout(measureTops, 60);
+    }, {passive:true});
+    window.addEventListener('load', function(){
+      setTimeout(measureTops, 60);
+    }, {passive:true});
+
+    // Intersection-based current block (per your requirement), stabilized by scrollTop.
+    function currentIndex(){
+      var cr = container.getBoundingClientRect();
+      var cTop = cr.top, cBot = cr.bottom;
+
+      var bestIdx = 0;
+      var bestInter = -1;
+
+      for(var i=0;i<blocks.length;i++){
+        var br = blocks[i].getBoundingClientRect();
+        var interTop = Math.max(br.top, cTop);
+        var interBot = Math.min(br.bottom, cBot);
+        var interH = Math.max(0, interBot - interTop);
+        if(interH > bestInter){
+          bestInter = interH;
+          bestIdx = i;
+        }
+      }
+
+      // Stabilize using scrollTop thresholds: whichever top we've passed
+      var y = container.scrollTop + THRESH;
+      var idx2 = 0;
+      for(var k=0;k<tops.length;k++){
+        if(y >= tops[k]) idx2 = k;
+      }
+
+      // If near a boundary, trust scrollTop-derived idx to avoid flip-flopping.
+      if(Math.abs(bestIdx - idx2) <= 1) return idx2;
+      return bestIdx;
+    }
+
+    function disarm(){
+      armed = null;
+      state = State.IDLE;
+      pendingIntentDir = 0;
+    }
+
+    function arm(dir, fromIdx, targetIdx, targetTop){
+      state = State.ARMED;
+      armed = {
+        dir: dir,
+        fromIdx: fromIdx,
+        targetIdx: targetIdx,
+        targetTop: targetTop,
+        ts: now(),
+        gestureId: gestureId,
+        lockTop: Math.max(0, targetTop - (dir > 0 ? LOCK_PEEK : -LOCK_PEEK))
+      };
+      // Apply immediate brake by pinning close to the boundary.
+      container.scrollTop = armed.lockTop;
+      lastScrollTop = container.scrollTop;
+    }
+
+    function startPaging(targetTop){
+      state = State.PAGING;
+
+      ignoreUntil = now() + POST_PAGE_GUARD_MS;
+
+      var behavior = prefersReduced ? 'auto' : 'smooth';
+      container.scrollTo({ top: targetTop, behavior: behavior });
+
+      // Safety unlock
+      clearTimeout(pagingTimer);
+      pagingTimer = setTimeout(function(){
+        state = State.IDLE;
+        armed = null;
+        lastScrollTop = container.scrollTop;
+      }, PAGE_TIMEOUT_MS);
+    }
+
+    function requestTick(){
+      if(rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(tick);
+    }
+
+    function tick(){
+      rafPending = false;
+
+      if(state === State.PAGING){
+        lastScrollTop = container.scrollTop;
+        pendingIntentDir = 0;
         return;
       }
 
-      const isSecondGesture = currentGesture !== armedGestureAtArm;
-
-      if(isSecondGesture && dir === armedDir){
-        if(armedDir === 'down' && hasNext && atBottom){ beginPaging(blockStartTop(idx + 1)); lastSt = container.scrollTop; return; }
-        if(armedDir === 'up' && hasPrev && atTop){ beginPaging(blockStartTop(idx - 1)); lastSt = container.scrollTop; return; }
+      if(now() < ignoreUntil){
+        lastScrollTop = container.scrollTop;
+        pendingIntentDir = 0;
+        return;
       }
 
-      lastSt = st;
-      return;
+      // Keep measurements reasonably fresh if layout shifts while scrolling
+      // (cheap check: if last block top is behind scrollTop by a lot, remeasure)
+      if(tops.length && Math.abs((tops[0] || 0) - container.scrollTop) > 2000){
+        measureTops();
+      }
+
+      var st = container.scrollTop;
+      var delta = st - lastScrollTop;
+      if(Math.abs(delta) > 0.5) lastDir = delta > 0 ? 1 : -1;
+      lastScrollTop = st;
+
+      var idx = currentIndex();
+      var intentDir = pendingIntentDir || lastDir;
+
+      // --------------------------
+      // Armed state: hold, then require second gesture
+      // --------------------------
+      if(state === State.ARMED && armed){
+        var elapsed = now() - armed.ts;
+
+        // During hold: pin and ignore momentum
+        if(elapsed < HOLD_MS){
+          container.scrollTop = armed.lockTop;
+          lastScrollTop = container.scrollTop;
+          return;
+        }
+
+        // After hold: accept a NEW gesture in same direction within window
+        if(gestureId > armed.gestureId && (pendingIntentDir === armed.dir || lastDir === armed.dir)){
+          startPaging(armed.targetTop);
+          pendingIntentDir = 0;
+          return;
+        }
+
+        if(elapsed > SECOND_WINDOW_MS){
+          disarm();
+        }
+        return;
+      }
+
+      // --------------------------
+      // Idle: detect boundary entry *with intent* and arm
+      // --------------------------
+      if(!intentDir) return;
+
+      // Down boundary = next block's top
+      if(intentDir > 0 && idx < blocks.length - 1){
+        var nextTop = tops[idx + 1];
+        // arm only when user is trying to pass into the next block start zone
+        if(st >= (nextTop - THRESH)){
+          arm(+1, idx, idx + 1, nextTop);
+          pendingIntentDir = 0;
+          return;
+        }
+      }
+
+      // Up boundary = current block's top (go to previous start)
+      if(intentDir < 0 && idx > 0){
+        var curTop = tops[idx];
+        if(st <= (curTop + THRESH)){
+          arm(-1, idx, idx - 1, tops[idx - 1]);
+          pendingIntentDir = 0;
+          return;
+        }
+      }
+
+      pendingIntentDir = 0;
     }
 
-    // Idle: arm only when user pushes past a boundary and there is a neighbor
-    if(!dir){ lastSt = st; return; }
+    // Scroll handler (primary)
+    container.addEventListener('scroll', requestTick, {passive:true});
 
-    if(dir === 'down' && hasNext && atBottom){
-      mode = 'armed';
-      armedDir = 'down';
-      armedIndex = idx;
-      armedGestureAtArm = currentGesture;
+    // Touch handlers (intent detection on iOS)
+    container.addEventListener('touchstart', function(e){
+      gestureId++;
+      touchActive = true;
+      pendingIntentDir = 0;
+      lastTouchY = (e.touches && e.touches[0]) ? e.touches[0].clientY : lastTouchY;
+    }, {passive:true});
 
-      lockTop = clamp(blockEndLockTop(idx), 0, Math.max(0, container.scrollHeight - container.clientHeight));
-      holdUntil = t + HOLD_MS;
-      armExpires = holdUntil + SECOND_WINDOW_MS;
+    container.addEventListener('touchend', function(){
+      touchActive = false;
+      pendingIntentDir = 0;
+    }, {passive:true});
 
-      container.scrollTop = lockTop;
-      if(touchEvent && touchEvent.cancelable) touchEvent.preventDefault();
-      lastSt = lockTop;
-      return;
-    }
+    container.addEventListener('touchcancel', function(){
+      touchActive = false;
+      pendingIntentDir = 0;
+    }, {passive:true});
 
-    if(dir === 'up' && hasPrev && atTop){
-      mode = 'armed';
-      armedDir = 'up';
-      armedIndex = idx;
-      armedGestureAtArm = currentGesture;
+    // NOTE: non-passive so we can preventDefault only while "holding"
+    container.addEventListener('touchmove', function(e){
+      if(!touchActive) return;
 
-      lockTop = clamp(blockStartTop(idx), 0, Math.max(0, container.scrollHeight - container.clientHeight));
-      holdUntil = t + HOLD_MS;
-      armExpires = holdUntil + SECOND_WINDOW_MS;
+      var y = (e.touches && e.touches[0]) ? e.touches[0].clientY : lastTouchY;
+      var dy = y - lastTouchY;
+      lastTouchY = y;
 
-      container.scrollTop = lockTop;
-      if(touchEvent && touchEvent.cancelable) touchEvent.preventDefault();
-      lastSt = lockTop;
-      return;
-    }
+      // finger up (dy<0) => content down (dir=+1)
+      // finger down (dy>0) => content up (dir=-1)
+      var dir = dy < -2 ? +1 : (dy > 2 ? -1 : 0);
+      if(!dir) return;
 
-    lastSt = st;
-  }
+      // If armed and within hold window, pin and prevent rubber-band
+      if(state === State.ARMED && armed){
+        var elapsed = now() - armed.ts;
+        if(elapsed < HOLD_MS){
+          container.scrollTop = armed.lockTop;
+          e.preventDefault();
+          pendingIntentDir = dir;
+          requestTick();
+          return;
+        }
+      }
 
-  // Scroll-driven updates (normal scrolling)
-  container.addEventListener('scroll', () => {
-    if(rafPending) return;
-    rafPending = true;
-    requestAnimationFrame(() => { rafPending = false; tick(null, null); });
-  }, { passive: true });
+      // Otherwise only record intent when close to a boundary zone
+      var idx = currentIndex();
+      var st = container.scrollTop;
 
-  // Touch-driven intent at boundaries (covers iOS rubber-band where scrollTop doesn't change → no scroll event)
-  let lastTouchY = null;
-  container.addEventListener('touchstart', (e) => {
-    lastTouchY = (e.touches && e.touches[0]) ? e.touches[0].clientY : null;
-  }, { passive: true });
+      if(dir > 0 && idx < blocks.length - 1){
+        var nextTop = tops[idx + 1];
+        if(st >= (nextTop - THRESH)){
+          pendingIntentDir = +1;
+          requestTick();
+        }
+      } else if(dir < 0 && idx > 0){
+        var curTop = tops[idx];
+        if(st <= (curTop + THRESH)){
+          pendingIntentDir = -1;
+          requestTick();
+        }
+      }
+    }, {passive:false});
 
-  container.addEventListener('touchmove', (e) => {
-    if(lastTouchY == null || !(e.touches && e.touches[0])) return;
-    const y = e.touches[0].clientY;
-    const dy = y - lastTouchY;
-    lastTouchY = y;
-
-    // finger up (dy < 0) means scrolling down
-    const dir = dy < -8 ? 'down' : (dy > 8 ? 'up' : null);
-    if(!dir) return;
-
-    tick(dir, e);
-  }, { passive: false });
-
-  container.addEventListener('touchend', () => { lastTouchY = null; }, { passive: true });
-  container.addEventListener('touchcancel', () => { lastTouchY = null; }, { passive: true });
-
-  // Keep blocks list fresh on resize/orientation/font reflow.
-  window.addEventListener('resize', () => {
-    let b = Array.from(container.querySelectorAll('section[id^="page_block_"]'));
-    if(!b.length) b = Array.from(container.querySelectorAll('section.snap-block'));
-    if(b.length >= 2) blocks = b;
-  }, { passive: true });
-
-})(); 
-// MOBILE SOFT PAGING END
+    // Kick once to initialize direction/idx without locking anything
+    requestTick();
+  });
+})();
 </script>
-
+/* ----------------------------------------------------------
+   // MOBILE SOFT PAGING END
+----------------------------------------------------------- */
 
 </body>
 </html>
