@@ -1462,124 +1462,118 @@ AFRAME.registerComponent('sphere-dome-audio', {
   });
 
   // --- Toggle component: animates glass + base together ------------------------
-  AFRAME.registerComponent('capsule-split-toggle', {
-    schema: {
-      leftGlass:  { type: 'selector' },
-      rightGlass: { type: 'selector' },
-      leftBase:   { type: 'selector' },
-      rightBase:  { type: 'selector' },
-      openGlassX: { type: 'number', default: 0.75 },
-      openBaseX:  { type: 'number', default: 0.55 },
-      tuckY:      { type: 'number', default: 0.06 },
-      dur:        { type: 'number', default: 650 }
-    },
-    init: function () {
-      this._open = false;
-      this._anim = null;
-      this._synced = false;
+  // --- Toggle component: animates halves (glass+base) as unified modules -----------
+AFRAME.registerComponent('capsule-split-toggle', {
+  schema: {
+    leftHalf:   { type: 'selector' },  // group containing baseL + glassL
+    rightHalf:  { type: 'selector' },  // group containing baseR + glassR
+    leftGlass:  { type: 'selector' },  // for tuckY
+    rightGlass: { type: 'selector' },  // for tuckY
+    openX:      { type: 'number', default: 0.75 }, // lateral travel for each half
+    tuckY:      { type: 'number', default: 0.06 }, // glass-only downward tuck
+    dur:        { type: 'number', default: 650 }
+  },
+  init: function () {
+    this._open = false;
+    this._anim = null;
+    this._synced = false;
 
-      this._closed = {
-        lg: new THREE.Vector3(),
-        rg: new THREE.Vector3(),
-        lb: new THREE.Vector3(),
-        rb: new THREE.Vector3()
-      };
+    this._closed = {
+      lh: new THREE.Vector3(),
+      rh: new THREE.Vector3(),
+      lg: new THREE.Vector3(),
+      rg: new THREE.Vector3()
+    };
 
-      const isTyping = () => {
-        const a = document.activeElement;
-        return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
-      };
+    const isTyping = () => {
+      const a = document.activeElement;
+      return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
+    };
 
-      this._onKeyDown = (e) => {
-        if (e.repeat) return;
-        const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
-        if (!isO) return;
-        if (e.defaultPrevented) return;
-        if (isTyping()) return;
-        if (e.ctrlKey || e.metaKey || e.altKey) return;
-        e.preventDefault();
-        e.stopPropagation();
-        this.toggle();
-      };
+    this._onKeyDown = (e) => {
+      if (e.repeat) return;
+      const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
+      if (!isO) return;
+      if (e.defaultPrevented) return;
+      if (isTyping()) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggle();
+    };
 
-      window.addEventListener('keydown', this._onKeyDown, { capture: true });
-    },
-    remove: function () {
-      window.removeEventListener('keydown', this._onKeyDown, { capture: true });
-    },
-    _captureClosedOnce: function () {
-      if (this._synced) return;
-      const d = this.data;
-      if (!d.leftGlass || !d.rightGlass || !d.leftBase || !d.rightBase) return;
+    window.addEventListener('keydown', this._onKeyDown, { capture: true });
+  },
+  remove: function () {
+    window.removeEventListener('keydown', this._onKeyDown, { capture: true });
+  },
+  _captureClosedOnce: function () {
+    if (this._synced) return;
+    const d = this.data;
+    if (!d.leftHalf || !d.rightHalf || !d.leftGlass || !d.rightGlass) return;
 
-      this._closed.lg.copy(d.leftGlass.object3D.position);
-      this._closed.rg.copy(d.rightGlass.object3D.position);
-      this._closed.lb.copy(d.leftBase.object3D.position);
-      this._closed.rb.copy(d.rightBase.object3D.position);
+    this._closed.lh.copy(d.leftHalf.object3D.position);
+    this._closed.rh.copy(d.rightHalf.object3D.position);
+    this._closed.lg.copy(d.leftGlass.object3D.position);
+    this._closed.rg.copy(d.rightGlass.object3D.position);
 
-      // Force deterministic closed start
-      d.leftGlass.object3D.position.copy(this._closed.lg);
-      d.rightGlass.object3D.position.copy(this._closed.rg);
-      d.leftBase.object3D.position.copy(this._closed.lb);
-      d.rightBase.object3D.position.copy(this._closed.rb);
+    d.leftHalf.object3D.position.copy(this._closed.lh);
+    d.rightHalf.object3D.position.copy(this._closed.rh);
+    d.leftGlass.object3D.position.copy(this._closed.lg);
+    d.rightGlass.object3D.position.copy(this._closed.rg);
 
-      this._synced = true;
-    },
-    toggle: function () {
-      const d = this.data;
-      if (!d.leftGlass || !d.rightGlass || !d.leftBase || !d.rightBase) return;
+    this._synced = true;
+  },
+  toggle: function () {
+    const d = this.data;
+    if (!d.leftHalf || !d.rightHalf || !d.leftGlass || !d.rightGlass) return;
 
-      this._captureClosedOnce();
+    this._captureClosedOnce();
 
-      const from = {
-        lg: d.leftGlass.object3D.position.clone(),
-        rg: d.rightGlass.object3D.position.clone(),
-        lb: d.leftBase.object3D.position.clone(),
-        rb: d.rightBase.object3D.position.clone()
-      };
+    const from = {
+      lh: d.leftHalf.object3D.position.clone(),
+      rh: d.rightHalf.object3D.position.clone(),
+      lg: d.leftGlass.object3D.position.clone(),
+      rg: d.rightGlass.object3D.position.clone()
+    };
 
-      this._open = !this._open;
+    this._open = !this._open;
 
-      const gx = Math.max(0.0, d.openGlassX);
-      const bx = Math.max(0.0, d.openBaseX);
-      const ty = Math.max(0.0, d.tuckY);
+    const ox = Math.max(0.0, d.openX);
+    const ty = Math.max(0.0, d.tuckY);
 
-      const to = {
-        lg: this._open ? new THREE.Vector3(this._closed.lg.x - gx, this._closed.lg.y - ty, this._closed.lg.z) : this._closed.lg.clone(),
-        rg: this._open ? new THREE.Vector3(this._closed.rg.x + gx, this._closed.rg.y - ty, this._closed.rg.z) : this._closed.rg.clone(),
-        lb: this._open ? new THREE.Vector3(this._closed.lb.x - bx, this._closed.lb.y,      this._closed.lb.z) : this._closed.lb.clone(),
-        rb: this._open ? new THREE.Vector3(this._closed.rb.x + bx, this._closed.rb.y,      this._closed.rb.z) : this._closed.rb.clone()
-      };
+    const to = {
+      lh: this._open ? new THREE.Vector3(this._closed.lh.x - ox, this._closed.lh.y,       this._closed.lh.z) : this._closed.lh.clone(),
+      rh: this._open ? new THREE.Vector3(this._closed.rh.x + ox, this._closed.rh.y,       this._closed.rh.z) : this._closed.rh.clone(),
+      lg: this._open ? new THREE.Vector3(this._closed.lg.x,      this._closed.lg.y - ty, this._closed.lg.z) : this._closed.lg.clone(),
+      rg: this._open ? new THREE.Vector3(this._closed.rg.x,      this._closed.rg.y - ty, this._closed.rg.z) : this._closed.rg.clone()
+    };
 
-      this._anim = {
-        t0: performance.now(),
-        dur: Math.max(120, d.dur),
-        from, to
-      };
-    },
-    tick: function () {
-      this._captureClosedOnce();
-      if (!this._anim) return;
+    this._anim = { t0: performance.now(), dur: Math.max(120, d.dur), from, to };
+  },
+  tick: function () {
+    this._captureClosedOnce();
+    if (!this._anim) return;
 
-      const d = this.data;
-      if (!d.leftGlass || !d.rightGlass || !d.leftBase || !d.rightBase) { this._anim = null; return; }
+    const d = this.data;
+    if (!d.leftHalf || !d.rightHalf || !d.leftGlass || !d.rightGlass) { this._anim = null; return; }
 
-      const now = performance.now();
-      const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
-      const s = u < 0.5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3)/2; // easeInOutCubic
+    const now = performance.now();
+    const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
+    const s = u < 0.5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3)/2; // easeInOutCubic
+    const lerp = (a, b) => a + (b - a) * s;
 
-      const lerp = (a, b) => a + (b - a) * s;
+    const A = this._anim.from, B = this._anim.to;
 
-      const A = this._anim.from, B = this._anim.to;
+    d.leftHalf.object3D.position.set(lerp(A.lh.x, B.lh.x), lerp(A.lh.y, B.lh.y), lerp(A.lh.z, B.lh.z));
+    d.rightHalf.object3D.position.set(lerp(A.rh.x, B.rh.x), lerp(A.rh.y, B.rh.y), lerp(A.rh.z, B.rh.z));
+    d.leftGlass.object3D.position.set(lerp(A.lg.x, B.lg.x), lerp(A.lg.y, B.lg.y), lerp(A.lg.z, B.lg.z));
+    d.rightGlass.object3D.position.set(lerp(A.rg.x, B.rg.x), lerp(A.rg.y, B.rg.y), lerp(A.rg.z, B.rg.z));
 
-      d.leftGlass.object3D.position.set(lerp(A.lg.x, B.lg.x), lerp(A.lg.y, B.lg.y), lerp(A.lg.z, B.lg.z));
-      d.rightGlass.object3D.position.set(lerp(A.rg.x, B.rg.x), lerp(A.rg.y, B.rg.y), lerp(A.rg.z, B.rg.z));
-      d.leftBase.object3D.position.set(lerp(A.lb.x, B.lb.x), lerp(A.lb.y, B.lb.y), lerp(A.lb.z, B.lb.z));
-      d.rightBase.object3D.position.set(lerp(A.rb.x, B.rb.x), lerp(A.rb.y, B.rb.y), lerp(A.rb.z, B.rb.z));
+    if (u >= 1) this._anim = null;
+  }
+});
 
-      if (u >= 1) this._anim = null;
-    }
-  });
 })();
 </script>
 
@@ -16822,61 +16816,61 @@ AFRAME.registerComponent('ion-wind-field', {
          - Entry side faces +Z (toward the mercury pool).
          ========================================================= -->
     <a-entity id="capsuleRig" position="5 0 35.5" rotation="0 0 0">
-      <!-- Sliding base halves (rounded, extruded ring segments; elevator-door metal material) -->
-      <a-entity id="capsuleBaseL"
-                class="collider"
-                position="0 0.06 0.00"
-                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-                procedural-capsule-base-half="side: L; rOuter: 1.65; rInner: 1.22; height: 0.12; segments: 128"
-                shadow="cast:false; receive:true"></a-entity>
 
-      <a-entity id="capsuleBaseR"
-                class="collider"
-                position="0 0.06 0.00"
-                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-                procedural-capsule-base-half="side: R; rOuter: 1.65; rInner: 1.22; height: 0.12; segments: 128"
-                shadow="cast:false; receive:true"></a-entity>
+<!-- Inner deck (fixed, walkable) -->
+<a-cylinder id="capsuleInnerDeck"
+            class="collider"
+            radius="1.18" height="0.10"
+            position="0 0.05 0.00"
+            material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
+            shadow="cast:false; receive:true"></a-cylinder>
 
-      <!-- Inner deck (fixed) --><!-- Inner deck (fixed) -->
-      <a-cylinder id="capsuleInnerDeck"
-                  class="collider"
-                  radius="1.18" height="0.10"
-                  position="0 0.05 0.00"
-                  material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
-                  shadow="cast:false; receive:true"></a-cylinder>
+<!-- Inner step (fixed, entry side +Z) -->
+<a-box id="capsuleInnerStep"
+       class="collider"
+       width="1.40" height="0.16" depth="0.80"
+       position="0 0.08 1.25"
+       material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
+       shadow="cast:false; receive:true"></a-box>
 
-      <!-- Inner step (fixed, entry side) -->
-      <a-box id="capsuleInnerStep"
-             class="collider"
-             width="1.40" height="0.16" depth="0.80"
-             position="0 0.08 1.25"
-             material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
-             shadow="cast:false; receive:true"></a-box>
+<!-- LEFT half-module (base + glass move together) -->
+<a-entity id="capsuleHalfL" position="0 0 0">
+  <a-entity id="capsuleBaseL"
+            class="collider"
+            position="0 0.06 0.00"
+            material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+            procedural-capsule-base-half="side: L; rOuter: 1.65; rInner: 1.22; height: 0.12; segments: 128"
+            shadow="cast:false; receive:true"></a-entity>
 
-      <!-- Glass halves (animated) -->
-      <a-entity id="capsuleCore" position="0 0.12 0">
-        <a-entity id="capsuleGlassL" procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
-        <a-entity id="capsuleGlassR" procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
+  <a-entity id="capsuleGlassL"
+            position="0 0.12 0"
+            procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
+</a-entity>
 
-        <!-- subtle seam accent -->
-        <a-entity geometry="primitive: torus; radius: 1.35; radiusTubular: 0.003; segmentsTubular: 16; segmentsRadial: 128"
-                  rotation="90 0 0"
-                  material="shader: standard; color: #0e1116; roughness: 1.0; metalness: 0.0; transparent: true; opacity: 0.32"
-                  position="0 -0.002 0"></a-entity>
-      </a-entity>
+<!-- RIGHT half-module (base + glass move together) -->
+<a-entity id="capsuleHalfR" position="0 0 0">
+  <a-entity id="capsuleBaseR"
+            class="collider"
+            position="0 0.06 0.00"
+            material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+            procedural-capsule-base-half="side: R; rOuter: 1.65; rInner: 1.22; height: 0.12; segments: 128"
+            shadow="cast:false; receive:true"></a-entity>
 
-      <!-- Controller -->
-      <a-entity capsule-split-toggle="
-          leftGlass:  #capsuleGlassL;
-          rightGlass: #capsuleGlassR;
-          leftBase:   #capsuleBaseL;
-          rightBase:  #capsuleBaseR;
-          openGlassX: 0.75;
-          openBaseX:  0.55;
-          tuckY:      0.06;
-          dur:        650"></a-entity>
+  <a-entity id="capsuleGlassR"
+            position="0 0.12 0"
+            procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
+</a-entity>
+
+<!-- Controller (press O) -->
+<a-entity capsule-split-toggle="
+    leftHalf:   #capsuleHalfL;
+    rightHalf:  #capsuleHalfR;
+    leftGlass:  #capsuleGlassL;
+    rightGlass: #capsuleGlassR;
+    openX:      0.75;
+    tuckY:      0.06;
+    dur:        650"></a-entity>
     </a-entity>
-
 <!-- Subtle visible glow so it feels like light is emanating from the pool (does not affect lighting) -->
     <a-circle id="mercury_pool_glow" render-order="value: 4"
               radius="4.10"
