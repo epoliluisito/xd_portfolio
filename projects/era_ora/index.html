@@ -6633,8 +6633,11 @@ function startOverlayVideo(){
     }
     const muted = !audioEnabled;
 
-    if (WAITING) WAITING.muted = muted;
-    if (WALKING) WALKING.muted = muted;
+    // IMPORTANT UX FIX:
+    // If the user enables audio *after* they've already entered the room (e.g. skipped the intro),
+    // we must NOT restart intro video audio in the background. Keep intro videos muted once finished.
+    if (WAITING) WAITING.muted = introFinished ? true : muted;
+    if (WALKING) WALKING.muted = introFinished ? true : muted;
     if (ROOM_MUSIC) ROOM_MUSIC.muted = !audioEnabled;
 
     if (AUDIO_STATUS) {
@@ -6644,8 +6647,15 @@ function startOverlayVideo(){
     }
 
     if (audioEnabled) {
-      const modeWalking = INTRO && INTRO.classList.contains('mode-walking');
-      safePlay(modeWalking ? WALKING : WAITING).catch(() => {});
+      // Only auto-play intro videos while we're still in the intro.
+      if (!introFinished) {
+        const modeWalking = INTRO && INTRO.classList.contains('mode-walking');
+        safePlay(modeWalking ? WALKING : WAITING).catch(() => {});
+      } else {
+        // Defensive: ensure intro media stays silent.
+        safePause(WAITING);
+        safePause(WALKING);
+      }
       if (introFinished) tryStartRoomAudio();
     }
   }
