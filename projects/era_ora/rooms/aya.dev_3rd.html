@@ -1,16 +1,14 @@
 <!DOCTYPE html>
-<!-- v9: fixed duplicate component registrations; moved npc-ground out of mixamo-mat-fix; added data: favicon -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mercury Dome — Mercury Pool</title>
-  <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
   <link rel="dns-prefetch" href="https://raw.githubusercontent.com">
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="../vendor/aframe/aframe-1.5.0.min.js"></script>
   <!-- Imported (dome_tunnel.html deps) -->
   <script src="https://unpkg.com/three@0.152.2/examples/js/loaders/RGBELoader.js"></script>
   <script src="https://unpkg.com/three@0.152.2/examples/js/postprocessing/EffectComposer.js"></script>
@@ -98,6 +96,11 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    opacity: 0;
+    transition: opacity 240ms ease;
+  }
+  #ayaFullscreenOverlay.visible video{
+    opacity: 1;
   }
 </style>
 
@@ -221,21 +224,6 @@ AFRAME.registerComponent('autoplay-gltf-anim', {
     this.mixer.update(timeDelta / 1000);
   }
 });
-// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
-if (!AFRAME.components['npc-ground']) {
-  AFRAME.registerComponent('npc-ground', {
-    init: function () {
-      this.el.addEventListener('model-loaded', () => {
-        const obj = this.el.getObject3D('mesh');
-        if (!obj || !THREE || !THREE.Box3) return;
-        const box = new THREE.Box3().setFromObject(obj);
-        if (!isFinite(box.min.y)) return;
-        obj.position.y -= box.min.y;
-      });
-    }
-  });
-}
-
 
 // Mixamo / NPC material matte fix (ported from index.html).
 AFRAME.registerComponent('mixamo-mat-fix', {
@@ -247,9 +235,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
   init: function () {
     this.el.addEventListener('model-loaded', () => {
       const obj = this.el.getObject3D('mesh');
-      
-
-if (!obj) return;
+      if (!obj) return;
 
       obj.traverse((o) => {
         if (!o.isMesh || !o.material) return;
@@ -337,6 +323,19 @@ if (!obj) return;
         });
 
       });
+    });
+  }
+});
+
+// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
+AFRAME.registerComponent('npc-ground', {
+  init: function () {
+    this.el.addEventListener('model-loaded', () => {
+      const obj = this.el.getObject3D('mesh');
+      if (!obj || !THREE || !THREE.Box3) return;
+      const box = new THREE.Box3().setFromObject(obj);
+      if (!isFinite(box.min.y)) return;
+      obj.position.y -= box.min.y;
     });
   }
 });
@@ -4105,802 +4104,6 @@ document.addEventListener('pointerlockchange', this._onPointerLockChange);
 });
 
 
-
-// === Third-person camera boom (fixed offset behind the rig; yaw rotates boom, pitch does NOT change boom position) ===
-AFRAME.registerComponent('third-person-camera', {
-  schema: {
-    target: { type: 'selector' },      // usually #rig
-    distance: { type: 'number', default: 3.2 },
-    height: { type: 'number', default: 1.55 },
-    smoothing: { type: 'number', default: 0.12 },
-    minPitch: { type: 'number', default: -65 },
-    maxPitch: { type: 'number', default: 35 }
-  },
-  init: function () {
-    this._tmp = new THREE.Vector3();
-    this._cur = new THREE.Vector3();
-    this._hasCur = false;
-  },
-  tick: function () {
-    const t = this.data.target;
-    if (!t) return;
-
-    // Read current camera rotation (driven by look-controls).
-    const rot = this.el.object3D.rotation;
-    // Clamp pitch for comfort, but keep the camera boom position FIXED.
-    // (Pitch only affects view direction, not camera position.)
-    const minR = this.data.minPitch * DEG2RAD;
-    const maxR = this.data.maxPitch * DEG2RAD;
-    rot.x = Math.min(maxR, Math.max(minR, rot.x));
-
-    const yaw = rot.y;
-    const r = this.data.distance;
-
-    // Fixed boom offset behind the target: (0, height, +distance) at yaw=0.
-    const ox = r * Math.sin(yaw);
-    const oz = r * Math.cos(yaw);
-    const oy = this.data.height;
-
-    this._tmp.set(ox, oy, oz);
-
-    // Smooth camera boom position to reduce jitter.
-    if (!this._hasCur) {
-      this._cur.copy(this._tmp);
-      this._hasCur = true;
-    } else {
-      const a = Math.min(1, Math.max(0, this.data.smoothing));
-      this._cur.lerp(this._tmp, a);
-    }
-
-    this.el.object3D.position.copy(this._cur);
-  }
-});
-
-
-// === Stick to ground: raycast down and keep rig feet on the nearest *walkable* floor surface ===
-// Game-friendly rules:
-// - Only treat surfaces with upward-facing normals as "ground" (prevents side-wall/edge hits causing vertical pops).
-// - Enforce a max step height (prevents climbing onto tiny ledges/triangles unless it's a real step).
-// - Smooth using speeds (m/s) rather than per-frame clamps (frame-rate independent).
-AFRAME.registerComponent('stick-to-ground', {
-  schema: {
-    offset: { type: 'number', default: 0.03 },        // feet offset above hit point
-    rayHeight: { type: 'number', default: 2.0 },      // ray start height above rig origin
-    maxDrop: { type: 'number', default: 6.0 },        // ignore hits that are too far below
-    maxRise: { type: 'number', default: 1.0 },        // ignore hits that are too far above
-
-    // Walkability + steps
-    minNormalY: { type: 'number', default: 0.62 },    // how "upward" a surface must be to count as ground
-    maxStepHeight: { type: 'number', default: 0.38 }, // maximum allowed upward snap (meters)
-
-    // Smoothing (frame-rate independent)
-    upSpeed: { type: 'number', default: 2.2 },        // m/s maximum rise speed
-    downSpeed: { type: 'number', default: 6.5 },      // m/s maximum fall speed
-    snapDist: { type: 'number', default: 0.01 }       // snap when within this distance
-  },
-
-  init: function () {
-    this.raycaster = new THREE.Raycaster();
-    this.origin = new THREE.Vector3();
-    this.dir = new THREE.Vector3(0, -1, 0);
-    this._meshes = [];
-    this._lastCollect = 0;
-
-    this._wN = new THREE.Vector3();
-    this._nM = new THREE.Matrix3();
-  },
-
-  collectMeshes: function () {
-    this._meshes.length = 0;
-    const root = this.el.sceneEl && this.el.sceneEl.object3D;
-    if (!root) return;
-
-    root.traverse((obj) => {
-      if (!obj.isMesh) return;
-
-      // Ignore anything that belongs to the player rig (self-intersections)
-      let p = obj;
-      while (p) {
-        if (p === this.el.object3D) return;
-        p = p.parent;
-      }
-      this._meshes.push(obj);
-    });
-  },
-
-  _pickWalkableHit: function (hits) {
-    const minNy = this.data.minNormalY;
-
-    for (let i = 0; i < hits.length; i++) {
-      const h = hits[i];
-      if (!h) continue;
-
-      // If we have a face normal, transform it to world space and test walkability.
-      if (h.face && h.object) {
-        // normal matrix from the hit object's world matrix
-        this._nM.getNormalMatrix(h.object.matrixWorld);
-        this._wN.copy(h.face.normal).applyMatrix3(this._nM).normalize();
-
-        if (this._wN.y >= minNy) return h;
-        continue;
-      }
-
-      // If no face info, accept as a last resort.
-      return h;
-    }
-    return null;
-  },
-
-  tick: function (t, dt) {
-    if (!this.el.sceneEl) return;
-
-    // Refresh mesh list occasionally (scene may still be loading / late GLBs)
-    if (!this._meshes.length || (t - this._lastCollect) > 1500) {
-      this.collectMeshes();
-      this._lastCollect = t;
-      if (!this._meshes.length) return;
-    }
-
-    const dtS = Math.min(0.05, dt / 1000);
-
-    // World origin above rig
-    this.origin.copy(this.el.object3D.position);
-    this.origin.y += this.data.rayHeight;
-
-    this.raycaster.set(this.origin, this.dir);
-    this.raycaster.far = this.data.rayHeight + this.data.maxDrop;
-
-    const hits = this.raycaster.intersectObjects(this._meshes, true);
-    if (!hits || !hits.length) return;
-
-    const hit = this._pickWalkableHit(hits);
-    if (!hit) return;
-
-    const hitY = hit.point.y + this.data.offset;
-    const curY = this.el.object3D.position.y;
-    const dy = hitY - curY;
-
-    // Avoid snapping to ceilings / odd geometry
-    if (dy > this.data.maxRise) return;
-    if (dy < -this.data.maxDrop) return;
-
-    // Prevent "over-stepping" onto new surfaces: only allow rising by a real step amount.
-    if (dy > this.data.maxStepHeight) return;
-
-    // Snap when very close
-    if (Math.abs(dy) <= this.data.snapDist) {
-      this.el.object3D.position.y = hitY;
-      return;
-    }
-
-    // Move toward target with capped speeds (m/s)
-    const maxUp = this.data.upSpeed * dtS;
-    const maxDown = this.data.downSpeed * dtS;
-
-    let step = dy;
-    if (step > maxUp) step = maxUp;
-    if (step < -maxDown) step = -maxDown;
-
-    this.el.object3D.position.y = curY + step;
-  }
-});
-
-
-
-
-
-// === Third-person mouse look: yaw on this entity, pitch on a separate pivot ===
-
-// === Third-person camera occlusion solver ===
-// Keeps a desired boom distance in open space, but pulls the camera closer when walls block the view.
-// This prevents "can't see player at spawn" while preserving the preferred distance outside.
-AFRAME.registerComponent('tp-camera-occlusion', {
-  schema: {
-    pivot:   { type: 'selector' },               // usually the pitch node (e.g., #camPitch)
-    ignore:  { type: 'selector' },               // rig subtree to ignore (e.g., #racerYaw)
-    padding: { type: 'number', default: 0.18 },  // how far in front of the hit point to place the camera
-    minDist: { type: 'number', default: 0.75 },  // closest allowed distance
-    maxDist: { type: 'number', default: -1 },    // if -1, uses initial local distance
-    smooth:  { type: 'number', default: 0.12 },  // 0..1 (higher = snappier)
-    sphereRadius: { type: 'number', default: 0.12 } // thickness of the ray (approx) to reduce edge clipping
-  },
-
-  init: function () {
-    this.sceneEl = this.el.sceneEl;
-    this.raycaster = new THREE.Raycaster();
-    this._origin = new THREE.Vector3();
-    this._desired = new THREE.Vector3();
-    this._dir = new THREE.Vector3();
-    this._tmp = new THREE.Vector3();
-    this._wN = new THREE.Vector3();
-    this._nM = new THREE.Matrix3();
-
-    // Store sign + max distance from initial local position (Z axis boom)
-    const p = this.el.object3D.position;
-    this._sign = (p.z >= 0) ? 1 : -1;
-    this._maxDist = (this.data.maxDist > 0) ? this.data.maxDist : Math.abs(p.z);
-    this._curDist = this._maxDist;
-
-    // Debounce transient hits (e.g., stepping onto new surfaces) to avoid one-frame zoom pops.
-    this._stableHitId = null;
-    this._stableFrames = 0;
-
-    // Rate-limit distance changes to prevent snap/crash.
-    this._maxPullInSpeed = 10.0;   // meters per second (camera moving closer)
-    this._maxReleaseSpeed = 6.0;   // meters per second (camera moving back)
-
-    // Track vertical transitions (stepping onto ramps/ledges) to avoid false occlusion from floors/ceilings.
-    this._lastOriginY = null;
-    this._yGraceMs = 0;           // remaining grace window in ms
-    this._yVelTrigger = 0.55;     // m/s: vertical speed that indicates a step/transition
-    this._yGraceWindow = 140;     // ms: ignore floor/ceiling-ish hits briefly after a step
-
-    // Cache: build a list of candidate meshes once, then refresh occasionally.
-    this._meshes = [];
-    this._lastRefresh = 0;
-    this.refreshMeshes();
-  },
-
-  refreshMeshes: function () {
-    const ignoreObj = this.data.ignore ? this.data.ignore.object3D : null;
-    const meshes = [];
-    this.sceneEl.object3D.traverse((o) => {
-      if (!o.isMesh) return;
-      if (ignoreObj) {
-        // three.js Object3D doesn't implement .contains(); walk up parents instead.
-        let cur = o;
-        while (cur) {
-          if (cur === ignoreObj) return;
-          cur = cur.parent;
-        }
-      }
-      // Ignore invisible or non-collidable layers if used
-      if (o.visible === false) return;
-      meshes.push(o);
-    });
-    this._meshes = meshes;
-  },
-
-  tick: function (t, dt) {
-    if (!this.data.pivot) return;
-
-    // Refresh mesh list occasionally (handles late-loaded GLBs)
-    if (t - this._lastRefresh > 1500) {
-      this._lastRefresh = t;
-      this.refreshMeshes();
-    }
-
-    const pivotObj = this.data.pivot.object3D;
-
-    // World-space origin at pivot
-    pivotObj.getWorldPosition(this._origin);
-    // Detect rapid vertical motion (step/ramp transitions) and temporarily relax occlusion against floor/ceiling-ish faces.
-    if (this._lastOriginY === null) this._lastOriginY = this._origin.y;
-    const dy = this._origin.y - this._lastOriginY;
-    const dtSecVT = Math.max(0.001, dt / 1000);
-    const vy = dy / dtSecVT;
-    this._lastOriginY = this._origin.y;
-    if (Math.abs(vy) > this._yVelTrigger) {
-      this._yGraceMs = this._yGraceWindow;
-    } else if (this._yGraceMs > 0) {
-      this._yGraceMs = Math.max(0, this._yGraceMs - dt);
-    }
-
-
-    // Desired camera world position (current pivot transform + max boom along local Z)
-    // IMPORTANT: occlusion must be stable across vertical transitions (steps/ramps).
-    // So we compute the boom direction from the pivot yaw, but do the occlusion test in XZ only.
-    // This prevents a rising floor / ramp / ceiling triangle from briefly intersecting the ray and "crashing" the camera.
-    pivotObj.getWorldDirection(this._dir); // forward (points -Z in three.js)
-    this._dir.multiplyScalar(-1).normalize(); // convert to +Z axis direction
-
-    // World desired at full distance (kept for orientation), but occlusion will use a flattened variant.
-    this._desired.copy(this._origin).addScaledVector(this._dir, this._sign * this._maxDist);
-
-    // Flatten direction to XZ plane for occlusion tests.
-    const flatDir = this._tmp.copy(this._dir);
-    flatDir.y = 0;
-    const flatLen = flatDir.length();
-    if (flatLen < 1e-4) return;
-    flatDir.multiplyScalar(1 / flatLen);
-
-    const flatOrigin = this._origin; // same y as pivot
-    const flatDesired = this._desired; // reuse vector
-    flatDesired.copy(flatOrigin).addScaledVector(flatDir, this._sign * this._maxDist);
-
-    // Ray cast from origin to desired (XZ only)
-    this._tmp.copy(flatDesired).sub(flatOrigin);
-    const desiredLen = this._tmp.length();
-    if (desiredLen < 1e-4) return;
-
-    this._tmp.normalize();
-    this.raycaster.set(flatOrigin, this._tmp);
-    this.raycaster.far = desiredLen;
-
-    // Use near=0 to catch immediate occluders
-    this.raycaster.near = 0;
-
-    const hits = this.raycaster.intersectObjects(this._meshes, true);
-
-    let targetDist = this._maxDist;
-
-    if (hits && hits.length) {
-      // Find nearest *useful* hit.
-      // Ignore "mostly-up" surfaces (floors/steps/ramps) so walking onto new heights doesn't trigger false occlusion.
-      let hit = null;
-
-      for (let i = 0; i < hits.length; i++) {
-        const h = hits[i];
-        if (!h || !h.object) continue;
-
-        if (h.face && h.face.normal) {
-          this._nM.getNormalMatrix(h.object.matrixWorld);
-          this._wN.copy(h.face.normal).applyMatrix3(this._nM).normalize();
-
-          const mostlyUp = (this._wN.y > 0.35);
-          const floorOrCeil = (Math.abs(this._wN.y) > 0.35);
-          // Always ignore floors/ramps; during vertical transitions also ignore ceilings/sloped overhead surfaces to prevent boom collapse.
-          if (mostlyUp) continue;
-          if (this._yGraceMs > 0 && floorOrCeil) continue;
-        }
-
-        hit = h;
-        break;
-      }
-
-      if (hit) {
-        const hitDist = hit.distance;
-
-        // Pull camera in slightly in front of the wall
-        targetDist = Math.max(this.data.minDist, Math.min(this._maxDist, hitDist - this.data.padding));
-
-        // Debounce transient hits: require a few consecutive frames hitting roughly the same occluder
-        const hid = (hit.object && hit.object.uuid) ? hit.object.uuid : null;
-        if (hid && hid === this._stableHitId) {
-          this._stableFrames++;
-        } else {
-          this._stableHitId = hid;
-          this._stableFrames = 1;
-        }
-
-        // If it's not stable yet, don't yank the camera in.
-        if (this._stableFrames < 3) {
-          targetDist = this._maxDist;
-        }
-      } else {
-        this._stableHitId = null;
-        this._stableFrames = 0;
-      }
-    } else {
-      this._stableHitId = null;
-      this._stableFrames = 0;
-    }
-
-    // Smooth + rate limit distance changes (prevents snap/crash on step/height transitions)
-    const dtSec = Math.max(0.001, dt / 1000);
-    const a = 1 - Math.pow(1 - THREE.MathUtils.clamp(this.data.smooth, 0.001, 1), dt / 16.67);
-    const desiredDist = THREE.MathUtils.lerp(this._curDist, targetDist, a);
-
-    if (desiredDist < this._curDist) {
-      const maxDelta = this._maxPullInSpeed * dtSec;
-      this._curDist = Math.max(desiredDist, this._curDist - maxDelta);
-    } else {
-      const maxDelta = this._maxReleaseSpeed * dtSec;
-      this._curDist = Math.min(desiredDist, this._curDist + maxDelta);
-    }
-
-    // Apply to camera local position along Z only (keeps your fixed follow offset)
-    const pos = this.el.object3D.position;
-    pos.z = this._sign * this._curDist;
-  }
-});
-
-
-AFRAME.registerComponent('tp-camera-lock-offset', {
-  schema: {
-    // If a seat experience is active and currently seated/standing, allow it to drive camera Y.
-    seatEl: { type: 'selector', default: '#aya_seat_experience' }
-  },
-  init: function () {
-    const p = this.el.object3D.position;
-    this._lockX = p.x;
-    this._lockY = p.y;
-  },
-  tick: function () {
-    // Allow seat logic to animate camera height if the user is seated/standing up.
-    const seat = this.data.seatEl;
-    if (seat && seat.components && seat.components['aya-seat-experience']) {
-      const st = seat.components['aya-seat-experience'].state || {};
-      if (st.step === 2 || st.standAnim) return;
-    }
-    const p = this.el.object3D.position;
-    if (p.x !== this._lockX) p.x = this._lockX;
-    if (p.y !== this._lockY) p.y = this._lockY;
-  }
-});
-
-
-// === Third-person spring-arm camera (game-style) ===
-// Baseline: fixed local offset from the pivot (distance + height stay constant).
-// Collision: clamp boom length using a pseudo sphere-sweep (multi-ray) against dedicated colliders.
-// Ceiling: if camera headroom is insufficient, apply a temporary downward correction (returns to baseline when clear).
-AFRAME.registerComponent('tp-camera-springarm', {
-  schema: {
-    pivot:   { type: 'selector' },                 // e.g., #camPitch
-    ignore:  { type: 'selector' },                 // rig subtree to ignore (e.g., #racerYaw)
-    colliders:{ type: 'string', default: '.collider, [data-tube="1"]' }, // elements to collide against
-    padding: { type: 'number', default: 0.18 },    // keep this far in front of hit point
-    minDist: { type: 'number', default: 0.75 },    // closest allowed distance
-    smoothPos:{ type: 'number', default: 0.15 },   // smoothing for camera world position
-    smoothDist:{ type: 'number', default: 0.18 },  // smoothing for boom length
-    sphereRadius:{ type: 'number', default: 0.22 },// pseudo sphere cast radius
-    ceilingPadding:{ type: 'number', default: 0.08 }, // extra clearance to keep from clipping
-    maxCeilingDrop:{ type: 'number', default: 0.65 }, // max temporary downward correction
-    ceilingProbe:{ type: 'number', default: 1.0 }   // how far up to probe for ceilings
-  },
-
-  init: function () {
-    this.sceneEl = this.el.sceneEl;
-    this.raycaster = new THREE.Raycaster();
-
-    this._pivotW = new THREE.Vector3();
-    this._desiredW = new THREE.Vector3();
-    this._finalW = new THREE.Vector3();
-    this._smoothedW = new THREE.Vector3();
-    this._dir = new THREE.Vector3();
-    this._tmp = new THREE.Vector3();
-    this._right = new THREE.Vector3();
-    this._up = new THREE.Vector3(0, 1, 0);
-
-        // Offsets for pseudo sphere-sweep (preallocated to avoid GC)
-        this._offsets = [
-          new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
-        ];
-
-        // Preallocated offsets for pseudo sphere sweep
-        this._offsets = [
-          new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
-        ];
-
-    // Baseline local offset (kept constant). We only shorten along boom direction and apply temporary ceiling drop.
-    this._baseLocal = this.el.object3D.position.clone();
-    this._baseDist = Math.abs(this._baseLocal.z);
-    this._sign = (this._baseLocal.z >= 0) ? 1 : -1;
-
-    this._curDist = this._baseDist;
-    this._ceilingDrop = 0;
-
-    this._colliderMeshes = [];
-    this._lastRefresh = 0;
-    this.refreshColliderMeshes();
-
-    // Initialize smoothed position at current world position
-    this.el.object3D.getWorldPosition(this._smoothedW);
-  },
-
-  refreshColliderMeshes: function () {
-    const ignoreObj = this.data.ignore ? this.data.ignore.object3D : null;
-    const nodes = Array.from(this.sceneEl.querySelectorAll(this.data.colliders || '.collider, [data-tube="1"]'));
-    const meshes = [];
-    for (let i = 0; i < nodes.length; i++) {
-      const root = nodes[i].object3D;
-      if (!root) continue;
-      root.traverse((o) => {
-        if (!o.isMesh) return;
-        if (ignoreObj) {
-          let cur = o;
-          while (cur) { if (cur === ignoreObj) return; cur = cur.parent; }
-        }
-        // IMPORTANT: include invisible colliders too.
-        meshes.push(o);
-      });
-    }
-    this._colliderMeshes = meshes;
-  },
-
-  _sphereSweepClampDist: function (origin, desired, dt) {
-    // Pseudo sphere sweep: cast multiple rays offset perpendicular to boom direction.
-    // Returns clamped distance from origin along boom direction.
-    this._tmp.copy(desired).sub(origin);
-    const desiredLen = this._tmp.length();
-    if (desiredLen < 1e-4) return this._baseDist;
-
-    const dir = this._tmp.normalize();
-
-    // Build an orthonormal basis around dir
-    this._right.copy(dir).cross(this._up);
-    if (this._right.lengthSq() < 1e-6) {
-      // dir is close to up; pick arbitrary right
-      this._right.set(1, 0, 0);
-    } else {
-      this._right.normalize();
-    }
-    const up2 = this._tmp.copy(this._right).cross(dir).normalize();
-    // Copy to a stable vector (this._tmp will be reused below)
-    const upVec = this._dir; // reuse _dir as temp stable vector here
-    upVec.copy(up2);
-    
-
-    const r = Math.max(0, this.data.sphereRadius);
-    const offsets = this._offsets;
-    offsets[0].set(0,0,0);
-    offsets[1].copy(this._right).multiplyScalar(r);
-    offsets[2].copy(this._right).multiplyScalar(-r);
-    offsets[3].copy(upVec).multiplyScalar(r);
-    offsets[4].copy(upVec).multiplyScalar(-r);
-
-    let best = desiredLen;
-
-    for (let i = 0; i < offsets.length; i++) {
-      const off = offsets[i];
-      const o = this._tmp.copy(origin).add(off);
-      this.raycaster.set(o, dir);
-      this.raycaster.near = 0;
-      this.raycaster.far = desiredLen;
-
-      const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
-      if (hits && hits.length) {
-        const d = Math.max(0, hits[0].distance - this.data.padding);
-        if (d < best) best = d;
-      }
-    }
-
-    // Convert to boom distance along local Z sign.
-    const clamped = Math.max(this.data.minDist, Math.min(this._baseDist, best));
-    return clamped;
-  },
-
-  _computeCeilingDrop: function (camPos, dt) {
-    // Probe upward; if ceiling is too close (within radius+padding), drop camera temporarily.
-    const probeUp = Math.max(0.2, this.data.ceilingProbe);
-    this.raycaster.set(camPos, this._up);
-    this.raycaster.near = 0;
-    this.raycaster.far = probeUp;
-
-    const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
-    if (!hits || !hits.length) return 0;
-
-    const dist = hits[0].distance;
-    const needClear = this.data.sphereRadius + this.data.ceilingPadding;
-    if (dist >= needClear) return 0;
-
-    return Math.min(this.data.maxCeilingDrop, (needClear - dist));
-  },
-
-  tick: function (t, dt) {
-    if (!this.data.pivot) return;
-
-    // Refresh colliders occasionally (late loads / elevator).
-    if (t - this._lastRefresh > 1200) {
-      this._lastRefresh = t;
-      this.refreshColliderMeshes();
-    }
-
-    const pivotObj = this.data.pivot.object3D;
-
-    // Desired camera world position from baseline local offset (constant height/distance baseline).
-    pivotObj.getWorldPosition(this._pivotW);
-
-    // local->world for baseline offset
-    this._desiredW.copy(this._baseLocal);
-    pivotObj.localToWorld(this._desiredW);
-
-    // Clamp distance using sphere-sweep against colliders (walls, elevator, etc.)
-    const targetDist = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
-
-    // Smooth boom distance (so it doesn't snap)
-    const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
-    this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
-
-    // Recompute final position along the boom direction while preserving baseline pitch (dir from pivot->desired)
-    this._dir.copy(this._desiredW).sub(this._pivotW);
-    const len = this._dir.length();
-    if (len < 1e-4) return;
-    this._dir.multiplyScalar(1 / len);
-
-    this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
-
-    // Ceiling headroom correction: only downward, temporary, returns to baseline when clear.
-    const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
-
-    // Smooth ceiling drop separately to avoid jitter.
-    const aPos = Math.min(1, Math.max(0, this.data.smoothPos));
-    this._ceilingDrop = this._ceilingDrop + (desiredDrop - this._ceilingDrop) * aPos;
-
-    if (this._ceilingDrop > 0) {
-      this._finalW.y -= this._ceilingDrop;
-    }
-
-    // Smooth final world position for camera friendliness.
-    this._smoothedW.lerp(this._finalW, aPos);
-
-    // Convert back to local position under pivot so we don't disturb hierarchy.
-    const local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
-    // Keep baseline X (shoulder offset) constant; allow Z to shorten; allow Y to drop but never rise above baseline.
-    local.x = this._baseLocal.x;
-    local.z = this._sign * this._curDist;
-    local.y = Math.min(this._baseLocal.y, local.y);
-
-    this.el.object3D.position.copy(local);
-  }
-});
-
-AFRAME.registerComponent('spawn-at', {
-  schema: {
-    target: { type: 'selector', default: null },
-    yOffset: { type: 'number', default: 0 },
-    once: { default: true }
-  },
-  init: function () { this._done = false; },
-  tick: function () {
-    if (this._done) return;
-    var t = this.data.target;
-    if (!t || !t.object3D) return;
-
-    // Wait until target has a valid world matrix (merge-align etc. may apply after load).
-    t.object3D.updateWorldMatrix(true, false);
-    var wp = new THREE.Vector3();
-    var wq = new THREE.Quaternion();
-    t.object3D.getWorldPosition(wp);
-    t.object3D.getWorldQuaternion(wq);
-
-    var o = this.el.object3D;
-    o.position.copy(wp);
-    o.position.y += this.data.yOffset;
-    o.quaternion.copy(wq);
-    o.updateMatrixWorld(true);
-
-    if (this.data.once) this._done = true;
-  }
-});
-
-
-AFRAME.registerComponent('tp-mouselook', {
-  schema: {
-    pitchEl: { type: 'selector' },
-    sensitivity: { type: 'number', default: 0.12 },
-    minPitch: { type: 'number', default: -25 },
-    maxPitch: { type: 'number', default: 18 }
-  },
-  init: function () {
-    this.yaw = this.el.object3D.rotation.y || 0;
-    this.pitch = 0;
-
-    this._onMouseMove = (e) => {
-      if (!this._locked) return;
-      const sx = this.data.sensitivity;
-      const sy = this.data.sensitivity;
-
-      this.yaw -= (e.movementX || 0) * sx * 0.01;
-      this.pitch -= (e.movementY || 0) * sy * 0.01;
-
-      const minP = THREE.MathUtils.degToRad(this.data.minPitch);
-      const maxP = THREE.MathUtils.degToRad(this.data.maxPitch);
-      this.pitch = THREE.MathUtils.clamp(this.pitch, minP, maxP);
-
-      this.el.object3D.rotation.y = this.yaw;
-
-      const pEl = this.data.pitchEl;
-      if (pEl) pEl.object3D.rotation.x = this.pitch;
-    };
-
-    this._onLockChange = () => {
-      this._locked = (document.pointerLockElement === (this.el.sceneEl && this.el.sceneEl.canvas));
-    };
-
-    this._requestLock = () => {
-      const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
-      if (canvas && canvas.requestPointerLock) canvas.requestPointerLock();
-    };
-
-    this._locked = false;
-    document.addEventListener('pointerlockchange', this._onLockChange);
-    window.addEventListener('mousemove', this._onMouseMove, { passive: true });
-    this.el.sceneEl.addEventListener('click', this._requestLock);
-  },
-  remove: function () {
-    document.removeEventListener('pointerlockchange', this._onLockChange);
-    window.removeEventListener('mousemove', this._onMouseMove);
-    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('click', this._requestLock);
-  }
-});
-
-// === Racer controller: sync avatar yaw to camera yaw + switch Idle/Walk based on movement keys ===
-AFRAME.registerComponent('racer-controller', {
-  schema: {
-    cam: { type: 'selector' }, // #playerCam
-    idleHint: { type: 'string', default: 'idle' },
-    walkHint: { type: 'string', default: 'walk' },
-    turnWithCamera: { type: 'boolean', default: true }
-  },
-  init: function () {
-    this.keys = Object.create(null);
-    this.mixer = null;
-    this.idleAction = null;
-    this.walkAction = null;
-    this.active = null;
-
-    const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
-
-    this._onKeyDown = (e) => { if (MOVE_KEYS.has(e.code)) this.keys[e.code] = true; };
-    this._onKeyUp   = (e) => { if (MOVE_KEYS.has(e.code)) this.keys[e.code] = false; };
-
-    window.addEventListener('keydown', this._onKeyDown, { passive: true });
-    window.addEventListener('keyup', this._onKeyUp, { passive: true });
-    window.addEventListener('blur', () => { for (const k in this.keys) this.keys[k] = false; });
-
-    this.el.addEventListener('model-loaded', () => {
-      const mesh = this.el.getObject3D('mesh');
-      if (!mesh) return;
-
-      const clips = (mesh.animations && mesh.animations.length) ? mesh.animations : [];
-      if (!clips.length) return;
-
-      const findByHint = (hint) => {
-        const h = (hint || '').toLowerCase();
-        return clips.find(c => (c.name || '').toLowerCase().includes(h));
-      };
-
-      const idleClip = findByHint(this.data.idleHint) || clips[0];
-      const walkClip = findByHint(this.data.walkHint) || clips.find(c => c !== idleClip) || idleClip;
-
-      this.mixer = new THREE.AnimationMixer(mesh);
-      this.idleAction = this.mixer.clipAction(idleClip);
-      this.walkAction = this.mixer.clipAction(walkClip);
-
-      this.idleAction.enabled = true;
-      this.walkAction.enabled = true;
-
-      this._play('idle', true);
-    });
-  },
-
-  remove: function () {
-    window.removeEventListener('keydown', this._onKeyDown);
-    window.removeEventListener('keyup', this._onKeyUp);
-    if (this.mixer) this.mixer.stopAllAction();
-  },
-
-  _isMoving: function () {
-    return !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
-              this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight']);
-  },
-
-  _play: function (which, instant) {
-    const a = (which === 'walk') ? this.walkAction : this.idleAction;
-    if (!a || this.active === which) return;
-
-    const from = (this.active === 'walk') ? this.walkAction : this.idleAction;
-    this.active = which;
-
-    if (from && from !== a) {
-      if (instant) {
-        from.stop();
-        a.reset().play();
-      } else {
-        from.fadeOut(0.18);
-        a.reset().fadeIn(0.18).play();
-      }
-    } else {
-      a.reset().play();
-    }
-  },
-
-  tick: function (t, dt) {
-    if (this.mixer) this.mixer.update((dt || 0) / 1000);
-
-    const cam = this.data.cam;
-    if (cam && this.data.turnWithCamera) {
-      // Match the avatar yaw to the camera yaw so movement direction reads correctly in third-person.
-      const yaw = cam.object3D.rotation.y;
-      this.el.object3D.rotation.y = yaw + Math.PI; // model faces +Z; A-Frame forward is -Z
-    }
-
-    this._play(this._isMoving() ? 'walk' : 'idle', false);
-  }
-});
-
-
 AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
@@ -8072,11 +7275,6 @@ AFRAME.registerComponent('perforated-sphere-light', {
 
   init: function () {
     this._up = new THREE.Vector3(0, 1, 0);
-
-        // Preallocated offsets for pseudo sphere sweep
-        this._offsets = [
-          new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
-        ];
     this._dirs = [];
     this._beams = [];
 
@@ -9188,11 +8386,6 @@ AFRAME.registerComponent('sphere-hole-beams', {
     this.el.object3D.add(this._group);
 
     this._up = new THREE.Vector3(0, 1, 0);
-
-        // Preallocated offsets for pseudo sphere sweep
-        this._offsets = [
-          new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
-        ];
     this._down = new THREE.Vector3(0, -1, 0);
 
     this._cBlue  = new THREE.Color(this.data.blue);
@@ -10381,9 +9574,7 @@ AFRAME.registerComponent('aya-seat-experience', {
 
     this.seats = [
       document.querySelector('#rock_seat_01'),
-      document.querySelector('#rock_seat_02'),
-      document.querySelector('#rock_seat_03'),
-      document.querySelector('#rock_seat_04')
+      document.querySelector('#rock_seat_02')
     ].filter(Boolean);
 
     this._poolWorld = new THREE.Vector3();
@@ -10996,16 +10187,45 @@ return chosen * 180 / Math.PI;
       this._suppressPointerLockUntil = performance.now() + 700;
     }
 
+    // Pick video based on which seat initiated the experience.
+    if (this.overlayVideo) {
+      const seatId = this.state.activeSeat && this.state.activeSeat.getAttribute && this.state.activeSeat.getAttribute('id');
+      const filename = (seatId === 'rock_seat_02')
+        ? 'aya_visual_experience_from_seat_02.mp4'
+        : 'aya_visual_experience.mp4';
+
+      // Preserve the existing relative base path (defaults to ../aya_room/assets/).
+      const cur = this.overlayVideo.getAttribute('src') || '';
+      const base = cur ? cur.replace(/[^\/\?#]+(\?.*)?$/, '') : '../aya_room/assets/';
+      const desired = base + filename;
+
+      if (cur !== desired) {
+        try {
+          this.overlayVideo.setAttribute('src', desired);
+          this.overlayVideo.load();
+        } catch (err) {}
+      }
+    }
+
     this.state.step = 3;
     this._hideGuide();
 
+    // Fade in the overlay, then start playback.
     this._showOverlay();
 
     if (this.overlayVideo) {
       try {
         this.overlayVideo.currentTime = 0;
-        const p = this.overlayVideo.play();
-        if (p && typeof p.catch === 'function') p.catch(() => {});
+
+        const playNow = () => {
+          try {
+            const p = this.overlayVideo.play();
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+          } catch (err) {}
+        };
+
+        // Let CSS transitions take effect for a smooth fade-in.
+        requestAnimationFrame(() => setTimeout(playNow, 30));
       } catch (err) {}
     }
   },
@@ -14097,11 +13317,44 @@ AFRAME.registerComponent('uv2-from-uv', {
 
 // NOTE: removed duplicate rig-walk definition (kept the earlier OBB-based version)
 
+AFRAME.registerComponent('pitch-clamp', {
+          schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
+          tick: function () {
+            const lc = this.el.components['look-controls'];
+            if (!lc || !lc.pitchObject) return;
+            const minR = this.data.min * DEG2RAD;
+            const maxR = this.data.max * DEG2RAD;
+            const p = lc.pitchObject.rotation.x;
+            lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, p));
+          }
+        });
 
+AFRAME.registerComponent('initial-yaw', {
+  schema: { yaw: { type: 'number', default: 0 } },
+  init: function () {
+    const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
+    const el = this.el;
 
+    const apply = () => {
+      const lc = el.components && el.components['look-controls'];
+      if (lc && lc.yawObject) {
+        lc.yawObject.rotation.y = targetYaw;
+        return true;
+      }
+      return false;
+    };
 
+    let tries = 0;
+    const tickTry = () => {
+      if (apply()) return;
+      tries++;
+      if (tries < 240) requestAnimationFrame(tickTry); // ~4s safety
+    };
 
-
+    tickTry();
+    el.addEventListener('componentinitialized', (e) => {
+      if (e.detail && e.detail.name === 'look-controls') { tries = 0; tickTry(); }
+    });
   }
 });
 
@@ -16748,31 +16001,31 @@ AFRAME.registerComponent('ion-wind-field', {
 
     
 <a-assets>
-    <img id="earthTex" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/earth_skin.jpg">
-<img id="moonDiffuse" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_diffuse.webp">
-  <img id="moonNormal"  crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_normal.webp">
-  <img id="moonRough"   crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_rough.png">
-  <img id="moonAO"      crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_ao.png">
+    <img id="earthTex" crossorigin="anonymous" src="../aya_room/assets/earth_skin.jpg">
+<img id="moonDiffuse" crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_diffuse.webp">
+  <img id="moonNormal"  crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_normal.webp">
+  <img id="moonRough"   crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_rough.png">
+  <img id="moonAO"      crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_ao.png">
 
-  <img id="groundAO"      crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_ao.png">
-  <img id="groundDiffuse" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_diffuse%20.webp">
-  <img id="groundNormal"  crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_normal.webp">
-  <img id="groundRough"   crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_rough.png">
+  <img id="groundAO"      crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_ao.png">
+  <img id="groundDiffuse" crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_diffuse%20.webp">
+  <img id="groundNormal"  crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_normal.webp">
+  <img id="groundRough"   crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_rough.png">
 <!-- Elevator metal PBR (used by mercurial torches) --><!-- Floating sphere PBR (metal elevator door) -->
   <!-- Floating sphere PBR (metal elevator door) -->
-  <img id="metalElevatorColor" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_color.webp" crossorigin="anonymous">
-  <img id="metalElevatorNormal" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_normal.webp" crossorigin="anonymous">
-  <img id="metalElevatorRough" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_rough.png" crossorigin="anonymous">
-  <img id="metalElevatorMetalness" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png" crossorigin="anonymous">
-  <img id="metalElevatorDisplacement" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_displacement.png" crossorigin="anonymous">
+  <img id="metalElevatorColor" src="../aya_room/assets/metal_elevator_door/metal_elevator_color.webp" crossorigin="anonymous">
+  <img id="metalElevatorNormal" src="../aya_room/assets/metal_elevator_door/metal_elevator_normal.webp" crossorigin="anonymous">
+  <img id="metalElevatorRough" src="../aya_room/assets/metal_elevator_door/metal_elevator_rough.png" crossorigin="anonymous">
+  <img id="metalElevatorMetalness" src="../aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png" crossorigin="anonymous">
+  <img id="metalElevatorDisplacement" src="../aya_room/assets/metal_elevator_door/metal_elevator_displacement.png" crossorigin="anonymous">
 
   <!-- Imported assets (dome_tunnel.html) -->
-  <img id="elevMetalColor" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_color.webp">
-  <img id="elevMetalNormal" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_normal.webp">
-  <img id="elevMetalRough" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_rough.png">
-  <img id="elevMetalMetal" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png">
+  <img id="elevMetalColor" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_color.webp">
+  <img id="elevMetalNormal" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_normal.webp">
+  <img id="elevMetalRough" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_rough.png">
+  <img id="elevMetalMetal" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png">
 
-  <video id="ayaExperienceVideo" crossorigin="anonymous" playsinline webkit-playsinline preload="auto" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/rooms/aya_visual_experience.mp4"></video>
+  <video id="ayaExperienceVideo" crossorigin="anonymous" playsinline webkit-playsinline preload="auto" src="../aya_room/assets/aya_visual_experience.mp4"></video>
 
   <!-- Torch V2: unlit cinematic glow cards (no real-time lights per torch) -->
   <img id="torchGlowTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'><defs><radialGradient id='g' cx='50%25' cy='50%25' r='60%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='1'/><stop offset='28%25' stop-color='%23bfe6ff' stop-opacity='0.65'/><stop offset='55%25' stop-color='%238ad4ff' stop-opacity='0.22'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='256' height='256' fill='url(%23g)'/></svg>" />
@@ -16780,25 +16033,23 @@ AFRAME.registerComponent('ion-wind-field', {
   <img id="torchSplashTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='512' height='256' viewBox='0 0 512 256'><defs><radialGradient id='p' cx='35%25' cy='55%25' r='70%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='0.18'/><stop offset='35%25' stop-color='%23bfe6ff' stop-opacity='0.10'/><stop offset='75%25' stop-color='%238ad4ff' stop-opacity='0.04'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='512' height='256' fill='url(%23p)'/></svg>" />
 
     <!-- ===== NPCs (sitting) ===== -->
-    <a-asset-item id="megan_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/megan_sitting.glb"></a-asset-item>
-    <a-asset-item id="liz_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/liz_sitting.glb"></a-asset-item>
-    <a-asset-item id="david_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/david_sitting.glb"></a-asset-item>
-    <a-asset-item id="adam_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/adam_sitting.glb"></a-asset-item>
+    <a-asset-item id="megan_sitting_glb" src="../characters/megan_sitting.glb"></a-asset-item>
+    <a-asset-item id="liz_sitting_glb" src="../characters/liz_sitting.glb"></a-asset-item>
+    <a-asset-item id="david_sitting_glb" src="../characters/david_sitting.glb"></a-asset-item>
+    <a-asset-item id="adam_sitting_glb" src="../characters/adam_sitting.glb"></a-asset-item>
     <!-- ===== NPCs (idle) ===== -->
-    <a-asset-item id="sophie_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/sophie_idle.glb"></a-asset-item>
-    <a-asset-item id="bryce_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/bryce_idle.glb"></a-asset-item>
-    <a-asset-item id="jodie_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/jodie_idle.glb"></a-asset-item>
-    <a-asset-item id="brian_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/brian_idle.glb"></a-asset-item>
-    <a-asset-item id="alex_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/alex.glb"></a-asset-item>
-
-    <a-asset-item id="racer_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/racer.glb"></a-asset-item>
+    <a-asset-item id="sophie_idle_glb" src="../characters/sophie_idle.glb"></a-asset-item>
+    <a-asset-item id="bryce_idle_glb" src="../characters/bryce_idle.glb"></a-asset-item>
+    <a-asset-item id="jodie_idle_glb" src="../characters/jodie_idle.glb"></a-asset-item>
+    <a-asset-item id="brian_idle_glb" src="../characters/brian_idle.glb"></a-asset-item>
+    <a-asset-item id="alex_glb" src="../characters/alex.glb"></a-asset-item>
 
 
 
-    <audio id="pool_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/pool_sound.mp3"></audio>
-    <audio id="nde_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/aya_sounds.mp3"></audio>
+    <audio id="pool_sound" crossorigin="anonymous" src="../aya_room/music/pool_sound.mp3"></audio>
+    <audio id="nde_sound" crossorigin="anonymous" src="../aya_room/music/aya_sounds.mp3"></audio>
 
-    <audio id="sphere_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/sphere_sounds.mp3"></audio>
+    <audio id="sphere_sound" crossorigin="anonymous" src="../aya_room/music/sphere_sounds.mp3"></audio>
 
 </a-assets>
 
@@ -18167,8 +17418,6 @@ AFRAME.registerComponent('ion-wind-field', {
 
 <!-- Cave chamber outside the elevator (4m x 4m x 3m) -->
     <a-entity id="entrance_chamber" position="0 0 0">
-      <a-entity id="spawn_elevator" position="0 0 -0.65" rotation="0 180 0"></a-entity>
-
       
       
       <!-- Debug grey floor at natural ground level -->
@@ -18893,12 +18142,11 @@ AFRAME.registerComponent('ion-wind-field', {
     <!-- TEMP SPAWN OVERRIDE for end_chamber_06 iteration.
      Original rig position was: 35.33 0.03 41.92
      Remember to restore after end-chamber tests. -->
+    <!-- Player rig with third-person camera -->
     <a-entity id="rig"
               position="35.33 0.03 41.92"
               rotation="0 0 0"
-              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh
-              spawn-at="target: #spawn_elevator; yOffset: 0.03; once: true"
-              stick-to-ground="offset: 0.03; rayHeight: 2.0; smoothing: 0.14; maxStepUp: 0.06; maxStepDown: 0.18; snapDist: 0.01">
+              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh>
 
   <!-- Yaw pivot driven by mouse; everything (avatar + camera) follows -->
   <a-entity id="racerYaw" rotation="0 0 0" tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18">
@@ -18916,7 +18164,7 @@ AFRAME.registerComponent('ion-wind-field', {
       <a-entity id="playerCam"
                 camera="fov: 60; near: 0.1; far: 250; zoom: 1.08"
                 camera-enable-layer="layer: 2"
-                tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=\"1\"]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
+                tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
                 position="0 0 1.3"
                 rotation="0 0 0">
         <a-entity cursor="rayOrigin: mouse"></a-entity>
@@ -19088,7 +18336,7 @@ AFRAME.registerComponent('ion-wind-field', {
 <!-- Tunnel lighting: dome-style mercurial torches -->
       <a-entity id="torch_tunnel_04_L1" class="torchAnchor"
               position="-6.31 0.45 -1.25"
-              rotation="0 0 0"
+              rotation="0 180 0"
               shadow="cast:false; receive:false"
               mercury-sinuous-driver>
       <a-entity id="torch_tunnel_04_L1_rods">
@@ -20095,7 +19343,7 @@ AFRAME.registerComponent('ion-wind-field', {
          playsinline
          webkit-playsinline
          preload="auto"
-         src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/rooms/aya_visual_experience.mp4"></video>
+         src="../aya_room/assets/aya_visual_experience.mp4"></video>
 </div>
 
   <div id="userGuide" aria-live="polite">
@@ -20493,6 +19741,352 @@ AFRAME.registerComponent('freeze-static-mesh', {
     requestAnimationFrame(() => requestAnimationFrame(tryFreeze));
   }
 });
+
+
+// === Third-person spring-arm camera (game-style) ===
+// Smooth camera boom with collision detection + ceiling headroom correction.
+// Prevents wall clipping while maintaining a stable follow distance.
+AFRAME.registerComponent('tp-camera-springarm', {
+  schema: {
+    pivot: { type: 'selector' },                   // pitch pivot (e.g., #camPitch)
+    ignore: { type: 'selector' },                  // rig subtree to skip (e.g., #racerYaw)
+    colliders: { type: 'string', default: '.collider, [data-tube="1"]' },  // CSS selector for collidable geometry
+    minDist: { type: 'number', default: 0.85 },    // minimum camera distance from pivot
+    padding: { type: 'number', default: 0.22 },    // how far in front of walls to stop
+    smoothPos: { type: 'number', default: 0.15 },  // smoothing for camera world position
+    smoothDist: { type: 'number', default: 0.18 }, // smoothing for boom distance changes
+    sphereRadius: { type: 'number', default: 0.22 }, // pseudo sphere-sweep radius (thicker collision)
+    ceilingPadding: { type: 'number', default: 0.08 }, // extra clearance below ceilings
+    ceilingProbe: { type: 'number', default: 0.42 },   // how far up to check for ceilings
+    maxCeilingDrop: { type: 'number', default: 0.65 }  // max downward shift when hitting ceiling
+  },
+
+  init: function () {
+    this.sceneEl = this.el.sceneEl;
+    this.raycaster = new THREE.Raycaster();
+    this._pivotW = new THREE.Vector3();
+    this._desiredW = new THREE.Vector3();
+    this._finalW = new THREE.Vector3();
+    this._smoothedW = new THREE.Vector3();
+    this._dir = new THREE.Vector3();
+    this._tmp = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+    this._up = new THREE.Vector3(0, 1, 0);
+
+    // Offsets for pseudo sphere-sweep (preallocated to avoid GC)
+    this._offsets = [
+      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
+    ];
+
+    // Baseline local offset (kept constant). We only shorten along boom direction and apply temporary ceiling drop.
+    this._baseLocal = this.el.object3D.position.clone();
+    this._baseDist = Math.abs(this._baseLocal.z);
+    this._sign = (this._baseLocal.z >= 0) ? 1 : -1;
+
+    this._curDist = this._baseDist;
+    this._ceilingDrop = 0;
+
+    this._colliderMeshes = [];
+    this._lastRefresh = 0;
+    this.refreshColliderMeshes();
+
+    // Initialize smoothed position at current world position
+    this.el.object3D.getWorldPosition(this._smoothedW);
+  },
+
+  refreshColliderMeshes: function () {
+    const ignoreObj = this.data.ignore ? this.data.ignore.object3D : null;
+    const nodes = Array.from(this.sceneEl.querySelectorAll(this.data.colliders || '.collider, [data-tube="1"]'));
+    const meshes = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const root = nodes[i].object3D;
+      if (!root) continue;
+      root.traverse((o) => {
+        if (!o.isMesh) return;
+        if (ignoreObj) {
+          let cur = o;
+          while (cur) { if (cur === ignoreObj) return; cur = cur.parent; }
+        }
+        // IMPORTANT: include invisible colliders too.
+        meshes.push(o);
+      });
+    }
+    this._colliderMeshes = meshes;
+  },
+
+  _sphereSweepClampDist: function (origin, desired, dt) {
+    // Pseudo sphere sweep: cast multiple rays offset perpendicular to boom direction.
+    // Returns clamped distance from origin along boom direction.
+    this._tmp.copy(desired).sub(origin);
+    const desiredLen = this._tmp.length();
+    if (desiredLen < 1e-4) return this._baseDist;
+
+    const dir = this._tmp.normalize();
+
+    // Build an orthonormal basis around dir
+    this._right.copy(dir).cross(this._up);
+    if (this._right.lengthSq() < 1e-6) {
+      // dir is close to up; pick arbitrary right
+      this._right.set(1, 0, 0);
+    } else {
+      this._right.normalize();
+    }
+    const up2 = this._tmp.copy(this._right).cross(dir).normalize();
+    // Copy to a stable vector (this._tmp will be reused below)
+    const upVec = this._dir; // reuse _dir as temp stable vector here
+    upVec.copy(up2);
+    
+
+    const r = Math.max(0, this.data.sphereRadius);
+    const offsets = this._offsets;
+    offsets[0].set(0,0,0);
+    offsets[1].copy(this._right).multiplyScalar(r);
+    offsets[2].copy(this._right).multiplyScalar(-r);
+    offsets[3].copy(upVec).multiplyScalar(r);
+    offsets[4].copy(upVec).multiplyScalar(-r);
+
+    let best = desiredLen;
+
+    for (let i = 0; i < offsets.length; i++) {
+      const off = offsets[i];
+      const o = this._tmp.copy(origin).add(off);
+      this.raycaster.set(o, dir);
+      this.raycaster.near = 0;
+      this.raycaster.far = desiredLen;
+
+      const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
+      if (hits && hits.length) {
+        const d = Math.max(0, hits[0].distance - this.data.padding);
+        if (d < best) best = d;
+      }
+    }
+
+    // Convert to boom distance along local Z sign.
+    const clamped = Math.max(this.data.minDist, Math.min(this._baseDist, best));
+    return clamped;
+  },
+
+  _computeCeilingDrop: function (camPos, dt) {
+    // Probe upward; if ceiling is too close (within radius+padding), drop camera temporarily.
+    const probeUp = Math.max(0.2, this.data.ceilingProbe);
+    this.raycaster.set(camPos, this._up);
+    this.raycaster.near = 0;
+    this.raycaster.far = probeUp;
+
+    const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
+    if (!hits || !hits.length) return 0;
+
+    const dist = hits[0].distance;
+    const needClear = this.data.sphereRadius + this.data.ceilingPadding;
+    if (dist >= needClear) return 0;
+
+    return Math.min(this.data.maxCeilingDrop, (needClear - dist));
+  },
+
+  tick: function (t, dt) {
+    if (!this.data.pivot) return;
+
+    // Refresh colliders occasionally (late loads / elevator).
+    if (t - this._lastRefresh > 1200) {
+      this._lastRefresh = t;
+      this.refreshColliderMeshes();
+    }
+
+    const pivotObj = this.data.pivot.object3D;
+
+    // Desired camera world position from baseline local offset (constant height/distance baseline).
+    pivotObj.getWorldPosition(this._pivotW);
+
+    // local->world for baseline offset
+    this._desiredW.copy(this._baseLocal);
+    pivotObj.localToWorld(this._desiredW);
+
+    // Clamp distance using sphere-sweep against colliders (walls, elevator, etc.)
+    const targetDist = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
+
+    // Smooth boom distance (so it doesn't snap)
+    const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
+    this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
+
+    // Recompute final position along the boom direction while preserving baseline pitch (dir from pivot->desired)
+    this._dir.copy(this._desiredW).sub(this._pivotW);
+    const len = this._dir.length();
+    if (len < 1e-4) return;
+    this._dir.multiplyScalar(1 / len);
+
+    this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
+
+    // Ceiling headroom correction: only downward, temporary, returns to baseline when clear.
+    const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
+
+    // Smooth ceiling drop separately to avoid jitter.
+    const aPos = Math.min(1, Math.max(0, this.data.smoothPos));
+    this._ceilingDrop = this._ceilingDrop + (desiredDrop - this._ceilingDrop) * aPos;
+
+    if (this._ceilingDrop > 0) {
+      this._finalW.y -= this._ceilingDrop;
+    }
+
+    // Smooth final world position for camera friendliness.
+    this._smoothedW.lerp(this._finalW, aPos);
+
+    // Convert back to local position under pivot so we don't disturb hierarchy.
+    const local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
+    // Keep baseline X (shoulder offset) constant; allow Z to shorten; allow Y to drop but never rise above baseline.
+    local.x = this._baseLocal.x;
+    local.z = this._sign * this._curDist;
+    local.y = Math.min(this._baseLocal.y, local.y);
+
+    this.el.object3D.position.copy(local);
+  }
+});
+
+// === Third-person mouse look: yaw on this entity, pitch on a separate pivot ===
+AFRAME.registerComponent('tp-mouselook', {
+  schema: {
+    pitchEl: { type: 'selector' },
+    sensitivity: { type: 'number', default: 0.12 },
+    minPitch: { type: 'number', default: -25 },
+    maxPitch: { type: 'number', default: 18 }
+  },
+  init: function () {
+    this.yaw = this.el.object3D.rotation.y || 0;
+    this.pitch = 0;
+
+    this._onMouseMove = (e) => {
+      if (!this._locked) return;
+      const sx = this.data.sensitivity;
+      const sy = this.data.sensitivity;
+
+      this.yaw -= (e.movementX || 0) * sx * 0.01;
+      this.pitch -= (e.movementY || 0) * sy * 0.01;
+
+      const minP = THREE.MathUtils.degToRad(this.data.minPitch);
+      const maxP = THREE.MathUtils.degToRad(this.data.maxPitch);
+      this.pitch = THREE.MathUtils.clamp(this.pitch, minP, maxP);
+
+      this.el.object3D.rotation.y = this.yaw;
+
+      const pEl = this.data.pitchEl;
+      if (pEl) pEl.object3D.rotation.x = this.pitch;
+    };
+
+    this._onLockChange = () => {
+      this._locked = (document.pointerLockElement === (this.el.sceneEl && this.el.sceneEl.canvas));
+    };
+
+    this._requestLock = () => {
+      const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
+      if (canvas && canvas.requestPointerLock) canvas.requestPointerLock();
+    };
+
+    this._locked = false;
+    document.addEventListener('pointerlockchange', this._onLockChange);
+    window.addEventListener('mousemove', this._onMouseMove, { passive: true });
+    this.el.sceneEl.addEventListener('click', this._requestLock);
+  },
+  remove: function () {
+    document.removeEventListener('pointerlockchange', this._onLockChange);
+    window.removeEventListener('mousemove', this._onMouseMove);
+    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('click', this._requestLock);
+  }
+});
+
+// === Racer controller: sync avatar yaw to camera yaw + switch Idle/Walk based on movement keys ===
+AFRAME.registerComponent('racer-controller', {
+  schema: {
+    cam: { type: 'selector' },
+    idleHint: { type: 'string', default: 'idle' },
+    walkHint: { type: 'string', default: 'walk' },
+    turnWithCamera: { type: 'boolean', default: true }
+  },
+  init: function () {
+    this.keys = Object.create(null);
+    this.mixer = null;
+    this.idleAction = null;
+    this.walkAction = null;
+    this.active = null;
+
+    const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
+
+    this._onKeyDown = (e) => { if (MOVE_KEYS.has(e.code)) this.keys[e.code] = true; };
+    this._onKeyUp   = (e) => { if (MOVE_KEYS.has(e.code)) this.keys[e.code] = false; };
+
+    window.addEventListener('keydown', this._onKeyDown, { passive: true });
+    window.addEventListener('keyup', this._onKeyUp, { passive: true });
+    window.addEventListener('blur', () => { for (const k in this.keys) this.keys[k] = false; });
+
+    this.el.addEventListener('model-loaded', () => {
+      const mesh = this.el.getObject3D('mesh');
+      if (!mesh) return;
+
+      const clips = (mesh.animations && mesh.animations.length) ? mesh.animations : [];
+      if (!clips.length) return;
+
+      const findByHint = (hint) => {
+        const h = (hint || '').toLowerCase();
+        return clips.find(c => (c.name || '').toLowerCase().includes(h));
+      };
+
+      const idleClip = findByHint(this.data.idleHint) || clips[0];
+      const walkClip = findByHint(this.data.walkHint) || clips.find(c => c !== idleClip) || idleClip;
+
+      this.mixer = new THREE.AnimationMixer(mesh);
+      this.idleAction = this.mixer.clipAction(idleClip);
+      this.walkAction = this.mixer.clipAction(walkClip);
+
+      this.idleAction.enabled = true;
+      this.walkAction.enabled = true;
+
+      this._play('idle', true);
+    });
+  },
+
+  remove: function () {
+    window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('keyup', this._onKeyUp);
+    if (this.mixer) this.mixer.stopAllAction();
+  },
+
+  _isMoving: function () {
+    return !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
+              this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight']);
+  },
+
+  _play: function (which, instant) {
+    const a = (which === 'walk') ? this.walkAction : this.idleAction;
+    if (!a || this.active === which) return;
+
+    const from = (this.active === 'walk') ? this.walkAction : this.idleAction;
+    this.active = which;
+
+    if (from && from !== a) {
+      if (instant) {
+        from.stop();
+        a.reset().play();
+      } else {
+        from.fadeOut(0.18);
+        a.reset().fadeIn(0.18).play();
+      }
+    } else {
+      a.reset().play();
+    }
+  },
+
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+
+    const cam = this.data.cam;
+    if (cam && this.data.turnWithCamera) {
+      // Match the avatar yaw to the camera yaw so movement direction reads correctly in third-person.
+      const yaw = cam.object3D.rotation.y;
+      this.el.object3D.rotation.y = yaw + Math.PI; // model faces +Z; A-Frame forward is -Z
+    }
+
+    this._play(this._isMoving() ? 'walk' : 'idle', false);
+  }
+});
+
 
 </script>
 
