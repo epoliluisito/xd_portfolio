@@ -5621,6 +5621,21 @@ AFRAME.registerComponent('pbr-carpet', {
 
     window.addEventListener('pointerdown', unlock, { once: true, capture: true });
     window.addEventListener('keydown', unlock, { once: true, capture: true });
+  
+    // Resilient asset loading: if an <img> in <a-assets> 404/5xx, substitute a 1x1 pixel
+    // and emit a synthetic load so the A-Frame asset system doesn't stall at ~99%.
+    const onePx = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+    document.querySelectorAll('a-assets img').forEach((img) => {
+      img.addEventListener('error', () => {
+        try {
+          console.warn('[assets] failed, substituting:', img.id || img.getAttribute('src'));
+          img.src = onePx;
+          // Some loaders only advance on "load"
+          img.dispatchEvent(new Event('load'));
+        } catch (e) {}
+      }, { once: true });
+    });
+
   });
 })();
 </script>
@@ -6373,10 +6388,10 @@ AFRAME.registerComponent('pbr-carpet', {
         try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
         skipElevatorBtn.style.opacity = '0.65';
       } else if (mode === 'disabled'){
-        skipElevatorBtn.textContent = 'PREPARING…';
-        skipElevatorBtn.setAttribute('aria-disabled','true');
-        try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
-        skipElevatorBtn.style.opacity = '0.65';
+        // Keep skip hidden until actually ready.
+        skipElevatorShell.style.opacity = '0';
+        skipElevatorShell.style.pointerEvents = 'none';
+        return;
       } else {
         // enabled
         skipElevatorBtn.textContent = 'SKIP ELEVATOR';
@@ -6443,12 +6458,12 @@ AFRAME.registerComponent('pbr-carpet', {
     if (e && e.preventDefault) e.preventDefault();
 
     // If the next room isn't ready yet, do NOT hard-cut to black.
-    // Instead, hold the elevator video, show "PREPARING…" and auto-complete once READY arrives.
+    // Instead, hold the elevator video, show "SKIP ELEVATOR" and auto-complete once READY arrives.
     const ready = (window.__ayaIsReady && window.__ayaIsReady());
     if (!ready){
       __skipPressed = true;
       __skipEnabled = false;
-      setSkipUI('disabled');
+      setSkipUI('hidden');
       startSkipReadyPolling();
       return;
     }
@@ -6506,7 +6521,7 @@ function startOverlayVideo(){
     if (window.preloadAyaFragment) window.preloadAyaFragment();
 
     // Skip becomes available only once the next room reports READY.
-    setSkipUI('disabled');
+    setSkipUI('hidden');
     startSkipReadyPolling();
 
     rideVideo.onended = finishElevatorRide;
