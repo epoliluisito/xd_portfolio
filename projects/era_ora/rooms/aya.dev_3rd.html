@@ -18148,7 +18148,7 @@ AFRAME.registerComponent('ion-wind-field', {
               position="35.33 0.03 41.92"
               rotation="0 0 0"
               rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh
-              stick-to-ground="offset: 0.03; rayHeight: 2.0; minNormalY: 0.62; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
+              stick-to-ground="offset: 0.03; rayHeight: 2.0; minNormalY: 0.35; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
 
   <!-- Yaw pivot driven by mouse; everything (avatar + camera) follows -->
   <a-entity id="racerYaw" rotation="0 0 0" tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18">
@@ -20117,9 +20117,21 @@ AFRAME.registerComponent('stick-to-ground', {
     this.dir = new THREE.Vector3(0, -1, 0);
     this._meshes = [];
     this._lastCollect = 0;
+    this._initialized = false;
 
     this._wN = new THREE.Vector3();
     this._nM = new THREE.Matrix3();
+
+    // Wait for scene to be ready before first mesh collection
+    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) {
+      this._initialized = true;
+      this.collectMeshes();
+    } else if (this.el.sceneEl) {
+      this.el.sceneEl.addEventListener('loaded', () => {
+        this._initialized = true;
+        this.collectMeshes();
+      });
+    }
   },
 
   collectMeshes: function () {
@@ -20129,6 +20141,8 @@ AFRAME.registerComponent('stick-to-ground', {
 
     root.traverse((obj) => {
       if (!obj.isMesh) return;
+      // Skip invisible objects
+      if (obj.visible === false) return;
 
       // Ignore anything that belongs to the player rig (self-intersections)
       let p = obj;
@@ -20165,6 +20179,7 @@ AFRAME.registerComponent('stick-to-ground', {
 
   tick: function (t, dt) {
     if (!this.el.sceneEl) return;
+    if (!this._initialized) return;
 
     // Refresh mesh list occasionally (scene may still be loading / late GLBs)
     if (!this._meshes.length || (t - this._lastCollect) > 1500) {
