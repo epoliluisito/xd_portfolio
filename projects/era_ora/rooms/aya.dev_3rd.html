@@ -1,113 +1,16 @@
 <!DOCTYPE html>
+<!-- v9: fixed duplicate component registrations; moved npc-ground out of mixamo-mat-fix; added data: favicon -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mercury Dome — Mercury Pool</title>
+  <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
   <link rel="dns-prefetch" href="https://raw.githubusercontent.com">
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
-  <script src="../vendor/aframe/aframe-1.5.0.min.js"></script>
-  <!-- === PATCH: ensure custom geometry/components are registered exactly once and early === -->
-  <script>
-  (function(){
-    if (!window.AFRAME || !window.THREE) return;
-
-    // Guarded component/geometry registrations (prevents "already registered" hard-fail).
-    // NOTE: detailed implementations remain later in the file; this just ensures availability during scene parse.
-    if (!AFRAME.geometries['extruded-ring']) {
-      AFRAME.registerGeometry('extruded-ring', {
-        schema: {
-          radiusInner: { type: 'number', default: 1 },
-          radiusOuter: { type: 'number', default: 2 },
-          height:      { type: 'number', default: 0.10 },
-          segments:    { type: 'int',    default: 96 }
-        },
-        init: function (data) {
-          const shape = new THREE.Shape();
-          shape.absarc(0, 0, data.radiusOuter, 0, Math.PI * 2, false);
-          const hole = new THREE.Path();
-          hole.absarc(0, 0, data.radiusInner, 0, Math.PI * 2, true);
-          shape.holes.push(hole);
-
-          const geo = new THREE.ExtrudeGeometry(shape, {
-            depth: data.height,
-            bevelEnabled: false,
-            steps: 1,
-            curveSegments: Math.max(12, data.segments | 0)
-          });
-          geo.rotateX(-Math.PI / 2);
-          geo.computeVertexNormals();
-          this.geometry = geo;
-        }
-      });
-    }
-
-    // Basic pitch clamp helper (used by third-person rig). Full version later; this prevents duplicate registration crashes.
-    if (!AFRAME.components['pitch-clamp']) {
-      const DEG2RAD = Math.PI / 180;
-      AFRAME.registerComponent('pitch-clamp', {
-        schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
-        tick: function () {
-          const lc = this.el.components['look-controls'];
-          if (!lc || !lc.pitchObject) return;
-          const minR = this.data.min * DEG2RAD;
-          const maxR = this.data.max * DEG2RAD;
-          const p = lc.pitchObject.rotation.x;
-          lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, p));
-        }
-      });
-    }
-
-    if (!AFRAME.components['initial-yaw']) {
-      AFRAME.registerComponent('initial-yaw', {
-        schema: { yaw: { type: 'number', default: 0 } },
-        init: function () {
-          const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
-          const el = this.el;
-
-          const apply = () => {
-            const lc = el.components && el.components['look-controls'];
-            if (lc && lc.yawObject) {
-              lc.yawObject.rotation.y = targetYaw;
-              return true;
-            }
-            return false;
-          };
-
-          let tries = 0;
-          const tickTry = () => {
-            if (apply()) return;
-            tries++;
-            if (tries < 240) requestAnimationFrame(tickTry);
-          };
-
-          tickTry();
-          el.addEventListener('componentinitialized', (e) => {
-            if (e.detail && e.detail.name === 'look-controls') { tries = 0; tickTry(); }
-          });
-        }
-      });
-    }
-
-    if (!AFRAME.components['auto-focus']) {
-      AFRAME.registerComponent('auto-focus', {
-        init: function () {
-          const scene = this.el;
-          const focus = () => {
-            try { scene.focus(); } catch(e) {}
-            try { if (scene.canvas) scene.canvas.focus(); } catch(e) {}
-          };
-          if (scene.hasLoaded) focus();
-          else scene.addEventListener('loaded', focus, { once: true });
-          window.addEventListener('pointerdown', focus);
-        }
-      });
-    }
-  })();
-  </script>
-
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <!-- Imported (dome_tunnel.html deps) -->
   <script src="https://unpkg.com/three@0.152.2/examples/js/loaders/RGBELoader.js"></script>
   <script src="https://unpkg.com/three@0.152.2/examples/js/postprocessing/EffectComposer.js"></script>
@@ -195,11 +98,6 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    opacity: 0;
-    transition: opacity 240ms ease;
-  }
-  #ayaFullscreenOverlay.visible video{
-    opacity: 1;
   }
 </style>
 
@@ -323,6 +221,21 @@ AFRAME.registerComponent('autoplay-gltf-anim', {
     this.mixer.update(timeDelta / 1000);
   }
 });
+// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
+if (!AFRAME.components['npc-ground']) {
+  AFRAME.registerComponent('npc-ground', {
+    init: function () {
+      this.el.addEventListener('model-loaded', () => {
+        const obj = this.el.getObject3D('mesh');
+        if (!obj || !THREE || !THREE.Box3) return;
+        const box = new THREE.Box3().setFromObject(obj);
+        if (!isFinite(box.min.y)) return;
+        obj.position.y -= box.min.y;
+      });
+    }
+  });
+}
+
 
 // Mixamo / NPC material matte fix (ported from index.html).
 AFRAME.registerComponent('mixamo-mat-fix', {
@@ -336,18 +249,6 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       const obj = this.el.getObject3D('mesh');
       
 
-// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
-AFRAME.registerComponent('npc-ground', {
-  init: function () {
-    this.el.addEventListener('model-loaded', () => {
-      const obj = this.el.getObject3D('mesh');
-      if (!obj || !THREE || !THREE.Box3) return;
-      const box = new THREE.Box3().setFromObject(obj);
-      if (!isFinite(box.min.y)) return;
-      obj.position.y -= box.min.y;
-    });
-  }
-});
 if (!obj) return;
 
       obj.traverse((o) => {
@@ -4205,8 +4106,7 @@ document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
 
 
-
-// === Third-person camera + ground system (ported from racer build) ===
+// === Third-person camera boom (fixed offset behind the rig; yaw rotates boom, pitch does NOT change boom position) ===
 AFRAME.registerComponent('third-person-camera', {
   schema: {
     target: { type: 'selector' },      // usually #rig
@@ -5001,7 +4901,7 @@ AFRAME.registerComponent('racer-controller', {
 });
 
 
-if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
+AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
             const lc = this.el.components['look-controls'];
@@ -5013,7 +4913,7 @@ if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
           }
         });
 
-if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
+AFRAME.registerComponent('initial-yaw', {
   schema: { yaw: { type: 'number', default: 0 } },
   init: function () {
     const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
@@ -5049,70 +4949,7 @@ if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
 
 
 // Ensure the scene can reliably receive keyboard input in embeds/browsers.
-if (!AFRAME.components['auto-focus']) AFRAME.registerComponent('auto-focus', {
-  init: function () {
-    const scene = this.el;
-    const focus = () => {
-      try { scene.focus(); } catch(e) {}
-      try { if (scene.canvas) scene.canvas.focus(); } catch(e) {}
-    };
-    if (scene.hasLoaded) focus();
-    else scene.addEventListener('loaded', focus, { once: true });
-    window.addEventListener('pointerdown', focus);
-  }
-});
-
-
-
-if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
-          schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
-          tick: function () {
-            const lc = this.el.components['look-controls'];
-            if (!lc || !lc.pitchObject) return;
-            const minR = this.data.min * DEG2RAD;
-            const maxR = this.data.max * DEG2RAD;
-            const p = lc.pitchObject.rotation.x;
-            lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, p));
-          }
-        });
-
-if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
-  schema: { yaw: { type: 'number', default: 0 } },
-  init: function () {
-    const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
-    const el = this.el;
-
-    const apply = () => {
-      const lc = el.components && el.components['look-controls'];
-      if (lc && lc.yawObject) {
-        lc.yawObject.rotation.y = targetYaw;
-        return true;
-      }
-      return false;
-    };
-
-    let tries = 0;
-    const tickTry = () => {
-      if (apply()) return;
-      tries++;
-      if (tries < 240) requestAnimationFrame(tickTry); // ~4s safety
-    };
-
-    tickTry();
-    el.addEventListener('componentinitialized', (e) => {
-      if (e.detail && e.detail.name === 'look-controls') { tries = 0; tickTry(); }
-    });
-  }
-});
-
-      
-
-
-      
-
-
-// Ensure the scene can reliably receive keyboard input in embeds/browsers.
-if (!AFRAME.components['auto-focus']) AFRAME.registerComponent('auto-focus', {
+AFRAME.registerComponent('auto-focus', {
   init: function () {
     const scene = this.el;
     const focus = () => {
@@ -8235,6 +8072,11 @@ AFRAME.registerComponent('perforated-sphere-light', {
 
   init: function () {
     this._up = new THREE.Vector3(0, 1, 0);
+
+        // Preallocated offsets for pseudo sphere sweep
+        this._offsets = [
+          new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
+        ];
     this._dirs = [];
     this._beams = [];
 
@@ -9346,6 +9188,11 @@ AFRAME.registerComponent('sphere-hole-beams', {
     this.el.object3D.add(this._group);
 
     this._up = new THREE.Vector3(0, 1, 0);
+
+        // Preallocated offsets for pseudo sphere sweep
+        this._offsets = [
+          new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
+        ];
     this._down = new THREE.Vector3(0, -1, 0);
 
     this._cBlue  = new THREE.Color(this.data.blue);
@@ -10288,7 +10135,7 @@ AFRAME.registerComponent('force-double-side', {
 });
 
 /* --- Extruded ring geometry (for raised pool shore) --- */
-if (!AFRAME.geometries['extruded-ring']) AFRAME.registerGeometry('extruded-ring', {
+AFRAME.registerGeometry('extruded-ring', {
   schema: {
     radiusInner: { type: 'number', default: 1 },
     radiusOuter: { type: 'number', default: 2 },
@@ -10534,7 +10381,9 @@ AFRAME.registerComponent('aya-seat-experience', {
 
     this.seats = [
       document.querySelector('#rock_seat_01'),
-      document.querySelector('#rock_seat_02')
+      document.querySelector('#rock_seat_02'),
+      document.querySelector('#rock_seat_03'),
+      document.querySelector('#rock_seat_04')
     ].filter(Boolean);
 
     this._poolWorld = new THREE.Vector3();
@@ -11147,45 +10996,16 @@ return chosen * 180 / Math.PI;
       this._suppressPointerLockUntil = performance.now() + 700;
     }
 
-    // Pick video based on which seat initiated the experience.
-    if (this.overlayVideo) {
-      const seatId = this.state.activeSeat && this.state.activeSeat.getAttribute && this.state.activeSeat.getAttribute('id');
-      const filename = (seatId === 'rock_seat_02')
-        ? 'aya_visual_experience_from_seat_02.mp4'
-        : 'aya_visual_experience.mp4';
-
-      // Preserve the existing relative base path (defaults to ../aya_room/assets/).
-      const cur = this.overlayVideo.getAttribute('src') || '';
-      const base = cur ? cur.replace(/[^\/\?#]+(\?.*)?$/, '') : '../aya_room/assets/';
-      const desired = base + filename;
-
-      if (cur !== desired) {
-        try {
-          this.overlayVideo.setAttribute('src', desired);
-          this.overlayVideo.load();
-        } catch (err) {}
-      }
-    }
-
     this.state.step = 3;
     this._hideGuide();
 
-    // Fade in the overlay, then start playback.
     this._showOverlay();
 
     if (this.overlayVideo) {
       try {
         this.overlayVideo.currentTime = 0;
-
-        const playNow = () => {
-          try {
-            const p = this.overlayVideo.play();
-            if (p && typeof p.catch === 'function') p.catch(() => {});
-          } catch (err) {}
-        };
-
-        // Let CSS transitions take effect for a smooth fade-in.
-        requestAnimationFrame(() => setTimeout(playNow, 30));
+        const p = this.overlayVideo.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
       } catch (err) {}
     }
   },
@@ -14277,44 +14097,11 @@ AFRAME.registerComponent('uv2-from-uv', {
 
 // NOTE: removed duplicate rig-walk definition (kept the earlier OBB-based version)
 
-if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
-          schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
-          tick: function () {
-            const lc = this.el.components['look-controls'];
-            if (!lc || !lc.pitchObject) return;
-            const minR = this.data.min * DEG2RAD;
-            const maxR = this.data.max * DEG2RAD;
-            const p = lc.pitchObject.rotation.x;
-            lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, p));
-          }
-        });
 
-if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
-  schema: { yaw: { type: 'number', default: 0 } },
-  init: function () {
-    const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
-    const el = this.el;
 
-    const apply = () => {
-      const lc = el.components && el.components['look-controls'];
-      if (lc && lc.yawObject) {
-        lc.yawObject.rotation.y = targetYaw;
-        return true;
-      }
-      return false;
-    };
 
-    let tries = 0;
-    const tickTry = () => {
-      if (apply()) return;
-      tries++;
-      if (tries < 240) requestAnimationFrame(tickTry); // ~4s safety
-    };
 
-    tickTry();
-    el.addEventListener('componentinitialized', (e) => {
-      if (e.detail && e.detail.name === 'look-controls') { tries = 0; tickTry(); }
-    });
+
   }
 });
 
@@ -16961,31 +16748,31 @@ AFRAME.registerComponent('ion-wind-field', {
 
     
 <a-assets>
-    <img id="earthTex" crossorigin="anonymous" src="../aya_room/assets/earth_skin.jpg">
-<img id="moonDiffuse" crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_diffuse.webp">
-  <img id="moonNormal"  crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_normal.webp">
-  <img id="moonRough"   crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_rough.png">
-  <img id="moonAO"      crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_ao.png">
+    <img id="earthTex" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/earth_skin.jpg">
+<img id="moonDiffuse" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_diffuse.webp">
+  <img id="moonNormal"  crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_normal.webp">
+  <img id="moonRough"   crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_rough.png">
+  <img id="moonAO"      crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/cave_wall/moon_ao.png">
 
-  <img id="groundAO"      crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_ao.png">
-  <img id="groundDiffuse" crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_diffuse%20.webp">
-  <img id="groundNormal"  crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_normal.webp">
-  <img id="groundRough"   crossorigin="anonymous" src="../aya_room/assets/moon_ground/moon_ground_rough.png">
+  <img id="groundAO"      crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_ao.png">
+  <img id="groundDiffuse" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_diffuse%20.webp">
+  <img id="groundNormal"  crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_normal.webp">
+  <img id="groundRough"   crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/moon_ground/moon_ground_rough.png">
 <!-- Elevator metal PBR (used by mercurial torches) --><!-- Floating sphere PBR (metal elevator door) -->
   <!-- Floating sphere PBR (metal elevator door) -->
-  <img id="metalElevatorColor" src="../aya_room/assets/metal_elevator_door/metal_elevator_color.webp" crossorigin="anonymous">
-  <img id="metalElevatorNormal" src="../aya_room/assets/metal_elevator_door/metal_elevator_normal.webp" crossorigin="anonymous">
-  <img id="metalElevatorRough" src="../aya_room/assets/metal_elevator_door/metal_elevator_rough.png" crossorigin="anonymous">
-  <img id="metalElevatorMetalness" src="../aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png" crossorigin="anonymous">
-  <img id="metalElevatorDisplacement" src="../aya_room/assets/metal_elevator_door/metal_elevator_displacement.png" crossorigin="anonymous">
+  <img id="metalElevatorColor" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_color.webp" crossorigin="anonymous">
+  <img id="metalElevatorNormal" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_normal.webp" crossorigin="anonymous">
+  <img id="metalElevatorRough" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_rough.png" crossorigin="anonymous">
+  <img id="metalElevatorMetalness" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png" crossorigin="anonymous">
+  <img id="metalElevatorDisplacement" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_displacement.png" crossorigin="anonymous">
 
   <!-- Imported assets (dome_tunnel.html) -->
-  <img id="elevMetalColor" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_color.webp">
-  <img id="elevMetalNormal" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_normal.webp">
-  <img id="elevMetalRough" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_rough.png">
-  <img id="elevMetalMetal" crossorigin="anonymous" src="../aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png">
+  <img id="elevMetalColor" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_color.webp">
+  <img id="elevMetalNormal" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_normal.webp">
+  <img id="elevMetalRough" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_rough.png">
+  <img id="elevMetalMetal" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png">
 
-  <video id="ayaExperienceVideo" crossorigin="anonymous" playsinline webkit-playsinline preload="auto" src="../aya_room/assets/aya_visual_experience.mp4"></video>
+  <video id="ayaExperienceVideo" crossorigin="anonymous" playsinline webkit-playsinline preload="auto" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/rooms/aya_visual_experience.mp4"></video>
 
   <!-- Torch V2: unlit cinematic glow cards (no real-time lights per torch) -->
   <img id="torchGlowTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'><defs><radialGradient id='g' cx='50%25' cy='50%25' r='60%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='1'/><stop offset='28%25' stop-color='%23bfe6ff' stop-opacity='0.65'/><stop offset='55%25' stop-color='%238ad4ff' stop-opacity='0.22'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='256' height='256' fill='url(%23g)'/></svg>" />
@@ -16993,23 +16780,25 @@ AFRAME.registerComponent('ion-wind-field', {
   <img id="torchSplashTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='512' height='256' viewBox='0 0 512 256'><defs><radialGradient id='p' cx='35%25' cy='55%25' r='70%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='0.18'/><stop offset='35%25' stop-color='%23bfe6ff' stop-opacity='0.10'/><stop offset='75%25' stop-color='%238ad4ff' stop-opacity='0.04'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='512' height='256' fill='url(%23p)'/></svg>" />
 
     <!-- ===== NPCs (sitting) ===== -->
-    <a-asset-item id="megan_sitting_glb" src="../characters/megan_sitting.glb"></a-asset-item>
-    <a-asset-item id="liz_sitting_glb" src="../characters/liz_sitting.glb"></a-asset-item>
-    <a-asset-item id="david_sitting_glb" src="../characters/david_sitting.glb"></a-asset-item>
-    <a-asset-item id="adam_sitting_glb" src="../characters/adam_sitting.glb"></a-asset-item>
+    <a-asset-item id="megan_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/megan_sitting.glb"></a-asset-item>
+    <a-asset-item id="liz_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/liz_sitting.glb"></a-asset-item>
+    <a-asset-item id="david_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/david_sitting.glb"></a-asset-item>
+    <a-asset-item id="adam_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/adam_sitting.glb"></a-asset-item>
     <!-- ===== NPCs (idle) ===== -->
-    <a-asset-item id="sophie_idle_glb" src="../characters/sophie_idle.glb"></a-asset-item>
-    <a-asset-item id="bryce_idle_glb" src="../characters/bryce_idle.glb"></a-asset-item>
-    <a-asset-item id="jodie_idle_glb" src="../characters/jodie_idle.glb"></a-asset-item>
-    <a-asset-item id="brian_idle_glb" src="../characters/brian_idle.glb"></a-asset-item>
-    <a-asset-item id="alex_glb" src="../characters/alex.glb"></a-asset-item>
+    <a-asset-item id="sophie_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/sophie_idle.glb"></a-asset-item>
+    <a-asset-item id="bryce_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/bryce_idle.glb"></a-asset-item>
+    <a-asset-item id="jodie_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/jodie_idle.glb"></a-asset-item>
+    <a-asset-item id="brian_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/brian_idle.glb"></a-asset-item>
+    <a-asset-item id="alex_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/alex.glb"></a-asset-item>
+
+    <a-asset-item id="racer_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/racer.glb"></a-asset-item>
 
 
 
-    <audio id="pool_sound" crossorigin="anonymous" src="../aya_room/music/pool_sound.mp3"></audio>
-    <audio id="nde_sound" crossorigin="anonymous" src="../aya_room/music/aya_sounds.mp3"></audio>
+    <audio id="pool_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/pool_sound.mp3"></audio>
+    <audio id="nde_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/aya_sounds.mp3"></audio>
 
-    <audio id="sphere_sound" crossorigin="anonymous" src="../aya_room/music/sphere_sounds.mp3"></audio>
+    <audio id="sphere_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/sphere_sounds.mp3"></audio>
 
 </a-assets>
 
@@ -18378,6 +18167,8 @@ AFRAME.registerComponent('ion-wind-field', {
 
 <!-- Cave chamber outside the elevator (4m x 4m x 3m) -->
     <a-entity id="entrance_chamber" position="0 0 0">
+      <a-entity id="spawn_elevator" position="0 0 -0.65" rotation="0 180 0"></a-entity>
+
       
       
       <!-- Debug grey floor at natural ground level -->
@@ -19105,17 +18896,35 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="rig"
               position="35.33 0.03 41.92"
               rotation="0 0 0"
-              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh stick-to-ground="offset: 0.03; rayHeight: 2.0; maxDrop: 6.0; maxRise: 1.0; minNormalY: 0.62; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
+              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh
+              spawn-at="target: #spawn_elevator; yOffset: 0.03; once: true"
+              stick-to-ground="offset: 0.03; rayHeight: 2.0; smoothing: 0.14; maxStepUp: 0.06; maxStepDown: 0.18; snapDist: 0.01">
+
+  <!-- Yaw pivot driven by mouse; everything (avatar + camera) follows -->
+  <a-entity id="racerYaw" rotation="0 0 0" tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18">
+
+    <a-entity id="racerAvatar"
+              gltf-model="#racer_glb"
+              position="0 0 0"
+              rotation="0 180 0"
+              scale="1 1 1"
+              racer-controller="cam: #racerYaw; turnWithCamera: false"
+              shadow="cast:false; receive:false"></a-entity>
+
+    <!-- Fixed follow-cam: slightly above + behind the avatar -->
+    <a-entity id="camPitch" position="0 1.65 0" rotation="0 0 0">
       <a-entity id="playerCam"
                 camera="fov: 60; near: 0.1; far: 250; zoom: 1.08"
-                look-controls="pointerLockEnabled: true"
-                pitch-clamp="min: -80; max: 80"
                 camera-enable-layer="layer: 2"
-                position="0 1.6 0"
+                tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=\"1\"]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
+                position="0 0 1.3"
                 rotation="0 0 0">
         <a-entity cursor="rayOrigin: mouse"></a-entity>
       </a-entity>
     </a-entity>
+
+  </a-entity>
+</a-entity>
 
   
     <a-entity id="aya_seat_experience" aya-seat-experience></a-entity>
@@ -19279,7 +19088,7 @@ AFRAME.registerComponent('ion-wind-field', {
 <!-- Tunnel lighting: dome-style mercurial torches -->
       <a-entity id="torch_tunnel_04_L1" class="torchAnchor"
               position="-6.31 0.45 -1.25"
-              rotation="0 180 0"
+              rotation="0 0 0"
               shadow="cast:false; receive:false"
               mercury-sinuous-driver>
       <a-entity id="torch_tunnel_04_L1_rods">
@@ -20286,7 +20095,7 @@ AFRAME.registerComponent('ion-wind-field', {
          playsinline
          webkit-playsinline
          preload="auto"
-         src="../aya_room/assets/aya_visual_experience.mp4"></video>
+         src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/rooms/aya_visual_experience.mp4"></video>
 </div>
 
   <div id="userGuide" aria-live="polite">
