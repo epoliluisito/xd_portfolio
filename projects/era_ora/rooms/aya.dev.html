@@ -96,6 +96,11 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    opacity: 0;
+    transition: opacity 240ms ease;
+  }
+  #ayaFullscreenOverlay.visible video{
+    opacity: 1;
   }
 </style>
 
@@ -9570,9 +9575,7 @@ AFRAME.registerComponent('aya-seat-experience', {
 
     this.seats = [
       document.querySelector('#rock_seat_01'),
-      document.querySelector('#rock_seat_02'),
-      document.querySelector('#rock_seat_03'),
-      document.querySelector('#rock_seat_04')
+      document.querySelector('#rock_seat_02')
     ].filter(Boolean);
 
     this._poolWorld = new THREE.Vector3();
@@ -10185,16 +10188,45 @@ return chosen * 180 / Math.PI;
       this._suppressPointerLockUntil = performance.now() + 700;
     }
 
+    // Pick video based on which seat initiated the experience.
+    if (this.overlayVideo) {
+      const seatId = this.state.activeSeat && this.state.activeSeat.getAttribute && this.state.activeSeat.getAttribute('id');
+      const filename = (seatId === 'rock_seat_02')
+        ? 'aya_visual_experience_from_seat_02.mp4'
+        : 'aya_visual_experience.mp4';
+
+      // Preserve the existing relative base path (defaults to ../aya_room/assets/).
+      const cur = this.overlayVideo.getAttribute('src') || '';
+      const base = cur ? cur.replace(/[^\/\?#]+(\?.*)?$/, '') : '../aya_room/assets/';
+      const desired = base + filename;
+
+      if (cur !== desired) {
+        try {
+          this.overlayVideo.setAttribute('src', desired);
+          this.overlayVideo.load();
+        } catch (err) {}
+      }
+    }
+
     this.state.step = 3;
     this._hideGuide();
 
+    // Fade in the overlay, then start playback.
     this._showOverlay();
 
     if (this.overlayVideo) {
       try {
         this.overlayVideo.currentTime = 0;
-        const p = this.overlayVideo.play();
-        if (p && typeof p.catch === 'function') p.catch(() => {});
+
+        const playNow = () => {
+          try {
+            const p = this.overlayVideo.play();
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+          } catch (err) {}
+        };
+
+        // Let CSS transitions take effect for a smooth fade-in.
+        requestAnimationFrame(() => setTimeout(playNow, 30));
       } catch (err) {}
     }
   },
