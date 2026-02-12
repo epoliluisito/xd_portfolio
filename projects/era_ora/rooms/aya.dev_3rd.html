@@ -9,6 +9,105 @@
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
   <script src="../vendor/aframe/aframe-1.5.0.min.js"></script>
+  <!-- === PATCH: ensure custom geometry/components are registered exactly once and early === -->
+  <script>
+  (function(){
+    if (!window.AFRAME || !window.THREE) return;
+
+    // Guarded component/geometry registrations (prevents "already registered" hard-fail).
+    // NOTE: detailed implementations remain later in the file; this just ensures availability during scene parse.
+    if (!AFRAME.geometries['extruded-ring']) {
+      AFRAME.registerGeometry('extruded-ring', {
+        schema: {
+          radiusInner: { type: 'number', default: 1 },
+          radiusOuter: { type: 'number', default: 2 },
+          height:      { type: 'number', default: 0.10 },
+          segments:    { type: 'int',    default: 96 }
+        },
+        init: function (data) {
+          const shape = new THREE.Shape();
+          shape.absarc(0, 0, data.radiusOuter, 0, Math.PI * 2, false);
+          const hole = new THREE.Path();
+          hole.absarc(0, 0, data.radiusInner, 0, Math.PI * 2, true);
+          shape.holes.push(hole);
+
+          const geo = new THREE.ExtrudeGeometry(shape, {
+            depth: data.height,
+            bevelEnabled: false,
+            steps: 1,
+            curveSegments: Math.max(12, data.segments | 0)
+          });
+          geo.rotateX(-Math.PI / 2);
+          geo.computeVertexNormals();
+          this.geometry = geo;
+        }
+      });
+    }
+
+    // Basic pitch clamp helper (used by third-person rig). Full version later; this prevents duplicate registration crashes.
+    if (!AFRAME.components['pitch-clamp']) {
+      const DEG2RAD = Math.PI / 180;
+      AFRAME.registerComponent('pitch-clamp', {
+        schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
+        tick: function () {
+          const lc = this.el.components['look-controls'];
+          if (!lc || !lc.pitchObject) return;
+          const minR = this.data.min * DEG2RAD;
+          const maxR = this.data.max * DEG2RAD;
+          const p = lc.pitchObject.rotation.x;
+          lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, p));
+        }
+      });
+    }
+
+    if (!AFRAME.components['initial-yaw']) {
+      AFRAME.registerComponent('initial-yaw', {
+        schema: { yaw: { type: 'number', default: 0 } },
+        init: function () {
+          const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
+          const el = this.el;
+
+          const apply = () => {
+            const lc = el.components && el.components['look-controls'];
+            if (lc && lc.yawObject) {
+              lc.yawObject.rotation.y = targetYaw;
+              return true;
+            }
+            return false;
+          };
+
+          let tries = 0;
+          const tickTry = () => {
+            if (apply()) return;
+            tries++;
+            if (tries < 240) requestAnimationFrame(tickTry);
+          };
+
+          tickTry();
+          el.addEventListener('componentinitialized', (e) => {
+            if (e.detail && e.detail.name === 'look-controls') { tries = 0; tickTry(); }
+          });
+        }
+      });
+    }
+
+    if (!AFRAME.components['auto-focus']) {
+      AFRAME.registerComponent('auto-focus', {
+        init: function () {
+          const scene = this.el;
+          const focus = () => {
+            try { scene.focus(); } catch(e) {}
+            try { if (scene.canvas) scene.canvas.focus(); } catch(e) {}
+          };
+          if (scene.hasLoaded) focus();
+          else scene.addEventListener('loaded', focus, { once: true });
+          window.addEventListener('pointerdown', focus);
+        }
+      });
+    }
+  })();
+  </script>
+
   <!-- Imported (dome_tunnel.html deps) -->
   <script src="https://unpkg.com/three@0.152.2/examples/js/loaders/RGBELoader.js"></script>
   <script src="https://unpkg.com/three@0.152.2/examples/js/postprocessing/EffectComposer.js"></script>
@@ -4902,7 +5001,7 @@ AFRAME.registerComponent('racer-controller', {
 });
 
 
-AFRAME.registerComponent('pitch-clamp', {
+if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
             const lc = this.el.components['look-controls'];
@@ -4914,7 +5013,7 @@ AFRAME.registerComponent('pitch-clamp', {
           }
         });
 
-AFRAME.registerComponent('initial-yaw', {
+if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
   schema: { yaw: { type: 'number', default: 0 } },
   init: function () {
     const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
@@ -4950,7 +5049,7 @@ AFRAME.registerComponent('initial-yaw', {
 
 
 // Ensure the scene can reliably receive keyboard input in embeds/browsers.
-AFRAME.registerComponent('auto-focus', {
+if (!AFRAME.components['auto-focus']) AFRAME.registerComponent('auto-focus', {
   init: function () {
     const scene = this.el;
     const focus = () => {
@@ -4965,7 +5064,7 @@ AFRAME.registerComponent('auto-focus', {
 
 
 
-AFRAME.registerComponent('pitch-clamp', {
+if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
             const lc = this.el.components['look-controls'];
@@ -4977,7 +5076,7 @@ AFRAME.registerComponent('pitch-clamp', {
           }
         });
 
-AFRAME.registerComponent('initial-yaw', {
+if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
   schema: { yaw: { type: 'number', default: 0 } },
   init: function () {
     const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
@@ -5013,7 +5112,7 @@ AFRAME.registerComponent('initial-yaw', {
 
 
 // Ensure the scene can reliably receive keyboard input in embeds/browsers.
-AFRAME.registerComponent('auto-focus', {
+if (!AFRAME.components['auto-focus']) AFRAME.registerComponent('auto-focus', {
   init: function () {
     const scene = this.el;
     const focus = () => {
@@ -10189,7 +10288,7 @@ AFRAME.registerComponent('force-double-side', {
 });
 
 /* --- Extruded ring geometry (for raised pool shore) --- */
-AFRAME.registerGeometry('extruded-ring', {
+if (!AFRAME.geometries['extruded-ring']) AFRAME.registerGeometry('extruded-ring', {
   schema: {
     radiusInner: { type: 'number', default: 1 },
     radiusOuter: { type: 'number', default: 2 },
@@ -14178,7 +14277,7 @@ AFRAME.registerComponent('uv2-from-uv', {
 
 // NOTE: removed duplicate rig-walk definition (kept the earlier OBB-based version)
 
-AFRAME.registerComponent('pitch-clamp', {
+if (!AFRAME.components['pitch-clamp']) AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
             const lc = this.el.components['look-controls'];
@@ -14190,7 +14289,7 @@ AFRAME.registerComponent('pitch-clamp', {
           }
         });
 
-AFRAME.registerComponent('initial-yaw', {
+if (!AFRAME.components['initial-yaw']) AFRAME.registerComponent('initial-yaw', {
   schema: { yaw: { type: 'number', default: 0 } },
   init: function () {
     const targetYaw = (this.data.yaw || 0) * (Math.PI / 180);
