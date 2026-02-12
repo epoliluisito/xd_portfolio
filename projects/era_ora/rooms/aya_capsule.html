@@ -1682,15 +1682,20 @@ const clipByX = (geom, keepSign) => {
     schema: {
       left:  { type: 'selector' },
       right: { type: 'selector' },
-      openOffset: { type: 'number', default: 1.10 },   // meters along ±X (in capsule local space)
+
+      // Optional sliding base parts that move with the glass halves.
+      baseLeft:  { type: 'selector', default: null },
+      baseRight: { type: 'selector', default: null },
+
+      openOffset: { type: 'number', default: 0.75 },   // meters along ±X (in capsule local space)
+      baseOpenOffset: { type: 'number', default: 0.55 }, // meters along ±X for base halves (usually smaller)
       tuckY: { type: 'number', default: 0.06 },        // optional small downward tuck when open
       dur: { type: 'number', default: 650 }            // ms
     },
 
     init: function () {
       this._open = false;
-      this._anim = null; // {t0, fromL, toL, fromR, toR}
-      this._tmp = new THREE.Vector3();
+      this._anim = null; // {t0, dur, from/to vectors...}
       this._syncedClosed = false;
 
       const isTyping = () => {
@@ -1704,8 +1709,6 @@ const clipByX = (geom, keepSign) => {
         if (!isO) return;
         if (e.defaultPrevented) return;
         if (isTyping()) return;
-
-        // Don't steal O while modifier keys are held (let browser/system shortcuts work).
         if (e.ctrlKey || e.metaKey || e.altKey) return;
 
         e.preventDefault();
@@ -1713,8 +1716,6 @@ const clipByX = (geom, keepSign) => {
         this.toggle();
       };
 
-      // Use capture=true so we still work even if other listeners are passive/bubbling,
-      // but we respect defaultPrevented to avoid breaking existing O bindings.
       window.addEventListener('keydown', this._onKeyDown, { capture: true });
     },
 
@@ -1722,10 +1723,25 @@ const clipByX = (geom, keepSign) => {
       window.removeEventListener('keydown', this._onKeyDown, { capture: true });
     },
 
+    _setClosedPose: function () {
+      const L = this.data.left;
+      const R = this.data.right;
+      const BL = this.data.baseLeft;
+      const BR = this.data.baseRight;
+      if (L)  L.object3D.position.set(0,0,0);
+      if (R)  R.object3D.position.set(0,0,0);
+      if (BL) BL.object3D.position.set(0,0,0);
+      if (BR) BR.object3D.position.set(0,0,0);
+      this._syncedClosed = true;
+    },
+
     toggle: function () {
       const L = this.data.left;
       const R = this.data.right;
       if (!L || !R) return;
+
+      const BL = this.data.baseLeft;
+      const BR = this.data.baseRight;
 
       const lObj = L.object3D;
       const rObj = R.object3D;
@@ -1733,31 +1749,34 @@ const clipByX = (geom, keepSign) => {
       const fromL = lObj.position.clone();
       const fromR = rObj.position.clone();
 
+      const fromBL = BL ? BL.object3D.position.clone() : null;
+      const fromBR = BR ? BR.object3D.position.clone() : null;
+
       this._open = !this._open;
 
-      const ox = Math.max(0.0, this.data.openOffset);
-      const ty = Math.max(0.0, this.data.tuckY);
+      const ox  = Math.max(0.0, this.data.openOffset);
+      const box = Math.max(0.0, this.data.baseOpenOffset);
+      const ty  = Math.max(0.0, this.data.tuckY);
 
-      const toL = new THREE.Vector3(this._open ? -ox : 0, this._open ? -ty : 0, 0);
-      const toR = new THREE.Vector3(this._open ?  ox : 0, this._open ? -ty : 0, 0);
+      const toL  = new THREE.Vector3(this._open ? -ox  : 0, this._open ? -ty : 0, 0);
+      const toR  = new THREE.Vector3(this._open ?  ox  : 0, this._open ? -ty : 0, 0);
+      const toBL = fromBL ? new THREE.Vector3(this._open ? -box : 0, 0, 0) : null;
+      const toBR = fromBR ? new THREE.Vector3(this._open ?  box : 0, 0, 0) : null;
 
       this._anim = {
         t0: performance.now(),
         dur: Math.max(120, this.data.dur),
-        fromL, fromR, toL, toR
+
+        fromL, fromR, toL, toR,
+        fromBL, fromBR, toBL, toBR
       };
     },
 
     tick: function () {
-      // Ensure we start in a deterministic CLOSED pose even if other code touched positions.
       if (!this._syncedClosed) {
         const L = this.data.left;
         const R = this.data.right;
-        if (L && R) {
-          L.object3D.position.set(0,0,0);
-          R.object3D.position.set(0,0,0);
-          this._syncedClosed = true;
-        }
+        if (L && R) this._setClosedPose();
       }
 
       if (!this._anim) return;
@@ -1766,27 +1785,43 @@ const clipByX = (geom, keepSign) => {
       const R = this.data.right;
       if (!L || !R) { this._anim = null; return; }
 
+      const BL = this.data.baseLeft;
+      const BR = this.data.baseRight;
+
       const now = performance.now();
       const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
       const s = easeInOutCubic(u);
 
-      const lObj = L.object3D;
-      const rObj = R.object3D;
-
-      lObj.position.set(
+      L.object3D.position.set(
         this._anim.fromL.x + (this._anim.toL.x - this._anim.fromL.x) * s,
         this._anim.fromL.y + (this._anim.toL.y - this._anim.fromL.y) * s,
         this._anim.fromL.z + (this._anim.toL.z - this._anim.fromL.z) * s
       );
-      rObj.position.set(
+      R.object3D.position.set(
         this._anim.fromR.x + (this._anim.toR.x - this._anim.fromR.x) * s,
         this._anim.fromR.y + (this._anim.toR.y - this._anim.fromR.y) * s,
         this._anim.fromR.z + (this._anim.toR.z - this._anim.fromR.z) * s
       );
 
+      if (BL && this._anim.fromBL && this._anim.toBL) {
+        BL.object3D.position.set(
+          this._anim.fromBL.x + (this._anim.toBL.x - this._anim.fromBL.x) * s,
+          this._anim.fromBL.y + (this._anim.toBL.y - this._anim.fromBL.y) * s,
+          this._anim.fromBL.z + (this._anim.toBL.z - this._anim.fromBL.z) * s
+        );
+      }
+      if (BR && this._anim.fromBR && this._anim.toBR) {
+        BR.object3D.position.set(
+          this._anim.fromBR.x + (this._anim.toBR.x - this._anim.fromBR.x) * s,
+          this._anim.fromBR.y + (this._anim.toBR.y - this._anim.fromBR.y) * s,
+          this._anim.fromBR.z + (this._anim.toBR.z - this._anim.fromBR.z) * s
+        );
+      }
+
       if (u >= 1) this._anim = null;
     }
   });
+
 
   function easeInOutCubic(t) {
     return (t < 0.5) ? (4 * t * t * t) : (1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -17036,6 +17071,34 @@ AFRAME.registerComponent('ion-wind-field', {
                 material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
                 shadow="cast:false; receive:true"></a-entity>
 
+
+      <!-- Inner platform (walkable deck inside capsule) -->
+      <a-entity id="capsuleInnerPlatform" class="collider"
+                geometry="primitive: cylinder; radius: 1.22; height: 0.08; segmentsRadial: 64; openEnded: false"
+                position="0 0.04 0"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1.0; roughness: 0.62; normalScale: 0.75 0.75"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <!-- Inner step (so the player can step up into the capsule) -->
+      <a-entity id="capsuleInnerStep" class="collider"
+                geometry="primitive: box; width: 1.20; height: 0.12; depth: 0.55"
+                position="0 0.06 1.05"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1.0; roughness: 0.68; normalScale: 0.75 0.75"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <!-- Sliding base halves (move with the glass, smaller travel than the canopy) -->
+      <a-entity id="capsuleSlideBaseL"
+                geometry="primitive: cylinder; radius: 1.78; height: 0.10; segmentsRadial: 72; openEnded: false; thetaStart: 90; thetaLength: 180"
+                position="0 0.05 0"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1.0; roughness: 0.58; normalScale: 0.75 0.75"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <a-entity id="capsuleSlideBaseR"
+                geometry="primitive: cylinder; radius: 1.78; height: 0.10; segmentsRadial: 72; openEnded: false; thetaStart: -90; thetaLength: 180"
+                position="0 0.05 0"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1.0; roughness: 0.58; normalScale: 0.75 0.75"
+                shadow="cast:false; receive:true"></a-entity>
+
       <!-- Shared sphere center (all parts share the same radius + center => perfect seam) -->
       <a-entity id="capsuleCore" position="0 1.01 0">
         <!-- Base: bottom hemisphere clipped flat at floor plane -->
@@ -17059,7 +17122,7 @@ AFRAME.registerComponent('ion-wind-field', {
       </a-entity>
 
       <!-- Toggle controller (binds to O key) -->
-      <a-entity capsule-open-toggle="left: #capsuleGlassL; right: #capsuleGlassR; openOffset: 1.15; tuckY: 0.06; dur: 650"></a-entity>
+      <a-entity capsule-open-toggle="left: #capsuleGlassL; right: #capsuleGlassR; baseLeft: #capsuleSlideBaseL; baseRight: #capsuleSlideBaseR; openOffset: 0.75; baseOpenOffset: 0.55; tuckY: 0.06; dur: 650"></a-entity>
     </a-entity>
     
     <!-- Forest-of-Lights ring removed (per request) -->
