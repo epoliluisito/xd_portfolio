@@ -15994,7 +15994,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
 
 
-  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  <a-scene adaptive-resolution proximity-light-culler npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -19513,19 +19513,27 @@ AFRAME.registerComponent('ion-wind-field', {
 --------------------------------------------------------------------------- */
 AFRAME.registerComponent('adaptive-resolution', {
   schema: {
-    startScale: {type: 'number', default: 0.90},
-    minScale:   {type: 'number', default: 0.75},
+    startScale: {type: 'number', default: 0.75},
+    minScale:   {type: 'number', default: 0.60},
     maxScale:   {type: 'number', default: 1.00},
-    dprCap:     {type: 'number', default: 1.25},
-    adjustEveryMs: {type: 'int', default: 650},
-    downStep:   {type: 'number', default: 0.06},
-    upStep:     {type: 'number', default: 0.03},
+    dprCap:     {type: 'number', default: 1.50},
+    adjustEveryMs: {type: 'int', default: 700},
+    downStep:   {type: 'number', default: 0.07},
+    upStep:     {type: 'number', default: 0.025},
     downFps:    {type: 'number', default: 45},
     upFps:      {type: 'number', default: 58}
   },
 
   init: function () {
     this._q = this._clamp(this.data.startScale, this.data.minScale, this.data.maxScale);
+
+    // Safari tends to struggle with high DPR + heavy scenes; treat it as a separate tier.
+    const ua = navigator.userAgent || '';
+    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg|OPR/i.test(ua);
+    this._isSafari = isSafari;
+
+    // Effective caps (Safari: keep DPR low for input/frametime stability; others: allow sharper output).
+    this._dprCapEff = isSafari ? Math.min(1.05, this.data.dprCap) : this.data.dprCap;
 
     // Smoothed frametime + spike catcher (better than raw FPS averages for stutter).
     this._emaDt = 16.6;
@@ -19614,11 +19622,13 @@ AFRAME.registerComponent('adaptive-resolution', {
     const postfx = this._getPostFX();
 
     try {
-      const dpr = Math.min(window.devicePixelRatio || 1, this.data.dprCap);
+      const baseDpr = window.devicePixelRatio || 1;
+      const cap = (this._dprCapEff != null) ? this._dprCapEff : this.data.dprCap;
+      const dpr = Math.min(baseDpr, cap);
 
-      // Cap canvas DPR to reduce final full-screen pass cost on high-DPR screens.
-      // (Does not change scene content; only internal render resolution.)
-      const canvasPR = (q > 0.98) ? dpr : Math.min(dpr, 1.0);
+      // Render scale: q acts as a scalar on DPR (bounded by cap).
+      // This keeps the image sharp when performance allows, but still gives us room to downscale.
+      const canvasPR = Math.max(0.75, Math.min(cap, dpr * q));
       renderer.setPixelRatio(canvasPR);
 
       if (postfx && postfx.composer) {
@@ -19669,6 +19679,105 @@ AFRAME.registerComponent('adaptive-resolution', {
   }
 });
 
+
+
+// Cull/restore local point lights based on player proximity (no visual change where it matters).
+// Goal: reduce active light count (shader uniforms + CPU traversal) so we can keep higher DPR.
+AFRAME.registerComponent('proximity-light-culler', {
+  schema: {
+    rig: { type: 'selector', default: '#rig' },
+    checkMs: { type: 'int', default: 220 },
+    // Multiplier applied to each light's "distance" to decide when it can be safely disabled.
+    rangeMult: { type: 'number', default: 1.35 },
+    // Extra buffer in meters.
+    buffer: { type: 'number', default: 2.0 },
+    // Never touch lights whose distance is 0 or huge (global/ambient).
+    maxCullDistance: { type: 'number', default: 45 }
+  },
+
+  init: function () {
+    this._lights = [];
+    this._t = 0;
+    this._rigObj = null;
+
+    const refresh = () => {
+      const rigEl = this.data.rig || this.el.querySelector('#rig');
+      this._rigObj = rigEl && rigEl.object3D ? rigEl.object3D : null;
+
+      // Collect entities with a THREE.Light.
+      this._lights = [];
+      const lightEls = this.el.querySelectorAll('[light]');
+      for (let i = 0; i < lightEls.length; i++) {
+        const e = lightEls[i];
+        const comp = e.components && e.components.light;
+        const L = comp && comp.light;
+        if (!L) continue;
+
+        // Only cull local lights (point/spot) with finite-ish range.
+        const type = (L.type || '').toLowerCase();
+        if (type !== 'pointlight' && type !== 'spotlight') continue;
+
+        // Respect explicit opt-out.
+        if (e.hasAttribute('data-no-cull')) continue;
+
+        const dist = (typeof L.distance === 'number') ? L.distance : 0;
+        if (!dist || dist > this.data.maxCullDistance) continue;
+
+        this._lights.push({
+          el: e,
+          light: L,
+          baseIntensity: (typeof L.intensity === 'number') ? L.intensity : 1,
+          distance: dist,
+          culled: false
+        });
+      }
+    };
+
+    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) refresh();
+    else this.el.addEventListener('loaded', refresh);
+
+    // Refresh again after imports settle (some lights arrive late).
+    setTimeout(refresh, 1200);
+    setTimeout(refresh, 3000);
+  },
+
+  tick: function (t, dt) {
+    this._t += dt || 16;
+    if (this._t < this.data.checkMs) return;
+    this._t = 0;
+
+    const rig = this._rigObj;
+    if (!rig) return;
+
+    const rx = rig.position.x, ry = rig.position.y, rz = rig.position.z;
+
+    for (let i = 0; i < this._lights.length; i++) {
+      const it = this._lights[i];
+      const L = it.light;
+      const e = it.el;
+
+      // If light entity is invisible, keep it culled.
+      if (e.getAttribute && e.getAttribute('visible') === false) {
+        if (!it.culled) { L.intensity = 0; it.culled = true; }
+        continue;
+      }
+
+      const p = e.object3D && e.object3D.position;
+      if (!p) continue;
+
+      const dx = p.x - rx, dy = p.y - ry, dz = p.z - rz;
+      const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+      const cutoff = (it.distance * this.data.rangeMult) + this.data.buffer;
+
+      if (d > cutoff) {
+        if (!it.culled) { L.intensity = 0; it.culled = true; }
+      } else {
+        if (it.culled) { L.intensity = it.baseIntensity; it.culled = false; }
+      }
+    }
+  }
+});
 
 // Freeze world transforms for heavy static geometry (no visual change, reduces per-frame matrix work).
 AFRAME.registerComponent('freeze-static-mesh', {
@@ -19759,65 +19868,5 @@ AFRAME.registerComponent('freeze-static-mesh', {
 })();
 </script>
 
-
-<script>
-/* Performance tier for Safari (pointer-lock responsiveness)
-   - caps DPR and internal scaling more aggressively
-   - slows adaptive-resize cadence to avoid resize thrash
-   - does NOT change scene content or layout
-*/
-(function () {
-  const ua = navigator.userAgent || "";
-  const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|Edg|OPR|CriOS|FxiOS|Android/i.test(ua);
-
-  function applySafariTier() {
-    const sceneEl = document.querySelector('a-scene');
-    if (!sceneEl) return;
-
-    // Apply only if adaptive-resolution component is present.
-    if (sceneEl.hasAttribute('adaptive-resolution')) {
-      // More stable cadence + lower DPR cap helps Safari input + frame pacing.
-      sceneEl.setAttribute('adaptive-resolution', {
-        startScale: 0.85,
-        minScale:   0.60,
-        maxScale:   1.00,
-        dprCap:     1.00,
-        adjustEveryMs: 900,
-        downStep:   0.08,
-        upStep:     0.03,
-        downFps:    52,
-        upFps:      58
-      });
-    }
-
-    // Keep planar reflections conservative (already low in this file, but enforce stability).
-    const refl = document.querySelector('[planar-reflector]');
-    if (refl) {
-      // Preserve existing values where possible.
-      const cur = refl.getAttribute('planar-reflector') || {};
-      refl.setAttribute('planar-reflector', Object.assign({}, cur, {
-        resolution: Math.min(cur.resolution || 256, 256),
-        maxHz: Math.min(cur.maxHz || 4, 4)
-      }));
-    }
-
-    // Explicitly cap pixel ratio (some Safari builds ignore later caps during resize).
-    const r = sceneEl.renderer;
-    if (r && typeof r.setPixelRatio === 'function') {
-      r.setPixelRatio(1);
-    }
-  }
-
-  if (isSafari) {
-    // A-Frame may build renderer after DOMContentLoaded; wait for scene loaded.
-    window.addEventListener('load', function () {
-      const sceneEl = document.querySelector('a-scene');
-      if (!sceneEl) return;
-      if (sceneEl.hasLoaded) applySafariTier();
-      else sceneEl.addEventListener('loaded', applySafariTier, { once: true });
-    });
-  }
-})();
-</script>
 </body>
 </html>
