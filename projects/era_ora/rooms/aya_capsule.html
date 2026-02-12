@@ -235,7 +235,21 @@ AFRAME.registerComponent('mixamo-mat-fix', {
   init: function () {
     this.el.addEventListener('model-loaded', () => {
       const obj = this.el.getObject3D('mesh');
-      if (!obj) return;
+      
+
+// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
+AFRAME.registerComponent('npc-ground', {
+  init: function () {
+    this.el.addEventListener('model-loaded', () => {
+      const obj = this.el.getObject3D('mesh');
+      if (!obj || !THREE || !THREE.Box3) return;
+      const box = new THREE.Box3().setFromObject(obj);
+      if (!isFinite(box.min.y)) return;
+      obj.position.y -= box.min.y;
+    });
+  }
+});
+if (!obj) return;
 
       obj.traverse((o) => {
         if (!o.isMesh || !o.material) return;
@@ -323,19 +337,6 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         });
 
       });
-    });
-  }
-});
-
-// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
-AFRAME.registerComponent('npc-ground', {
-  init: function () {
-    this.el.addEventListener('model-loaded', () => {
-      const obj = this.el.getObject3D('mesh');
-      if (!obj || !THREE || !THREE.Box3) return;
-      const box = new THREE.Box3().setFromObject(obj);
-      if (!isFinite(box.min.y)) return;
-      obj.position.y -= box.min.y;
     });
   }
 });
@@ -1289,6 +1290,225 @@ AFRAME.registerComponent('sphere-dome-audio', {
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   }
 </style>
+
+
+<!-- CAPSULE_SYSTEM_V2 -->
+<script>
+/* ============================================================
+   Capsule v2 (glass + sliding base + inner platform/step)
+   - Press O to toggle open/close.
+   - Glass halves slide wider than the base halves.
+   - Base uses the same material maps as the elevator doors (elevMetal* assets).
+   ============================================================ */
+(function () {
+  if (!window.AFRAME || !window.THREE) return;
+
+  // --- Procedural glass halves (top hemisphere split along X=0) -----------------
+  AFRAME.registerComponent('procedural-capsule-glass', {
+    schema: {
+      side: { type: 'string', default: 'L' },          // L | R
+      radius: { type: 'number', default: 1.35 },
+      segments: { type: 'int', default: 96 }
+    },
+    init: function () {
+      const d = this.data;
+      const r = Math.max(0.25, d.radius);
+      const seg = Math.max(24, d.segments|0);
+
+      // Top half (north pole -> equator)
+      const gTop = new THREE.SphereGeometry(r, seg, Math.floor(seg*0.5), 0, Math.PI * 2, 0, Math.PI * 0.5);
+      const g = clipByX(gTop, d.side === 'L' ? -1 : 1);
+
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color('#dfeeff'),
+        metalness: 0.05,
+        roughness: 0.06,
+        transmission: 1.0,
+        transparent: true,
+        opacity: 0.22,
+        thickness: 0.25,
+        ior: 1.45,
+        envMapIntensity: 1.25,
+        specularIntensity: 1.0,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.06,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+
+      const mesh = new THREE.Mesh(g, glassMat);
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.renderOrder = 40; // keep glass on top for stable transparency sorting
+
+      this.el.setObject3D('mesh', mesh);
+
+      function clipByX(geom, sign) {
+        // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
+        const g0 = geom.index ? geom.toNonIndexed() : geom;
+        const pos = g0.attributes.position;
+        const nor = g0.attributes.normal;
+        const uv  = g0.attributes.uv;
+
+        const outPos = [];
+        const outNor = [];
+        const outUv  = [];
+
+        const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
+
+        for (let i = 0; i < pos.count; i += 3) {
+          const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
+          const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
+
+          // Keep only triangles fully on the chosen side (simple + deterministic; no seam cap).
+          if (!(k0 && k1 && k2)) continue;
+
+          for (let j = 0; j < 3; j++) {
+            const ii = i + j;
+            outPos.push(pos.getX(ii), pos.getY(ii), pos.getZ(ii));
+            outNor.push(nor.getX(ii), nor.getY(ii), nor.getZ(ii));
+            outUv.push(uv.getX(ii), uv.getY(ii));
+          }
+        }
+
+        const gOut = new THREE.BufferGeometry();
+        gOut.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+        gOut.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
+        gOut.setAttribute('uv',       new THREE.Float32BufferAttribute(outUv, 2));
+        gOut.computeBoundingSphere();
+        return gOut;
+      }
+    },
+    remove: function () {
+      const m = this.el.getObject3D('mesh');
+      if (!m) return;
+      try { m.geometry && m.geometry.dispose(); } catch(e) {}
+      try { m.material && m.material.dispose(); } catch(e) {}
+      this.el.removeObject3D('mesh');
+    }
+  });
+
+  // --- Toggle component: animates glass + base together ------------------------
+  AFRAME.registerComponent('capsule-split-toggle', {
+    schema: {
+      leftGlass:  { type: 'selector' },
+      rightGlass: { type: 'selector' },
+      leftBase:   { type: 'selector' },
+      rightBase:  { type: 'selector' },
+      openGlassX: { type: 'number', default: 0.75 },
+      openBaseX:  { type: 'number', default: 0.55 },
+      tuckY:      { type: 'number', default: 0.06 },
+      dur:        { type: 'number', default: 650 }
+    },
+    init: function () {
+      this._open = false;
+      this._anim = null;
+      this._synced = false;
+
+      this._closed = {
+        lg: new THREE.Vector3(),
+        rg: new THREE.Vector3(),
+        lb: new THREE.Vector3(),
+        rb: new THREE.Vector3()
+      };
+
+      const isTyping = () => {
+        const a = document.activeElement;
+        return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
+      };
+
+      this._onKeyDown = (e) => {
+        if (e.repeat) return;
+        const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
+        if (!isO) return;
+        if (e.defaultPrevented) return;
+        if (isTyping()) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.toggle();
+      };
+
+      window.addEventListener('keydown', this._onKeyDown, { capture: true });
+    },
+    remove: function () {
+      window.removeEventListener('keydown', this._onKeyDown, { capture: true });
+    },
+    _captureClosedOnce: function () {
+      if (this._synced) return;
+      const d = this.data;
+      if (!d.leftGlass || !d.rightGlass || !d.leftBase || !d.rightBase) return;
+
+      this._closed.lg.copy(d.leftGlass.object3D.position);
+      this._closed.rg.copy(d.rightGlass.object3D.position);
+      this._closed.lb.copy(d.leftBase.object3D.position);
+      this._closed.rb.copy(d.rightBase.object3D.position);
+
+      // Force deterministic closed start
+      d.leftGlass.object3D.position.copy(this._closed.lg);
+      d.rightGlass.object3D.position.copy(this._closed.rg);
+      d.leftBase.object3D.position.copy(this._closed.lb);
+      d.rightBase.object3D.position.copy(this._closed.rb);
+
+      this._synced = true;
+    },
+    toggle: function () {
+      const d = this.data;
+      if (!d.leftGlass || !d.rightGlass || !d.leftBase || !d.rightBase) return;
+
+      this._captureClosedOnce();
+
+      const from = {
+        lg: d.leftGlass.object3D.position.clone(),
+        rg: d.rightGlass.object3D.position.clone(),
+        lb: d.leftBase.object3D.position.clone(),
+        rb: d.rightBase.object3D.position.clone()
+      };
+
+      this._open = !this._open;
+
+      const gx = Math.max(0.0, d.openGlassX);
+      const bx = Math.max(0.0, d.openBaseX);
+      const ty = Math.max(0.0, d.tuckY);
+
+      const to = {
+        lg: this._open ? new THREE.Vector3(this._closed.lg.x - gx, this._closed.lg.y - ty, this._closed.lg.z) : this._closed.lg.clone(),
+        rg: this._open ? new THREE.Vector3(this._closed.rg.x + gx, this._closed.rg.y - ty, this._closed.rg.z) : this._closed.rg.clone(),
+        lb: this._open ? new THREE.Vector3(this._closed.lb.x - bx, this._closed.lb.y,      this._closed.lb.z) : this._closed.lb.clone(),
+        rb: this._open ? new THREE.Vector3(this._closed.rb.x + bx, this._closed.rb.y,      this._closed.rb.z) : this._closed.rb.clone()
+      };
+
+      this._anim = {
+        t0: performance.now(),
+        dur: Math.max(120, d.dur),
+        from, to
+      };
+    },
+    tick: function () {
+      this._captureClosedOnce();
+      if (!this._anim) return;
+
+      const d = this.data;
+      if (!d.leftGlass || !d.rightGlass || !d.leftBase || !d.rightBase) { this._anim = null; return; }
+
+      const now = performance.now();
+      const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
+      const s = u < 0.5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3)/2; // easeInOutCubic
+
+      const lerp = (a, b) => a + (b - a) * s;
+
+      const A = this._anim.from, B = this._anim.to;
+
+      d.leftGlass.object3D.position.set(lerp(A.lg.x, B.lg.x), lerp(A.lg.y, B.lg.y), lerp(A.lg.z, B.lg.z));
+      d.rightGlass.object3D.position.set(lerp(A.rg.x, B.rg.x), lerp(A.rg.y, B.rg.y), lerp(A.rg.z, B.rg.z));
+      d.leftBase.object3D.position.set(lerp(A.lb.x, B.lb.x), lerp(A.lb.y, B.lb.y), lerp(A.lb.z, B.lb.z));
+      d.rightBase.object3D.position.set(lerp(A.rb.x, B.rb.x), lerp(A.rb.y, B.rb.y), lerp(A.rb.z, B.rb.z));
+
+      if (u >= 1) this._anim = null;
+    }
+  });
+})();
+</script>
 
 </head>
 <body>
@@ -16044,8 +16264,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-asset-item id="brian_idle_glb" src="../characters/brian_idle.glb"></a-asset-item>
     <a-asset-item id="alex_glb" src="../characters/alex.glb"></a-asset-item>
 
-    <!-- ===== Player character (third-person) ===== -->
-    <a-asset-item id="racer_glb" src="../characters/racer.glb"></a-asset-item>
+
 
     <audio id="pool_sound" crossorigin="anonymous" src="../aya_room/music/pool_sound.mp3"></audio>
     <audio id="nde_sound" crossorigin="anonymous" src="../aya_room/music/aya_sounds.mp3"></audio>
@@ -16522,6 +16741,68 @@ AFRAME.registerComponent('ion-wind-field', {
     <!-- Forest-of-Lights ring removed (per request) -->
 
 
+
+
+    <!-- =========================================================
+         Capsule v2 (glass + sliding base + inner platform/step)
+         - Press O to toggle open/close.
+         - Entry side faces +Z (toward the mercury pool).
+         ========================================================= -->
+    <a-entity id="capsuleRig" position="5 0 35.5" rotation="0 0 0">
+      <!-- Sliding base halves (use elevator-door metal material) -->
+      <a-entity id="capsuleBaseL"
+                class="collider"
+                geometry="primitive: box; width: 2.20; height: 0.12; depth: 3.10"
+                position="-1.10 0.06 0.35"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <a-entity id="capsuleBaseR"
+                class="collider"
+                geometry="primitive: box; width: 2.20; height: 0.12; depth: 3.10"
+                position="1.10 0.06 0.35"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <!-- Inner deck (fixed) -->
+      <a-cylinder id="capsuleInnerDeck"
+                  class="collider"
+                  radius="1.25" height="0.10"
+                  position="0 0.05 0.00"
+                  material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
+                  shadow="cast:false; receive:true"></a-cylinder>
+
+      <!-- Inner step (fixed, entry side) -->
+      <a-box id="capsuleInnerStep"
+             class="collider"
+             width="1.40" height="0.16" depth="0.80"
+             position="0 0.08 1.70"
+             material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
+             shadow="cast:false; receive:true"></a-box>
+
+      <!-- Glass halves (animated) -->
+      <a-entity id="capsuleCore" position="0 1.01 0">
+        <a-entity id="capsuleGlassL" procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
+        <a-entity id="capsuleGlassR" procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
+
+        <!-- subtle seam accent -->
+        <a-entity geometry="primitive: torus; radius: 1.35; radiusTubular: 0.003; segmentsTubular: 16; segmentsRadial: 128"
+                  rotation="90 0 0"
+                  material="shader: standard; color: #0e1116; roughness: 1.0; metalness: 0.0; transparent: true; opacity: 0.32"
+                  position="0 -0.002 0"></a-entity>
+      </a-entity>
+
+      <!-- Controller -->
+      <a-entity capsule-split-toggle="
+          leftGlass:  #capsuleGlassL;
+          rightGlass: #capsuleGlassR;
+          leftBase:   #capsuleBaseL;
+          rightBase:  #capsuleBaseR;
+          openGlassX: 0.75;
+          openBaseX:  0.55;
+          tuckY:      0.06;
+          dur:        650"></a-entity>
+    </a-entity>
 
 <!-- Subtle visible glow so it feels like light is emanating from the pool (does not affect lighting) -->
     <a-circle id="mercury_pool_glow" render-order="value: 4"
@@ -18143,38 +18424,20 @@ AFRAME.registerComponent('ion-wind-field', {
     <!-- TEMP SPAWN OVERRIDE for end_chamber_06 iteration.
      Original rig position was: 35.33 0.03 41.92
      Remember to restore after end-chamber tests. -->
-    <!-- Player rig with third-person camera -->
     <a-entity id="rig"
               position="35.33 0.03 41.92"
               rotation="0 0 0"
-              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh
-              stick-to-ground="offset: 0.03; rayHeight: 2.0; minNormalY: 0.62; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
-
-  <!-- Yaw pivot driven by mouse; everything (avatar + camera) follows -->
-  <a-entity id="racerYaw" rotation="0 0 0" tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18">
-
-    <a-entity id="racerAvatar"
-              gltf-model="#racer_glb"
-              position="0 0 0"
-              rotation="0 180 0"
-              scale="1 1 1"
-              racer-controller="cam: #racerYaw; turnWithCamera: false"
-              shadow="cast:false; receive:false"></a-entity>
-
-    <!-- Fixed follow-cam: slightly above + behind the avatar -->
-    <a-entity id="camPitch" position="0 1.65 0" rotation="0 0 0">
+              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh>
       <a-entity id="playerCam"
                 camera="fov: 60; near: 0.1; far: 250; zoom: 1.08"
+                look-controls="pointerLockEnabled: true"
+                pitch-clamp="min: -80; max: 80"
                 camera-enable-layer="layer: 2"
-                tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
-                position="0 0 1.3"
+                position="0 1.6 0"
                 rotation="0 0 0">
         <a-entity cursor="rayOrigin: mouse"></a-entity>
       </a-entity>
     </a-entity>
-
-  </a-entity>
-</a-entity>
 
   
     <a-entity id="aya_seat_experience" aya-seat-experience></a-entity>
@@ -19743,510 +20006,6 @@ AFRAME.registerComponent('freeze-static-mesh', {
     requestAnimationFrame(() => requestAnimationFrame(tryFreeze));
   }
 });
-
-
-// === Third-person spring-arm camera (game-style) ===
-// Smooth camera boom with collision detection + ceiling headroom correction.
-// Prevents wall clipping while maintaining a stable follow distance.
-AFRAME.registerComponent('tp-camera-springarm', {
-  schema: {
-    pivot: { type: 'selector' },                   // pitch pivot (e.g., #camPitch)
-    ignore: { type: 'selector' },                  // rig subtree to skip (e.g., #racerYaw)
-    colliders: { type: 'string', default: '.collider, [data-tube="1"]' },  // CSS selector for collidable geometry
-    minDist: { type: 'number', default: 0.85 },    // minimum camera distance from pivot
-    padding: { type: 'number', default: 0.22 },    // how far in front of walls to stop
-    smoothPos: { type: 'number', default: 0.15 },  // smoothing for camera world position
-    smoothDist: { type: 'number', default: 0.18 }, // smoothing for boom distance changes
-    sphereRadius: { type: 'number', default: 0.22 }, // pseudo sphere-sweep radius (thicker collision)
-    ceilingPadding: { type: 'number', default: 0.08 }, // extra clearance below ceilings
-    ceilingProbe: { type: 'number', default: 0.42 },   // how far up to check for ceilings
-    maxCeilingDrop: { type: 'number', default: 0.65 }  // max downward shift when hitting ceiling
-  },
-
-  init: function () {
-    this.sceneEl = this.el.sceneEl;
-    this.raycaster = new THREE.Raycaster();
-    this._pivotW = new THREE.Vector3();
-    this._desiredW = new THREE.Vector3();
-    this._finalW = new THREE.Vector3();
-    this._smoothedW = new THREE.Vector3();
-    this._dir = new THREE.Vector3();
-    this._tmp = new THREE.Vector3();
-    this._right = new THREE.Vector3();
-    this._up = new THREE.Vector3(0, 1, 0);
-
-    // Offsets for pseudo sphere-sweep (preallocated to avoid GC)
-    this._offsets = [
-      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
-    ];
-
-    // Baseline local offset (kept constant). We only shorten along boom direction and apply temporary ceiling drop.
-    this._baseLocal = this.el.object3D.position.clone();
-    this._baseDist = Math.abs(this._baseLocal.z);
-    this._sign = (this._baseLocal.z >= 0) ? 1 : -1;
-
-    this._curDist = this._baseDist;
-    this._ceilingDrop = 0;
-
-    this._colliderMeshes = [];
-    this._lastRefresh = 0;
-    this.refreshColliderMeshes();
-
-    // Initialize smoothed position at current world position
-    this.el.object3D.getWorldPosition(this._smoothedW);
-  },
-
-  refreshColliderMeshes: function () {
-    const ignoreObj = this.data.ignore ? this.data.ignore.object3D : null;
-    const nodes = Array.from(this.sceneEl.querySelectorAll(this.data.colliders || '.collider, [data-tube="1"]'));
-    const meshes = [];
-    for (let i = 0; i < nodes.length; i++) {
-      const root = nodes[i].object3D;
-      if (!root) continue;
-      root.traverse((o) => {
-        if (!o.isMesh) return;
-        if (ignoreObj) {
-          let cur = o;
-          while (cur) { if (cur === ignoreObj) return; cur = cur.parent; }
-        }
-        // IMPORTANT: include invisible colliders too.
-        meshes.push(o);
-      });
-    }
-    this._colliderMeshes = meshes;
-  },
-
-  _sphereSweepClampDist: function (origin, desired, dt) {
-    // Pseudo sphere sweep: cast multiple rays offset perpendicular to boom direction.
-    // Returns clamped distance from origin along boom direction.
-    this._tmp.copy(desired).sub(origin);
-    const desiredLen = this._tmp.length();
-    if (desiredLen < 1e-4) return this._baseDist;
-
-    const dir = this._tmp.normalize();
-
-    // Build an orthonormal basis around dir
-    this._right.copy(dir).cross(this._up);
-    if (this._right.lengthSq() < 1e-6) {
-      // dir is close to up; pick arbitrary right
-      this._right.set(1, 0, 0);
-    } else {
-      this._right.normalize();
-    }
-    const up2 = this._tmp.copy(this._right).cross(dir).normalize();
-    // Copy to a stable vector (this._tmp will be reused below)
-    const upVec = this._dir; // reuse _dir as temp stable vector here
-    upVec.copy(up2);
-    
-
-    const r = Math.max(0, this.data.sphereRadius);
-    const offsets = this._offsets;
-    offsets[0].set(0,0,0);
-    offsets[1].copy(this._right).multiplyScalar(r);
-    offsets[2].copy(this._right).multiplyScalar(-r);
-    offsets[3].copy(upVec).multiplyScalar(r);
-    offsets[4].copy(upVec).multiplyScalar(-r);
-
-    let best = desiredLen;
-
-    for (let i = 0; i < offsets.length; i++) {
-      const off = offsets[i];
-      const o = this._tmp.copy(origin).add(off);
-      this.raycaster.set(o, dir);
-      this.raycaster.near = 0;
-      this.raycaster.far = desiredLen;
-
-      const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
-      if (hits && hits.length) {
-        const d = Math.max(0, hits[0].distance - this.data.padding);
-        if (d < best) best = d;
-      }
-    }
-
-    // Convert to boom distance along local Z sign.
-    const clamped = Math.max(this.data.minDist, Math.min(this._baseDist, best));
-    return clamped;
-  },
-
-  _computeCeilingDrop: function (camPos, dt) {
-    // Probe upward; if ceiling is too close (within radius+padding), drop camera temporarily.
-    const probeUp = Math.max(0.2, this.data.ceilingProbe);
-    this.raycaster.set(camPos, this._up);
-    this.raycaster.near = 0;
-    this.raycaster.far = probeUp;
-
-    const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
-    if (!hits || !hits.length) return 0;
-
-    const dist = hits[0].distance;
-    const needClear = this.data.sphereRadius + this.data.ceilingPadding;
-    if (dist >= needClear) return 0;
-
-    return Math.min(this.data.maxCeilingDrop, (needClear - dist));
-  },
-
-  tick: function (t, dt) {
-    if (!this.data.pivot) return;
-
-    // Refresh colliders occasionally (late loads / elevator).
-    if (t - this._lastRefresh > 1200) {
-      this._lastRefresh = t;
-      this.refreshColliderMeshes();
-    }
-
-    const pivotObj = this.data.pivot.object3D;
-
-    // Desired camera world position from baseline local offset (constant height/distance baseline).
-    pivotObj.getWorldPosition(this._pivotW);
-
-    // local->world for baseline offset
-    this._desiredW.copy(this._baseLocal);
-    pivotObj.localToWorld(this._desiredW);
-
-    // Clamp distance using sphere-sweep against colliders (walls, elevator, etc.)
-    const targetDist = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
-
-    // Smooth boom distance (so it doesn't snap)
-    const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
-    this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
-
-    // Recompute final position along the boom direction while preserving baseline pitch (dir from pivot->desired)
-    this._dir.copy(this._desiredW).sub(this._pivotW);
-    const len = this._dir.length();
-    if (len < 1e-4) return;
-    this._dir.multiplyScalar(1 / len);
-
-    this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
-
-    // Ceiling headroom correction: only downward, temporary, returns to baseline when clear.
-    const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
-
-    // Smooth ceiling drop separately to avoid jitter.
-    const aPos = Math.min(1, Math.max(0, this.data.smoothPos));
-    this._ceilingDrop = this._ceilingDrop + (desiredDrop - this._ceilingDrop) * aPos;
-
-    if (this._ceilingDrop > 0) {
-      this._finalW.y -= this._ceilingDrop;
-    }
-
-    // Smooth final world position for camera friendliness.
-    this._smoothedW.lerp(this._finalW, aPos);
-
-    // Convert back to local position under pivot so we don't disturb hierarchy.
-    const local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
-    // Keep baseline X (shoulder offset) constant; allow Z to shorten; allow Y to drop but never rise above baseline.
-    local.x = this._baseLocal.x;
-    local.z = this._sign * this._curDist;
-    local.y = Math.min(this._baseLocal.y, local.y);
-
-    this.el.object3D.position.copy(local);
-  }
-});
-
-// === Third-person mouse look: yaw on this entity, pitch on a separate pivot ===
-AFRAME.registerComponent('tp-mouselook', {
-  schema: {
-    pitchEl: { type: 'selector' },
-    sensitivity: { type: 'number', default: 0.12 },
-    minPitch: { type: 'number', default: -25 },
-    maxPitch: { type: 'number', default: 18 }
-  },
-  init: function () {
-    this.yaw = this.el.object3D.rotation.y || 0;
-    this.pitch = 0;
-
-    this._onMouseMove = (e) => {
-      if (!this._locked) return;
-      const sx = this.data.sensitivity;
-      const sy = this.data.sensitivity;
-
-      this.yaw -= (e.movementX || 0) * sx * 0.01;
-      this.pitch -= (e.movementY || 0) * sy * 0.01;
-
-      const minP = THREE.MathUtils.degToRad(this.data.minPitch);
-      const maxP = THREE.MathUtils.degToRad(this.data.maxPitch);
-      this.pitch = THREE.MathUtils.clamp(this.pitch, minP, maxP);
-
-      this.el.object3D.rotation.y = this.yaw;
-
-      const pEl = this.data.pitchEl;
-      if (pEl) pEl.object3D.rotation.x = this.pitch;
-    };
-
-    this._onLockChange = () => {
-      this._locked = (document.pointerLockElement === (this.el.sceneEl && this.el.sceneEl.canvas));
-    };
-
-    this._requestLock = () => {
-      const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
-      if (canvas && canvas.requestPointerLock) canvas.requestPointerLock();
-    };
-
-    this._locked = false;
-    document.addEventListener('pointerlockchange', this._onLockChange);
-    window.addEventListener('mousemove', this._onMouseMove, { passive: true });
-    this.el.sceneEl.addEventListener('click', this._requestLock);
-  },
-  remove: function () {
-    document.removeEventListener('pointerlockchange', this._onLockChange);
-    window.removeEventListener('mousemove', this._onMouseMove);
-    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('click', this._requestLock);
-  }
-});
-
-// === Racer controller: sync avatar yaw to camera yaw + switch Idle/Walk based on movement keys ===
-AFRAME.registerComponent('racer-controller', {
-  schema: {
-    cam: { type: 'selector' },
-    idleHint: { type: 'string', default: 'idle' },
-    walkHint: { type: 'string', default: 'walk' },
-    turnWithCamera: { type: 'boolean', default: true }
-  },
-  init: function () {
-    this.keys = Object.create(null);
-    this.mixer = null;
-    this.idleAction = null;
-    this.walkAction = null;
-    this.active = null;
-
-    const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
-
-    this._onKeyDown = (e) => { if (MOVE_KEYS.has(e.code)) this.keys[e.code] = true; };
-    this._onKeyUp   = (e) => { if (MOVE_KEYS.has(e.code)) this.keys[e.code] = false; };
-
-    window.addEventListener('keydown', this._onKeyDown, { passive: true });
-    window.addEventListener('keyup', this._onKeyUp, { passive: true });
-    window.addEventListener('blur', () => { for (const k in this.keys) this.keys[k] = false; });
-
-    this.el.addEventListener('model-loaded', () => {
-      const mesh = this.el.getObject3D('mesh');
-      if (!mesh) return;
-
-      const clips = (mesh.animations && mesh.animations.length) ? mesh.animations : [];
-      if (!clips.length) return;
-
-      const findByHint = (hint) => {
-        const h = (hint || '').toLowerCase();
-        return clips.find(c => (c.name || '').toLowerCase().includes(h));
-      };
-
-      const idleClip = findByHint(this.data.idleHint) || clips[0];
-      const walkClip = findByHint(this.data.walkHint) || clips.find(c => c !== idleClip) || idleClip;
-
-      this.mixer = new THREE.AnimationMixer(mesh);
-      this.idleAction = this.mixer.clipAction(idleClip);
-      this.walkAction = this.mixer.clipAction(walkClip);
-
-      this.idleAction.enabled = true;
-      this.walkAction.enabled = true;
-
-      this._play('idle', true);
-    });
-  },
-
-  remove: function () {
-    window.removeEventListener('keydown', this._onKeyDown);
-    window.removeEventListener('keyup', this._onKeyUp);
-    if (this.mixer) this.mixer.stopAllAction();
-  },
-
-  _isMoving: function () {
-    return !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
-              this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight']);
-  },
-
-  _play: function (which, instant) {
-    const a = (which === 'walk') ? this.walkAction : this.idleAction;
-    if (!a || this.active === which) return;
-
-    const from = (this.active === 'walk') ? this.walkAction : this.idleAction;
-    this.active = which;
-
-    if (from && from !== a) {
-      if (instant) {
-        from.stop();
-        a.reset().play();
-      } else {
-        from.fadeOut(0.18);
-        a.reset().fadeIn(0.18).play();
-      }
-    } else {
-      a.reset().play();
-    }
-  },
-
-  tick: function (t, dt) {
-    if (this.mixer) this.mixer.update((dt || 0) / 1000);
-
-    const cam = this.data.cam;
-    if (cam && this.data.turnWithCamera) {
-      // Match the avatar yaw to the camera yaw so movement direction reads correctly in third-person.
-      const yaw = cam.object3D.rotation.y;
-      this.el.object3D.rotation.y = yaw + Math.PI; // model faces +Z; A-Frame forward is -Z
-    }
-
-    this._play(this._isMoving() ? 'walk' : 'idle', false);
-  }
-});
-
-// === Stick to ground: raycast down and keep rig feet on the nearest *walkable* floor surface ===
-// Game-friendly rules:
-// - Only treat surfaces with upward-facing normals as "ground" (prevents side-wall/edge hits causing vertical pops).
-// - Enforce a max step height (prevents climbing onto tiny ledges/triangles unless it's a real step).
-// - Smooth using speeds (m/s) rather than per-frame clamps (frame-rate independent).
-AFRAME.registerComponent('stick-to-ground', {
-  schema: {
-    offset: { type: 'number', default: 0.03 },        // feet offset above hit point
-    rayHeight: { type: 'number', default: 2.0 },      // ray start height above rig origin
-    maxDrop: { type: 'number', default: 6.0 },        // ignore hits that are too far below
-    maxRise: { type: 'number', default: 1.0 },        // ignore hits that are too far above
-
-    // Walkability + steps
-    minNormalY: { type: 'number', default: 0.62 },    // how "upward" a surface must be to count as ground
-    maxStepHeight: { type: 'number', default: 0.38 }, // maximum allowed upward snap (meters)
-
-    // Smoothing (frame-rate independent)
-    upSpeed: { type: 'number', default: 2.2 },        // m/s maximum rise speed
-    downSpeed: { type: 'number', default: 6.5 },      // m/s maximum fall speed
-    snapDist: { type: 'number', default: 0.01 }       // snap when within this distance
-  },
-
-  init: function () {
-    this.raycaster = new THREE.Raycaster();
-    this.origin = new THREE.Vector3();
-    this.dir = new THREE.Vector3(0, -1, 0);
-    this._meshes = [];
-    this._lastCollect = 0;
-
-    this._wN = new THREE.Vector3();
-    this._nM = new THREE.Matrix3();
-  },
-
-  collectMeshes: function () {
-    this._meshes.length = 0;
-    const root = this.el.sceneEl && this.el.sceneEl.object3D;
-    if (!root) return;
-
-    root.traverse((obj) => {
-      if (!obj.isMesh) return;
-
-      // Ignore anything that belongs to the player rig (self-intersections)
-      let p = obj;
-      while (p) {
-        if (p === this.el.object3D) return;
-        p = p.parent;
-      }
-      this._meshes.push(obj);
-    });
-  },
-
-  _pickWalkableHit: function (hits) {
-    const minNy = this.data.minNormalY;
-
-    for (let i = 0; i < hits.length; i++) {
-      const h = hits[i];
-      if (!h) continue;
-
-      // If we have a face normal, transform it to world space and test walkability.
-      if (h.face && h.object) {
-        // normal matrix from the hit object's world matrix
-        this._nM.getNormalMatrix(h.object.matrixWorld);
-        this._wN.copy(h.face.normal).applyMatrix3(this._nM).normalize();
-
-        if (this._wN.y >= minNy) return h;
-        continue;
-      }
-
-      // If no face info, accept as a last resort.
-      return h;
-    }
-    return null;
-  },
-
-  tick: function (t, dt) {
-    if (!this.el.sceneEl) return;
-
-    // Refresh mesh list occasionally (scene may still be loading / late GLBs)
-    if (!this._meshes.length || (t - this._lastCollect) > 1500) {
-      this.collectMeshes();
-      this._lastCollect = t;
-      if (!this._meshes.length) return;
-    }
-
-    const dtS = Math.min(0.05, dt / 1000);
-
-    // World origin above rig
-    this.origin.copy(this.el.object3D.position);
-    this.origin.y += this.data.rayHeight;
-
-    this.raycaster.set(this.origin, this.dir);
-    this.raycaster.far = this.data.rayHeight + this.data.maxDrop;
-
-    const hits = this.raycaster.intersectObjects(this._meshes, true);
-    if (!hits || !hits.length) return;
-
-    const hit = this._pickWalkableHit(hits);
-    if (!hit) return;
-
-    const hitY = hit.point.y + this.data.offset;
-    const curY = this.el.object3D.position.y;
-    const dy = hitY - curY;
-
-    // Avoid snapping to ceilings / odd geometry
-    if (dy > this.data.maxRise) return;
-    if (dy < -this.data.maxDrop) return;
-
-    // Prevent "over-stepping" onto new surfaces: only allow rising by a real step amount.
-    if (dy > this.data.maxStepHeight) return;
-
-    // Snap when very close
-    if (Math.abs(dy) <= this.data.snapDist) {
-      this.el.object3D.position.y = hitY;
-      return;
-    }
-
-    // Move toward target with capped speeds (m/s)
-    const maxUp = this.data.upSpeed * dtS;
-    const maxDown = this.data.downSpeed * dtS;
-
-    let step = dy;
-    if (step > maxUp) step = maxUp;
-    if (step < -maxDown) step = -maxDown;
-
-    this.el.object3D.position.y = curY + step;
-  }
-});
-
-AFRAME.registerComponent('spawn-at', {
-  schema: {
-    target: { type: 'selector', default: null },
-    yOffset: { type: 'number', default: 0 },
-    once: { default: true }
-  },
-  init: function () { this._done = false; },
-  tick: function () {
-    if (this._done) return;
-    var t = this.data.target;
-    if (!t || !t.object3D) return;
-
-    // Wait until target has a valid world matrix (merge-align etc. may apply after load).
-    t.object3D.updateWorldMatrix(true, false);
-    var wp = new THREE.Vector3();
-    var wq = new THREE.Quaternion();
-    t.object3D.getWorldPosition(wp);
-    t.object3D.getWorldQuaternion(wq);
-
-    var o = this.el.object3D;
-    o.position.copy(wp);
-    o.position.y += this.data.yOffset;
-    o.quaternion.copy(wq);
-    o.updateMatrixWorld(true);
-
-    if (this.data.once) this._done = true;
-  }
-});
-
-
 
 </script>
 
