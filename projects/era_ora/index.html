@@ -6347,7 +6347,68 @@ AFRAME.registerComponent('pbr-carpet', {
     requestAnimationFrame(tick);
   }
 
-  
+  // --- Skip gating (prevents "dead" black screen if user skips before next room is ready)
+  let __skipEnabled = false;
+  let __skipPressed = false;
+  let __skipPollRAF = 0;
+
+  function setSkipUI(mode){
+    // mode: 'hidden' | 'disabled' | 'enabled' | 'loading'
+    try {
+      if (!skipElevatorShell || !skipElevatorBtn) return;
+      if (mode === 'hidden'){
+        skipElevatorShell.style.opacity = '0';
+        skipElevatorShell.style.pointerEvents = 'none';
+        skipElevatorBtn.setAttribute('aria-disabled','true');
+        try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '0.55';
+        return;
+      }
+      // keep shell present, but gate interaction
+      skipElevatorShell.style.opacity = '';
+      skipElevatorShell.style.pointerEvents = (mode === 'enabled') ? 'auto' : 'none';
+      if (mode === 'loading'){
+        skipElevatorBtn.textContent = 'LOADING…';
+        skipElevatorBtn.setAttribute('aria-disabled','true');
+        try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '0.65';
+      } else if (mode === 'disabled'){
+        skipElevatorBtn.textContent = 'PREPARING…';
+        skipElevatorBtn.setAttribute('aria-disabled','true');
+        try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '0.65';
+      } else {
+        // enabled
+        skipElevatorBtn.textContent = 'SKIP ELEVATOR';
+        skipElevatorBtn.setAttribute('aria-disabled','false');
+        try { skipElevatorBtn.setAttribute('tabindex','0'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '';
+      }
+    } catch (e) {}
+  }
+
+  function startSkipReadyPolling(){
+    if (__skipPollRAF) return;
+    const tick = () => {
+      __skipPollRAF = 0;
+      const ready = (window.__ayaIsReady && window.__ayaIsReady());
+      if (ready){
+        __skipEnabled = true;
+        // If the user already tried to skip, complete the action now.
+        if (__skipPressed){
+          setSkipUI('loading');
+          finishElevatorRide();
+          return;
+        }
+        setSkipUI('enabled');
+        return;
+      }
+      // keep waiting
+      __skipPollRAF = requestAnimationFrame(tick);
+    };
+    __skipPollRAF = requestAnimationFrame(tick);
+  }
+
   let __elevatorRideFinished = false;
 
   function finishElevatorRide(){
@@ -6378,9 +6439,23 @@ AFRAME.registerComponent('pbr-carpet', {
       requestAnimationFrame(waitForAyaReadyThenNavigate);
     });
   }
-
   function onSkipElevatorActivate(e){
     if (e && e.preventDefault) e.preventDefault();
+
+    // If the next room isn't ready yet, do NOT hard-cut to black.
+    // Instead, hold the elevator video, show "PREPARING…" and auto-complete once READY arrives.
+    const ready = (window.__ayaIsReady && window.__ayaIsReady());
+    if (!ready){
+      __skipPressed = true;
+      __skipEnabled = false;
+      setSkipUI('disabled');
+      startSkipReadyPolling();
+      return;
+    }
+
+    // Ready: proceed immediately with a clear "Loading…" acknowledgement.
+    if (__elevatorRideFinished) return;
+    setSkipUI('loading');
     finishElevatorRide();
   }
 
@@ -6394,12 +6469,10 @@ AFRAME.registerComponent('pbr-carpet', {
 
 function startOverlayVideo(){
     __elevatorRideFinished = false;
-    try {
-      if (skipElevatorShell){
-        skipElevatorShell.style.opacity = '';
-        skipElevatorShell.style.pointerEvents = '';
-      }
-    } catch (e) {}
+    __skipPressed = false;
+    __skipEnabled = false;
+    // Hide the skip control until AYA preload has finished (prevents "stuck" black screen).
+    setSkipUI('hidden');
 
     // Hide guide immediately for immersion
     hideGuide();
@@ -6429,9 +6502,12 @@ function startOverlayVideo(){
         rideVideo.play().catch(()=>{});
       });
     }
-
     // Preload next room while the video plays (cache warmup + READY handshake).
     if (window.preloadAyaFragment) window.preloadAyaFragment();
+
+    // Skip becomes available only once the next room reports READY.
+    setSkipUI('disabled');
+    startSkipReadyPolling();
 
     rideVideo.onended = finishElevatorRide;
   }
