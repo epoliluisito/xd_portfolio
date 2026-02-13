@@ -1649,6 +1649,176 @@ AFRAME.registerComponent('play-gltf-clip', {
 
 })();
 </script>
+
+<!-- ZONE_VISIBILITY_MANAGER (portal/room activation based on authored visibility graph) -->
+<script>
+(function () {
+  if (!window.AFRAME || !window.THREE) return;
+
+  // Invisible trigger volume (sphere) used to infer the player's current zone.
+  AFRAME.registerComponent('zone-trigger', {
+    schema: {
+      zone:     { type: 'string', default: '' },
+      radius:   { type: 'number', default: 3.0 },
+      priority: { type: 'int',    default: 0 }
+    }
+  });
+
+  // Enable/disable authored zone roots (visibility + stop heavy ticking components inside disabled roots).
+  AFRAME.registerComponent('zone-visibility-manager', {
+    schema: {
+      camera: { type: 'selector', default: '#playerCam' },
+      graceMs: { type: 'int', default: 700 } // hysteresis to avoid boundary thrashing
+    },
+
+    init: function () {
+      this._camEl = this.data.camera || this.el.sceneEl.camera && this.el.sceneEl.camera.el;
+      this._triggers = [];
+      this._currentZone = '';
+      this._lastZoneChangeT = 0;
+
+      // Map zone-name -> list of zone root selectors to keep enabled
+      this._zoneActiveMap = {
+        // 1) From tunnel_01
+        tunnel_01: ['#tunnel_01', '#aya_dome', '#entrance_chamber'],
+
+        // 2) From aya_dome
+        aya_dome: ['#aya_dome', '#tunnel_01', '#entrance_chamber', '#sphere_dome_import', '#nde_dome_import'],
+
+        // 3) From sphere_dome
+        sphere_dome: ['#sphere_dome_import', '#aya_dome', '#junction_dome', '#tunnel_04_module'],
+
+        // 4) From nde_dome
+        nde_dome: ['#nde_dome_import', '#aya_dome', '#junction_dome', '#tunnel_05_module'],
+
+        // 5) From junction_dome
+        junction_dome: ['#junction_dome', '#tunnel_04_module', '#tunnel_05_module', '#tunnel_06_module', '#sphere_dome_import', '#nde_dome_import', '#end_chamber_06'],
+
+        // 6) From tunnel_06
+        tunnel_06: ['#tunnel_06_module', '#junction_dome', '#tunnel_04_module', '#tunnel_05_module', '#end_chamber_06'],
+
+        // Fallbacks (safe defaults)
+        entrance_chamber: ['#entrance_chamber', '#tunnel_01', '#aya_dome'],
+        end_chamber: ['#end_chamber_06', '#junction_dome', '#tunnel_06_module']
+      };
+
+      // Roots we manage (anything not listed is untouched)
+      this._managedRoots = [
+        '#entrance_chamber',
+        '#tunnel_01',
+        '#aya_dome',
+        '#sphere_dome_import',
+        '#nde_dome_import',
+        '#tunnel_04_module',
+        '#tunnel_05_module',
+        '#junction_dome',
+        '#tunnel_06_module',
+        '#end_chamber_06'
+      ];
+
+      // Cache triggers once the scene is loaded.
+      this.el.sceneEl.addEventListener('loaded', () => {
+        this._camEl = this.data.camera || document.querySelector('#playerCam') || (this.el.sceneEl.camera && this.el.sceneEl.camera.el);
+        this._triggers = Array.from(document.querySelectorAll('[zone-trigger]'));
+        // Start with everything enabled until we can infer a zone.
+        this._managedRoots.forEach(sel => {
+          const root = document.querySelector(sel);
+          if (root) this._setRootEnabled(root, true);
+        });
+      });
+    },
+
+    tick: function (t) {
+      if (!this._camEl || !this._triggers.length) return;
+      const now = (t || 0);
+
+      const camObj = this._camEl.object3D;
+      if (!camObj) return;
+
+      const camPos = new THREE.Vector3();
+      camObj.getWorldPosition(camPos);
+
+      // Find highest-priority trigger that contains the camera.
+      let best = null;
+      let bestPri = -999999;
+
+      for (let i = 0; i < this._triggers.length; i++) {
+        const trg = this._triggers[i];
+        const d = trg.components['zone-trigger'] && trg.components['zone-trigger'].data;
+        if (!d || !d.zone) continue;
+
+        const trgPos = new THREE.Vector3();
+        trg.object3D.getWorldPosition(trgPos);
+
+        const r = Math.max(0.1, d.radius || 0);
+        const inside = camPos.distanceTo(trgPos) <= r;
+        if (!inside) continue;
+
+        const pri = (d.priority|0);
+        if (pri > bestPri) { bestPri = pri; best = d.zone; }
+      }
+
+      if (!best) return;
+
+      // Grace/hysteresis: avoid rapid toggling at boundaries.
+      if (best !== this._currentZone) {
+        if ((now - this._lastZoneChangeT) < this.data.graceMs) return;
+        this._currentZone = best;
+        this._lastZoneChangeT = now;
+        this._applyZone(best);
+      }
+    },
+
+    _applyZone: function (zoneName) {
+      const activeList = this._zoneActiveMap[zoneName] || this._zoneActiveMap['aya_dome'];
+
+      // Build a set for quick lookup.
+      const active = new Set(activeList);
+
+      for (let i = 0; i < this._managedRoots.length; i++) {
+        const sel = this._managedRoots[i];
+        const root = document.querySelector(sel);
+        if (!root) continue;
+        this._setRootEnabled(root, active.has(sel));
+      }
+    },
+
+    _setRootEnabled: function (rootEl, enabled) {
+      // 1) Visibility on the root (culls render + lights when disabled).
+      rootEl.setAttribute('visible', !!enabled);
+
+      // 2) Stop/start heavy tick-based components inside disabled roots:
+      //    - play-gltf-clip (NPC mixers)
+      //    - capsule-split-toggle (key interaction / sliding animation controller)
+      const heavyAttrs = ['play-gltf-clip', 'capsule-split-toggle'];
+
+      for (let a = 0; a < heavyAttrs.length; a++) {
+        const attr = heavyAttrs[a];
+        const nodes = rootEl.querySelectorAll('[' + attr + ']');
+        for (let i = 0; i < nodes.length; i++) {
+          const el = nodes[i];
+          const key = 'zvm_' + attr;
+
+          if (!enabled) {
+            if (!el.dataset[key]) {
+              // Store the raw attribute string so we can restore exactly.
+              el.dataset[key] = el.getAttribute(attr) || '';
+            }
+            el.removeAttribute(attr);
+          } else {
+            if (el.dataset[key] !== undefined) {
+              const val = el.dataset[key];
+              // If it was present previously, restore it. (Empty string still means "enable with defaults".)
+              el.setAttribute(attr, val);
+              delete el.dataset[key];
+            }
+          }
+        }
+      }
+    }
+  });
+})();
+</script>
 </head>
 <body>
 
@@ -16357,6 +16527,9 @@ AFRAME.registerComponent('ion-wind-field', {
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
            vr-mode-ui="enabled: false">
+    <!-- Zone visibility manager (activates only logically visible rooms) -->
+    <a-entity id="zone_visibility_manager" zone-visibility-manager="camera: #playerCam"></a-entity>
+
 
     
 <a-assets>
@@ -16627,6 +16800,9 @@ AFRAME.registerComponent('ion-wind-field', {
 
 <!-- ===== Mercury Cavern Dome (new) ===== -->
 <a-entity id="aya_dome" position="1.72 0 0">
+    <!-- Zone trigger -->
+    <a-entity zone-trigger="zone: aya_dome; radius: 7.0; priority: 3" position="0 1.6 0" visible="false"></a-entity>
+
   
 
 <!-- Aya Dome ambience (spatial, fades out by 40m) -->
@@ -17280,6 +17456,9 @@ AFRAME.registerComponent('ion-wind-field', {
        - Temporary bright light in the center for integration checks
        ============================================================ -->
 <a-entity id="sphere_dome_import" position="-14.00 -1.20 0.00" freeze-static-mesh>
+    <!-- Zone trigger -->
+    <a-entity zone-trigger="zone: sphere_dome; radius: 7.0; priority: 3" position="0 1.6 0" visible="false"></a-entity>
+
 <!-- Anchor at the tunnel_02 far mouth (local), used for merge-align -->
     <a-entity id="sphere_dome_portal_anchor" position="0 1.20 0" rotation="0 90 0"></a-entity>
 
@@ -17627,6 +17806,9 @@ AFRAME.registerComponent('ion-wind-field', {
          - TEMP spotlight inside for visibility (requested)
          ============================================================ -->
     <a-entity id="nde_dome_import" position="-14.00 -1.20 0.00">
+    <!-- Zone trigger -->
+    <a-entity zone-trigger="zone: nde_dome; radius: 7.0; priority: 3" position="0 1.6 0" visible="false"></a-entity>
+
 
       <a-entity id="nde_dome_portal_anchor" position="0 1.20 0" rotation="0 90 0">
 
@@ -17781,6 +17963,9 @@ AFRAME.registerComponent('ion-wind-field', {
 
 <!-- Cave chamber outside the elevator (4m x 4m x 3m) -->
     <a-entity id="entrance_chamber" position="0 0 0">
+      <!-- Zone trigger -->
+      <a-entity zone-trigger="zone: entrance_chamber; radius: 6; priority: 2" position="0 1.6 0" visible="false"></a-entity>
+
       
       
       <!-- Debug grey floor at natural ground level -->
@@ -18022,6 +18207,11 @@ AFRAME.registerComponent('ion-wind-field', {
           rotation="0 0 0"></a-entity>
 
 <a-entity id="tunnel_01" position="-1.22 0 0">
+  <!-- Zone triggers -->
+  <a-entity zone-trigger="zone: tunnel_01; radius: 3.2; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+  <a-entity zone-trigger="zone: tunnel_01; radius: 3.2; priority: 1" position="0 1.6 -10" visible="false"></a-entity>
+  <a-entity zone-trigger="zone: tunnel_01; radius: 3.2; priority: 1" position="0 1.6 -18" visible="false"></a-entity>
+
   <!-- Inner walkable shell (visible from inside) -->
   <a-entity id="tunnel_01_shell_inner"
             geometry="primitive: cylinder; radius: 1.25; height: 20; openEnded: true; segmentsRadial: 64; segmentsHeight: 1"
@@ -18541,6 +18731,11 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="tunnel_04_hub_cutref" position="-26.2522 0 0" rotation="0 0 0"></a-entity>
 
     <a-entity id="tunnel_04" position="0 0 0">
+    <!-- Zone triggers -->
+    <a-entity zone-trigger="zone: sphere_dome; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: sphere_dome; radius: 3.0; priority: 1" position="0 1.6 -13" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: sphere_dome; radius: 3.0; priority: 1" position="0 1.6 -24" visible="false"></a-entity>
+
 
       <!-- Inner walkable shell (visible from inside) -->
       <a-entity id="tunnel_04_shell_inner"
@@ -18848,6 +19043,11 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="tunnel_05_hub_cutref" position="-26.5221 0 0" rotation="0 0 0"></a-entity>
 
     <a-entity id="tunnel_05" position="0 0 0">
+    <!-- Zone triggers -->
+    <a-entity zone-trigger="zone: nde_dome; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: nde_dome; radius: 3.0; priority: 1" position="0 1.6 -13" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: nde_dome; radius: 3.0; priority: 1" position="0 1.6 -24" visible="false"></a-entity>
+
 
       <!-- Inner walkable shell (visible from inside) -->
       <a-entity id="tunnel_05_shell_inner"
@@ -19186,6 +19386,11 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="tunnel_06_hub_cutref" position="-2.2000 0 0" rotation="0 0 0"></a-entity>
 
     <a-entity id="tunnel_06" position="0 0 0">
+    <!-- Zone triggers -->
+    <a-entity zone-trigger="zone: tunnel_06; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_06; radius: 3.0; priority: 1" position="0 1.6 -12" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_06; radius: 3.0; priority: 1" position="0 1.6 -22" visible="false"></a-entity>
+
 
       <!-- Inner walkable shell (visible from inside) -->
       <a-entity id="tunnel_06_shell_inner"
@@ -19408,6 +19613,9 @@ AFRAME.registerComponent('ion-wind-field', {
   <a-entity id="end_chamber_06"
             position="-29.00 0.00 0.00"
             rotation="0 0 0">
+    <!-- Zone trigger -->
+    <a-entity zone-trigger="zone: end_chamber; radius: 10.0; priority: 3" position="0 1.6 0" visible="false"></a-entity>
+
 
     <!-- Entrance dressing aligned to tunnel_06 axis (opening at x=+5 => matches tunnel_06_rim_far at x=-24) -->
     <a-entity id="end_chamber_06_portal"
@@ -19632,6 +19840,9 @@ AFRAME.registerComponent('ion-wind-field', {
   <a-entity id="junction_dome"
             position="-46.660 1.200 38.790"
             rotation="0 0 0" visible="true">
+    <!-- Zone trigger -->
+    <a-entity zone-trigger="zone: junction_dome; radius: 7.5; priority: 3" position="0 1.6 0" visible="false"></a-entity>
+
 <!-- Extra floor fill (debug visibility) -->
     <a-entity id="junction_dome_temp_floorfill"
               position="0 -0.30 0"
