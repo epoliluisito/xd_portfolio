@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
+  
+  <link rel="icon" href="data:,">
+<meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mercury Dome — Mercury Pool</title>
   <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
@@ -1291,38 +1293,347 @@ AFRAME.registerComponent('sphere-dome-audio', {
   }
 </style>
 
-
-<!-- CAPSULE_SYSTEM_V2 -->
 <script>
 /* ============================================================
-   Capsule v2 (glass + sliding base + inner platform/step)
-   - Press O to toggle open/close.
-   - Glass halves slide wider than the base halves.
-   - Base uses the same material maps as the elevator doors (elevMetal* assets).
+   Procedural Sphere Capsule (base + split glass clamshell)
+   - Closed by default.
+   - Press O to toggle open/close (glass halves slide ±X in capsule local space).
+   - Deterministic geometry (no external models).
    ============================================================ */
 (function () {
   if (!window.AFRAME || !window.THREE) return;
 
-  // --- Procedural glass halves (top hemisphere split along X=0) -----------------
-  AFRAME.registerComponent('procedural-capsule-glass', {
+  // Build the base + glass pieces as raw Three meshes so the seam is perfect and deterministic.
+  AFRAME.registerComponent('procedural-sphere-capsule', {
     schema: {
-      side: { type: 'string', default: 'L' },          // L | R
+      kind: { type: 'string', default: 'base' }, // base | glassL | glassR
       radius: { type: 'number', default: 1.35 },
+      flatDepth: { type: 'number', default: 0.34 }, // how much the sphere is raised above the floor plane (in meters)
       segments: { type: 'int', default: 96 }
     },
+
     init: function () {
       const d = this.data;
       const r = Math.max(0.25, d.radius);
       const seg = Math.max(24, d.segments|0);
 
-      // Top half (north pole -> equator)
-      const gTop = new THREE.SphereGeometry(r, seg, Math.floor(seg*0.5), 0, Math.PI * 2, 0, Math.PI * 0.5);
-      const g = clipByX(gTop, d.side === 'L' ? -1 : 1);
+      // Sphere center is raised by (r - flatDepth) so the floor plane y=0 truncates the sphere.
+      // We author geometry centered at origin, then position the parent "capsuleCore" in markup.
+      const yCut = -(r - Math.max(0.0, Math.min(r * 0.9, d.flatDepth))); // plane in local space (<= 0)
+
+      const mkBase = () => {
+        // Bottom half (equator -> south pole)
+        const g = new THREE.SphereGeometry(r, seg, Math.floor(seg*0.5), 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5);
+        // Clip to y >= yCut (create flat bottom at yCut) and then cap it.
+        return clipAndCapY(g, yCut, true);
+      };
+
+      const mkGlassHalf = (side) => {
+        // Top half (north pole -> equator), then clipped into two independent halves by the plane x = 0.
+        // This guarantees the seam is exactly along the capsule local X axis (perfect for lateral opening).
+        const gTop = new THREE.SphereGeometry(r, seg, Math.floor(seg*0.5), 0, Math.PI * 2, 0, Math.PI * 0.5);
+        // side: 'L' keeps x <= 0, side: 'R' keeps x >= 0. No cap on the seam.
+        return clipByX(gTop, side === 'L' ? -1 : 1);
+      };
+
+      const clipAndCapY = (geom, yPlane, cap) => {
+        // Converts to non-indexed, then clips triangles that fall below yPlane.
+        const g0 = geom.index ? geom.toNonIndexed() : geom;
+        const pos = g0.attributes.position;
+        const nor = g0.attributes.normal;
+        const uv  = g0.attributes.uv;
+
+        const outPos = [];
+        const outNor = [];
+        const outUv  = [];
+
+        const v = new THREE.Vector3(), n = new THREE.Vector3();
+        const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3();
+        const n1 = new THREE.Vector3(), n2 = new THREE.Vector3(), n3 = new THREE.Vector3();
+        const uv1 = new THREE.Vector2(), uv2 = new THREE.Vector2(), uv3 = new THREE.Vector2();
+
+        const getV = (i, vv, nn, uuv) => {
+          vv.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+          if (nor) nn.set(nor.getX(i), nor.getY(i), nor.getZ(i)); else nn.set(0,1,0);
+          if (uv)  uuv.set(uv.getX(i), uv.getY(i)); else uuv.set(0,0);
+        };
+
+        const pushTri = (a, b, c, na, nb, nc, uva, uvb, uvc) => {
+          outPos.push(a.x,a.y,a.z, b.x,b.y,b.z, c.x,c.y,c.z);
+          outNor.push(na.x,na.y,na.z, nb.x,nb.y,nb.z, nc.x,nc.y,nc.z);
+          outUv.push(uva.x,uva.y, uvb.x,uvb.y, uvc.x,uvc.y);
+        };
+
+        const lerpV = (A, B, t) => new THREE.Vector3(
+          A.x + (B.x - A.x) * t,
+          A.y + (B.y - A.y) * t,
+          A.z + (B.z - A.z) * t
+        );
+        const lerpN = (A, B, t) => new THREE.Vector3(
+          A.x + (B.x - A.x) * t,
+          A.y + (B.y - A.y) * t,
+          A.z + (B.z - A.z) * t
+        ).normalize();
+        const lerpUV = (A, B, t) => new THREE.Vector2(
+          A.x + (B.x - A.x) * t,
+          A.y + (B.y - A.y) * t
+        );
+
+        const triCount = pos.count / 3;
+        const eps = 1e-6;
+
+        for (let t = 0; t < triCount; t++) {
+          const i0 = t*3, i1 = t*3 + 1, i2 = t*3 + 2;
+
+          getV(i0, v1, n1, uv1);
+          getV(i1, v2, n2, uv2);
+          getV(i2, v3, n3, uv3);
+
+          const inside = (P) => (P.y >= yPlane - eps);
+          const in1 = inside(v1), in2 = inside(v2), in3 = inside(v3);
+          const insideCount = (in1?1:0) + (in2?1:0) + (in3?1:0);
+
+          if (insideCount === 3) {
+            pushTri(v1,v2,v3, n1,n2,n3, uv1,uv2,uv3);
+            continue;
+          }
+          if (insideCount === 0) continue;
+
+          // Clip against plane y = yPlane
+          const clipPoly = (verts, nors, uvs) => {
+            const outV = [];
+            const outN = [];
+            const outUV = [];
+            for (let i = 0; i < verts.length; i++) {
+              const A = verts[i];
+              const B = verts[(i+1)%verts.length];
+              const NA = nors[i];
+              const NB = nors[(i+1)%nors.length];
+              const UVA = uvs[i];
+              const UVB = uvs[(i+1)%uvs.length];
+
+              const Ain = (A.y >= yPlane - eps);
+              const Bin = (B.y >= yPlane - eps);
+
+              if (Ain) { outV.push(A); outN.push(NA); outUV.push(UVA); }
+
+              if (Ain !== Bin) {
+                const t = (yPlane - A.y) / ((B.y - A.y) || eps);
+                const I = lerpV(A, B, t);
+                const IN = lerpN(NA, NB, t);
+                const IUV = lerpUV(UVA, UVB, t);
+                outV.push(I); outN.push(IN); outUV.push(IUV);
+              }
+            }
+            return { outV, outN, outUV };
+          };
+
+          const poly = clipPoly([v1,v2,v3], [n1,n2,n3], [uv1,uv2,uv3]);
+          if (poly.outV.length < 3) continue;
+
+          // Triangulate fan
+          for (let k = 1; k < poly.outV.length - 1; k++) {
+            pushTri(poly.outV[0], poly.outV[k], poly.outV[k+1],
+                    poly.outN[0], poly.outN[k], poly.outN[k+1],
+                    poly.outUV[0], poly.outUV[k], poly.outUV[k+1]);
+          }
+        }
+
+        let g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+        g.setAttribute('normal', new THREE.Float32BufferAttribute(outNor, 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+
+        if (cap) {
+          // Build a simple cap disc at yPlane, facing downward (since it's the bottom).
+          const rCap = Math.sqrt(Math.max(0, (geom.parameters && geom.parameters.radius ? geom.parameters.radius : 1) ** 2 - yPlane*yPlane));
+          const segCap = Math.max(24, Math.floor(seg));
+          const capPos = [];
+          const capNor = [];
+          const capUv = [];
+
+          const center = new THREE.Vector3(0, yPlane, 0);
+          const nDown = new THREE.Vector3(0, -1, 0);
+
+          for (let i = 0; i < segCap; i++) {
+            const a0 = (i / segCap) * Math.PI * 2;
+            const a1 = ((i+1) / segCap) * Math.PI * 2;
+            const p0 = new THREE.Vector3(Math.cos(a0)*rCap, yPlane, Math.sin(a0)*rCap);
+            const p1 = new THREE.Vector3(Math.cos(a1)*rCap, yPlane, Math.sin(a1)*rCap);
+
+            // Triangle: center, p1, p0 (winding so normal points down)
+            capPos.push(center.x,center.y,center.z, p1.x,p1.y,p1.z, p0.x,p0.y,p0.z);
+            capNor.push(nDown.x,nDown.y,nDown.z, nDown.x,nDown.y,nDown.z, nDown.x,nDown.y,nDown.z);
+
+            // Simple planar UVs (not critical for matte base)
+            const uvC = new THREE.Vector2(0.5,0.5);
+            const uvP0 = new THREE.Vector2(0.5 + (p0.x/(2*rCap||1)), 0.5 + (p0.z/(2*rCap||1)));
+            const uvP1 = new THREE.Vector2(0.5 + (p1.x/(2*rCap||1)), 0.5 + (p1.z/(2*rCap||1)));
+            capUv.push(uvC.x,uvC.y, uvP1.x,uvP1.y, uvP0.x,uvP0.y);
+          }
+
+          const gCap = new THREE.BufferGeometry();
+          gCap.setAttribute('position', new THREE.Float32BufferAttribute(capPos, 3));
+          gCap.setAttribute('normal', new THREE.Float32BufferAttribute(capNor, 3));
+          gCap.setAttribute('uv', new THREE.Float32BufferAttribute(capUv, 2));
+
+          // Merge (cheap: concatenate arrays)
+          g = mergeGeoms([g, gCap]);
+        }
+
+        g.computeBoundingSphere();
+        return g;
+      };
+
+
+const clipByX = (geom, keepSign) => {
+  // keepSign: +1 => keep x >= 0, -1 => keep x <= 0
+  const g0 = geom.index ? geom.toNonIndexed() : geom;
+  const pos = g0.attributes.position;
+  const nor = g0.attributes.normal;
+  const uv  = g0.attributes.uv;
+
+  const outPos = [];
+  const outNor = [];
+  const outUv  = [];
+
+  const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3();
+  const n1 = new THREE.Vector3(), n2 = new THREE.Vector3(), n3 = new THREE.Vector3();
+  const uv1 = new THREE.Vector2(), uv2 = new THREE.Vector2(), uv3 = new THREE.Vector2();
+
+  const eps = 1e-7;
+
+  const getV = (i, vv, nn, uuv) => {
+    vv.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+    if (nor) nn.set(nor.getX(i), nor.getY(i), nor.getZ(i)); else nn.set(0,1,0);
+    if (uv)  uuv.set(uv.getX(i), uv.getY(i)); else uuv.set(0,0);
+  };
+
+  const pushTri = (a, b, c, na, nb, nc, uva, uvb, uvc) => {
+    outPos.push(a.x,a.y,a.z, b.x,b.y,b.z, c.x,c.y,c.z);
+    outNor.push(na.x,na.y,na.z, nb.x,nb.y,nb.z, nc.x,nc.y,nc.z);
+    outUv.push(uva.x,uva.y, uvb.x,uvb.y, uvc.x,uvc.y);
+  };
+
+  const lerpV = (A, B, t) => new THREE.Vector3(
+    A.x + (B.x - A.x) * t,
+    A.y + (B.y - A.y) * t,
+    A.z + (B.z - A.z) * t
+  );
+  const lerpN = (A, B, t) => new THREE.Vector3(
+    A.x + (B.x - A.x) * t,
+    A.y + (B.y - A.y) * t,
+    A.z + (B.z - A.z) * t
+  ).normalize();
+  const lerpUV = (A, B, t) => new THREE.Vector2(
+    A.x + (B.x - A.x) * t,
+    A.y + (B.y - A.y) * t
+  );
+
+  const inside = (P) => ((P.x * keepSign) >= -eps);
+
+  const triCount = pos.count / 3;
+  for (let t = 0; t < triCount; t++) {
+    const i0 = t*3, i1 = t*3 + 1, i2 = t*3 + 2;
+
+    getV(i0, v1, n1, uv1);
+    getV(i1, v2, n2, uv2);
+    getV(i2, v3, n3, uv3);
+
+    const in1 = inside(v1), in2 = inside(v2), in3 = inside(v3);
+    const insideCount = (in1?1:0) + (in2?1:0) + (in3?1:0);
+
+    if (insideCount === 3) {
+      pushTri(v1,v2,v3, n1,n2,n3, uv1,uv2,uv3);
+      continue;
+    }
+    if (insideCount === 0) continue;
+
+    // Clip polygon against plane x = 0 in signed space.
+    const clipPoly = (verts, nors, uvs) => {
+      const outV = [];
+      const outN = [];
+      const outUV = [];
+      for (let i = 0; i < verts.length; i++) {
+        const A = verts[i];
+        const B = verts[(i+1)%verts.length];
+        const NA = nors[i];
+        const NB = nors[(i+1)%nors.length];
+        const UVA = uvs[i];
+        const UVB = uvs[(i+1)%uvs.length];
+
+        const Ain = inside(A);
+        const Bin = inside(B);
+
+        if (Ain) { outV.push(A); outN.push(NA); outUV.push(UVA); }
+
+        if (Ain !== Bin) {
+          // Solve for intersection where signed x == 0
+          const Ax = A.x * keepSign;
+          const Bx = B.x * keepSign;
+          const denom = (Bx - Ax) || 1e-9;
+          const t = (0 - Ax) / denom;
+          const I = lerpV(A, B, t);
+          const IN = lerpN(NA, NB, t);
+          const IUV = lerpUV(UVA, UVB, t);
+          outV.push(I); outN.push(IN); outUV.push(IUV);
+        }
+      }
+      return { outV, outN, outUV };
+    };
+
+    const poly = clipPoly([v1,v2,v3], [n1,n2,n3], [uv1,uv2,uv3]);
+    if (poly.outV.length < 3) continue;
+
+    for (let k = 1; k < poly.outV.length - 1; k++) {
+      pushTri(poly.outV[0], poly.outV[k], poly.outV[k+1],
+              poly.outN[0], poly.outN[k], poly.outN[k+1],
+              poly.outUV[0], poly.outUV[k], poly.outUV[k+1]);
+    }
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(outNor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+  g.computeBoundingSphere();
+  return g;
+};
+
+      const mergeGeoms = (geoms) => {
+        const posA = [];
+        const norA = [];
+        const uvA  = [];
+        geoms.forEach((gg) => {
+          const p = gg.attributes.position.array;
+          const n = gg.attributes.normal.array;
+          const u = gg.attributes.uv.array;
+          for (let i = 0; i < p.length; i++) posA.push(p[i]);
+          for (let i = 0; i < n.length; i++) norA.push(n[i]);
+          for (let i = 0; i < u.length; i++) uvA.push(u[i]);
+        });
+        const out = new THREE.BufferGeometry();
+        out.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
+        out.setAttribute('normal', new THREE.Float32BufferAttribute(norA, 3));
+        out.setAttribute('uv', new THREE.Float32BufferAttribute(uvA, 2));
+        out.computeBoundingSphere();
+        return out;
+      };
+
+      // Materials
+      const baseMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#2a313b'),
+        roughness: 0.88,
+        metalness: 0.10,
+        envMapIntensity: 0.85,
+        emissive: new THREE.Color('#0a0d12'),
+        emissiveIntensity: 0.35
+      });
 
       const glassMat = new THREE.MeshPhysicalMaterial({
         color: new THREE.Color('#dfeeff'),
         metalness: 0.05,
-        roughness: 0.06,
+        roughness: 0.055,
         transmission: 1.0,
         transparent: true,
         opacity: 0.22,
@@ -1336,257 +1647,150 @@ AFRAME.registerComponent('sphere-dome-audio', {
         depthWrite: false
       });
 
-      const mesh = new THREE.Mesh(g, glassMat);
+      let geo = null;
+      let mat = null;
+
+      if (d.kind === 'base') { geo = mkBase(); mat = baseMat; }
+      else if (d.kind === 'glassL') { geo = mkGlassHalf('L'); mat = glassMat; }
+      else { geo = mkGlassHalf('R'); mat = glassMat; }
+
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = false;
       mesh.receiveShadow = true;
-      mesh.renderOrder = 40; // keep glass on top for stable transparency sorting
+
+      // For stable transparency sorting.
+      mesh.renderOrder = (d.kind === 'base') ? 20 : 40;
 
       this.el.setObject3D('mesh', mesh);
-
-      function clipByX(geom, sign) {
-        // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
-        const g0 = geom.index ? geom.toNonIndexed() : geom;
-        const pos = g0.attributes.position;
-        const nor = g0.attributes.normal;
-        const uv  = g0.attributes.uv;
-
-        const outPos = [];
-        const outNor = [];
-        const outUv  = [];
-
-        const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
-
-        for (let i = 0; i < pos.count; i += 3) {
-          const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
-          const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
-
-          // Keep only triangles fully on the chosen side (simple + deterministic; no seam cap).
-          if (!(k0 && k1 && k2)) continue;
-
-          for (let j = 0; j < 3; j++) {
-            const ii = i + j;
-            outPos.push(pos.getX(ii), pos.getY(ii), pos.getZ(ii));
-            outNor.push(nor.getX(ii), nor.getY(ii), nor.getZ(ii));
-            outUv.push(uv.getX(ii), uv.getY(ii));
-          }
-        }
-
-        const gOut = new THREE.BufferGeometry();
-        gOut.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
-        gOut.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
-        gOut.setAttribute('uv',       new THREE.Float32BufferAttribute(outUv, 2));
-        gOut.computeBoundingSphere();
-        return gOut;
-      }
     },
+
     remove: function () {
       const m = this.el.getObject3D('mesh');
-      if (!m) return;
-      try { m.geometry && m.geometry.dispose(); } catch(e) {}
-      try { m.material && m.material.dispose(); } catch(e) {}
-      this.el.removeObject3D('mesh');
+      if (m) {
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) {
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          mats.forEach(mm => { try { mm.dispose(); } catch(e) {} });
+        }
+        this.el.removeObject3D('mesh');
+      }
     }
   });
 
-  // Procedural rounded base half (extruded ring segment) -----------------------
-  AFRAME.registerComponent('procedural-capsule-base-half', {
-  schema: {
-    side: { type: 'string', default: 'L' }, // L | R
-    radius: { type: 'number', default: 1.35 }, // must match glass radius
-    height: { type: 'number', default: 0.12 },
-    segments: { type: 'int', default: 96 }
-  },
-  init: function () {
-    const d = this.data;
-    const r = Math.max(0.25, d.radius);
-    const h = Math.max(0.02, d.height);
-    const seg = Math.max(24, d.segments|0);
-
-    // Full disc (cylinder) then clip on X with the *same rule* as the glass halves.
-    // This ensures the base split line matches the glass split line visually.
-    const gFull = new THREE.CylinderGeometry(r, r, h, seg, 1, false);
-    const g = clipByX(gFull, d.side === 'L' ? -1 : 1);
-
-    // Prefer the A-Frame material (so elevator PBR maps apply), otherwise fallback.
-    let mat = null;
-    const afMat = this.el.components && this.el.components.material && this.el.components.material.material;
-    if (afMat) {
-      mat = afMat;
-      // Make sure the base remains opaque and renders before glass.
-      mat.transparent = false;
-      mat.opacity = 1.0;
-      mat.depthWrite = true;
-      mat.side = THREE.DoubleSide;
-    } else {
-      mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8b8f95'), metalness: 1.0, roughness: 1.0, side: THREE.DoubleSide });
-    }
-
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.castShadow = false;
-    mesh.receiveShadow = true;
-    mesh.renderOrder = 5;
-
-    this.el.setObject3D('mesh', mesh);
-
-    function clipByX(geom, sign) {
-      // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
-      const g0 = geom.index ? geom.toNonIndexed() : geom;
-      const pos = g0.attributes.position;
-      const nor = g0.attributes.normal;
-      const uv  = g0.attributes.uv;
-
-      const outPos = [];
-      const outNor = [];
-      const outUv  = [];
-
-      const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
-
-      for (let i = 0; i < pos.count; i += 3) {
-        const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
-        const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
-
-        // Keep only triangles fully on the chosen side (same deterministic behavior as glass).
-        if (!(k0 && k1 && k2)) continue;
-
-        for (let j = 0; j < 3; j++) {
-          outPos.push(pos.getX(i+j), pos.getY(i+j), pos.getZ(i+j));
-          outNor.push(nor.getX(i+j), nor.getY(i+j), nor.getZ(i+j));
-          if (uv) outUv.push(uv.getX(i+j), uv.getY(i+j));
-        }
-      }
-
-      const out = new THREE.BufferGeometry();
-      out.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
-      out.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
-      if (uv) out.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
-      out.computeBoundingBox();
-      out.computeBoundingSphere();
-      return out;
-    }
-  }
-});
-
-  // --- Toggle: move half-modules left/right with optional glass tuck (Press O) ---
-  AFRAME.registerComponent('capsule-split-toggle', {
+  // Smooth, game-friendly toggle animator (lerp in tick).
+  AFRAME.registerComponent('capsule-open-toggle', {
     schema: {
-      leftHalf:  { type: 'selector' },
-      rightHalf: { type: 'selector' },
-      leftGlass: { type: 'selector' },
-      rightGlass:{ type: 'selector' },
-      openX:     { type: 'number', default: 0.75 },
-      tuckY:     { type: 'number', default: 0.06 },
-      dur:       { type: 'int',    default: 650 }
+      left:  { type: 'selector' },
+      right: { type: 'selector' },
+      openOffset: { type: 'number', default: 1.10 },   // meters along ±X (in capsule local space)
+      tuckY: { type: 'number', default: 0.06 },        // optional small downward tuck when open
+      dur: { type: 'number', default: 650 }            // ms
     },
 
     init: function () {
       this._open = false;
-      this._anim = null;
+      this._anim = null; // {t0, fromL, toL, fromR, toR}
+      this._tmp = new THREE.Vector3();
+      this._syncedClosed = false;
 
-      this._resolve = this._resolve.bind(this);
-      this._onKeyDown = this._onKeyDown.bind(this);
-
-      const scene = this.el.sceneEl;
-      if (scene && scene.hasLoaded) this._resolve();
-      else if (scene) scene.addEventListener('loaded', this._resolve, { once: true });
-
-      window.addEventListener('keydown', this._onKeyDown, { passive: false });
-    },
-
-    _resolve: function () {
-      const d = this.data;
-
-      this._L = d.leftHalf;
-      this._R = d.rightHalf;
-      this._gL = d.leftGlass;
-      this._gR = d.rightGlass;
-
-      if (!this._L || !this._R) {
-        console.warn('[capsule-split-toggle] Missing leftHalf/rightHalf selectors.');
-        return;
-      }
-
-      // Cache closed poses (local positions).
-      this._pL0 = this._L.object3D.position.clone();
-      this._pR0 = this._R.object3D.position.clone();
-
-      if (this._gL) this._gL0y = this._gL.object3D.position.y;
-      if (this._gR) this._gR0y = this._gR.object3D.position.y;
-    },
-
-    _onKeyDown: function (e) {
-      if (e.repeat) return;
-      const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
-      if (!isO) return;
-
-      // Prevent page scroll / other handlers if any.
-      e.preventDefault();
-
-      // If not resolved yet, try now.
-      if (!this._L || !this._R) this._resolve();
-      if (!this._L || !this._R) return;
-
-      this._open = !this._open;
-
-      const d = this.data;
-      const now = performance.now();
-
-      const pLfrom = this._L.object3D.position.clone();
-      const pRfrom = this._R.object3D.position.clone();
-
-      const pLto = this._pL0.clone().add(new THREE.Vector3(-d.openX, 0, 0));
-      const pRto = this._pR0.clone().add(new THREE.Vector3( d.openX, 0, 0));
-
-      const pLclosed = this._pL0.clone();
-      const pRclosed = this._pR0.clone();
-
-      this._anim = {
-        t0: now,
-        dur: Math.max(1, d.dur|0),
-        pLfrom, pRfrom,
-        pLto: this._open ? pLto : pLclosed,
-        pRto: this._open ? pRto : pRclosed
+      const isTyping = () => {
+        const a = document.activeElement;
+        return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
       };
 
-      // Glass tuck (instant start target; eased in tick).
-      if (this._gL != null && this._gL0y != null) {
-        this._gL_targetY = this._open ? (this._gL0y - d.tuckY) : this._gL0y;
-      }
-      if (this._gR != null && this._gR0y != null) {
-        this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
-      }
-    },
+      this._onKeyDown = (e) => {
+        if (e.repeat) return;
+        const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
+        if (!isO) return;
+        if (e.defaultPrevented) return;
+        if (isTyping()) return;
 
-    tick: function () {
-      if (!this._anim) return;
+        // Don't steal O while modifier keys are held (let browser/system shortcuts work).
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      const a = this._anim;
-      const t = (performance.now() - a.t0) / a.dur;
-      const u = t >= 1 ? 1 : (t <= 0 ? 0 : t);
+        e.preventDefault();
+        e.stopPropagation();
+        this.toggle();
+      };
 
-      // Smoothstep ease.
-      const e = u*u*(3 - 2*u);
-
-      this._L.object3D.position.lerpVectors(a.pLfrom, a.pLto, e);
-      this._R.object3D.position.lerpVectors(a.pRfrom, a.pRto, e);
-
-      // Glass tuck (y only).
-      if (this._gL && this._gL_targetY != null) {
-        const y = this._gL.object3D.position.y;
-        this._gL.object3D.position.y = y + (this._gL_targetY - y) * (0.25 + 0.75*e);
-      }
-      if (this._gR && this._gR_targetY != null) {
-        const y = this._gR.object3D.position.y;
-        this._gR.object3D.position.y = y + (this._gR_targetY - y) * (0.25 + 0.75*e);
-      }
-
-      if (u >= 1) this._anim = null;
+      // Use capture=true so we still work even if other listeners are passive/bubbling,
+      // but we respect defaultPrevented to avoid breaking existing O bindings.
+      window.addEventListener('keydown', this._onKeyDown, { capture: true });
     },
 
     remove: function () {
-      window.removeEventListener('keydown', this._onKeyDown);
+      window.removeEventListener('keydown', this._onKeyDown, { capture: true });
+    },
+
+    toggle: function () {
+      const L = this.data.left;
+      const R = this.data.right;
+      if (!L || !R) return;
+
+      const lObj = L.object3D;
+      const rObj = R.object3D;
+
+      const fromL = lObj.position.clone();
+      const fromR = rObj.position.clone();
+
+      this._open = !this._open;
+
+      const ox = Math.max(0.0, this.data.openOffset);
+      const ty = Math.max(0.0, this.data.tuckY);
+
+      const toL = new THREE.Vector3(this._open ? -ox : 0, this._open ? -ty : 0, 0);
+      const toR = new THREE.Vector3(this._open ?  ox : 0, this._open ? -ty : 0, 0);
+
+      this._anim = {
+        t0: performance.now(),
+        dur: Math.max(120, this.data.dur),
+        fromL, fromR, toL, toR
+      };
+    },
+
+    tick: function () {
+      // Ensure we start in a deterministic CLOSED pose even if other code touched positions.
+      if (!this._syncedClosed) {
+        const L = this.data.left;
+        const R = this.data.right;
+        if (L && R) {
+          L.object3D.position.set(0,0,0);
+          R.object3D.position.set(0,0,0);
+          this._syncedClosed = true;
+        }
+      }
+
+      if (!this._anim) return;
+
+      const L = this.data.left;
+      const R = this.data.right;
+      if (!L || !R) { this._anim = null; return; }
+
+      const now = performance.now();
+      const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
+      const s = easeInOutCubic(u);
+
+      const lObj = L.object3D;
+      const rObj = R.object3D;
+
+      lObj.position.set(
+        this._anim.fromL.x + (this._anim.toL.x - this._anim.fromL.x) * s,
+        this._anim.fromL.y + (this._anim.toL.y - this._anim.fromL.y) * s,
+        this._anim.fromL.z + (this._anim.toL.z - this._anim.fromL.z) * s
+      );
+      rObj.position.set(
+        this._anim.fromR.x + (this._anim.toR.x - this._anim.fromR.x) * s,
+        this._anim.fromR.y + (this._anim.toR.y - this._anim.fromR.y) * s,
+        this._anim.fromR.z + (this._anim.toR.z - this._anim.fromR.z) * s
+      );
+
+      if (u >= 1) this._anim = null;
     }
   });
 
+  function easeInOutCubic(t) {
+    return (t < 0.5) ? (4 * t * t * t) : (1 - Math.pow(-2 * t + 2, 3) / 2);
+  }
 })();
 </script>
 
@@ -1642,6 +1846,114 @@ AFRAME.registerComponent('render-order', {
     };
     this.el.addEventListener('object3dset', apply);
     setTimeout(apply, 0);
+  }
+});
+
+AFRAME.registerComponent('capsule-open-toggle-keyed', {
+  schema: {
+    left:  { type: 'selector' },
+    right: { type: 'selector' },
+    openOffset: { type: 'number', default: 1.10 },   // meters along ±X (in capsule local space)
+    tuckY: { type: 'number', default: 0.06 },        // optional small downward tuck when open
+    dur: { type: 'number', default: 650 },           // ms
+    key: { type: 'string', default: 'KeyE' },        // KeyboardEvent.code (e.g., KeyE)
+    enabled: { type: 'boolean', default: true }
+  },
+
+  init: function () {
+    this._open = false;
+    this._anim = null;
+    this._syncedClosed = false;
+
+    const isTyping = () => {
+      const a = document.activeElement;
+      return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
+    };
+
+    this._onKeyDown = (e) => {
+      if (!this.data.enabled) return;
+      if (e.repeat) return;
+      if (e.defaultPrevented) return;
+      if (isTyping()) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const match = (e.code === this.data.key);
+      if (!match) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggle();
+    };
+
+    window.addEventListener('keydown', this._onKeyDown, { capture: true });
+  },
+
+  remove: function () {
+    window.removeEventListener('keydown', this._onKeyDown, { capture: true });
+  },
+
+  toggle: function () {
+    const L = this.data.left;
+    const R = this.data.right;
+    if (!L || !R) return;
+
+    const lObj = L.object3D;
+    const rObj = R.object3D;
+
+    const fromL = lObj.position.clone();
+    const fromR = rObj.position.clone();
+
+    this._open = !this._open;
+
+    const ox = Math.max(0.0, this.data.openOffset);
+    const ty = Math.max(0.0, this.data.tuckY);
+
+    const toL = new THREE.Vector3(this._open ? -ox : 0, this._open ? -ty : 0, 0);
+    const toR = new THREE.Vector3(this._open ?  ox : 0, this._open ? -ty : 0, 0);
+
+    this._anim = {
+      t0: performance.now(),
+      dur: Math.max(120, this.data.dur),
+      fromL, fromR, toL, toR
+    };
+  },
+
+  tick: function () {
+    if (!this._syncedClosed) {
+      const L = this.data.left;
+      const R = this.data.right;
+      if (L && R) {
+        L.object3D.position.set(0,0,0);
+        R.object3D.position.set(0,0,0);
+        this._syncedClosed = true;
+      }
+    }
+
+    if (!this._anim) return;
+
+    const L = this.data.left;
+    const R = this.data.right;
+    if (!L || !R) { this._anim = null; return; }
+
+    const now = performance.now();
+    const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
+    const s = easeInOutCubic(u);
+
+    const lObj = L.object3D;
+    const rObj = R.object3D;
+
+    lObj.position.set(
+      this._anim.fromL.x + (this._anim.toL.x - this._anim.fromL.x) * s,
+      this._anim.fromL.y + (this._anim.toL.y - this._anim.fromL.y) * s,
+      this._anim.fromL.z + (this._anim.toL.z - this._anim.fromL.z) * s
+    );
+    rObj.position.set(
+      this._anim.fromR.x + (this._anim.toR.x - this._anim.fromR.x) * s,
+      this._anim.fromR.y + (this._anim.toR.y - this._anim.fromR.y) * s,
+      this._anim.fromR.z + (this._anim.toR.z - this._anim.fromR.z) * s
+    );
+
+    if (u >= 1) this._anim = null;
   }
 });
 
@@ -9603,75 +9915,6 @@ AFRAME.registerComponent('pool-sheen-fresnel', {
       });
     }
   });
-
-  // Ensures animation-mixer binds after GLTF is fully loaded (fixes occasional T-pose when component init order differs)
-  AFRAME.registerComponent('force-anim-onload', {
-    schema: {
-      clip: {type: 'string', default: ''},
-      loop: {type: 'string', default: 'repeat'}
-    },
-    init: function () {
-      const el = this.el;
-      this._onLoaded = () => {
-        const clip = this.data.clip;
-        // Re-apply animation-mixer after model is present
-        if (clip && clip.length) {
-          el.setAttribute('animation-mixer', `clip: ${clip}; loop: ${this.data.loop}`);
-        } else {
-          el.setAttribute('animation-mixer', `loop: ${this.data.loop}`);
-        }
-      };
-      el.addEventListener('model-loaded', this._onLoaded);
-    },
-    remove: function () {
-      this.el.removeEventListener('model-loaded', this._onLoaded);
-    }
-  });
-
-  // Robust GLB animation playback (avoids animation-mixer binding quirks).
-  // Plays a named clip (or the first available) via THREE.AnimationMixer.
-  AFRAME.registerComponent('play-gltf-clip', {
-    schema: {
-      clip: { type: 'string', default: '' },
-      loop: { type: 'string', default: 'repeat' }
-    },
-    init: function () {
-      this.mixer = null;
-      this.action = null;
-      this._onLoaded = (e) => {
-        const model = e.detail && e.detail.model;
-        if (!model) return;
-        const clips = (model.animations && model.animations.length) ? model.animations : [];
-        if (!clips.length) return;
-
-        const wanted = (this.data.clip || '').trim();
-        let clip = null;
-        if (wanted) {
-          clip = THREE.AnimationClip.findByName(clips, wanted) || null;
-        }
-        if (!clip) clip = clips[0];
-
-        // Reset any previous mixer
-        this.mixer = new THREE.AnimationMixer(model);
-        this.action = this.mixer.clipAction(clip);
-        this.action.enabled = true;
-        this.action.setLoop(THREE.LoopRepeat);
-        this.action.play();
-      };
-      this.el.addEventListener('model-loaded', this._onLoaded);
-    },
-    tick: function (t, dt) {
-      if (!this.mixer) return;
-      this.mixer.update((dt || 0) / 1000);
-    },
-    remove: function () {
-      this.el.removeEventListener('model-loaded', this._onLoaded);
-      this.mixer = null;
-      this.action = null;
-    }
-  });
-
-
 })();
 
 
@@ -16362,7 +16605,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
 
 
-  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #capsuleRig" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #junction_dome" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -16370,6 +16613,8 @@ AFRAME.registerComponent('ion-wind-field', {
 
     
 <a-assets>
+    <a-asset-item id="oliviaModel" src="olivia_laying.glb"></a-asset-item>
+    <a-asset-item id="peteModel" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/xd_portfolio/main/projects/era_ora/characters/pete_laying.glb"></a-asset-item>
     <img id="earthTex" crossorigin="anonymous" src="../aya_room/assets/earth_skin.jpg">
 <img id="moonDiffuse" crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_diffuse.webp">
   <img id="moonNormal"  crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_normal.webp">
@@ -16420,7 +16665,6 @@ AFRAME.registerComponent('ion-wind-field', {
 
     <audio id="sphere_sound" crossorigin="anonymous" src="../aya_room/music/sphere_sounds.mp3"></audio>
 
-    <a-asset-item id="oliviaLayingGLB" src="https://raw.githubusercontent.com/epoliluisito/xd_portfolio/main/projects/era_ora/characters/olivia_laying.glb"></a-asset-item>
 </a-assets>
 
 
@@ -16886,19 +17130,12 @@ AFRAME.registerComponent('ion-wind-field', {
       <a-entity position="0 1.60 -2.20" light="type: point; color: #cfe9ff; intensity: 1.05; distance: 14; decay: 2; castShadow: false"></a-entity>
       <!-- Very soft overhead fill so the dome does not read as one-sided-lit -->
       <a-entity position="0 4.90 0" light="type: point; color: #d9f1ff; intensity: 0.32; distance: 40; decay: 2; castShadow: false"></a-entity>
-    </a-entity>
-    
-    <!-- Forest-of-Lights ring removed (per request) -->
+        
+</a-entity>
 
 
 
 
-    <!-- =========================================================
-         Capsule v2 (glass + sliding base + inner platform/step)
-         - Press O to toggle open/close.
-         - Entry side faces +Z (toward the mercury pool).
-         ========================================================= -->
-    
 <!-- Subtle visible glow so it feels like light is emanating from the pool (does not affect lighting) -->
     <a-circle id="mercury_pool_glow" render-order="value: 4"
               radius="4.10"
@@ -19688,97 +19925,114 @@ AFRAME.registerComponent('ion-wind-field', {
               material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; metalness: 0; roughness: 1; repeat: 10 10; normalScale: 1 1; side: double"
               shadow="cast:false; receive:true"
               uv2-from-uv></a-circle>
+    <!-- capsule_01 -->
+    <a-entity id="capsule_01" position="0.000 -1.100 -4.500" rotation="0 0.000 0">
+      <!-- Step (faces +Z toward dome center) -->
+      <a-entity id="capsule_01_step" class="collider"
+                geometry="primitive: box; width: 1.70; height: 0.18; depth: 0.95"
+                position="0 0.09 2.10"
+                material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
+                shadow="cast:false; receive:true"></a-entity>
 
-  
+      <a-entity id="capsule_01_core" position="0 1.01 0">
+        <a-entity id="capsule_01_base" class="collider"
+                  procedural-sphere-capsule="kind: base; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
 
-  <!-- Capsule moved into junction_dome -->
-  <a-entity id="capsuleRig" position="-1.660 -1.1250 -4.950" rotation="0 17.3 0" scale="1.5 1.5 1.5">
-  
-  <!-- Inner deck (fixed, walkable) -->
-  <a-cylinder id="capsuleInnerDeck"
-              class="collider"
-              radius="1.12" height="0.10"
-              position="0 0.17 0.00"
-              material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
-              shadow="cast:false; receive:true"></a-cylinder>
+        <!-- Inner deck (fixed) -->
+        <a-cylinder id="capsule_01_deck" class="collider"
+                    radius="1.12" height="0.06"
+                    position="0 0.08 0"
+                    material="shader: standard; color: #1a2028; roughness: 0.95; metalness: 0.08"
+                    shadow="cast:false; receive:true"></a-cylinder>
 
-  <!-- Olivia (lying) -->
-  <a-entity id="oliviaLaying"
-            gltf-model="#oliviaLayingGLB"
-            position="0 0 0"
-            rotation="0 0 0"
-            scale="0.75 0.75 0.75"
-            play-gltf-clip="clip: Armature|mixamo.com|Layer0"
-            shadow="cast:false; receive:false"></a-entity>
-
-  
-  <!-- Fixed rim light ring (emissive + real lights) -->
-  <a-torus id="capsuleRimRing"
-           radius="1.12" radius-tubular="0.012"
-           rotation="90 0 0"
-           position="0 0.235 0"
-           material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
-           shadow="cast:false; receive:false"></a-torus>
-  
-  <!-- Real lights around the rim (soft indigo-white) -->
-  <a-entity id="capsuleRimLights">
-    <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="1.12 0.26 0"></a-light>
-    <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="-1.12 0.26 0"></a-light>
-    <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 1.12"></a-light>
-    <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 -1.12"></a-light>
-    <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="0.79 0.26 0.79"></a-light>
-    <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="-0.79 0.26 -0.79"></a-light>
-  </a-entity>
-  
-  
-  <!-- Inner step (fixed, entry side +Z) -->
-  <a-box id="capsuleInnerStep"
-         class="collider"
-         width="1.30" height="0.07" depth="0.75"
-         position="0 0.10 1.22"
-         material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
-         shadow="cast:false; receive:true"></a-box>
-  
-  <!-- LEFT half-module (base + glass move together) -->
-  <a-entity id="capsuleHalfL" position="0 0 0">
-    <a-entity id="capsuleBaseL"
-              class="collider"
-              position="0 0.04 0.00"
-              material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-              procedural-capsule-base-half="side: L; radius: 1.35; height: 0.12; segments: 128"
-              shadow="cast:false; receive:true"></a-entity>
-  
-    <a-entity id="capsuleGlassL"
-              position="0 0.10 0"
-              procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
-  </a-entity>
-  
-  <!-- RIGHT half-module (base + glass move together) -->
-  <a-entity id="capsuleHalfR" position="0 0 0">
-    <a-entity id="capsuleBaseR"
-              class="collider"
-              position="0 0.04 0.00"
-              material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-              procedural-capsule-base-half="side: R; radius: 1.35; height: 0.12; segments: 128"
-              shadow="cast:false; receive:true"></a-entity>
-  
-    <a-entity id="capsuleGlassR"
-              position="0 0.10 0"
-              procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
-  </a-entity>
-  
-  <!-- Controller (press O) -->
-  <a-entity capsule-split-toggle="
-      leftHalf:   #capsuleHalfL;
-      rightHalf:  #capsuleHalfR;
-      leftGlass:  #capsuleGlassL;
-      rightGlass: #capsuleGlassR;
-      openX:      0.5;
-      tuckY:      0.06;
-      dur:        650"></a-entity>
+        <a-entity id="capsule_01_glassL"
+                  procedural-sphere-capsule="kind: glassL; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+        <a-entity id="capsule_01_glassR"
+                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+        
+        <a-entity id="capsule_01_olivia"
+                  gltf-model="#oliviaModel"
+                  autoplay-gltf-anim
+                  mixamo-mat-fix
+                  npc-ground
+                  position="0 0.11 0"
+                  rotation="0 0 0"
+                  scale="1 1 1"
+                  ></a-entity>
       </a-entity>
+      
+    </a-entity>
 
-</a-entity>
+    <!-- capsule_02 -->
+    <a-entity id="capsule_02" position="3.897 -1.100 2.250" rotation="0 -120.000 0">
+      <!-- Step (faces +Z toward dome center) -->
+      <a-entity id="capsule_02_step" class="collider"
+                geometry="primitive: box; width: 1.70; height: 0.18; depth: 0.95"
+                position="0 0.09 2.10"
+                material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <a-entity id="capsule_02_core" position="0 1.01 0">
+        <a-entity id="capsule_02_base" class="collider"
+                  procedural-sphere-capsule="kind: base; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+
+        <!-- Inner deck (fixed) -->
+        <a-cylinder id="capsule_02_deck" class="collider"
+                    radius="1.12" height="0.06"
+                    position="0 0.08 0"
+                    material="shader: standard; color: #1a2028; roughness: 0.95; metalness: 0.08"
+                    shadow="cast:false; receive:true"></a-cylinder>
+
+        <a-entity id="capsule_02_glassL"
+                  procedural-sphere-capsule="kind: glassL; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+        <a-entity id="capsule_02_glassR"
+                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+        
+        <a-entity id="capsule_02_pete"
+                  gltf-model="#peteModel"
+                  autoplay-gltf-anim
+                  mixamo-mat-fix
+                  npc-ground
+                  position="0 0.11 0"
+                  rotation="0 0 0"
+                  scale="1 1 1"
+                  ></a-entity>
+      </a-entity>
+      
+    </a-entity>
+
+    <!-- capsule_03 -->
+    <a-entity id="capsule_03" position="-3.897 -1.100 2.250" rotation="0 120.000 0">
+      <!-- Step (faces +Z toward dome center) -->
+      <a-entity id="capsule_03_step" class="collider"
+                geometry="primitive: box; width: 1.70; height: 0.18; depth: 0.95"
+                position="0 0.09 2.10"
+                material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
+                shadow="cast:false; receive:true"></a-entity>
+
+      <a-entity id="capsule_03_core" position="0 1.01 0">
+        <a-entity id="capsule_03_base" class="collider"
+                  procedural-sphere-capsule="kind: base; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+
+        <!-- Inner deck (fixed) -->
+        <a-cylinder id="capsule_03_deck" class="collider"
+                    radius="1.12" height="0.06"
+                    position="0 0.08 0"
+                    material="shader: standard; color: #1a2028; roughness: 0.95; metalness: 0.08"
+                    shadow="cast:false; receive:true"></a-cylinder>
+
+        <a-entity id="capsule_03_glassL"
+                  procedural-sphere-capsule="kind: glassL; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+        <a-entity id="capsule_03_glassR"
+                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+        
+      </a-entity>
+      
+      <a-entity capsule-open-toggle-keyed="left: #capsule_03_glassL; right: #capsule_03_glassR; openOffset: 0.5; tuckY: 0.06; dur: 650; key: KeyE; enabled: true"></a-entity>
+    </a-entity>
+
+
+  </a-entity>
 
 </a-entity>
 
