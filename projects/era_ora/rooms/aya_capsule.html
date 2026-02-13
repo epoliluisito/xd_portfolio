@@ -1465,6 +1465,128 @@ AFRAME.registerComponent('sphere-dome-audio', {
     }
   }
 });
+
+  // --- Toggle: move half-modules left/right with optional glass tuck (Press O) ---
+  AFRAME.registerComponent('capsule-split-toggle', {
+    schema: {
+      leftHalf:  { type: 'selector' },
+      rightHalf: { type: 'selector' },
+      leftGlass: { type: 'selector' },
+      rightGlass:{ type: 'selector' },
+      openX:     { type: 'number', default: 0.75 },
+      tuckY:     { type: 'number', default: 0.06 },
+      dur:       { type: 'int',    default: 650 }
+    },
+
+    init: function () {
+      this._open = false;
+      this._anim = null;
+
+      this._resolve = this._resolve.bind(this);
+      this._onKeyDown = this._onKeyDown.bind(this);
+
+      const scene = this.el.sceneEl;
+      if (scene && scene.hasLoaded) this._resolve();
+      else if (scene) scene.addEventListener('loaded', this._resolve, { once: true });
+
+      window.addEventListener('keydown', this._onKeyDown, { passive: false });
+    },
+
+    _resolve: function () {
+      const d = this.data;
+
+      this._L = d.leftHalf;
+      this._R = d.rightHalf;
+      this._gL = d.leftGlass;
+      this._gR = d.rightGlass;
+
+      if (!this._L || !this._R) {
+        console.warn('[capsule-split-toggle] Missing leftHalf/rightHalf selectors.');
+        return;
+      }
+
+      // Cache closed poses (local positions).
+      this._pL0 = this._L.object3D.position.clone();
+      this._pR0 = this._R.object3D.position.clone();
+
+      if (this._gL) this._gL0y = this._gL.object3D.position.y;
+      if (this._gR) this._gR0y = this._gR.object3D.position.y;
+    },
+
+    _onKeyDown: function (e) {
+      if (e.repeat) return;
+      const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
+      if (!isO) return;
+
+      // Prevent page scroll / other handlers if any.
+      e.preventDefault();
+
+      // If not resolved yet, try now.
+      if (!this._L || !this._R) this._resolve();
+      if (!this._L || !this._R) return;
+
+      this._open = !this._open;
+
+      const d = this.data;
+      const now = performance.now();
+
+      const pLfrom = this._L.object3D.position.clone();
+      const pRfrom = this._R.object3D.position.clone();
+
+      const pLto = this._pL0.clone().add(new THREE.Vector3(-d.openX, 0, 0));
+      const pRto = this._pR0.clone().add(new THREE.Vector3( d.openX, 0, 0));
+
+      const pLclosed = this._pL0.clone();
+      const pRclosed = this._pR0.clone();
+
+      this._anim = {
+        t0: now,
+        dur: Math.max(1, d.dur|0),
+        pLfrom, pRfrom,
+        pLto: this._open ? pLto : pLclosed,
+        pRto: this._open ? pRto : pRclosed
+      };
+
+      // Glass tuck (instant start target; eased in tick).
+      if (this._gL != null && this._gL0y != null) {
+        this._gL_targetY = this._open ? (this._gL0y - d.tuckY) : this._gL0y;
+      }
+      if (this._gR != null && this._gR0y != null) {
+        this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
+      }
+    },
+
+    tick: function () {
+      if (!this._anim) return;
+
+      const a = this._anim;
+      const t = (performance.now() - a.t0) / a.dur;
+      const u = t >= 1 ? 1 : (t <= 0 ? 0 : t);
+
+      // Smoothstep ease.
+      const e = u*u*(3 - 2*u);
+
+      this._L.object3D.position.lerpVectors(a.pLfrom, a.pLto, e);
+      this._R.object3D.position.lerpVectors(a.pRfrom, a.pRto, e);
+
+      // Glass tuck (y only).
+      if (this._gL && this._gL_targetY != null) {
+        const y = this._gL.object3D.position.y;
+        this._gL.object3D.position.y = y + (this._gL_targetY - y) * (0.25 + 0.75*e);
+      }
+      if (this._gR && this._gR_targetY != null) {
+        const y = this._gR.object3D.position.y;
+        this._gR.object3D.position.y = y + (this._gR_targetY - y) * (0.25 + 0.75*e);
+      }
+
+      if (u >= 1) this._anim = null;
+    },
+
+    remove: function () {
+      window.removeEventListener('keydown', this._onKeyDown);
+    }
+  });
+
 })();
 </script>
 
