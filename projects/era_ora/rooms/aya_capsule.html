@@ -1315,97 +1315,32 @@ AFRAME.registerComponent('sphere-dome-audio', {
       const r = Math.max(0.25, d.radius);
       const seg = Math.max(24, d.segments|0);
 
-      // Top half (north pole -> equator)
-      const gTop = new THREE.SphereGeometry(r, seg, Math.floor(seg*0.5), 0, Math.PI * 2, 0, Math.PI * 0.5);
-      const g = clipByX(gTop, d.side === 'L' ? -1 : 1);
 
-      const glassMat = new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color('#dfeeff'),
-        metalness: 0.05,
-        roughness: 0.06,
-        transmission: 1.0,
-        transparent: true,
-        opacity: 0.22,
-        thickness: 0.25,
-        ior: 1.45,
-        envMapIntensity: 1.25,
-        specularIntensity: 1.0,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.06,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      });
-
-      const mesh = new THREE.Mesh(g, glassMat);
-      mesh.castShadow = false;
-      mesh.receiveShadow = true;
-      mesh.renderOrder = 40; // keep glass on top for stable transparency sorting
-
-      this.el.setObject3D('mesh', mesh);
-
-      function clipByX(geom, sign) {
-        // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
-        const g0 = geom.index ? geom.toNonIndexed() : geom;
-        const pos = g0.attributes.position;
-        const nor = g0.attributes.normal;
-        const uv  = g0.attributes.uv;
-
-        const outPos = [];
-        const outNor = [];
-        const outUv  = [];
-
-        const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
-
-        for (let i = 0; i < pos.count; i += 3) {
-          const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
-          const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
-
-          // Keep only triangles fully on the chosen side (simple + deterministic; no seam cap).
-          if (!(k0 && k1 && k2)) continue;
-
-          for (let j = 0; j < 3; j++) {
-            const ii = i + j;
-            outPos.push(pos.getX(ii), pos.getY(ii), pos.getZ(ii));
-            outNor.push(nor.getX(ii), nor.getY(ii), nor.getZ(ii));
-            outUv.push(uv.getX(ii), uv.getY(ii));
-          }
-        }
-
-        const gOut = new THREE.BufferGeometry();
-        gOut.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
-        gOut.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
-        gOut.setAttribute('uv',       new THREE.Float32BufferAttribute(outUv, 2));
-        gOut.computeBoundingSphere();
-        return gOut;
-      }
-    },
-    remove: function () {
-      const m = this.el.getObject3D('mesh');
-      if (!m) return;
-      try { m.geometry && m.geometry.dispose(); } catch(e) {}
-      try { m.material && m.material.dispose(); } catch(e) {}
-      this.el.removeObject3D('mesh');
+    // Build a true half-disc base (no triangle clipping artifacts).
+    const shape = new THREE.Shape();
+    if (d.side === 'L') {
+      // Keep x <= 0
+      shape.moveTo(0, 0);
+      shape.absarc(0, 0, r, Math.PI / 2, (3 * Math.PI) / 2, false);
+      shape.lineTo(0, 0);
+    } else {
+      // Keep x >= 0
+      shape.moveTo(0, 0);
+      shape.absarc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
+      shape.lineTo(0, 0);
     }
-  });
 
-  // Procedural rounded base half (extruded ring segment) -----------------------
-  AFRAME.registerComponent('procedural-capsule-base-half', {
-  schema: {
-    side: { type: 'string', default: 'L' }, // L | R
-    radius: { type: 'number', default: 1.35 }, // must match glass radius
-    height: { type: 'number', default: 0.12 },
-    segments: { type: 'int', default: 96 }
-  },
-  init: function () {
-    const d = this.data;
-    const r = Math.max(0.25, d.radius);
-    const h = Math.max(0.02, d.height);
-    const seg = Math.max(24, d.segments|0);
+    const g = new THREE.ExtrudeGeometry(shape, {
+      depth: h,
+      bevelEnabled: false,
+      curveSegments: seg
+    });
+    // ExtrudeGeometry extrudes along +Z; rotate so thickness becomes +Y (A-Frame up axis).
+    g.rotateX(-Math.PI / 2);
+    // Center the base vertically like CylinderGeometry (so y=0 is the middle of the thickness).
+    g.translate(0, h / 2, 0);
+    g.computeVertexNormals();
 
-    // Full disc (cylinder) then clip on X with the *same rule* as the glass halves.
-    // This ensures the base split line matches the glass split line visually.
-    const gFull = new THREE.CylinderGeometry(r, r, h, seg, 1, false);
-    const g = clipByX(gFull, d.side === 'L' ? -1 : 1);
 
     // Prefer the A-Frame material (so elevator PBR maps apply), otherwise fallback.
     let mat = null;
@@ -19785,7 +19720,7 @@ AFRAME.registerComponent('ion-wind-field', {
         rightGlass: #capsule_01_glassR;
         openX:      0.5;
         tuckY:      0.06;
-        dur:        650
+        dur:        650;
         enabled:    false"></a-entity>
         </a-entity>
 
@@ -19872,7 +19807,7 @@ AFRAME.registerComponent('ion-wind-field', {
         rightGlass: #capsule_02_glassR;
         openX:      0.5;
         tuckY:      0.06;
-        dur:        650
+        dur:        650;
         enabled:    false"></a-entity>
         </a-entity>
 
@@ -19888,7 +19823,26 @@ AFRAME.registerComponent('ion-wind-field', {
 
   
   
-    <!-- Inner step (fixed, entry side +Z) -->
+    
+    <!-- Fixed rim light ring (emissive + real lights) -->
+    <a-torus id="capsule_03_rimRing"
+             radius="1.12" radius-tubular="0.012"
+             rotation="90 0 0"
+             position="0 0.235 0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             shadow="cast:false; receive:false"></a-torus>
+
+    <!-- Real lights around the rim (soft indigo-white) -->
+    <a-entity id="capsule_03_rimLights">
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="-1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 -1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="0.79 0.26 0.79"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="-0.79 0.26 -0.79"></a-light>
+    </a-entity>
+
+<!-- Inner step (fixed, entry side +Z) -->
     <a-box id="capsule_03_innerStep"
            class="collider"
            width="1.30" height="0.07" depth="0.75"
@@ -19932,7 +19886,7 @@ AFRAME.registerComponent('ion-wind-field', {
         rightGlass: #capsule_03_glassR;
         openX:      0.5;
         tuckY:      0.06;
-        dur:        650
+        dur:        650;
         key:        E;
         enabled:    true"></a-entity>
         </a-entity>
