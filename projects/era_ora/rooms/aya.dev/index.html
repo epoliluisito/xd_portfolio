@@ -1293,6 +1293,58 @@ AFRAME.registerComponent('sphere-dome-audio', {
 
 
 
+<!-- Capsule support (ported from aya_capsule.html) -->
+<script>
+(function(){
+  if (!window.AFRAME || !window.THREE) return;
+  if (!AFRAME.components['play-gltf-clip']) {
+AFRAME.registerComponent('play-gltf-clip', {
+    schema: {
+      clip: { type: 'string', default: '' },
+      loop: { type: 'string', default: 'repeat' }
+    },
+    init: function () {
+      this.mixer = null;
+      this.action = null;
+      this._onLoaded = (e) => {
+        const model = e.detail && e.detail.model;
+        if (!model) return;
+        const clips = (model.animations && model.animations.length) ? model.animations : [];
+        if (!clips.length) return;
+
+        const wanted = (this.data.clip || '').trim();
+        let clip = null;
+        if (wanted) {
+          clip = THREE.AnimationClip.findByName(clips, wanted) || null;
+        }
+        if (!clip) clip = clips[0];
+
+        // Reset any previous mixer
+        this.mixer = new THREE.AnimationMixer(model);
+        this.action = this.mixer.clipAction(clip);
+        this.action.enabled = true;
+        this.action.setLoop(THREE.LoopRepeat);
+        this.action.play();
+      };
+      this.el.addEventListener('model-loaded', this._onLoaded);
+    },
+    tick: function (t, dt) {
+      if (!this.mixer) return;
+      this.mixer.update((dt || 0) / 1000);
+    },
+    remove: function () {
+      this.el.removeEventListener('model-loaded', this._onLoaded);
+      this.mixer = null;
+      this.action = null;
+    }
+  });
+
+
+
+  }
+})();
+</script>
+
 <!-- CAPSULE_SYSTEM_V2 -->
 <script>
 /* ============================================================
@@ -1597,75 +1649,6 @@ AFRAME.registerComponent('sphere-dome-audio', {
 
 })();
 </script>
-
-<script>
-registerComponent('play-gltf-clip', {
-    schema: {
-      clip: { type: 'string', default: '' },
-      loop: { type: 'string', default: 'repeat' }
-    },
-    init: function () {
-      this.mixer = null;
-      this.action = null;
-      this._onLoaded = (e) => {
-        const model = e.detail && e.detail.model;
-        if (!model) return;
-        const clips = (model.animations && model.animations.length) ? model.animations : [];
-        if (!clips.length) return;
-
-        const wanted = (this.data.clip || '').trim();
-        let clip = null;
-        if (wanted) {
-          clip = THREE.AnimationClip.findByName(clips, wanted) || null;
-        }
-        if (!clip) clip = clips[0];
-
-        // Reset any previous mixer
-        this.mixer = new THREE.AnimationMixer(model);
-        this.action = this.mixer.clipAction(clip);
-        this.action.enabled = true;
-        this.action.setLoop(THREE.LoopRepeat);
-        this.action.play();
-      };
-      this.el.addEventListener('model-loaded', this._onLoaded);
-    },
-    tick: function (t, dt) {
-      if (!this.mixer) return;
-      this.mixer.update((dt || 0) / 1000);
-    },
-    remove: function () {
-      this.el.removeEventListener('model-loaded', this._onLoaded);
-      this.mixer = null;
-      this.action = null;
-    }
-  });
-
-
-})();
-
-
-/* --- Force double-sided material on a mesh (for interior wall visibility) --- */
-AFRAME.registerComponent('force-double-side', {
-  init: function () {
-    this.apply = this.apply.bind(this);
-    this.el.addEventListener('object3dset', this.apply);
-    this.apply();
-  },
-  apply: function () {
-    const mesh = this.el.getObject3D('mesh');
-    if (!mesh) return;
-    mesh.traverse(obj => {
-      if (!obj.isMesh || !obj.material) return;
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      mats.forEach(m => {
-        m.side = THREE.DoubleSide;
-        m.needsUpdate = true;
-      });
-    });
-  }
-});
-</script>
-
 </head>
 <body>
 
@@ -16369,7 +16352,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
 
 
-  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #capsule_01, #capsule_02, #capsule_03" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -16428,8 +16411,8 @@ AFRAME.registerComponent('ion-wind-field', {
     <audio id="sphere_sound" crossorigin="anonymous" src="./music/sphere_sounds.mp3"></audio>
 
 
+    <!-- Capsule NPC laying assets (from aya_capsule.html) -->
     <a-asset-item id="oliviaLayingGLB" src="https://raw.githubusercontent.com/epoliluisito/xd_portfolio/main/projects/era_ora/characters/olivia_laying.glb"></a-asset-item>
-
     <a-asset-item id="peteLayingGLB" src="https://raw.githubusercontent.com/epoliluisito/xd_portfolio/main/projects/era_ora/characters/pete_laying.glb"></a-asset-item>
 </a-assets>
 
@@ -19694,7 +19677,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
   
 
-    <!-- ===== Capsules (ported from aya_capsule reference) ===== -->
+    <!-- === Capsules (ported from aya_capsule.html) === -->
 <a-entity id="capsule_01" position="-1.660 -1.1250 -4.950" rotation="0 17.300 0" scale="1.5 1.5 1.5">
   
     <!-- Inner deck (fixed, walkable) -->
@@ -19948,6 +19931,8 @@ AFRAME.registerComponent('ion-wind-field', {
         key:        KeyE;
         enabled:    true"></a-entity>
         </a-entity>
+    <!-- === /Capsules === -->
+
 </a-entity>
 
 </a-entity>
