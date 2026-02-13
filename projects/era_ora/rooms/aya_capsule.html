@@ -1680,6 +1680,7 @@ const clipByX = (geom, keepSign) => {
   // Smooth, game-friendly toggle animator (lerp in tick).
   AFRAME.registerComponent('capsule-open-toggle', {
     schema: {
+      key: {type: 'string', default: 'KeyO'},
       left:  { type: 'selector' },
       right: { type: 'selector' },
       openOffset: { type: 'number', default: 1.10 },   // meters along ±X (in capsule local space)
@@ -1846,114 +1847,6 @@ AFRAME.registerComponent('render-order', {
     };
     this.el.addEventListener('object3dset', apply);
     setTimeout(apply, 0);
-  }
-});
-
-AFRAME.registerComponent('capsule-open-toggle-keyed', {
-  schema: {
-    left:  { type: 'selector' },
-    right: { type: 'selector' },
-    openOffset: { type: 'number', default: 1.10 },   // meters along ±X (in capsule local space)
-    tuckY: { type: 'number', default: 0.06 },        // optional small downward tuck when open
-    dur: { type: 'number', default: 650 },           // ms
-    key: { type: 'string', default: 'KeyE' },        // KeyboardEvent.code (e.g., KeyE)
-    enabled: { type: 'boolean', default: true }
-  },
-
-  init: function () {
-    this._open = false;
-    this._anim = null;
-    this._syncedClosed = false;
-
-    const isTyping = () => {
-      const a = document.activeElement;
-      return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
-    };
-
-    this._onKeyDown = (e) => {
-      if (!this.data.enabled) return;
-      if (e.repeat) return;
-      if (e.defaultPrevented) return;
-      if (isTyping()) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      const match = (e.code === this.data.key);
-      if (!match) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-      this.toggle();
-    };
-
-    window.addEventListener('keydown', this._onKeyDown, { capture: true });
-  },
-
-  remove: function () {
-    window.removeEventListener('keydown', this._onKeyDown, { capture: true });
-  },
-
-  toggle: function () {
-    const L = this.data.left;
-    const R = this.data.right;
-    if (!L || !R) return;
-
-    const lObj = L.object3D;
-    const rObj = R.object3D;
-
-    const fromL = lObj.position.clone();
-    const fromR = rObj.position.clone();
-
-    this._open = !this._open;
-
-    const ox = Math.max(0.0, this.data.openOffset);
-    const ty = Math.max(0.0, this.data.tuckY);
-
-    const toL = new THREE.Vector3(this._open ? -ox : 0, this._open ? -ty : 0, 0);
-    const toR = new THREE.Vector3(this._open ?  ox : 0, this._open ? -ty : 0, 0);
-
-    this._anim = {
-      t0: performance.now(),
-      dur: Math.max(120, this.data.dur),
-      fromL, fromR, toL, toR
-    };
-  },
-
-  tick: function () {
-    if (!this._syncedClosed) {
-      const L = this.data.left;
-      const R = this.data.right;
-      if (L && R) {
-        L.object3D.position.set(0,0,0);
-        R.object3D.position.set(0,0,0);
-        this._syncedClosed = true;
-      }
-    }
-
-    if (!this._anim) return;
-
-    const L = this.data.left;
-    const R = this.data.right;
-    if (!L || !R) { this._anim = null; return; }
-
-    const now = performance.now();
-    const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
-    const s = easeInOutCubic(u);
-
-    const lObj = L.object3D;
-    const rObj = R.object3D;
-
-    lObj.position.set(
-      this._anim.fromL.x + (this._anim.toL.x - this._anim.fromL.x) * s,
-      this._anim.fromL.y + (this._anim.toL.y - this._anim.fromL.y) * s,
-      this._anim.fromL.z + (this._anim.toL.z - this._anim.fromL.z) * s
-    );
-    rObj.position.set(
-      this._anim.fromR.x + (this._anim.toR.x - this._anim.fromR.x) * s,
-      this._anim.fromR.y + (this._anim.toR.y - this._anim.fromR.y) * s,
-      this._anim.fromR.z + (this._anim.toR.z - this._anim.fromR.z) * s
-    );
-
-    if (u >= 1) this._anim = null;
   }
 });
 
@@ -16605,7 +16498,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
 
 
-  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #junction_dome" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -16613,8 +16506,6 @@ AFRAME.registerComponent('ion-wind-field', {
 
     
 <a-assets>
-    <a-asset-item id="oliviaModel" src="../characters/olivia_laying.glb"></a-asset-item>
-    <a-asset-item id="peteModel" src="../characters/pete_laying.glb"></a-asset-item>
     <img id="earthTex" crossorigin="anonymous" src="../aya_room/assets/earth_skin.jpg">
 <img id="moonDiffuse" crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_diffuse.webp">
   <img id="moonNormal"  crossorigin="anonymous" src="../aya_room/assets/cave_wall/moon_normal.webp">
@@ -16665,6 +16556,9 @@ AFRAME.registerComponent('ion-wind-field', {
 
     <audio id="sphere_sound" crossorigin="anonymous" src="../aya_room/music/sphere_sounds.mp3"></audio>
 
+
+    <a-asset-item id="oliviaGLB" src="../characters/olivia_laying.glb"></a-asset-item>
+    <a-asset-item id="peteGLB" src="../characters/pete_laying.glb"></a-asset-item>
 </a-assets>
 
 
@@ -17133,6 +17027,14 @@ AFRAME.registerComponent('ion-wind-field', {
         
 </a-entity>
 
+    <!-- =========================================================
+         Procedural Sphere Capsule (base + split glass)
+         - Parent rig for easy positioning.
+         - Entry step faces +Z (toward the mercury pool).
+         ========================================================= -->
+    
+    
+    <!-- Forest-of-Lights ring removed (per request) -->
 
 
 
@@ -19925,112 +19827,110 @@ AFRAME.registerComponent('ion-wind-field', {
               material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; metalness: 0; roughness: 1; repeat: 10 10; normalScale: 1 1; side: double"
               shadow="cast:false; receive:true"
               uv2-from-uv></a-circle>
-    <!-- capsule_01 -->
-    <a-entity id="capsule_01" position="0.000 -1.100 -4.500" rotation="0 0.000 0">
-      <!-- Step (faces +Z toward dome center) -->
-      <a-entity id="capsule_01_step" class="collider"
+
+  
+
+    <!-- ===== CAPSULES (x3) in junction_dome ===== -->
+<a-entity id="capsule_01" position="5.100 -1.100 0.000" rotation="0 -90.00 0" scale="1.5 1.5 1.5">
+      <!-- Step / entry plinth (aligned to entry side) -->
+      <a-entity id="c01_capsuleStep" class="collider"
                 geometry="primitive: box; width: 1.70; height: 0.18; depth: 0.95"
                 position="0 0.09 2.10"
                 material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
                 shadow="cast:false; receive:true"></a-entity>
 
-      <a-entity id="capsule_01_core" position="0 1.01 0">
-        <a-entity id="capsule_01_base" class="collider"
+      <!-- Shared sphere center (all parts share the same radius + center => perfect seam) -->
+      <a-entity id="c01_capsuleCore" position="0 1.01 0">
+        <!-- Base: bottom hemisphere clipped flat at floor plane -->
+        <a-entity id="c01_capsuleBase" class="collider"
                   procedural-sphere-capsule="kind: base; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
 
-        <!-- Inner deck (fixed) -->
-        <a-cylinder id="capsule_01_deck" class="collider"
-                    radius="1.12" height="0.06"
-                    position="0 0.08 0"
-                    material="shader: standard; color: #1a2028; roughness: 0.95; metalness: 0.08"
-                    shadow="cast:false; receive:true"></a-cylinder>
-
-        <a-entity id="capsule_01_glassL"
+        <!-- Glass halves wrappers (animated) -->
+        <a-entity id="c01_capsuleGlassL"
                   procedural-sphere-capsule="kind: glassL; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
-        <a-entity id="capsule_01_glassR"
-                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
-        
-        <a-entity id="capsule_01_olivia"
-                  gltf-model="#oliviaModel"
-                  autoplay-gltf-anim
-                  mixamo-mat-fix
-                  npc-ground
-                  position="0 0.11 0"
-                  rotation="0 0 0"
-                  scale="1 1 1"
-                  ></a-entity>
-      </a-entity>
-      
-    </a-entity>
 
-    <!-- capsule_02 -->
-    <a-entity id="capsule_02" position="3.897 -1.100 2.250" rotation="0 -120.000 0">
-      <!-- Step (faces +Z toward dome center) -->
-      <a-entity id="capsule_02_step" class="collider"
+        <a-entity id="c01_capsuleGlassR"
+                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+
+        <!-- Optional subtle seam accent (very thin) -->
+        <a-entity geometry="primitive: torus; radius: 1.35; radiusTubular: 0.003; segmentsTubular: 16; segmentsRadial: 128"
+                  rotation="90 0 0"
+                  material="shader: standard; color: #0e1116; roughness: 1.0; metalness: 0.0; transparent: true; opacity: 0.35"
+                  position="0 -0.002 0"
+                  visible="true"></a-entity>
+
+      
+        <a-entity id="c01_olivia" gltf-model="#oliviaGLB"
+                  position="0 -0.33 0" rotation="0 180 0" scale="0.9 0.9 0.9"
+                  autoplay-gltf-anim="clip: Armature|mixamo.com|Layer0; timeScale: 1"></a-entity>
+
+
+<a-entity id="capsule_02" position="-2.550 -1.100 4.417" rotation="0 150.00 0" scale="1.5 1.5 1.5">
+      <!-- Step / entry plinth (aligned to entry side) -->
+      <a-entity id="c02_capsuleStep" class="collider"
                 geometry="primitive: box; width: 1.70; height: 0.18; depth: 0.95"
                 position="0 0.09 2.10"
                 material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
                 shadow="cast:false; receive:true"></a-entity>
 
-      <a-entity id="capsule_02_core" position="0 1.01 0">
-        <a-entity id="capsule_02_base" class="collider"
+      <!-- Shared sphere center (all parts share the same radius + center => perfect seam) -->
+      <a-entity id="c02_capsuleCore" position="0 1.01 0">
+        <!-- Base: bottom hemisphere clipped flat at floor plane -->
+        <a-entity id="c02_capsuleBase" class="collider"
                   procedural-sphere-capsule="kind: base; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
 
-        <!-- Inner deck (fixed) -->
-        <a-cylinder id="capsule_02_deck" class="collider"
-                    radius="1.12" height="0.06"
-                    position="0 0.08 0"
-                    material="shader: standard; color: #1a2028; roughness: 0.95; metalness: 0.08"
-                    shadow="cast:false; receive:true"></a-cylinder>
-
-        <a-entity id="capsule_02_glassL"
+        <!-- Glass halves wrappers (animated) -->
+        <a-entity id="c02_capsuleGlassL"
                   procedural-sphere-capsule="kind: glassL; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
-        <a-entity id="capsule_02_glassR"
-                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
-        
-        <a-entity id="capsule_02_pete"
-                  gltf-model="#peteModel"
-                  autoplay-gltf-anim
-                  mixamo-mat-fix
-                  npc-ground
-                  position="0 0.11 0"
-                  rotation="0 0 0"
-                  scale="1 1 1"
-                  ></a-entity>
-      </a-entity>
-      
-    </a-entity>
 
-    <!-- capsule_03 -->
-    <a-entity id="capsule_03" position="-3.897 -1.100 2.250" rotation="0 120.000 0">
-      <!-- Step (faces +Z toward dome center) -->
-      <a-entity id="capsule_03_step" class="collider"
+        <a-entity id="c02_capsuleGlassR"
+                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+
+        <!-- Optional subtle seam accent (very thin) -->
+        <a-entity geometry="primitive: torus; radius: 1.35; radiusTubular: 0.003; segmentsTubular: 16; segmentsRadial: 128"
+                  rotation="90 0 0"
+                  material="shader: standard; color: #0e1116; roughness: 1.0; metalness: 0.0; transparent: true; opacity: 0.35"
+                  position="0 -0.002 0"
+                  visible="true"></a-entity>
+
+      
+        <a-entity id="c02_pete" gltf-model="#peteGLB"
+                  position="0 -0.33 0" rotation="0 180 0" scale="0.9 0.9 0.9"
+                  autoplay-gltf-anim="clip: Armature|mixamo.com|Layer0; timeScale: 1"></a-entity>
+
+
+<a-entity id="capsule_03" position="-2.550 -1.100 -4.417" rotation="0 30.00 0" scale="1.5 1.5 1.5">
+      <!-- Step / entry plinth (aligned to entry side) -->
+      <a-entity id="c03_capsuleStep" class="collider"
                 geometry="primitive: box; width: 1.70; height: 0.18; depth: 0.95"
                 position="0 0.09 2.10"
                 material="shader: standard; color: #232a33; roughness: 0.92; metalness: 0.05"
                 shadow="cast:false; receive:true"></a-entity>
 
-      <a-entity id="capsule_03_core" position="0 1.01 0">
-        <a-entity id="capsule_03_base" class="collider"
+      <!-- Shared sphere center (all parts share the same radius + center => perfect seam) -->
+      <a-entity id="c03_capsuleCore" position="0 1.01 0">
+        <!-- Base: bottom hemisphere clipped flat at floor plane -->
+        <a-entity id="c03_capsuleBase" class="collider"
                   procedural-sphere-capsule="kind: base; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
 
-        <!-- Inner deck (fixed) -->
-        <a-cylinder id="capsule_03_deck" class="collider"
-                    radius="1.12" height="0.06"
-                    position="0 0.08 0"
-                    material="shader: standard; color: #1a2028; roughness: 0.95; metalness: 0.08"
-                    shadow="cast:false; receive:true"></a-cylinder>
-
-        <a-entity id="capsule_03_glassL"
+        <!-- Glass halves wrappers (animated) -->
+        <a-entity id="c03_capsuleGlassL"
                   procedural-sphere-capsule="kind: glassL; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
-        <a-entity id="capsule_03_glassR"
-                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
-        
-      </a-entity>
-      
-      <a-entity capsule-open-toggle-keyed="left: #capsule_03_glassL; right: #capsule_03_glassR; openOffset: 0.5; tuckY: 0.06; dur: 650; key: KeyE; enabled: true"></a-entity>
-    </a-entity>
 
+        <a-entity id="c03_capsuleGlassR"
+                  procedural-sphere-capsule="kind: glassR; radius: 1.35; flatDepth: 0.34; segments: 96"></a-entity>
+
+        <!-- Optional subtle seam accent (very thin) -->
+        <a-entity geometry="primitive: torus; radius: 1.35; radiusTubular: 0.003; segmentsTubular: 16; segmentsRadial: 128"
+                  rotation="90 0 0"
+                  material="shader: standard; color: #0e1116; roughness: 1.0; metalness: 0.0; transparent: true; opacity: 0.35"
+                  position="0 -0.002 0"
+                  visible="true"></a-entity>
+
+      </a-entity>
+      <a-entity capsule-open-toggle="left: #c03_capsuleGlassL; right: #c03_capsuleGlassR; openOffset: 1.15; tuckY: 0.06; dur: 650; key: KeyE"></a-entity>
+
+    <!-- ===== END CAPSULES ===== -->
 
   </a-entity>
 
