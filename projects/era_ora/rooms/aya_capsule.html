@@ -1390,194 +1390,81 @@ AFRAME.registerComponent('sphere-dome-audio', {
 
   // Procedural rounded base half (extruded ring segment) -----------------------
   AFRAME.registerComponent('procedural-capsule-base-half', {
-    schema: {
-      side: { type: 'string', default: 'L' }, // L | R
-      rOuter: { type: 'number', default: 1.65 },
-      rInner: { type: 'number', default: 1.22 },
-      height: { type: 'number', default: 0.12 },
-      segments: { type: 'int', default: 96 }
-    },
-    init: function () {
-      const d = this.data;
-      const rO = Math.max(0.4, d.rOuter);
-      const rInnerReq = (d.rInner == null) ? 0 : d.rInner;
-      const useHole = rInnerReq > 0.05;
-      const rI = useHole ? Math.min(rO - 0.05, Math.max(0.1, rInnerReq)) : 0;
-      const h = Math.max(0.02, d.height);
-      const seg = Math.max(24, d.segments|0);
-
-      // Left = angles 90..270 (x<0). Right = angles -90..90 (x>0).
-      const a0 = (d.side === 'L') ? (Math.PI * 0.5) : (-Math.PI * 0.5);
-      const a1 = a0 + Math.PI;
-
-      const shape = new THREE.Shape();
-      // outer arc
-      shape.absarc(0, 0, rO, a0, a1, false);
-      // inner arc back (optional hole)
-      if (useHole) {
-        const hole = new THREE.Path();
-        hole.absarc(0, 0, rI, a1, a0, true);
-        shape.holes.push(hole);
-      }
-
-      const geom = new THREE.ExtrudeGeometry(shape, {
-        depth: h,
-        bevelEnabled: false,
-        steps: 1,
-        curveSegments: Math.floor(seg / 2)
-      });
-
-      // ExtrudeGeometry depth is +Z; rotate so thickness is +Y and surface is horizontal.
-      geom.rotateX(-Math.PI / 2);
-
-      // Center geometry at origin, then lift so the top surface is at y = h (we'll place entity at y=h/2).
-      geom.computeBoundingBox();
-      const bb = geom.boundingBox;
-      const cx = (bb.min.x + bb.max.x) * 0.5;
-      const cy = (bb.min.y + bb.max.y) * 0.5;
-      const cz = (bb.min.z + bb.max.z) * 0.5;
-      geom.translate(-cx, -cy, -cz);
-
-      // Use A-Frame material if present (so we can reuse the elevator door PBR maps).
-      let mat = null;
-      if (this.el.components && this.el.components.material && this.el.components.material.material) {
-        mat = this.el.components.material.material;
-      } else {
-        mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#2b2f38'), metalness: 1.0, roughness: 0.6 });
-      }
-
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.castShadow = false;
-      mesh.receiveShadow = true;
-      this.el.setObject3D('mesh', mesh);
-    },
-    update: function () {
-      // rebuild if params change
-      this.remove();
-      this.init();
-    },
-    remove: function () {
-      const m = this.el.getObject3D('mesh');
-      if (!m) return;
-      try { m.geometry && m.geometry.dispose(); } catch(e) {}
-      // Do NOT dispose material: it's owned by A-Frame material system.
-      this.el.removeObject3D('mesh');
-    }
-  });
-
-  // --- Toggle component: animates glass + base together ------------------------
-  // --- Toggle component: animates halves (glass+base) as unified modules -----------
-AFRAME.registerComponent('capsule-split-toggle', {
   schema: {
-    leftHalf:   { type: 'selector' },  // group containing baseL + glassL
-    rightHalf:  { type: 'selector' },  // group containing baseR + glassR
-    leftGlass:  { type: 'selector' },  // for tuckY
-    rightGlass: { type: 'selector' },  // for tuckY
-    openX:      { type: 'number', default: 0.75 }, // lateral travel for each half
-    tuckY:      { type: 'number', default: 0.06 }, // glass-only downward tuck
-    dur:        { type: 'number', default: 650 }
+    side: { type: 'string', default: 'L' }, // L | R
+    radius: { type: 'number', default: 1.35 }, // must match glass radius
+    height: { type: 'number', default: 0.12 },
+    segments: { type: 'int', default: 96 }
   },
   init: function () {
-    this._open = false;
-    this._anim = null;
-    this._synced = false;
-
-    this._closed = {
-      lh: new THREE.Vector3(),
-      rh: new THREE.Vector3(),
-      lg: new THREE.Vector3(),
-      rg: new THREE.Vector3()
-    };
-
-    const isTyping = () => {
-      const a = document.activeElement;
-      return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
-    };
-
-    this._onKeyDown = (e) => {
-      if (e.repeat) return;
-      const isO = (e.code === 'KeyO' || e.key === 'o' || e.key === 'O');
-      if (!isO) return;
-      if (e.defaultPrevented) return;
-      if (isTyping()) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      this.toggle();
-    };
-
-    window.addEventListener('keydown', this._onKeyDown, { capture: true });
-  },
-  remove: function () {
-    window.removeEventListener('keydown', this._onKeyDown, { capture: true });
-  },
-  _captureClosedOnce: function () {
-    if (this._synced) return;
     const d = this.data;
-    if (!d.leftHalf || !d.rightHalf || !d.leftGlass || !d.rightGlass) return;
+    const r = Math.max(0.25, d.radius);
+    const h = Math.max(0.02, d.height);
+    const seg = Math.max(24, d.segments|0);
 
-    this._closed.lh.copy(d.leftHalf.object3D.position);
-    this._closed.rh.copy(d.rightHalf.object3D.position);
-    this._closed.lg.copy(d.leftGlass.object3D.position);
-    this._closed.rg.copy(d.rightGlass.object3D.position);
+    // Full disc (cylinder) then clip on X with the *same rule* as the glass halves.
+    // This ensures the base split line matches the glass split line visually.
+    const gFull = new THREE.CylinderGeometry(r, r, h, seg, 1, false);
+    const g = clipByX(gFull, d.side === 'L' ? -1 : 1);
 
-    d.leftHalf.object3D.position.copy(this._closed.lh);
-    d.rightHalf.object3D.position.copy(this._closed.rh);
-    d.leftGlass.object3D.position.copy(this._closed.lg);
-    d.rightGlass.object3D.position.copy(this._closed.rg);
+    // Prefer the A-Frame material (so elevator PBR maps apply), otherwise fallback.
+    let mat = null;
+    const afMat = this.el.components && this.el.components.material && this.el.components.material.material;
+    if (afMat) {
+      mat = afMat;
+      // Make sure the base remains opaque and renders before glass.
+      mat.transparent = false;
+      mat.opacity = 1.0;
+      mat.depthWrite = true;
+      mat.side = THREE.DoubleSide;
+    } else {
+      mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8b8f95'), metalness: 1.0, roughness: 1.0, side: THREE.DoubleSide });
+    }
 
-    this._synced = true;
-  },
-  toggle: function () {
-    const d = this.data;
-    if (!d.leftHalf || !d.rightHalf || !d.leftGlass || !d.rightGlass) return;
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.renderOrder = 5;
 
-    this._captureClosedOnce();
+    this.el.setObject3D('mesh', mesh);
 
-    const from = {
-      lh: d.leftHalf.object3D.position.clone(),
-      rh: d.rightHalf.object3D.position.clone(),
-      lg: d.leftGlass.object3D.position.clone(),
-      rg: d.rightGlass.object3D.position.clone()
-    };
+    function clipByX(geom, sign) {
+      // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
+      const g0 = geom.index ? geom.toNonIndexed() : geom;
+      const pos = g0.attributes.position;
+      const nor = g0.attributes.normal;
+      const uv  = g0.attributes.uv;
 
-    this._open = !this._open;
+      const outPos = [];
+      const outNor = [];
+      const outUv  = [];
 
-    const ox = Math.max(0.0, d.openX);
-    const ty = Math.max(0.0, d.tuckY);
+      const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
 
-    const to = {
-      lh: this._open ? new THREE.Vector3(this._closed.lh.x - ox, this._closed.lh.y,       this._closed.lh.z) : this._closed.lh.clone(),
-      rh: this._open ? new THREE.Vector3(this._closed.rh.x + ox, this._closed.rh.y,       this._closed.rh.z) : this._closed.rh.clone(),
-      lg: this._open ? new THREE.Vector3(this._closed.lg.x,      this._closed.lg.y - ty, this._closed.lg.z) : this._closed.lg.clone(),
-      rg: this._open ? new THREE.Vector3(this._closed.rg.x,      this._closed.rg.y - ty, this._closed.rg.z) : this._closed.rg.clone()
-    };
+      for (let i = 0; i < pos.count; i += 3) {
+        const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
+        const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
 
-    this._anim = { t0: performance.now(), dur: Math.max(120, d.dur), from, to };
-  },
-  tick: function () {
-    this._captureClosedOnce();
-    if (!this._anim) return;
+        // Keep only triangles fully on the chosen side (same deterministic behavior as glass).
+        if (!(k0 && k1 && k2)) continue;
 
-    const d = this.data;
-    if (!d.leftHalf || !d.rightHalf || !d.leftGlass || !d.rightGlass) { this._anim = null; return; }
+        for (let j = 0; j < 3; j++) {
+          outPos.push(pos.getX(i+j), pos.getY(i+j), pos.getZ(i+j));
+          outNor.push(nor.getX(i+j), nor.getY(i+j), nor.getZ(i+j));
+          if (uv) outUv.push(uv.getX(i+j), uv.getY(i+j));
+        }
+      }
 
-    const now = performance.now();
-    const u = Math.min(1, (now - this._anim.t0) / this._anim.dur);
-    const s = u < 0.5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3)/2; // easeInOutCubic
-    const lerp = (a, b) => a + (b - a) * s;
-
-    const A = this._anim.from, B = this._anim.to;
-
-    d.leftHalf.object3D.position.set(lerp(A.lh.x, B.lh.x), lerp(A.lh.y, B.lh.y), lerp(A.lh.z, B.lh.z));
-    d.rightHalf.object3D.position.set(lerp(A.rh.x, B.rh.x), lerp(A.rh.y, B.rh.y), lerp(A.rh.z, B.rh.z));
-    d.leftGlass.object3D.position.set(lerp(A.lg.x, B.lg.x), lerp(A.lg.y, B.lg.y), lerp(A.lg.z, B.lg.z));
-    d.rightGlass.object3D.position.set(lerp(A.rg.x, B.rg.x), lerp(A.rg.y, B.rg.y), lerp(A.rg.z, B.rg.z));
-
-    if (u >= 1) this._anim = null;
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+      out.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
+      if (uv) out.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+      out.computeBoundingBox();
+      out.computeBoundingSphere();
+      return out;
+    }
   }
 });
-
 })();
 </script>
 
@@ -16843,7 +16730,7 @@ AFRAME.registerComponent('ion-wind-field', {
             class="collider"
             position="0 0.04 0.00"
             material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-            procedural-capsule-base-half="side: L; rOuter: 1.35; rInner: 0.00; height: 0.12; segments: 128"
+            procedural-capsule-base-half="side: L; radius: 1.35; height: 0.12; segments: 128"
             shadow="cast:false; receive:true"></a-entity>
 
   <a-entity id="capsuleGlassL"
@@ -16857,7 +16744,7 @@ AFRAME.registerComponent('ion-wind-field', {
             class="collider"
             position="0 0.04 0.00"
             material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-            procedural-capsule-base-half="side: R; rOuter: 1.35; rInner: 0.00; height: 0.12; segments: 128"
+            procedural-capsule-base-half="side: R; radius: 1.35; height: 0.12; segments: 128"
             shadow="cast:false; receive:true"></a-entity>
 
   <a-entity id="capsuleGlassR"
