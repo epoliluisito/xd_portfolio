@@ -1291,6 +1291,381 @@ AFRAME.registerComponent('sphere-dome-audio', {
   }
 </style>
 
+
+
+<!-- CAPSULE_SYSTEM_V2 -->
+<script>
+/* ============================================================
+   Capsule v2 (glass + sliding base + inner platform/step)
+   - Press O to toggle open/close.
+   - Glass halves slide wider than the base halves.
+   - Base uses the same material maps as the elevator doors (elevMetal* assets).
+   ============================================================ */
+(function () {
+  if (!window.AFRAME || !window.THREE) return;
+
+  // --- Procedural glass halves (top hemisphere split along X=0) -----------------
+  AFRAME.registerComponent('procedural-capsule-glass', {
+    schema: {
+      side: { type: 'string', default: 'L' },          // L | R
+      radius: { type: 'number', default: 1.35 },
+      segments: { type: 'int', default: 96 }
+    },
+    init: function () {
+      const d = this.data;
+      const r = Math.max(0.25, d.radius);
+      const seg = Math.max(24, d.segments|0);
+
+      // Top half (north pole -> equator)
+      const gTop = new THREE.SphereGeometry(r, seg, Math.floor(seg*0.5), 0, Math.PI * 2, 0, Math.PI * 0.5);
+      const g = clipByX(gTop, d.side === 'L' ? -1 : 1);
+
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color('#dfeeff'),
+        metalness: 0.05,
+        roughness: 0.06,
+        transmission: 1.0,
+        transparent: true,
+        opacity: 0.22,
+        thickness: 0.25,
+        ior: 1.45,
+        envMapIntensity: 1.25,
+        specularIntensity: 1.0,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.06,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+
+      const mesh = new THREE.Mesh(g, glassMat);
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.renderOrder = 40; // keep glass on top for stable transparency sorting
+
+      this.el.setObject3D('mesh', mesh);
+
+      function clipByX(geom, sign) {
+        // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
+        const g0 = geom.index ? geom.toNonIndexed() : geom;
+        const pos = g0.attributes.position;
+        const nor = g0.attributes.normal;
+        const uv  = g0.attributes.uv;
+
+        const outPos = [];
+        const outNor = [];
+        const outUv  = [];
+
+        const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
+
+        for (let i = 0; i < pos.count; i += 3) {
+          const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
+          const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
+
+          // Keep only triangles fully on the chosen side (simple + deterministic; no seam cap).
+          if (!(k0 && k1 && k2)) continue;
+
+          for (let j = 0; j < 3; j++) {
+            const ii = i + j;
+            outPos.push(pos.getX(ii), pos.getY(ii), pos.getZ(ii));
+            outNor.push(nor.getX(ii), nor.getY(ii), nor.getZ(ii));
+            outUv.push(uv.getX(ii), uv.getY(ii));
+          }
+        }
+
+        const gOut = new THREE.BufferGeometry();
+        gOut.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+        gOut.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
+        gOut.setAttribute('uv',       new THREE.Float32BufferAttribute(outUv, 2));
+        gOut.computeBoundingSphere();
+        return gOut;
+      }
+    },
+    remove: function () {
+      const m = this.el.getObject3D('mesh');
+      if (!m) return;
+      try { m.geometry && m.geometry.dispose(); } catch(e) {}
+      try { m.material && m.material.dispose(); } catch(e) {}
+      this.el.removeObject3D('mesh');
+    }
+  });
+
+  // Procedural rounded base half (extruded ring segment) -----------------------
+  AFRAME.registerComponent('procedural-capsule-base-half', {
+  schema: {
+    side: { type: 'string', default: 'L' }, // L | R
+    radius: { type: 'number', default: 1.35 }, // must match glass radius
+    height: { type: 'number', default: 0.12 },
+    segments: { type: 'int', default: 96 }
+  },
+  init: function () {
+    const d = this.data;
+    const r = Math.max(0.25, d.radius);
+    const h = Math.max(0.02, d.height);
+    const seg = Math.max(24, d.segments|0);
+
+    // Full disc (cylinder) then clip on X with the *same rule* as the glass halves.
+    // This ensures the base split line matches the glass split line visually.
+    const gFull = new THREE.CylinderGeometry(r, r, h, seg, 1, false);
+    const g = clipByX(gFull, d.side === 'L' ? -1 : 1);
+
+    // Prefer the A-Frame material (so elevator PBR maps apply), otherwise fallback.
+    let mat = null;
+    const afMat = this.el.components && this.el.components.material && this.el.components.material.material;
+    if (afMat) {
+      mat = afMat;
+      // Make sure the base remains opaque and renders before glass.
+      mat.transparent = false;
+      mat.opacity = 1.0;
+      mat.depthWrite = true;
+      mat.side = THREE.DoubleSide;
+    } else {
+      mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8b8f95'), metalness: 1.0, roughness: 1.0, side: THREE.DoubleSide });
+    }
+
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.renderOrder = 5;
+
+    this.el.setObject3D('mesh', mesh);
+
+    function clipByX(geom, sign) {
+      // sign=-1 keeps x <= 0, sign=+1 keeps x >= 0
+      const g0 = geom.index ? geom.toNonIndexed() : geom;
+      const pos = g0.attributes.position;
+      const nor = g0.attributes.normal;
+      const uv  = g0.attributes.uv;
+
+      const outPos = [];
+      const outNor = [];
+      const outUv  = [];
+
+      const keep = (x) => (sign < 0) ? (x <= 0.000001) : (x >= -0.000001);
+
+      for (let i = 0; i < pos.count; i += 3) {
+        const x0 = pos.getX(i+0), x1 = pos.getX(i+1), x2 = pos.getX(i+2);
+        const k0 = keep(x0), k1 = keep(x1), k2 = keep(x2);
+
+        // Keep only triangles fully on the chosen side (same deterministic behavior as glass).
+        if (!(k0 && k1 && k2)) continue;
+
+        for (let j = 0; j < 3; j++) {
+          outPos.push(pos.getX(i+j), pos.getY(i+j), pos.getZ(i+j));
+          outNor.push(nor.getX(i+j), nor.getY(i+j), nor.getZ(i+j));
+          if (uv) outUv.push(uv.getX(i+j), uv.getY(i+j));
+        }
+      }
+
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+      out.setAttribute('normal',   new THREE.Float32BufferAttribute(outNor, 3));
+      if (uv) out.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+      out.computeBoundingBox();
+      out.computeBoundingSphere();
+      return out;
+    }
+  }
+});
+
+  // --- Toggle: move half-modules left/right with optional glass tuck (Press O) ---
+  AFRAME.registerComponent('capsule-split-toggle', {
+    schema: {
+      leftHalf:  { type: 'selector' },
+      rightHalf: { type: 'selector' },
+      leftGlass: { type: 'selector' },
+      rightGlass:{ type: 'selector' },
+      openX:     { type: 'number', default: 0.75 },
+      tuckY:     { type: 'number', default: 0.06 },
+      dur:       { type: 'int',    default: 650 },
+      enabled:  { type: 'boolean', default: true },
+      key:      { type: 'string',  default: 'KeyO' }
+    },
+
+    init: function () {
+      this._open = false;
+      this._anim = null;
+
+      this._resolve = this._resolve.bind(this);
+      this._onKeyDown = this._onKeyDown.bind(this);
+
+      const scene = this.el.sceneEl;
+      if (scene && scene.hasLoaded) this._resolve();
+      else if (scene) scene.addEventListener('loaded', this._resolve, { once: true });
+
+      if (this.data.enabled) {
+        window.addEventListener('keydown', this._onKeyDown, { passive: false });
+      }
+    },
+
+    _resolve: function () {
+      const d = this.data;
+
+      this._L = d.leftHalf;
+      this._R = d.rightHalf;
+      this._gL = d.leftGlass;
+      this._gR = d.rightGlass;
+
+      if (!this._L || !this._R) {
+        console.warn('[capsule-split-toggle] Missing leftHalf/rightHalf selectors.');
+        return;
+      }
+
+      // Cache closed poses (local positions).
+      this._pL0 = this._L.object3D.position.clone();
+      this._pR0 = this._R.object3D.position.clone();
+
+      if (this._gL) this._gL0y = this._gL.object3D.position.y;
+      if (this._gR) this._gR0y = this._gR.object3D.position.y;
+    },
+
+    _onKeyDown: function (e) {
+      if (e.repeat) return;
+      const d = this.data;
+      if (!d.enabled) return;
+      const k = (d.key || 'KeyO');
+      const match = (e.code === k) || ((k.length === 4 && k.startsWith('Key')) && (e.key && e.key.toLowerCase() === k.slice(3).toLowerCase()));
+      if (!match) return;
+
+      // Prevent page scroll / other handlers if any.
+      e.preventDefault();
+
+      // If not resolved yet, try now.
+      if (!this._L || !this._R) this._resolve();
+      if (!this._L || !this._R) return;
+
+      this._open = !this._open;
+
+      // d already defined above
+      const now = performance.now();
+
+      const pLfrom = this._L.object3D.position.clone();
+      const pRfrom = this._R.object3D.position.clone();
+
+      const pLto = this._pL0.clone().add(new THREE.Vector3(-d.openX, 0, 0));
+      const pRto = this._pR0.clone().add(new THREE.Vector3( d.openX, 0, 0));
+
+      const pLclosed = this._pL0.clone();
+      const pRclosed = this._pR0.clone();
+
+      this._anim = {
+        t0: now,
+        dur: Math.max(1, d.dur|0),
+        pLfrom, pRfrom,
+        pLto: this._open ? pLto : pLclosed,
+        pRto: this._open ? pRto : pRclosed
+      };
+
+      // Glass tuck (instant start target; eased in tick).
+      if (this._gL != null && this._gL0y != null) {
+        this._gL_targetY = this._open ? (this._gL0y - d.tuckY) : this._gL0y;
+      }
+      if (this._gR != null && this._gR0y != null) {
+        this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
+      }
+    },
+
+    tick: function () {
+      if (!this._anim) return;
+
+      const a = this._anim;
+      const t = (performance.now() - a.t0) / a.dur;
+      const u = t >= 1 ? 1 : (t <= 0 ? 0 : t);
+
+      // Smoothstep ease.
+      const e = u*u*(3 - 2*u);
+
+      this._L.object3D.position.lerpVectors(a.pLfrom, a.pLto, e);
+      this._R.object3D.position.lerpVectors(a.pRfrom, a.pRto, e);
+
+      // Glass tuck (y only).
+      if (this._gL && this._gL_targetY != null) {
+        const y = this._gL.object3D.position.y;
+        this._gL.object3D.position.y = y + (this._gL_targetY - y) * (0.25 + 0.75*e);
+      }
+      if (this._gR && this._gR_targetY != null) {
+        const y = this._gR.object3D.position.y;
+        this._gR.object3D.position.y = y + (this._gR_targetY - y) * (0.25 + 0.75*e);
+      }
+
+      if (u >= 1) this._anim = null;
+    },
+
+    remove: function () {
+      window.removeEventListener('keydown', this._onKeyDown);
+    }
+  });
+
+})();
+</script>
+
+<script>
+registerComponent('play-gltf-clip', {
+    schema: {
+      clip: { type: 'string', default: '' },
+      loop: { type: 'string', default: 'repeat' }
+    },
+    init: function () {
+      this.mixer = null;
+      this.action = null;
+      this._onLoaded = (e) => {
+        const model = e.detail && e.detail.model;
+        if (!model) return;
+        const clips = (model.animations && model.animations.length) ? model.animations : [];
+        if (!clips.length) return;
+
+        const wanted = (this.data.clip || '').trim();
+        let clip = null;
+        if (wanted) {
+          clip = THREE.AnimationClip.findByName(clips, wanted) || null;
+        }
+        if (!clip) clip = clips[0];
+
+        // Reset any previous mixer
+        this.mixer = new THREE.AnimationMixer(model);
+        this.action = this.mixer.clipAction(clip);
+        this.action.enabled = true;
+        this.action.setLoop(THREE.LoopRepeat);
+        this.action.play();
+      };
+      this.el.addEventListener('model-loaded', this._onLoaded);
+    },
+    tick: function (t, dt) {
+      if (!this.mixer) return;
+      this.mixer.update((dt || 0) / 1000);
+    },
+    remove: function () {
+      this.el.removeEventListener('model-loaded', this._onLoaded);
+      this.mixer = null;
+      this.action = null;
+    }
+  });
+
+
+})();
+
+
+/* --- Force double-sided material on a mesh (for interior wall visibility) --- */
+AFRAME.registerComponent('force-double-side', {
+  init: function () {
+    this.apply = this.apply.bind(this);
+    this.el.addEventListener('object3dset', this.apply);
+    this.apply();
+  },
+  apply: function () {
+    const mesh = this.el.getObject3D('mesh');
+    if (!mesh) return;
+    mesh.traverse(obj => {
+      if (!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m => {
+        m.side = THREE.DoubleSide;
+        m.needsUpdate = true;
+      });
+    });
+  }
+});
+</script>
+
 </head>
 <body>
 
@@ -16052,6 +16427,10 @@ AFRAME.registerComponent('ion-wind-field', {
 
     <audio id="sphere_sound" crossorigin="anonymous" src="./music/sphere_sounds.mp3"></audio>
 
+
+    <a-asset-item id="oliviaLayingGLB" src="https://raw.githubusercontent.com/epoliluisito/xd_portfolio/main/projects/era_ora/characters/olivia_laying.glb"></a-asset-item>
+
+    <a-asset-item id="peteLayingGLB" src="https://raw.githubusercontent.com/epoliluisito/xd_portfolio/main/projects/era_ora/characters/pete_laying.glb"></a-asset-item>
 </a-assets>
 
 
@@ -19313,7 +19692,263 @@ AFRAME.registerComponent('ion-wind-field', {
               shadow="cast:false; receive:true"
               uv2-from-uv></a-circle>
 
-  </a-entity>
+  
+
+    <!-- ===== Capsules (ported from aya_capsule reference) ===== -->
+<a-entity id="capsule_01" position="-1.660 -1.1250 -4.950" rotation="0 17.300 0" scale="1.5 1.5 1.5">
+  
+    <!-- Inner deck (fixed, walkable) -->
+    <a-cylinder id="capsule_01_innerDeck"
+                class="collider"
+                radius="1.12" height="0.10"
+                position="0 0.17 0.00"
+                material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
+                shadow="cast:false; receive:true"></a-cylinder>
+
+    <!-- Olivia (lying) -->
+    <a-entity id="capsule_01_character"
+              gltf-model="#oliviaLayingGLB"
+              position="0 0 0"
+              rotation="0 0 0"
+              scale="0.75 0.75 0.75"
+              play-gltf-clip="clip: Armature|mixamo.com|Layer0"
+              shadow="cast:false; receive:false"></a-entity>
+
+  
+    <!-- Fixed rim light ring (emissive + real lights) -->
+    <a-torus id="capsule_01_rimRing"
+             radius="1.12" radius-tubular="0.012"
+             rotation="90 0 0"
+             position="0 0.235 0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             shadow="cast:false; receive:false"></a-torus>
+  
+    <!-- Real lights around the rim (soft indigo-white) -->
+    <a-entity id="capsule_01_rimLights">
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="-1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 -1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="0.79 0.26 0.79"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="-0.79 0.26 -0.79"></a-light>
+    </a-entity>
+  
+  
+    <!-- Inner step (fixed, entry side +Z) -->
+    <a-box id="capsule_01_innerStep"
+           class="collider"
+           width="1.30" height="0.07" depth="0.75"
+           position="0 0.10 1.22"
+           material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
+           shadow="cast:false; receive:true"></a-box>
+  
+    <!-- LEFT half-module (base + glass move together) -->
+    <a-entity id="capsule_01_halfL" position="0 0 0">
+      <a-entity id="capsule_01_baseL"
+                class="collider"
+                position="0 0.04 0.00"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                procedural-capsule-base-half="side: L; radius: 1.35; height: 0.12; segments: 128"
+                shadow="cast:false; receive:true"></a-entity>
+  
+      <a-entity id="capsule_01_glassL"
+                position="0 0.10 0"
+                procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
+    </a-entity>
+  
+    <!-- RIGHT half-module (base + glass move together) -->
+    <a-entity id="capsule_01_halfR" position="0 0 0">
+      <a-entity id="capsule_01_baseR"
+                class="collider"
+                position="0 0.04 0.00"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                procedural-capsule-base-half="side: R; radius: 1.35; height: 0.12; segments: 128"
+                shadow="cast:false; receive:true"></a-entity>
+  
+      <a-entity id="capsule_01_glassR"
+                position="0 0.10 0"
+                procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
+    </a-entity>
+  
+    <!-- Controller (press O) -->
+    <a-entity capsule-split-toggle="
+        leftHalf:   #capsule_01_halfL;
+        rightHalf:  #capsule_01_halfR;
+        leftGlass:  #capsule_01_glassL;
+        rightGlass: #capsule_01_glassR;
+        openX:      0.5;
+        tuckY:      0.06;
+        dur:        650;
+        enabled:    false"></a-entity>
+        </a-entity>
+
+<a-entity id="capsule_02" position="-1.879 -1.1250 4.871" rotation="0 158.909 0" scale="1.5 1.5 1.5">
+  
+    <!-- Inner deck (fixed, walkable) -->
+    <a-cylinder id="capsule_02_innerDeck"
+                class="collider"
+                radius="1.12" height="0.10"
+                position="0 0.17 0.00"
+                material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
+                shadow="cast:false; receive:true"></a-cylinder>
+
+    <!-- Pete (lying) -->
+    <a-entity id="capsule_02_character"
+              gltf-model="#peteLayingGLB"
+              position="0 0 0"
+              rotation="0 0 0"
+              scale="0.75 0.75 0.75"
+              play-gltf-clip="clip: Armature|mixamo.com|Layer0"
+              shadow="cast:false; receive:false"></a-entity>
+
+  
+    <!-- Fixed rim light ring (emissive + real lights) -->
+    <a-torus id="capsule_02_rimRing"
+             radius="1.12" radius-tubular="0.012"
+             rotation="90 0 0"
+             position="0 0.235 0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             shadow="cast:false; receive:false"></a-torus>
+  
+    <!-- Real lights around the rim (soft indigo-white) -->
+    <a-entity id="capsule_02_rimLights">
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="-1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 -1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="0.79 0.26 0.79"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="-0.79 0.26 -0.79"></a-light>
+    </a-entity>
+  
+  
+    <!-- Inner step (fixed, entry side +Z) -->
+    <a-box id="capsule_02_innerStep"
+           class="collider"
+           width="1.30" height="0.07" depth="0.75"
+           position="0 0.10 1.22"
+           material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
+           shadow="cast:false; receive:true"></a-box>
+  
+    <!-- LEFT half-module (base + glass move together) -->
+    <a-entity id="capsule_02_halfL" position="0 0 0">
+      <a-entity id="capsule_02_baseL"
+                class="collider"
+                position="0 0.04 0.00"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                procedural-capsule-base-half="side: L; radius: 1.35; height: 0.12; segments: 128"
+                shadow="cast:false; receive:true"></a-entity>
+  
+      <a-entity id="capsule_02_glassL"
+                position="0 0.10 0"
+                procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
+    </a-entity>
+  
+    <!-- RIGHT half-module (base + glass move together) -->
+    <a-entity id="capsule_02_halfR" position="0 0 0">
+      <a-entity id="capsule_02_baseR"
+                class="collider"
+                position="0 0.04 0.00"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                procedural-capsule-base-half="side: R; radius: 1.35; height: 0.12; segments: 128"
+                shadow="cast:false; receive:true"></a-entity>
+  
+      <a-entity id="capsule_02_glassR"
+                position="0 0.10 0"
+                procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
+    </a-entity>
+  
+    <!-- Controller (press O) -->
+    <a-entity capsule-split-toggle="
+        leftHalf:   #capsule_02_halfL;
+        rightHalf:  #capsule_02_halfR;
+        leftGlass:  #capsule_02_glassL;
+        rightGlass: #capsule_02_glassR;
+        openX:      0.5;
+        tuckY:      0.06;
+        dur:        650;
+        enabled:    false"></a-entity>
+        </a-entity>
+
+<a-entity id="capsule_03" position="5.221 -1.1250 0.000" rotation="0 -90.000 0" scale="1.5 1.5 1.5">
+  
+    <!-- Inner deck (fixed, walkable) -->
+    <a-cylinder id="capsule_03_innerDeck"
+                class="collider"
+                radius="1.12" height="0.10"
+                position="0 0.17 0.00"
+                material="shader: standard; color: #141922; roughness: 0.95; metalness: 0.05"
+                shadow="cast:false; receive:true"></a-cylinder>
+
+  
+  
+    
+    <!-- Fixed rim light ring (emissive + real lights) -->
+    <a-torus id="capsule_03_rimRing"
+             radius="1.12" radius-tubular="0.012"
+             rotation="90 0 0"
+             position="0 0.235 0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             shadow="cast:false; receive:false"></a-torus>
+
+    <!-- Real lights around the rim (soft indigo-white) -->
+    <a-entity id="capsule_03_rimLights">
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="-1.12 0.26 0"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.55" distance="6" decay="2" position="0 0.26 -1.12"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="0.79 0.26 0.79"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="0.45" distance="6" decay="2" position="-0.79 0.26 -0.79"></a-light>
+    </a-entity>
+
+<!-- Inner step (fixed, entry side +Z) -->
+    <a-box id="capsule_03_innerStep"
+           class="collider"
+           width="1.30" height="0.07" depth="0.75"
+           position="0 0.10 1.22"
+           material="shader: standard; color: #10141b; roughness: 0.95; metalness: 0.05"
+           shadow="cast:false; receive:true"></a-box>
+  
+    <!-- LEFT half-module (base + glass move together) -->
+    <a-entity id="capsule_03_halfL" position="0 0 0">
+      <a-entity id="capsule_03_baseL"
+                class="collider"
+                position="0 0.04 0.00"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                procedural-capsule-base-half="side: L; radius: 1.35; height: 0.12; segments: 128"
+                shadow="cast:false; receive:true"></a-entity>
+  
+      <a-entity id="capsule_03_glassL"
+                position="0 0.10 0"
+                procedural-capsule-glass="side: L; radius: 1.35; segments: 96"></a-entity>
+    </a-entity>
+  
+    <!-- RIGHT half-module (base + glass move together) -->
+    <a-entity id="capsule_03_halfR" position="0 0 0">
+      <a-entity id="capsule_03_baseR"
+                class="collider"
+                position="0 0.04 0.00"
+                material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+                procedural-capsule-base-half="side: R; radius: 1.35; height: 0.12; segments: 128"
+                shadow="cast:false; receive:true"></a-entity>
+  
+      <a-entity id="capsule_03_glassR"
+                position="0 0.10 0"
+                procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
+    </a-entity>
+  
+    <!-- Controller (press O) -->
+    <a-entity capsule-split-toggle="
+        leftHalf:   #capsule_03_halfL;
+        rightHalf:  #capsule_03_halfR;
+        leftGlass:  #capsule_03_glassL;
+        rightGlass: #capsule_03_glassR;
+        openX:      0.5;
+        tuckY:      0.06;
+        dur:        650;
+        key:        KeyE;
+        enabled:    true"></a-entity>
+        </a-entity>
+</a-entity>
 
 </a-entity>
 
