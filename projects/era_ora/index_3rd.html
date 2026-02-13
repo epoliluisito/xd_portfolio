@@ -2188,7 +2188,7 @@ const far = this.data.avoidDist;
 <iframe id="ayaPreloadFrame"
         title="aya"
         src="about:blank"
-        data-src="./rooms/aya.dev_3rd.html?preload=1"
+        data-src="./rooms/aya_dev_3rd.html?preload=1"
         aria-hidden="true"
         tabindex="-1"
         allow="autoplay; fullscreen; xr-spatial-tracking; gamepad; accelerometer; gyroscope"
@@ -5996,9 +5996,9 @@ AFRAME.registerComponent('pbr-carpet', {
 <script>
 /* -------------------------------------------------------------------------
    AYA preloader handshake
-   - Loads ./rooms/aya.dev_3rd.html?preload=1 in a hidden iframe to warm HTTP cache + shaders.
-   - aya.dev_3rd.html will postMessage('AYA_READY') when it is fully warmed.
-   - We only ever *navigate* to aya.dev_3rd.html at the end of the elevator ride
+   - Loads ./rooms/aya_dev_3rd.html?preload=1 in a hidden iframe to warm HTTP cache + shaders.
+   - aya_dev_3rd.html will postMessage('AYA_READY') when it is fully warmed.
+   - We only ever *navigate* to aya_dev_3rd.html at the end of the elevator ride
      (important for WebXR + to guarantee Fear Room audio stops).
 --------------------------------------------------------------------------- */
 (function () {
@@ -6014,7 +6014,7 @@ AFRAME.registerComponent('pbr-carpet', {
   function ensureSrc () {
     const f = getFrame();
     if (!f) return null;
-    const want = f.getAttribute('data-src') || './rooms/aya.dev_3rd.html?preload=1';
+    const want = f.getAttribute('data-src') || './rooms/aya_dev_3rd.html?preload=1';
     const cur = (f.getAttribute('src') || '').trim();
     if (!cur || cur === 'about:blank') f.setAttribute('src', want);
     return f;
@@ -6377,7 +6377,7 @@ AFRAME.registerComponent('pbr-carpet', {
     const tick = () => {
       const ready = (window.__ayaIsReady && window.__ayaIsReady());
       if (ready || (performance.now() - start) > maxWaitMs){
-        window.location.href = './rooms/aya.dev_3rd.html';
+        window.location.href = './rooms/aya_dev_3rd.html';
         return;
       }
       requestAnimationFrame(tick);
@@ -7193,6 +7193,11 @@ AFRAME.registerComponent('racer-controller', {
     this.idleAction = null;
     this.walkAction = null;
     this.active = null;
+    
+    // Track rig position for autopilot detection
+    this._lastPos = new THREE.Vector3();
+    this._hasLastPos = false;
+    this._movementThreshold = 0.01; // meters per frame to consider "moving"
 
     const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
 
@@ -7236,8 +7241,21 @@ AFRAME.registerComponent('racer-controller', {
   },
 
   _isMoving: function () {
-    return !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
+    // Check keyboard input
+    const keyMoving = !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
               this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight']);
+    
+    // Also check if rig is actually moving (for autopilot)
+    if (!this._hasLastPos) return keyMoving;
+    
+    const rig = this.el.sceneEl && this.el.sceneEl.querySelector('#rig');
+    if (!rig) return keyMoving;
+    
+    const currentPos = new THREE.Vector3();
+    rig.object3D.getWorldPosition(currentPos);
+    const distance = currentPos.distanceTo(this._lastPos);
+    
+    return keyMoving || (distance > this._movementThreshold);
   },
 
   _play: function (which, instant) {
@@ -7262,6 +7280,18 @@ AFRAME.registerComponent('racer-controller', {
 
   tick: function (t, dt) {
     if (this.mixer) this.mixer.update((dt || 0) / 1000);
+
+    // Track rig position for autopilot detection
+    const rig = this.el.sceneEl && this.el.sceneEl.querySelector('#rig');
+    if (rig) {
+      const currentPos = new THREE.Vector3();
+      rig.object3D.getWorldPosition(currentPos);
+      if (this._hasLastPos) {
+        // Position tracking is active
+      }
+      this._lastPos.copy(currentPos);
+      this._hasLastPos = true;
+    }
 
     const cam = this.data.cam;
     if (cam && this.data.turnWithCamera) {
