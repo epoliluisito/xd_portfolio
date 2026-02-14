@@ -1301,8 +1301,7 @@ AFRAME.registerComponent('sphere-dome-audio', {
 AFRAME.registerComponent('play-gltf-clip', {
     schema: {
       clip: { type: 'string', default: '' },
-      loop: { type: 'string', default: 'repeat' },
-      enabled: { type: 'boolean', default: true }
+      loop: { type: 'string', default: 'repeat' }
     },
     init: function () {
       this.mixer = null;
@@ -1330,7 +1329,6 @@ AFRAME.registerComponent('play-gltf-clip', {
       this.el.addEventListener('model-loaded', this._onLoaded);
     },
     tick: function (t, dt) {
-      if (!this.data.enabled) return;
       if (!this.mixer) return;
       this.mixer.update((dt || 0) / 1000);
     },
@@ -1546,30 +1544,8 @@ AFRAME.registerComponent('play-gltf-clip', {
       if (scene && scene.hasLoaded) this._resolve();
       else if (scene) scene.addEventListener('loaded', this._resolve, { once: true });
 
-      this._listening = false;
-      this._syncListener();
-    },
-
-    update: function (oldData) {
-      // Allow runtime enable/disable without breaking input.
-      this._syncListener();
-    },
-
-    remove: function () {
-      if (this._listening) {
-        try { window.removeEventListener('keydown', this._onKeyDown); } catch (e) {}
-        this._listening = false;
-      }
-    },
-
-    _syncListener: function () {
-      const want = !!this.data.enabled;
-      if (want && !this._listening) {
+      if (this.data.enabled) {
         window.addEventListener('keydown', this._onKeyDown, { passive: false });
-        this._listening = true;
-      } else if (!want && this._listening) {
-        try { window.removeEventListener('keydown', this._onKeyDown); } catch (e) {}
-        this._listening = false;
       }
     },
 
@@ -1672,126 +1648,6 @@ AFRAME.registerComponent('play-gltf-clip', {
   });
 
 })();
-</script>
-
-<script>
-/* === Junction capsule performance gate (minimal, deterministic) =================
-   Goal: Keep the world unchanged; only gate the expensive capsule-only lights +
-   capsule-only NPC animation ticking + capsule_03 interaction when the player
-   is far from junction_dome.
-
-   - NO room zoning / no hiding whole domes.
-   - Uses hysteresis (enableDist < disableDist) so it won't thrash at boundaries.
-   - Keeps GLBs loaded (no model unload/reload), so no T-pose race conditions.
-=============================================================================== */
-AFRAME.registerComponent('junction-capsule-gate', {
-  schema: {
-    junction: { type: 'selector', default: '#junction_dome' },
-    enableDist: { type: 'number', default: 30 },   // turn ON when closer than this
-    disableDist:{ type: 'number', default: 42 },   // turn OFF when farther than this
-    tickMs:     { type: 'int',    default: 250 }   // throttle
-  },
-
-  init: function () {
-    this._cam = new THREE.Vector3();
-    this._jpos = new THREE.Vector3();
-    this._last = 0;
-    this._enabled = true; // will be computed on first tick
-
-    const j = this.data.junction;
-    if (!j) {
-      console.warn('[junction-capsule-gate] junction_dome not found.');
-      return;
-    }
-
-    // Collect only junction capsule lights (a-light + entities with light component)
-    this._lights = Array.from(j.querySelectorAll('a-light, [light]'));
-    this._lights.forEach((el) => {
-      if (!el.__jc_origLight) {
-        const l = el.getAttribute('light');
-        if (l && typeof l.intensity === 'number') {
-          el.__jc_origLight = { intensity: l.intensity };
-        } else if (l) {
-          // In some cases A-Frame returns stringified values; keep raw attr too.
-          el.__jc_origLight = { intensity: (l.intensity != null ? Number(l.intensity) : 1.0) };
-        } else {
-          el.__jc_origLight = { intensity: 1.0 };
-        }
-      }
-    });
-
-    // Collect capsule characters (olivia/pete etc.)
-    this._characters = Array.from(j.querySelectorAll('[play-gltf-clip]'));
-
-    // Collect capsule interactions (E toggle etc.)
-    this._toggles = Array.from(j.querySelectorAll('[capsule-split-toggle]'));
-    this._toggles.forEach((el) => {
-      if (el.__jc_origToggleEnabled == null) {
-        // Preserve original enabled value
-        const v = el.getAttribute('capsule-split-toggle');
-        el.__jc_origToggleEnabled = (v && typeof v.enabled !== 'undefined') ? !!v.enabled : true;
-      }
-    });
-
-    // Start in "OFF when far" state (next tick will decide).
-    this._apply(false, true);
-  },
-
-  _apply: function (wantOn, force) {
-    if (!force && this._enabled === wantOn) return;
-    this._enabled = wantOn;
-
-    // Lights: intensity -> 0 when off
-    for (let i = 0; i < this._lights.length; i++) {
-      const el = this._lights[i];
-      const orig = el.__jc_origLight || { intensity: 1.0 };
-      const target = wantOn ? orig.intensity : 0.0;
-
-      // a-light supports direct intensity attribute; [light] entities too.
-      try {
-        el.setAttribute('light', 'intensity', target);
-      } catch (e) {}
-    }
-
-    // NPC animation ticking: enabled flag on play-gltf-clip
-    for (let i = 0; i < this._characters.length; i++) {
-      const el = this._characters[i];
-      try {
-        el.setAttribute('play-gltf-clip', 'enabled', wantOn);
-      } catch (e) {}
-    }
-
-    // Interaction toggles: only enable when on (but restore original enabled on ON)
-    for (let i = 0; i < this._toggles.length; i++) {
-      const el = this._toggles[i];
-      const base = (el.__jc_origToggleEnabled != null) ? el.__jc_origToggleEnabled : true;
-      try {
-        el.setAttribute('capsule-split-toggle', 'enabled', wantOn ? base : false);
-      } catch (e) {}
-    }
-  },
-
-  tick: function (t) {
-    if (!this.data.junction) return;
-    if (t - this._last < this.data.tickMs) return;
-    this._last = t;
-
-    const scene = this.el.sceneEl;
-    const camEl = scene && scene.camera && scene.camera.el;
-    if (!camEl) return;
-
-    camEl.object3D.getWorldPosition(this._cam);
-    this.data.junction.object3D.getWorldPosition(this._jpos);
-
-    const d = this._cam.distanceTo(this._jpos);
-
-    if (this._enabled) {
-      if (d > this.data.disableDist) this._apply(false, false);
-    } else {
-      if (d < this.data.enableDist) this._apply(true, false);
-    }
-  }
-});
 </script>
 </head>
 <body>
@@ -11887,8 +11743,7 @@ AFRAME.registerComponent('merge-align', {
         return;
       }
 
-      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto>
-    <a-entity id="junction_capsule_gate" junction-capsule-gate></a-entity>.
+      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto>.
       this.el.object3D.position.add(this._tmpD);
     }
   });
@@ -16497,7 +16352,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
 
 
-  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #capsule_01, #capsule_02, #capsule_03" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  <a-scene zone-manager="playerRig: #rig; debugMode: false" adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #capsule_01, #capsule_02, #capsule_03" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -20475,6 +20330,267 @@ AFRAME.registerComponent('freeze-static-mesh', {
 
     // One extra defer for primitives created slightly later.
     requestAnimationFrame(() => requestAnimationFrame(tryFreeze));
+  }
+});
+
+// ========== ZONE-BASED PROGRESSIVE LOADING SYSTEM ==========
+// 3-tier zone loading: ACTIVE (visible) → PRELOAD (loading) → UNLOADED (disabled)
+// Prevents the "blank room" issue by preloading adjacent zones before arrival
+
+AFRAME.registerComponent('zone-manager', {
+  schema: {
+    playerRig: { type: 'selector', default: '#rig' },
+    debugMode: { type: 'boolean', default: false },
+    preloadDelayMs: { type: 'number', default: 300 },
+    unloadDelayMs: { type: 'number', default: 5000 }
+  },
+
+  init: function () {
+    this.currentZone = null;
+    this.zones = new Map();
+    this.zoneStates = new Map(); // 'unloaded', 'preloading', 'active'
+    this.recentlyVisited = new Set();
+    this.unloadTimers = new Map();
+    
+    // Define visibility map (what you can SEE from each zone)
+    this.visibilityMap = {
+      tunnel_01: ['aya_dome', 'tunnel_02', 'tunnel_03', 'entrance_chamber'],
+      aya_dome: ['tunnel_01', 'tunnel_02', 'tunnel_03', 'entrance_chamber', 'sphere_dome_import', 'nde_dome_import'],
+      sphere_dome_import: ['tunnel_02', 'tunnel_04', 'aya_dome', 'junction_dome'],
+      nde_dome_import: ['tunnel_03', 'tunnel_05', 'aya_dome', 'junction_dome'],
+      junction_dome: ['tunnel_04', 'tunnel_05', 'tunnel_06', 'nde_dome_import', 'sphere_dome_import', 'end_chamber_06'],
+      tunnel_06: ['tunnel_04', 'tunnel_05', 'junction_dome', 'end_chamber_06'],
+      tunnel_02: ['tunnel_01', 'aya_dome', 'sphere_dome_import'],
+      tunnel_03: ['tunnel_01', 'aya_dome', 'nde_dome_import'],
+      tunnel_04: ['sphere_dome_import', 'junction_dome', 'tunnel_06'],
+      tunnel_05: ['nde_dome_import', 'junction_dome', 'tunnel_06'],
+      entrance_chamber: ['tunnel_01', 'aya_dome'],
+      end_chamber_06: ['tunnel_06', 'junction_dome']
+    };
+
+    // Define preload map (what to PRELOAD when entering a zone - zones you could go to next)
+    this.preloadMap = {
+      tunnel_01: ['aya_dome', 'entrance_chamber'],
+      aya_dome: ['tunnel_01', 'tunnel_02', 'tunnel_03', 'sphere_dome_import', 'nde_dome_import', 'entrance_chamber'],
+      sphere_dome_import: ['tunnel_02', 'tunnel_04', 'aya_dome', 'junction_dome'],
+      nde_dome_import: ['tunnel_03', 'tunnel_05', 'aya_dome', 'junction_dome'],
+      junction_dome: ['tunnel_04', 'tunnel_05', 'tunnel_06', 'nde_dome_import', 'sphere_dome_import', 'end_chamber_06'],
+      tunnel_06: ['junction_dome', 'end_chamber_06'],
+      tunnel_02: ['aya_dome', 'sphere_dome_import'],
+      tunnel_03: ['aya_dome', 'nde_dome_import'],
+      tunnel_04: ['sphere_dome_import', 'junction_dome'],
+      tunnel_05: ['nde_dome_import', 'junction_dome'],
+      entrance_chamber: ['tunnel_01'],
+      end_chamber_06: ['tunnel_06']
+    };
+
+    // Discover zones
+    this._discoverZones();
+    
+    // Start all zones as unloaded except starting area
+    this._initializeZones();
+    
+    this._checkInterval = 0;
+  },
+
+  _discoverZones: function () {
+    const zoneIds = Object.keys(this.visibilityMap);
+    zoneIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        this.zones.set(id, {
+          id: id,
+          element: el,
+          position: new THREE.Vector3(),
+          radius: this._estimateRadius(el)
+        });
+        // Update position
+        el.object3D.getWorldPosition(this.zones.get(id).position);
+      } else if (this.data.debugMode) {
+        console.warn(`[zone-manager] Zone not found: ${id}`);
+      }
+    });
+  },
+
+  _estimateRadius: function (el) {
+    // Estimate zone trigger radius based on name
+    const id = el.id;
+    if (id.includes('tunnel')) return 6.0;
+    if (id.includes('dome')) return 12.0;
+    if (id.includes('chamber')) return 8.0;
+    return 10.0;
+  },
+
+  _initializeZones: function () {
+    // Start everything unloaded
+    this.zones.forEach((zone, id) => {
+      this.zoneStates.set(id, 'unloaded');
+      zone.element.object3D.visible = false;
+    });
+    
+    // Activate starting zones (entrance area)
+    this._setZoneActive('entrance_chamber');
+    this._setZoneActive('tunnel_01');
+    this._preloadZone('aya_dome');
+    
+    this.currentZone = 'entrance_chamber';
+  },
+
+  _setZoneActive: function (zoneId) {
+    const zone = this.zones.get(zoneId);
+    if (!zone) return;
+    
+    const prevState = this.zoneStates.get(zoneId);
+    if (prevState === 'active') return;
+    
+    this.zoneStates.set(zoneId, 'active');
+    zone.element.object3D.visible = true;
+    this.recentlyVisited.add(zoneId);
+    
+    // Clear any pending unload
+    if (this.unloadTimers.has(zoneId)) {
+      clearTimeout(this.unloadTimers.get(zoneId));
+      this.unloadTimers.delete(zoneId);
+    }
+    
+    if (this.data.debugMode) {
+      console.log(`[zone-manager] ACTIVE: ${zoneId}`);
+    }
+  },
+
+  _preloadZone: function (zoneId) {
+    const zone = this.zones.get(zoneId);
+    if (!zone) return;
+    
+    const state = this.zoneStates.get(zoneId);
+    if (state === 'active' || state === 'preloading') return;
+    
+    // Clear any pending unload
+    if (this.unloadTimers.has(zoneId)) {
+      clearTimeout(this.unloadTimers.get(zoneId));
+      this.unloadTimers.delete(zoneId);
+    }
+    
+    this.zoneStates.set(zoneId, 'preloading');
+    
+    // Delayed activation to give time for assets to load
+    setTimeout(() => {
+      zone.element.object3D.visible = true;
+      if (this.data.debugMode) {
+        console.log(`[zone-manager] PRELOADED: ${zoneId}`);
+      }
+    }, this.data.preloadDelayMs);
+  },
+
+  _scheduleUnload: function (zoneId) {
+    const zone = this.zones.get(zoneId);
+    if (!zone) return;
+    
+    // Don't unload if already scheduled
+    if (this.unloadTimers.has(zoneId)) return;
+    
+    // Don't unload active zone
+    if (this.zoneStates.get(zoneId) === 'active') return;
+    
+    const timer = setTimeout(() => {
+      this._unloadZone(zoneId);
+      this.unloadTimers.delete(zoneId);
+    }, this.data.unloadDelayMs);
+    
+    this.unloadTimers.set(zoneId, timer);
+  },
+
+  _unloadZone: function (zoneId) {
+    const zone = this.zones.get(zoneId);
+    if (!zone) return;
+    
+    const state = this.zoneStates.get(zoneId);
+    
+    // Never unload active zones
+    if (state === 'active') return;
+    
+    this.zoneStates.set(zoneId, 'unloaded');
+    zone.element.object3D.visible = false;
+    this.recentlyVisited.delete(zoneId);
+    
+    if (this.data.debugMode) {
+      console.log(`[zone-manager] UNLOADED: ${zoneId}`);
+    }
+  },
+
+  _updateZoneVisibility: function (newZone) {
+    if (newZone === this.currentZone) return;
+    
+    const visibleZones = new Set([newZone]);
+    const preloadZones = new Set();
+    
+    // Add visible zones
+    const visible = this.visibilityMap[newZone] || [];
+    visible.forEach(z => visibleZones.add(z));
+    
+    // Add preload zones
+    const toPreload = this.preloadMap[newZone] || [];
+    toPreload.forEach(z => {
+      if (!visibleZones.has(z)) {
+        preloadZones.add(z);
+      }
+    });
+    
+    // Set visible zones to active
+    visibleZones.forEach(zoneId => {
+      this._setZoneActive(zoneId);
+    });
+    
+    // Preload adjacent zones
+    preloadZones.forEach(zoneId => {
+      this._preloadZone(zoneId);
+    });
+    
+    // Schedule unload for zones that are no longer needed
+    this.zones.forEach((zone, zoneId) => {
+      if (!visibleZones.has(zoneId) && !preloadZones.has(zoneId)) {
+        // Keep recently visited for a bit longer
+        if (this.recentlyVisited.has(zoneId) && this.zoneStates.get(zoneId) !== 'unloaded') {
+          this._scheduleUnload(zoneId);
+        } else if (!this.recentlyVisited.has(zoneId)) {
+          this._unloadZone(zoneId);
+        }
+      }
+    });
+    
+    this.currentZone = newZone;
+    
+    if (this.data.debugMode) {
+      console.log(`[zone-manager] Current: ${newZone}, Visible: [${Array.from(visibleZones).join(', ')}], Preload: [${Array.from(preloadZones).join(', ')}]`);
+    }
+  },
+
+  tick: function (time, dt) {
+    if (!this.data.playerRig) return;
+    
+    // Only check every ~200ms
+    this._checkInterval += dt;
+    if (this._checkInterval < 200) return;
+    this._checkInterval = 0;
+    
+    const playerPos = new THREE.Vector3();
+    this.data.playerRig.object3D.getWorldPosition(playerPos);
+    
+    // Find closest zone
+    let closestZone = null;
+    let closestDist = Infinity;
+    
+    this.zones.forEach((zone, id) => {
+      const dist = playerPos.distanceTo(zone.position);
+      if (dist < zone.radius && dist < closestDist) {
+        closestDist = dist;
+        closestZone = id;
+      }
+    });
+    
+    if (closestZone && closestZone !== this.currentZone) {
+      this._updateZoneVisibility(closestZone);
+    }
   }
 });
 
