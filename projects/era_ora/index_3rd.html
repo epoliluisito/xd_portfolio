@@ -6042,16 +6042,23 @@ AFRAME.registerComponent('pbr-carpet', {
 
     const elevator = document.querySelector('#industrial_elevator_1');
   
-    const cam = document.querySelector('#playerCam');
     const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
     const doorL = document.querySelector('#elevator1_door_L');
 
-    if (!elevator || !cam || !callPanel) return;
+    if (!elevator || !callPanel) return;
 
     const _a = new THREE.Vector3();
     const _b = new THREE.Vector3();
 
     function nearCallPanel() {
+      // Get active camera based on mode
+      const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+      const cam = isThirdPerson 
+        ? document.querySelector('#thirdPersonCam')
+        : document.querySelector('#firstPersonCam');
+      
+      if (!cam) return false;
+      
       cam.object3D.getWorldPosition(_a);
       callPanel.object3D.getWorldPosition(_b);
       return _a.distanceTo(_b) <= USE_DISTANCE;
@@ -6208,7 +6215,6 @@ AFRAME.registerComponent('pbr-carpet', {
 
   const elevator = document.querySelector('#industrial_elevator_1');
   const rig = document.querySelector('#rig');
-  const cam = document.querySelector('#playerCam');
   const doorL = document.querySelector('#elevator1_door_L');
   const doorR = document.querySelector('#elevator1_door_R');
 
@@ -6221,7 +6227,15 @@ AFRAME.registerComponent('pbr-carpet', {
   const skipElevatorShell = document.getElementById('skipElevatorShell');
   const skipElevatorBtn = document.getElementById('skipElevatorBtn');
 
-  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo || !skipElevatorShell || !skipElevatorBtn) return;
+  if (!elevator || !rig || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo || !skipElevatorShell || !skipElevatorBtn) return;
+  
+  // Helper to get active camera based on mode
+  function getActiveCamera() {
+    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+    return isThirdPerson 
+      ? document.querySelector('#thirdPersonCam')
+      : document.querySelector('#firstPersonCam');
+  }
 
   // --- helpers
   const DEG2RAD = Math.PI / 180;
@@ -6277,33 +6291,89 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function pauseMovement(disable){
-    // disable WASD + look-controls while autopilot runs / video plays
+    // disable WASD + look-controls/tp-mouselook while autopilot runs / video plays
     const wasd = rig.components['wasd-controls'];
     if (wasd) wasd.enabled = !disable;
 
-    const lc = cam.components['look-controls'];
-    if (lc) lc.enabled = !disable;
+    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+    
+    if (isThirdPerson) {
+      // Disable third-person mouse look
+      const racerYaw = document.querySelector('#racerYaw');
+      if (racerYaw && racerYaw.components['tp-mouselook']) {
+        racerYaw.components['tp-mouselook'].enabled = !disable;
+      }
+    } else {
+      // Disable first-person look controls
+      const cam = getActiveCamera();
+      if (cam) {
+        const lc = cam.components['look-controls'];
+        if (lc) lc.enabled = !disable;
+      }
+    }
   }
 
   function setCameraYawPitch(yawDeg, pitchDeg){
-    const lc = cam.components['look-controls'];
-    if (!lc) return;
+    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
     const yawRad = yawDeg * DEG2RAD;
     const pitchRad = pitchDeg * DEG2RAD;
-    if (lc.yawObject) lc.yawObject.rotation.y = yawRad;
-    if (lc.pitchObject) lc.pitchObject.rotation.x = pitchRad;
+    
+    if (isThirdPerson) {
+      // Third-person: set yaw on racerYaw, pitch on camPitch
+      const racerYaw = document.querySelector('#racerYaw');
+      const camPitch = document.querySelector('#camPitch');
+      if (racerYaw) racerYaw.object3D.rotation.y = yawRad;
+      if (camPitch) camPitch.object3D.rotation.x = pitchRad;
+    } else {
+      // First-person: use look-controls
+      const cam = getActiveCamera();
+      if (!cam) return;
+      const lc = cam.components['look-controls'];
+      if (!lc) return;
+      if (lc.yawObject) lc.yawObject.rotation.y = yawRad;
+      if (lc.pitchObject) lc.pitchObject.rotation.x = pitchRad;
+    }
   }
+  
   function getCameraYawRad(){
-    const lc = cam.components['look-controls'];
-    if (lc && lc.yawObject) return lc.yawObject.rotation.y;
+    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+    
+    if (isThirdPerson) {
+      // Third-person: get yaw from racerYaw
+      const racerYaw = document.querySelector('#racerYaw');
+      if (racerYaw) return racerYaw.object3D.rotation.y;
+    } else {
+      // First-person: use look-controls
+      const cam = getActiveCamera();
+      if (cam) {
+        const lc = cam.components['look-controls'];
+        if (lc && lc.yawObject) return lc.yawObject.rotation.y;
+      }
+    }
     // fallback: rig rotation
     return rig.object3D.rotation.y;
   }
+  
   function setCameraYawRad(yawRad){
-    const lc = cam.components['look-controls'];
-    if (lc && lc.yawObject){
-      lc.yawObject.rotation.y = yawRad;
-      return;
+    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+    
+    if (isThirdPerson) {
+      // Third-person: set yaw on racerYaw
+      const racerYaw = document.querySelector('#racerYaw');
+      if (racerYaw) {
+        racerYaw.object3D.rotation.y = yawRad;
+        return;
+      }
+    } else {
+      // First-person: use look-controls
+      const cam = getActiveCamera();
+      if (cam) {
+        const lc = cam.components['look-controls'];
+        if (lc && lc.yawObject){
+          lc.yawObject.rotation.y = yawRad;
+          return;
+        }
+      }
     }
     rig.object3D.rotation.y = yawRad;
   }
@@ -7322,6 +7392,15 @@ AFRAME.registerComponent('tp-mouselook', {
     window.addEventListener('mousemove', this._onMouseMove, { passive: true });
     this.el.sceneEl.addEventListener('click', this._requestLock);
   },
+  
+  tick: function() {
+    // Sync internal yaw/pitch with actual object rotations
+    // This ensures elevator autopilot changes are preserved
+    this.yaw = this.el.object3D.rotation.y;
+    const pEl = this.data.pitchEl;
+    if (pEl) this.pitch = pEl.object3D.rotation.x;
+  },
+  
   remove: function () {
     document.removeEventListener('pointerlockchange', this._onLockChange);
     window.removeEventListener('mousemove', this._onMouseMove);
