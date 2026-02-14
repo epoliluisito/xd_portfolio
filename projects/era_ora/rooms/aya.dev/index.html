@@ -1676,26 +1676,41 @@ AFRAME.registerComponent('play-gltf-clip', {
       this._triggers = [];
       this._currentZone = '';
       this._lastZoneChangeT = 0;
+      this._lingerMs = 900;
+      this._lingerUntilT = 0;
+      this._prevActive = null;
 
       // Map zone-name -> list of zone root selectors to keep enabled
       this._zoneActiveMap = {
-        // 1) From tunnel_01
-        tunnel_01: ['#tunnel_01', '#aya_dome', '#entrance_chamber'],
+        // 1) From tunnel_01 you can only see: aya_dome, tunnel_02, tunnel_03, entrance_chamber
+        tunnel_01: ['#tunnel_01', '#aya_dome', '#tunnel_02_module', '#tunnel_03_module', '#entrance_chamber'],
 
-        // 2) From aya_dome
-        aya_dome: ['#aya_dome', '#tunnel_01', '#entrance_chamber', '#sphere_dome_import', '#nde_dome_import'],
+        // tunnel_02 (between aya_dome and sphere_dome)
+        tunnel_02: ['#tunnel_02_module', '#aya_dome', '#sphere_dome_import'],
 
-        // 3) From sphere_dome
-        sphere_dome: ['#sphere_dome_import', '#aya_dome', '#junction_dome', '#tunnel_04_module'],
+        // tunnel_03 (between aya_dome and nde_dome)
+        tunnel_03: ['#tunnel_03_module', '#aya_dome', '#nde_dome_import'],
 
-        // 4) From nde_dome
-        nde_dome: ['#nde_dome_import', '#aya_dome', '#junction_dome', '#tunnel_05_module'],
+        // 2) From aya_dome you can see: tunnel_01, 02, 03; entrance_chamber; sphere_dome; nde_dome
+        aya_dome: ['#aya_dome', '#tunnel_01', '#tunnel_02_module', '#tunnel_03_module', '#entrance_chamber', '#sphere_dome_import', '#nde_dome_import'],
 
-        // 5) From junction_dome
+        // 3) From sphere_dome you can see: tunnel_02, 04; aya_dome; junction_dome
+        sphere_dome: ['#sphere_dome_import', '#tunnel_02_module', '#tunnel_04_module', '#aya_dome', '#junction_dome'],
+
+        // 4) From nde_dome you can see: tunnel_03, 05; aya_dome; junction_dome
+        nde_dome: ['#nde_dome_import', '#tunnel_03_module', '#tunnel_05_module', '#aya_dome', '#junction_dome'],
+
+        // tunnel_04 (between sphere_dome and junction_dome)
+        tunnel_04: ['#tunnel_04_module', '#sphere_dome_import', '#junction_dome'],
+
+        // tunnel_05 (between nde_dome and junction_dome)
+        tunnel_05: ['#tunnel_05_module', '#nde_dome_import', '#junction_dome'],
+
+        // 5) From junction_dome you can see: tunnel_04, 05, 06; nde_dome; sphere_dome; end_chamber
         junction_dome: ['#junction_dome', '#tunnel_04_module', '#tunnel_05_module', '#tunnel_06_module', '#sphere_dome_import', '#nde_dome_import', '#end_chamber_06'],
 
-        // 6) From tunnel_06
-        tunnel_06: ['#tunnel_06_module', '#junction_dome', '#tunnel_04_module', '#tunnel_05_module', '#end_chamber_06'],
+        // From tunnel_06 you can see: tunnel_04, tunnel_05; junction_dome; end_chamber
+        tunnel_06: ['#tunnel_06_module', '#tunnel_04_module', '#tunnel_05_module', '#junction_dome', '#end_chamber_06'],
 
         // Fallbacks (safe defaults)
         entrance_chamber: ['#entrance_chamber', '#tunnel_01', '#aya_dome'],
@@ -1706,6 +1721,8 @@ AFRAME.registerComponent('play-gltf-clip', {
       this._managedRoots = [
         '#entrance_chamber',
         '#tunnel_01',
+        '#tunnel_02_module',
+        '#tunnel_03_module',
         '#aya_dome',
         '#sphere_dome_import',
         '#nde_dome_import',
@@ -1760,13 +1777,35 @@ AFRAME.registerComponent('play-gltf-clip', {
 
       if (!best) return;
 
-      // Grace/hysteresis: avoid rapid toggling at boundaries.
-      if (best !== this._currentZone) {
-        if ((now - this._lastZoneChangeT) < this.data.graceMs) return;
-        this._currentZone = best;
-        this._lastZoneChangeT = now;
-        this._applyZone(best);
+      // If we're in a "linger" window, we may need to drop the previous active-set once it expires.
+      if (best === this._currentZone) {
+        if (this._prevActive && now > this._lingerUntilT) {
+          this._prevActive = null;
+          this._applyZone(best);
+        }
+        return;
       }
+
+      // Minimal hysteresis: avoid rapid flip-flop at boundaries.
+      if ((now - this._lastZoneChangeT) < this.data.graceMs) return;
+
+      const prevZone = this._currentZone;
+      this._currentZone = best;
+      this._lastZoneChangeT = now;
+
+      // Warm-up: keep the previous zone's active roots enabled for a short window.
+      const prevList = this._zoneActiveMap[prevZone] || null;
+      this._prevActive = prevList ? new Set(prevList) : null;
+      // When entering the deep hub/end areas, don't keep Aya-side rooms alive during warm-up.
+      if (this._prevActive && (best === 'junction_dome' || best === 'tunnel_06' || best === 'end_chamber')) {
+        this._prevActive.delete('#aya_dome');
+        this._prevActive.delete('#tunnel_01');
+        this._prevActive.delete('#tunnel_02_module');
+        this._prevActive.delete('#tunnel_03_module');
+      }
+      this._lingerUntilT = now + this._lingerMs;
+
+      this._applyZone(best);
     },
 
     _applyZone: function (zoneName) {
@@ -1774,6 +1813,11 @@ AFRAME.registerComponent('play-gltf-clip', {
 
       // Build a set for quick lookup.
       const active = new Set(activeList);
+
+      // Warm-up linger: keep previous active-set alive briefly to avoid pop-in / "stuck on unloaded boundary".
+      if (this._prevActive && (this.el.sceneEl.time <= this._lingerUntilT)) {
+        this._prevActive.forEach(sel => active.add(sel));
+      }
 
       for (let i = 0; i < this._managedRoots.length; i++) {
         const sel = this._managedRoots[i];
@@ -1811,7 +1855,18 @@ AFRAME.registerComponent('play-gltf-clip', {
 	          if (el.__zvmSavedAttrs && (attr in el.__zvmSavedAttrs)) {
 	            const val = el.__zvmSavedAttrs[attr];
 	            // If it was present previously, restore it. (Empty string still means "enable with defaults".)
-	            el.setAttribute(attr, val);
+	if (attr === 'play-gltf-clip') {
+	              const applyClip = () => { try { el.setAttribute(attr, val); } catch(e){} };
+	              // If the GLTF isn't ready yet, wait for model-loaded to avoid T-pose on re-activation.
+	              if (!el.getObject3D('mesh')) {
+	                const once = () => { el.removeEventListener('model-loaded', once); applyClip(); };
+	                el.addEventListener('model-loaded', once);
+	              } else {
+	                applyClip();
+	              }
+	            } else {
+	              el.setAttribute(attr, val);
+	            }
 	            delete el.__zvmSavedAttrs[attr];
 	          }
 	        }
@@ -17192,6 +17247,10 @@ AFRAME.registerComponent('ion-wind-field', {
   <a-entity id="tunnel_02_module"
             position="-4.22 1.20 48.99"
             rotation="0 60 0">
+    <!-- Zone triggers (tunnel_02) -->
+    <a-entity zone-trigger="zone: tunnel_02; radius: 3.2; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_02; radius: 3.2; priority: 1" position="0 1.6 -10" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_02; radius: 3.2; priority: 1" position="0 1.6 -18" visible="false"></a-entity>
 <!-- ============================================================
        TUNNEL_02 (STEP 1): Aya dome ↔ future sphere_dome connector
        - Shorter sibling of tunnel_01
@@ -17605,7 +17664,11 @@ AFRAME.registerComponent('ion-wind-field', {
             position="-4.22 1.20 28.41"
             rotation="0 -60 0">
 
-    <!-- Clip reference for the aya_dome_shell opening (shader discard) -->
+        <!-- Zone triggers (tunnel_03) -->
+    <a-entity zone-trigger="zone: tunnel_03; radius: 3.2; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_03; radius: 3.2; priority: 1" position="0 1.6 -10" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_03; radius: 3.2; priority: 1" position="0 1.6 -18" visible="false"></a-entity>
+<!-- Clip reference for the aya_dome_shell opening (shader discard) -->
     <a-entity id="tunnel_03_cutref" position="0 0 0" rotation="0 0 0"></a-entity>
 
     <!-- Aya-side merge dressing for tunnel_03 (matches tunnel_02 style) -->
@@ -18734,9 +18797,9 @@ AFRAME.registerComponent('ion-wind-field', {
 
     <a-entity id="tunnel_04" position="0 0 0">
     <!-- Zone triggers -->
-    <a-entity zone-trigger="zone: sphere_dome; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
-    <a-entity zone-trigger="zone: sphere_dome; radius: 3.0; priority: 1" position="0 1.6 -13" visible="false"></a-entity>
-    <a-entity zone-trigger="zone: sphere_dome; radius: 3.0; priority: 1" position="0 1.6 -24" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_04; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_04; radius: 3.0; priority: 1" position="0 1.6 -13" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_04; radius: 3.0; priority: 1" position="0 1.6 -24" visible="false"></a-entity>
 
 
       <!-- Inner walkable shell (visible from inside) -->
@@ -19046,9 +19109,9 @@ AFRAME.registerComponent('ion-wind-field', {
 
     <a-entity id="tunnel_05" position="0 0 0">
     <!-- Zone triggers -->
-    <a-entity zone-trigger="zone: nde_dome; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
-    <a-entity zone-trigger="zone: nde_dome; radius: 3.0; priority: 1" position="0 1.6 -13" visible="false"></a-entity>
-    <a-entity zone-trigger="zone: nde_dome; radius: 3.0; priority: 1" position="0 1.6 -24" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_05; radius: 3.0; priority: 1" position="0 1.6 -2" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_05; radius: 3.0; priority: 1" position="0 1.6 -13" visible="false"></a-entity>
+    <a-entity zone-trigger="zone: tunnel_05; radius: 3.0; priority: 1" position="0 1.6 -24" visible="false"></a-entity>
 
 
       <!-- Inner walkable shell (visible from inside) -->
