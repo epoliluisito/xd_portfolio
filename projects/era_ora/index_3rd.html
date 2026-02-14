@@ -822,6 +822,66 @@ AFRAME.registerComponent('light-beam', {
     border-color: rgba(255,255,255,0.32);
     color: rgba(255,255,255,0.96);
   }
+
+  /* Camera View Toggle UI */
+  #cameraViewShell{
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 220;
+  }
+  #cameraViewBtn{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(0,0,0,0.35);
+    color: rgba(255,255,255,0.85);
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+  #cameraViewBtn:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+
+  #cameraViewConfirm{
+    position: fixed; inset: 0;
+    display:none;
+    align-items:center;
+    justify-content:center;
+    background: rgba(0,0,0,0.62);
+    z-index: 230;
+  }
+  #cameraViewConfirm.show{ display:flex; }
+  #cameraViewCard{
+    width: min(420px, calc(100vw - 48px));
+    background: rgba(0,0,0,0.78);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 14px;
+    padding: 18px;
+    color: rgba(255,255,255,0.92);
+    box-shadow: 0 22px 70px rgba(0,0,0,0.62);
+  }
+  #cameraViewCard h3{
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  #cameraViewCard p{
+    margin: 0 0 14px 0;
+    font-size: 13px;
+    opacity: 0.85;
+    line-height: 1.35;
+  }
+  #cameraViewActions{
+    display:flex;
+    gap: 10px;
+    justify-content:flex-end;
+  }
+
 </style>
 <!-- ===== NPC SYSTEM (characters: James, Louise, Frank, Kate) ===== -->
 <style>
@@ -2188,7 +2248,7 @@ const far = this.data.avoidDist;
 <iframe id="ayaPreloadFrame"
         title="aya"
         src="about:blank"
-        data-src="./rooms/aya_dev_3rd/?preload=1"
+        data-src="./rooms/aya.dev/?preload=1"
         aria-hidden="true"
         tabindex="-1"
         allow="autoplay; fullscreen; xr-spatial-tracking; gamepad; accelerometer; gyroscope"
@@ -2271,6 +2331,22 @@ const far = this.data.avoidDist;
 </div>
 </div>
 </div>
+
+<!-- Camera View Toggle UI -->
+<div id="cameraViewShell">
+<button id="cameraViewBtn" type="button">CHANGE VIEW</button>
+</div>
+<div aria-hidden="true" id="cameraViewConfirm">
+<div aria-label="Change camera view" aria-modal="true" id="cameraViewCard" role="dialog">
+<h3 id="cameraViewTitle">Switch to 3rd Person View</h3>
+<p id="cameraViewDesc">Switch to third-person camera and see your character.</p>
+<div id="cameraViewActions">
+<button class="qbtn" id="cameraViewCancel" type="button">Cancel</button>
+<button class="qbtn primary" id="cameraViewConfirmBtn" type="button">Switch View</button>
+</div>
+</div>
+</div>
+
 <!-- ===== END ERA ORA Intro / Loading UI ===== -->
 <div class="overlay grain"></div>
 <div aria-hidden="true" id="npcHud"></div>
@@ -2976,31 +3052,42 @@ const far = this.data.avoidDist;
 </a-box>
 <a-box class="collider station2-collider" depth="0.65" height="6.20" material="color:#000000; transparent:true; opacity:0" position="8.5 3.00 10.5" width="0.65">
 </a-box>
-<a-entity elevator-user-guide="target: #industrial_elevator_1; showDistance: 5" id="rig" position="9 0 -7.5" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0" stick-to-ground="offset: 0.03; rayHeight: 2.0; minNormalY: 0.62; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
+<!-- ===== DUAL CAMERA SYSTEM: First-Person + Third-Person ===== -->
+<a-entity elevator-user-guide="target: #industrial_elevator_1; showDistance: 5" id="rig" position="9 0 -7.5" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0" camera-mode-manager>
 
-  <!-- Yaw pivot driven by mouse; everything (avatar + camera) follows -->
-  <a-entity id="racerYaw" rotation="0 0 0" tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18">
-
-    <a-entity id="racerAvatar"
-              gltf-model="#racer_glb"
-              position="0 0 0"
-              rotation="0 180 0"
-              scale="1 1 1"
-              racer-controller="cam: #racerYaw; turnWithCamera: false"
-              shadow="cast:false; receive:false"></a-entity>
-
-    <!-- Fixed follow-cam: slightly above + behind the avatar -->
-    <a-entity id="camPitch" position="0 1.65 0" rotation="0 0 0">
-      <a-entity id="playerCam"
-                camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08"
-                tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
-                position="0 0 1.3"
-                rotation="0 0 0">
-        <a-entity cursor="rayOrigin: mouse"></a-entity>
-      </a-entity>
-    </a-entity>
-
+  <!-- FIRST-PERSON CAMERA (default active) -->
+  <a-entity id="firstPersonCam" camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0" visible="true">
+    <a-entity cursor="rayOrigin: mouse"></a-entity>
   </a-entity>
+
+  <!-- THIRD-PERSON CAMERA (initially inactive) -->
+  <a-entity id="thirdPersonRoot" visible="false">
+    <!-- Yaw pivot driven by mouse -->
+    <a-entity id="racerYaw" rotation="0 0 0" tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18" camera-mode-mouselook>
+
+      <!-- Racer avatar -->
+      <a-entity id="racerAvatar"
+                gltf-model="#racer_glb"
+                position="0 0 0"
+                rotation="0 180 0"
+                scale="1 1 1"
+                racer-controller="cam: #racerYaw; turnWithCamera: false"
+                shadow="cast:false; receive:false"></a-entity>
+
+      <!-- Pitch pivot + camera -->
+      <a-entity id="camPitch" position="0 1.65 0" rotation="0 0 0">
+        <a-entity id="thirdPersonCam"
+                  camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08; active: false"
+                  tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
+                  position="0 0 1.3"
+                  rotation="0 0 0">
+          <a-entity cursor="rayOrigin: mouse"></a-entity>
+        </a-entity>
+      </a-entity>
+
+    </a-entity>
+  </a-entity>
+
 </a-entity>
 <script>
       (function () {
@@ -5996,9 +6083,9 @@ AFRAME.registerComponent('pbr-carpet', {
 <script>
 /* -------------------------------------------------------------------------
    AYA preloader handshake
-   - Loads ./rooms/aya_dev_3rd/?preload=1 in a hidden iframe to warm HTTP cache + shaders.
-   - aya_dev_3rd/ will postMessage('AYA_READY') when it is fully warmed.
-   - We only ever *navigate* to aya_dev_3rd/ at the end of the elevator ride
+   - Loads ./rooms/aya.dev/?preload=1 in a hidden iframe to warm HTTP cache + shaders.
+   - aya.dev will postMessage('AYA_READY') when it is fully warmed.
+   - We only ever *navigate* to aya.dev at the end of the elevator ride
      (important for WebXR + to guarantee Fear Room audio stops).
 --------------------------------------------------------------------------- */
 (function () {
@@ -6014,7 +6101,7 @@ AFRAME.registerComponent('pbr-carpet', {
   function ensureSrc () {
     const f = getFrame();
     if (!f) return null;
-    const want = f.getAttribute('data-src') || './rooms/aya_dev_3rd/?preload=1';
+    const want = f.getAttribute('data-src') || './rooms/aya.dev/?preload=1';
     const cur = (f.getAttribute('src') || '').trim();
     if (!cur || cur === 'about:blank') f.setAttribute('src', want);
     return f;
@@ -6372,10 +6459,17 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function waitForAyaReadyThenNavigate(){
-    // Navigate immediately - preloading is nice but not essential
-    setTimeout(() => {
-      window.location.href = './rooms/aya_dev_3rd/';
-    }, 500); // Brief delay to ensure video has stopped
+    const start = performance.now();
+    const maxWaitMs = 30000; // hard fallback
+    const tick = () => {
+      const ready = (window.__ayaIsReady && window.__ayaIsReady());
+      if (ready || (performance.now() - start) > maxWaitMs){
+        window.location.href = './rooms/aya.dev/';
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 
   // --- Skip gating (prevents "dead" black screen if user skips before next room is ready)
@@ -6473,7 +6567,18 @@ AFRAME.registerComponent('pbr-carpet', {
   function onSkipElevatorActivate(e){
     if (e && e.preventDefault) e.preventDefault();
 
-    // Skip immediately - no waiting for preload
+    // If the next room isn't ready yet, do NOT hard-cut to black.
+    // Instead, hold the elevator video, show "SKIP ELEVATOR" and auto-complete once READY arrives.
+    const ready = (window.__ayaIsReady && window.__ayaIsReady());
+    if (!ready){
+      __skipPressed = true;
+      __skipEnabled = false;
+      setSkipUI('hidden');
+      startSkipReadyPolling();
+      return;
+    }
+
+    // Ready: proceed immediately with a clear "Loading…" acknowledgement.
     if (__elevatorRideFinished) return;
     setSkipUI('loading');
     finishElevatorRide();
@@ -6525,10 +6630,9 @@ function startOverlayVideo(){
     // Preload next room while the video plays (cache warmup + READY handshake).
     if (window.preloadAyaFragment) window.preloadAyaFragment();
 
-    // Show skip button immediately - don't wait for preload
-    setTimeout(() => {
-      setSkipUI('enabled');
-    }, 3000); // Show skip after 3 seconds
+    // Skip becomes available only once the next room reports READY.
+    setSkipUI('hidden');
+    startSkipReadyPolling();
 
     rideVideo.onended = finishElevatorRide;
   }
@@ -6913,22 +7017,81 @@ function startOverlayVideo(){
   buildLoadTasks().then(showIntro).catch(showIntro);
 })();
 
-// === Third-person spring-arm camera (game-style) ===
-// Smooth camera boom with collision detection + ceiling headroom correction.
-// Prevents wall clipping while maintaining a stable follow distance.
+// ===== CAMERA MODE TOGGLE SYSTEM =====
+
+// Camera Mode Manager Component
+AFRAME.registerComponent('camera-mode-manager', {
+  init: function () {
+    this.isThirdPerson = false;
+    this.firstPersonCam = document.querySelector('#firstPersonCam');
+    this.thirdPersonRoot = document.querySelector('#thirdPersonRoot');
+    this.thirdPersonCam = document.querySelector('#thirdPersonCam');
+    
+    window.switchCameraMode = () => {
+      this.isThirdPerson = !this.isThirdPerson;
+      
+      if (this.isThirdPerson) {
+        // Switch to third-person
+        this.firstPersonCam.setAttribute('camera', 'active', false);
+        this.firstPersonCam.setAttribute('visible', false);
+        if (this.firstPersonCam.components['look-controls']) {
+          this.firstPersonCam.components['look-controls'].pause();
+        }
+        
+        this.thirdPersonRoot.setAttribute('visible', true);
+        this.thirdPersonCam.setAttribute('camera', 'active', true);
+        
+        // Enable third-person controls
+        const racerYaw = document.querySelector('#racerYaw');
+        if (racerYaw && racerYaw.components['tp-mouselook']) {
+          racerYaw.components['tp-mouselook'].enabled = true;
+        }
+      } else {
+        // Switch to first-person
+        this.thirdPersonCam.setAttribute('camera', 'active', false);
+        this.thirdPersonRoot.setAttribute('visible', false);
+        
+        // Disable third-person controls
+        const racerYaw = document.querySelector('#racerYaw');
+        if (racerYaw && racerYaw.components['tp-mouselook']) {
+          racerYaw.components['tp-mouselook'].enabled = false;
+        }
+        
+        this.firstPersonCam.setAttribute('visible', true);
+        this.firstPersonCam.setAttribute('camera', 'active', true);
+        if (this.firstPersonCam.components['look-controls']) {
+          this.firstPersonCam.components['look-controls'].play();
+        }
+      }
+      
+      return this.isThirdPerson;
+    };
+    
+    window.isThirdPersonMode = () => this.isThirdPerson;
+  }
+});
+
+// Modified tp-mouselook to be enable/disable-able
+AFRAME.registerComponent('camera-mode-mouselook', {
+  init: function() {
+    this.enabled = false; // Start disabled
+  }
+});
+
+// === Third-person spring-arm camera ===
 AFRAME.registerComponent('tp-camera-springarm', {
   schema: {
-    pivot: { type: 'selector' },                   // pitch pivot (e.g., #camPitch)
-    ignore: { type: 'selector' },                  // rig subtree to skip (e.g., #racerYaw)
-    colliders: { type: 'string', default: '.collider, [data-tube="1"]' },  // CSS selector for collidable geometry
-    minDist: { type: 'number', default: 0.85 },    // minimum camera distance from pivot
-    padding: { type: 'number', default: 0.22 },    // how far in front of walls to stop
-    smoothPos: { type: 'number', default: 0.15 },  // smoothing for camera world position
-    smoothDist: { type: 'number', default: 0.18 }, // smoothing for boom distance changes
-    sphereRadius: { type: 'number', default: 0.22 }, // pseudo sphere-sweep radius (thicker collision)
-    ceilingPadding: { type: 'number', default: 0.08 }, // extra clearance below ceilings
-    ceilingProbe: { type: 'number', default: 0.42 },   // how far up to check for ceilings
-    maxCeilingDrop: { type: 'number', default: 0.65 }  // max downward shift when hitting ceiling
+    pivot: { type: 'selector' },
+    ignore: { type: 'selector' },
+    colliders: { type: 'string', default: '.collider, [data-tube="1"]' },
+    minDist: { type: 'number', default: 0.85 },
+    padding: { type: 'number', default: 0.22 },
+    smoothPos: { type: 'number', default: 0.15 },
+    smoothDist: { type: 'number', default: 0.18 },
+    sphereRadius: { type: 'number', default: 0.22 },
+    ceilingPadding: { type: 'number', default: 0.08 },
+    ceilingProbe: { type: 'number', default: 0.42 },
+    maxCeilingDrop: { type: 'number', default: 0.65 }
   },
 
   init: function () {
@@ -6943,12 +7106,11 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._right = new THREE.Vector3();
     this._up = new THREE.Vector3(0, 1, 0);
 
-    // Offsets for pseudo sphere-sweep (preallocated to avoid GC)
     this._offsets = [
-      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
+      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), 
+      new THREE.Vector3(), new THREE.Vector3()
     ];
 
-    // Baseline local offset (kept constant). We only shorten along boom direction and apply temporary ceiling drop.
     this._baseLocal = this.el.object3D.position.clone();
     this._baseDist = Math.abs(this._baseLocal.z);
     this._sign = (this._baseLocal.z >= 0) ? 1 : -1;
@@ -6960,7 +7122,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._lastRefresh = 0;
     this.refreshColliderMeshes();
 
-    // Initialize smoothed position at current world position
     this.el.object3D.getWorldPosition(this._smoothedW);
   },
 
@@ -6977,7 +7138,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
           let cur = o;
           while (cur) { if (cur === ignoreObj) return; cur = cur.parent; }
         }
-        // IMPORTANT: include invisible colliders too.
         meshes.push(o);
       });
     }
@@ -6985,27 +7145,21 @@ AFRAME.registerComponent('tp-camera-springarm', {
   },
 
   _sphereSweepClampDist: function (origin, desired, dt) {
-    // Pseudo sphere sweep: cast multiple rays offset perpendicular to boom direction.
-    // Returns clamped distance from origin along boom direction.
     this._tmp.copy(desired).sub(origin);
     const desiredLen = this._tmp.length();
     if (desiredLen < 1e-4) return this._baseDist;
 
     const dir = this._tmp.normalize();
 
-    // Build an orthonormal basis around dir
     this._right.copy(dir).cross(this._up);
     if (this._right.lengthSq() < 1e-6) {
-      // dir is close to up; pick arbitrary right
       this._right.set(1, 0, 0);
     } else {
       this._right.normalize();
     }
     const up2 = this._tmp.copy(this._right).cross(dir).normalize();
-    // Copy to a stable vector (this._tmp will be reused below)
-    const upVec = this._dir; // reuse _dir as temp stable vector here
+    const upVec = this._dir;
     upVec.copy(up2);
-    
 
     const r = Math.max(0, this.data.sphereRadius);
     const offsets = this._offsets;
@@ -7031,13 +7185,11 @@ AFRAME.registerComponent('tp-camera-springarm', {
       }
     }
 
-    // Convert to boom distance along local Z sign.
     const clamped = Math.max(this.data.minDist, Math.min(this._baseDist, best));
     return clamped;
   },
 
   _computeCeilingDrop: function (camPos, dt) {
-    // Probe upward; if ceiling is too close (within radius+padding), drop camera temporarily.
     const probeUp = Math.max(0.2, this.data.ceilingProbe);
     this.raycaster.set(camPos, this._up);
     this.raycaster.near = 0;
@@ -7056,7 +7208,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
   tick: function (t, dt) {
     if (!this.data.pivot) return;
 
-    // Refresh colliders occasionally (late loads / elevator).
     if (t - this._lastRefresh > 1200) {
       this._lastRefresh = t;
       this.refreshColliderMeshes();
@@ -7064,21 +7215,16 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     const pivotObj = this.data.pivot.object3D;
 
-    // Desired camera world position from baseline local offset (constant height/distance baseline).
     pivotObj.getWorldPosition(this._pivotW);
 
-    // local->world for baseline offset
     this._desiredW.copy(this._baseLocal);
     pivotObj.localToWorld(this._desiredW);
 
-    // Clamp distance using sphere-sweep against colliders (walls, elevator, etc.)
     const targetDist = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
 
-    // Smooth boom distance (so it doesn't snap)
     const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
     this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
 
-    // Recompute final position along the boom direction while preserving baseline pitch (dir from pivot->desired)
     this._dir.copy(this._desiredW).sub(this._pivotW);
     const len = this._dir.length();
     if (len < 1e-4) return;
@@ -7086,10 +7232,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
 
-    // Ceiling headroom correction: only downward, temporary, returns to baseline when clear.
     const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
 
-    // Smooth ceiling drop separately to avoid jitter.
     const aPos = Math.min(1, Math.max(0, this.data.smoothPos));
     this._ceilingDrop = this._ceilingDrop + (desiredDrop - this._ceilingDrop) * aPos;
 
@@ -7097,12 +7241,9 @@ AFRAME.registerComponent('tp-camera-springarm', {
       this._finalW.y -= this._ceilingDrop;
     }
 
-    // Smooth final world position for camera friendliness.
     this._smoothedW.lerp(this._finalW, aPos);
 
-    // Convert back to local position under pivot so we don't disturb hierarchy.
     const local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
-    // Keep baseline X (shoulder offset) constant; allow Z to shorten; allow Y to drop but never rise above baseline.
     local.x = this._baseLocal.x;
     local.z = this._sign * this._curDist;
     local.y = Math.min(this._baseLocal.y, local.y);
@@ -7111,7 +7252,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
   }
 });
 
-// === Third-person mouse look: yaw on this entity, pitch on a separate pivot ===
+// === Third-person mouse look ===
 AFRAME.registerComponent('tp-mouselook', {
   schema: {
     pitchEl: { type: 'selector' },
@@ -7122,9 +7263,10 @@ AFRAME.registerComponent('tp-mouselook', {
   init: function () {
     this.yaw = this.el.object3D.rotation.y || 0;
     this.pitch = 0;
+    this.enabled = false;
 
     this._onMouseMove = (e) => {
-      if (!this._locked) return;
+      if (!this._locked || !this.enabled) return;
       const sx = this.data.sensitivity;
       const sy = this.data.sensitivity;
 
@@ -7146,6 +7288,7 @@ AFRAME.registerComponent('tp-mouselook', {
     };
 
     this._requestLock = () => {
+      if (!this.enabled) return;
       const canvas = this.el.sceneEl && this.el.sceneEl.canvas;
       if (canvas && canvas.requestPointerLock) canvas.requestPointerLock();
     };
@@ -7162,7 +7305,7 @@ AFRAME.registerComponent('tp-mouselook', {
   }
 });
 
-// === Racer controller: sync avatar yaw to camera yaw + switch Idle/Walk based on movement keys ===
+// === Racer controller ===
 AFRAME.registerComponent('racer-controller', {
   schema: {
     cam: { type: 'selector' },
@@ -7177,10 +7320,9 @@ AFRAME.registerComponent('racer-controller', {
     this.walkAction = null;
     this.active = null;
     
-    // Track rig position for autopilot detection
     this._lastPos = new THREE.Vector3();
     this._hasLastPos = false;
-    this._movementThreshold = 0.01; // meters per frame to consider "moving"
+    this._movementThreshold = 0.01;
 
     const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
 
@@ -7224,11 +7366,9 @@ AFRAME.registerComponent('racer-controller', {
   },
 
   _isMoving: function () {
-    // Check keyboard input
     const keyMoving = !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
               this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight']);
     
-    // Also check if rig is actually moving (for autopilot)
     if (!this._hasLastPos) return keyMoving;
     
     const rig = this.el.sceneEl && this.el.sceneEl.querySelector('#rig');
@@ -7264,13 +7404,12 @@ AFRAME.registerComponent('racer-controller', {
   tick: function (t, dt) {
     if (this.mixer) this.mixer.update((dt || 0) / 1000);
 
-    // Track rig position for autopilot detection
     const rig = this.el.sceneEl && this.el.sceneEl.querySelector('#rig');
     if (rig) {
       const currentPos = new THREE.Vector3();
       rig.object3D.getWorldPosition(currentPos);
       if (this._hasLastPos) {
-        // Position tracking is active
+        // Position tracking active
       }
       this._lastPos.copy(currentPos);
       this._hasLastPos = true;
@@ -7278,164 +7417,60 @@ AFRAME.registerComponent('racer-controller', {
 
     const cam = this.data.cam;
     if (cam && this.data.turnWithCamera) {
-      // Match the avatar yaw to the camera yaw so movement direction reads correctly in third-person.
       const yaw = cam.object3D.rotation.y;
-      this.el.object3D.rotation.y = yaw + Math.PI; // model faces +Z; A-Frame forward is -Z
+      this.el.object3D.rotation.y = yaw + Math.PI;
     }
 
     this._play(this._isMoving() ? 'walk' : 'idle', false);
   }
 });
 
-// === Stick to ground: raycast down and keep rig feet on the nearest *walkable* floor surface ===
-AFRAME.registerComponent('stick-to-ground', {
-  schema: {
-    offset: { type: 'number', default: 0.03 },
-    rayHeight: { type: 'number', default: 2.0 },
-    maxDrop: { type: 'number', default: 6.0 },
-    maxRise: { type: 'number', default: 1.0 },
-    minNormalY: { type: 'number', default: 0.62 },
-    maxStepHeight: { type: 'number', default: 0.38 },
-    upSpeed: { type: 'number', default: 2.2 },
-    downSpeed: { type: 'number', default: 6.5 },
-    snapDist: { type: 'number', default: 0.01 }
-  },
+// ===== CAMERA VIEW TOGGLE UI LOGIC =====
+(function() {
+  const cameraViewBtn = document.getElementById('cameraViewBtn');
+  const cameraViewConfirm = document.getElementById('cameraViewConfirm');
+  const cameraViewTitle = document.getElementById('cameraViewTitle');
+  const cameraViewDesc = document.getElementById('cameraViewDesc');
+  const cameraViewConfirmBtn = document.getElementById('cameraViewConfirmBtn');
+  const cameraViewCancel = document.getElementById('cameraViewCancel');
 
-  init: function () {
-    this.raycaster = new THREE.Raycaster();
-    this.origin = new THREE.Vector3();
-    this.dir = new THREE.Vector3(0, -1, 0);
-    this._meshes = [];
-    this._lastCollect = 0;
-    this._initialized = false;
+  if (!cameraViewBtn || !cameraViewConfirm) return;
 
-    this._wN = new THREE.Vector3();
-    this._nM = new THREE.Matrix3();
-
-    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) {
-      this._initialized = true;
-      this.collectMeshes();
-    } else if (this.el.sceneEl) {
-      this.el.sceneEl.addEventListener('loaded', () => {
-        this._initialized = true;
-        this.collectMeshes();
-      });
+  function updateUI(isThirdPerson) {
+    if (isThirdPerson) {
+      cameraViewTitle.textContent = 'Switch to 1st Person View';
+      cameraViewDesc.textContent = 'Switch back to first-person camera.';
+    } else {
+      cameraViewTitle.textContent = 'Switch to 3rd Person View';
+      cameraViewDesc.textContent = 'Switch to third-person camera and see your character.';
     }
-  },
-
-  collectMeshes: function () {
-    this._meshes.length = 0;
-    const root = this.el.sceneEl && this.el.sceneEl.object3D;
-    if (!root) return;
-
-    root.traverse((obj) => {
-      if (!obj.isMesh) return;
-      if (obj.visible === false) return;
-
-      let p = obj;
-      while (p) {
-        if (p === this.el.object3D) return;
-        p = p.parent;
-      }
-      this._meshes.push(obj);
-    });
-  },
-
-  _pickWalkableHit: function (hits) {
-    const minNy = this.data.minNormalY;
-
-    for (let i = 0; i < hits.length; i++) {
-      const h = hits[i];
-      if (!h) continue;
-
-      if (h.face && h.object) {
-        this._nM.getNormalMatrix(h.object.matrixWorld);
-        this._wN.copy(h.face.normal).applyMatrix3(this._nM).normalize();
-
-        if (this._wN.y >= minNy) return h;
-        continue;
-      }
-
-      return h;
-    }
-    return null;
-  },
-
-  tick: function (t, dt) {
-    if (!this.el.sceneEl) return;
-    if (!this._initialized) return;
-
-    if (!this._meshes.length || (t - this._lastCollect) > 1500) {
-      this.collectMeshes();
-      this._lastCollect = t;
-      if (!this._meshes.length) return;
-    }
-
-    const dtS = Math.min(0.05, dt / 1000);
-
-    this.origin.copy(this.el.object3D.position);
-    this.origin.y += this.data.rayHeight;
-
-    this.raycaster.set(this.origin, this.dir);
-    this.raycaster.far = this.data.rayHeight + this.data.maxDrop;
-
-    const hits = this.raycaster.intersectObjects(this._meshes, true);
-    if (!hits || !hits.length) return;
-
-    const hit = this._pickWalkableHit(hits);
-    if (!hit) return;
-
-    const hitY = hit.point.y + this.data.offset;
-    const curY = this.el.object3D.position.y;
-    const dy = hitY - curY;
-
-    if (dy > this.data.maxRise) return;
-    if (dy < -this.data.maxDrop) return;
-    if (dy > this.data.maxStepHeight) return;
-
-    if (Math.abs(dy) <= this.data.snapDist) {
-      this.el.object3D.position.y = hitY;
-      return;
-    }
-
-    const maxUp = this.data.upSpeed * dtS;
-    const maxDown = this.data.downSpeed * dtS;
-
-    let step = dy;
-    if (step > maxUp) step = maxUp;
-    if (step < -maxDown) step = -maxDown;
-
-    this.el.object3D.position.y = curY + step;
   }
-});
 
-AFRAME.registerComponent('spawn-at', {
-  schema: {
-    target: { type: 'selector', default: null },
-    yOffset: { type: 'number', default: 0 },
-    once: { default: true }
-  },
-  init: function () { this._done = false; },
-  tick: function () {
-    if (this._done) return;
-    var t = this.data.target;
-    if (!t || !t.object3D) return;
+  cameraViewBtn.addEventListener('click', () => {
+    const isThirdPerson = window.isThirdPersonMode ? window.isThirdPersonMode() : false;
+    updateUI(isThirdPerson);
+    cameraViewConfirm.classList.add('show');
+  });
 
-    t.object3D.updateWorldMatrix(true, false);
-    var wp = new THREE.Vector3();
-    var wq = new THREE.Quaternion();
-    t.object3D.getWorldPosition(wp);
-    t.object3D.getWorldQuaternion(wq);
+  cameraViewCancel.addEventListener('click', () => {
+    cameraViewConfirm.classList.remove('show');
+  });
 
-    var o = this.el.object3D;
-    o.position.copy(wp);
-    o.position.y += this.data.yOffset;
-    o.quaternion.copy(wq);
-    o.updateMatrixWorld(true);
+  cameraViewConfirmBtn.addEventListener('click', () => {
+    if (window.switchCameraMode) {
+      const newMode = window.switchCameraMode();
+      updateUI(newMode);
+    }
+    cameraViewConfirm.classList.remove('show');
+  });
 
-    if (this.data.once) this._done = true;
-  }
-});
+  // ESC to close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && cameraViewConfirm.classList.contains('show')) {
+      cameraViewConfirm.classList.remove('show');
+    }
+  });
+})();
 
 </script>
 </body>
