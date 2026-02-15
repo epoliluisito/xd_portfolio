@@ -19686,14 +19686,12 @@ AFRAME.registerComponent('ion-wind-field', {
              radius="1.12" radius-tubular="0.012"
              rotation="90 0 0"
              position="0 0.235 0"
-             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 3.5; roughness: 0.25; metalness: 0.0"
              shadow="cast:false; receive:false"></a-torus>
   
-    <!-- Real lights around the rim (soft indigo-white) -->
+    <!-- Single light for efficiency -->
     <a-entity id="capsule_01_rimLights">
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="1.12 0.26 0"></a-light>
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="-0.56 0.26 0.97"></a-light>
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="-0.56 0.26 -0.97"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="1.2" distance="7" decay="2" position="0 0.26 0"></a-light>
     </a-entity>
   
   
@@ -19770,14 +19768,12 @@ AFRAME.registerComponent('ion-wind-field', {
              radius="1.12" radius-tubular="0.012"
              rotation="90 0 0"
              position="0 0.235 0"
-             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 3.5; roughness: 0.25; metalness: 0.0"
              shadow="cast:false; receive:false"></a-torus>
   
-    <!-- Real lights around the rim (soft indigo-white) -->
+    <!-- Single light for efficiency -->
     <a-entity id="capsule_02_rimLights">
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="1.12 0.26 0"></a-light>
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="-0.56 0.26 0.97"></a-light>
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="-0.56 0.26 -0.97"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="1.2" distance="7" decay="2" position="0 0.26 0"></a-light>
     </a-entity>
   
   
@@ -19847,14 +19843,12 @@ AFRAME.registerComponent('ion-wind-field', {
              radius="1.12" radius-tubular="0.012"
              rotation="90 0 0"
              position="0 0.235 0"
-             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 2.0; roughness: 0.25; metalness: 0.0"
+             material="shader: standard; color: #ffffff; emissive: #4b3cff; emissiveIntensity: 3.5; roughness: 0.25; metalness: 0.0"
              shadow="cast:false; receive:false"></a-torus>
 
-    <!-- Real lights around the rim (soft indigo-white) -->
+    <!-- Single light for efficiency -->
     <a-entity id="capsule_03_rimLights">
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="1.12 0.26 0"></a-light>
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="-0.56 0.26 0.97"></a-light>
-      <a-light type="point" color="#cfd6ff" intensity="0.70" distance="6" decay="2" position="-0.56 0.26 -0.97"></a-light>
+      <a-light type="point" color="#cfd6ff" intensity="1.2" distance="7" decay="2" position="0 0.26 0"></a-light>
     </a-entity>
 
 <!-- Inner step (fixed, entry side +Z) -->
@@ -20320,9 +20314,9 @@ AFRAME.registerComponent('freeze-static-mesh', {
   }
 });
 
-// ========== ZONE-BASED PROGRESSIVE LOADING SYSTEM (ULTRA-AGGRESSIVE) ==========
-// Predictive loading: loads destinations BEFORE you enter tunnels
-// Anti-freeze: Keeps zones loaded longer, checks tunnel proximity constantly
+// ========== ZONE-BASED PROGRESSIVE LOADING SYSTEM (ULTRA-SAFE) ==========
+// Strategy: Load almost everything at start, keep it loaded, never risk freezing
+// Only unload if extremely far away (100m+)
 
 AFRAME.registerComponent('zone-manager', {
   schema: {
@@ -20331,98 +20325,46 @@ AFRAME.registerComponent('zone-manager', {
   },
 
   init: function () {
-    this.currentZone = null;
     this.zones = new Map();
     this.loadedZones = new Set();
-    this.loadTimestamps = new Map();
-    this.MIN_LOAD_TIME = 10000; // Keep zones loaded for at least 10 seconds
+    this.everLoaded = new Set(); // Track what we've loaded to avoid reloading
     
-    // Define visibility map
-    this.visibilityMap = {
-      tunnel_01: ['aya_dome', 'tunnel_02', 'tunnel_03', 'entrance_chamber'],
-      aya_dome: ['tunnel_01', 'tunnel_02', 'tunnel_03', 'entrance_chamber', 'sphere_dome_import', 'nde_dome_import'],
-      sphere_dome_import: ['tunnel_02', 'tunnel_04', 'aya_dome', 'junction_dome'],
-      nde_dome_import: ['tunnel_03', 'tunnel_05', 'aya_dome', 'junction_dome'],
-      junction_dome: ['tunnel_04', 'tunnel_05', 'tunnel_06', 'nde_dome_import', 'sphere_dome_import', 'end_chamber_06'],
-      tunnel_06: ['tunnel_04', 'tunnel_05', 'junction_dome', 'end_chamber_06'],
-      tunnel_02: ['tunnel_01', 'aya_dome', 'sphere_dome_import'],
-      tunnel_03: ['tunnel_01', 'aya_dome', 'nde_dome_import'],
-      tunnel_04: ['sphere_dome_import', 'junction_dome', 'tunnel_06'],
-      tunnel_05: ['nde_dome_import', 'junction_dome', 'tunnel_06'],
-      entrance_chamber: ['tunnel_01', 'aya_dome'],
-      end_chamber_06: ['tunnel_06', 'junction_dome']
-    };
-
-    // What must be loaded when in each zone
-    this.mustLoadMap = {
-      tunnel_01: ['aya_dome', 'entrance_chamber', 'tunnel_02', 'tunnel_03', 'sphere_dome_import', 'nde_dome_import'],
-      aya_dome: ['tunnel_01', 'tunnel_02', 'tunnel_03', 'sphere_dome_import', 'nde_dome_import', 'entrance_chamber'],
-      sphere_dome_import: ['tunnel_02', 'tunnel_04', 'aya_dome', 'junction_dome', 'tunnel_01'],
-      nde_dome_import: ['tunnel_03', 'tunnel_05', 'aya_dome', 'junction_dome', 'tunnel_01'],
-      junction_dome: ['tunnel_04', 'tunnel_05', 'tunnel_06', 'nde_dome_import', 'sphere_dome_import', 'end_chamber_06'],
-      tunnel_06: ['junction_dome', 'end_chamber_06', 'tunnel_04', 'tunnel_05'],
-      tunnel_02: ['aya_dome', 'sphere_dome_import', 'tunnel_01', 'junction_dome', 'tunnel_04'],
-      tunnel_03: ['aya_dome', 'nde_dome_import', 'tunnel_01', 'junction_dome', 'tunnel_05'],
-      tunnel_04: ['sphere_dome_import', 'junction_dome', 'tunnel_06', 'tunnel_02'],
-      tunnel_05: ['nde_dome_import', 'junction_dome', 'tunnel_06', 'tunnel_03'],
-      entrance_chamber: ['tunnel_01', 'aya_dome', 'tunnel_02', 'tunnel_03'],
-      end_chamber_06: ['tunnel_06', 'junction_dome', 'tunnel_04', 'tunnel_05']
-    };
-
-    // CRITICAL: Tunnel destinations for predictive loading
-    this.tunnelDestinations = {
-      tunnel_01: ['aya_dome', 'entrance_chamber'],
-      tunnel_02: ['aya_dome', 'sphere_dome_import', 'junction_dome'],
-      tunnel_03: ['aya_dome', 'nde_dome_import', 'junction_dome'],
-      tunnel_04: ['sphere_dome_import', 'junction_dome'],
-      tunnel_05: ['nde_dome_import', 'junction_dome'],
-      tunnel_06: ['junction_dome', 'end_chamber_06']
+    // Zone positions and preload distances
+    const zoneConfig = {
+      entrance_chamber: { preloadDist: 999 }, // Always loaded
+      tunnel_01: { preloadDist: 999 },
+      aya_dome: { preloadDist: 999 },
+      tunnel_02: { preloadDist: 999 },
+      tunnel_03: { preloadDist: 999 },
+      sphere_dome_import: { preloadDist: 999 },
+      nde_dome_import: { preloadDist: 999 },
+      tunnel_04: { preloadDist: 60 },
+      tunnel_05: { preloadDist: 60 },
+      junction_dome: { preloadDist: 60 },
+      tunnel_06: { preloadDist: 60 },
+      end_chamber_06: { preloadDist: 60 }
     };
 
     // Discover zones
-    this._discoverZones();
-    
-    // Initialize zones
-    this._initializeZones();
-    
-    this._checkInterval = 0;
-  },
-
-  _discoverZones: function () {
-    const zoneIds = Object.keys(this.visibilityMap);
-    zoneIds.forEach(id => {
+    Object.keys(zoneConfig).forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         this.zones.set(id, {
           id: id,
           element: el,
           position: new THREE.Vector3(),
-          triggerRadius: this._getTriggerRadius(id),
-          preloadRadius: this._getPreloadRadius(id)
+          preloadDist: zoneConfig[id].preloadDist
         });
         el.object3D.getWorldPosition(this.zones.get(id).position);
       } else if (this.data.debugMode) {
         console.warn(`[zone-manager] Zone not found: ${id}`);
       }
     });
-  },
-
-  _getTriggerRadius: function (id) {
-    // When you're THIS close, you're "in" the zone
-    if (id.includes('tunnel')) return 12.0; // Large for tunnels
-    if (id.includes('junction_dome')) return 18.0;
-    if (id.includes('dome')) return 15.0;
-    if (id.includes('chamber')) return 12.0;
-    return 12.0;
-  },
-
-  _getPreloadRadius: function (id) {
-    // Start loading when you're THIS close (much larger)
-    if (id.includes('tunnel')) return 30.0; // HUGE - start loading when approaching tunnel
-    if (id.includes('junction_dome')) return 35.0;
-    if (id.includes('dome')) return 25.0;
-    if (id.includes('chamber')) return 20.0;
-    return 20.0;
+    
+    // Initialize: Load EVERYTHING in first half of level
+    this._initializeZones();
+    
+    this._checkInterval = 0;
   },
 
   _initializeZones: function () {
@@ -20431,34 +20373,43 @@ AFRAME.registerComponent('zone-manager', {
       zone.element.object3D.visible = false;
     });
     
-    // Load starting area VERY generously - entire starting path
-    const startZones = [
+    // Load the entire first half of the level immediately
+    // This ensures smooth experience in the most traversed areas
+    const initialLoad = [
       'entrance_chamber',
-      'tunnel_01', 
+      'tunnel_01',
       'aya_dome',
       'tunnel_02',
       'tunnel_03',
-      'sphere_dome_import', // Preload these too!
-      'nde_dome_import'     // Preload these too!
+      'sphere_dome_import',
+      'nde_dome_import',
+      'tunnel_04',      // Include these too for safety
+      'tunnel_05',
+      'junction_dome'   // Load junction early with all optimizations
     ];
     
-    startZones.forEach(id => this._loadZone(id));
-    this.currentZone = 'entrance_chamber';
+    if (this.data.debugMode) {
+      console.log('[zone-manager] Loading initial zones:', initialLoad);
+    }
+    
+    initialLoad.forEach(id => this._loadZone(id));
   },
 
   _loadZone: function (zoneId) {
     const zone = this.zones.get(zoneId);
     if (!zone) return;
     
-    // Already loaded? Don't reload
+    // Already loaded? Skip
     if (this.loadedZones.has(zoneId)) return;
+    
+    // Mark as ever loaded to prevent reload stutters
+    this.everLoaded.add(zoneId);
     
     zone.element.object3D.visible = true;
     this.loadedZones.add(zoneId);
-    this.loadTimestamps.set(zoneId, performance.now());
     
     if (this.data.debugMode) {
-      console.log(`[zone-manager] LOADED: ${zoneId}`);
+      console.log(`[zone-manager] LOADED: ${zoneId} (total loaded: ${this.loadedZones.size})`);
     }
   },
 
@@ -20466,108 +20417,42 @@ AFRAME.registerComponent('zone-manager', {
     const zone = this.zones.get(zoneId);
     if (!zone) return;
     
-    // Don't unload if recently loaded
-    const loadTime = this.loadTimestamps.get(zoneId);
-    if (loadTime && (performance.now() - loadTime) < this.MIN_LOAD_TIME) {
-      return;
-    }
+    // Don't unload if it's in the "always loaded" set
+    if (zone.preloadDist === 999) return;
     
     zone.element.object3D.visible = false;
     this.loadedZones.delete(zoneId);
-    this.loadTimestamps.delete(zoneId);
     
     if (this.data.debugMode) {
       console.log(`[zone-manager] UNLOADED: ${zoneId}`);
     }
   },
 
-  _updateZones: function (playerPos) {
-    // Find which zone we're in
-    let closestZone = null;
-    let closestDist = Infinity;
-    
-    this.zones.forEach((zone, id) => {
-      const dist = playerPos.distanceTo(zone.position);
-      if (dist < zone.triggerRadius && dist < closestDist) {
-        closestDist = dist;
-        closestZone = id;
-      }
-    });
-    
-    // Use current zone as fallback
-    if (!closestZone) {
-      closestZone = this.currentZone;
-    }
-    
-    // Update current zone
-    const zoneChanged = closestZone !== this.currentZone;
-    if (zoneChanged) {
-      this.currentZone = closestZone;
-      if (this.data.debugMode) {
-        console.log(`[zone-manager] Zone: ${closestZone}`);
-      }
-    }
-    
-    // Build required zones
-    const required = new Set();
-    
-    // Current zone
-    if (closestZone) {
-      required.add(closestZone);
-    }
-    
-    // Visible zones
-    const visible = this.visibilityMap[closestZone] || [];
-    visible.forEach(z => required.add(z));
-    
-    // Must-load zones
-    const mustLoad = this.mustLoadMap[closestZone] || [];
-    mustLoad.forEach(z => required.add(z));
-    
-    // PREDICTIVE: Check proximity to ALL tunnels, load destinations early
-    this.zones.forEach((zone, id) => {
-      if (!id.includes('tunnel')) return;
-      
-      const dist = playerPos.distanceTo(zone.position);
-      
-      // If approaching a tunnel (within preload radius), load its destinations
-      if (dist < zone.preloadRadius) {
-        const destinations = this.tunnelDestinations[id] || [];
-        destinations.forEach(dest => required.add(dest));
-        required.add(id); // Load tunnel too
-      }
-    });
-    
-    // Load all required zones
-    required.forEach(zoneId => this._loadZone(zoneId));
-    
-    // Very conservative unloading
-    const unloadDistance = 60.0; // VERY far
-    this.loadedZones.forEach(zoneId => {
-      if (required.has(zoneId)) return;
-      
-      const zone = this.zones.get(zoneId);
-      if (!zone) return;
-      
-      const dist = playerPos.distanceTo(zone.position);
-      if (dist > unloadDistance) {
-        this._unloadZone(zoneId);
-      }
-    });
-  },
-
   tick: function (time, dt) {
     if (!this.data.playerRig) return;
     
-    // Check MORE frequently for tunnel proximity - every 200ms
+    // Check frequently to catch proximity early
     this._checkInterval += dt;
-    if (this._checkInterval < 200) return;
+    if (this._checkInterval < 100) return;
     this._checkInterval = 0;
     
     const playerPos = new THREE.Vector3();
     this.data.playerRig.object3D.getWorldPosition(playerPos);
     
-    this._updateZones(playerPos);
+    // Check each zone
+    this.zones.forEach((zone, id) => {
+      const dist = playerPos.distanceTo(zone.position);
+      
+      // Load if within preload distance
+      if (dist < zone.preloadDist) {
+        this._loadZone(id);
+      }
+      
+      // Only unload if EXTREMELY far (100m+) and not in "always loaded" set
+      if (dist > 100 && zone.preloadDist !== 999) {
+        this._unloadZone(id);
+      }
+    });
   }
 });
 
