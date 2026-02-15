@@ -20333,24 +20333,24 @@ AFRAME.registerComponent('freeze-static-mesh', {
   }
 });
 
-// ========== ZONE-BASED PROGRESSIVE LOADING SYSTEM ==========
-// 3-tier zone loading: ACTIVE (visible) → PRELOAD (loading) → UNLOADED (disabled)
-// Prevents the "blank room" issue by preloading adjacent zones before arrival
+// ========== ZONE-BASED PROGRESSIVE LOADING SYSTEM (AGGRESSIVE) ==========
+// Extremely aggressive preloading to prevent blank rooms during fast movement
+// Loads zones IMMEDIATELY when you get close, keeps more in memory
 
 AFRAME.registerComponent('zone-manager', {
   schema: {
     playerRig: { type: 'selector', default: '#rig' },
-    debugMode: { type: 'boolean', default: false },
-    preloadDelayMs: { type: 'number', default: 300 },
-    unloadDelayMs: { type: 'number', default: 5000 }
+    debugMode: { type: 'boolean', default: false }
   },
 
   init: function () {
     this.currentZone = null;
+    this.previousZone = null;
     this.zones = new Map();
-    this.zoneStates = new Map(); // 'unloaded', 'preloading', 'active'
-    this.recentlyVisited = new Set();
-    this.unloadTimers = new Map();
+    this.zoneStates = new Map(); // 'unloaded' or 'loaded'
+    this.loadedZones = new Set();
+    this.lastPlayerPos = new THREE.Vector3();
+    this.playerVelocity = new THREE.Vector3();
     
     // Define visibility map (what you can SEE from each zone)
     this.visibilityMap = {
@@ -20368,26 +20368,37 @@ AFRAME.registerComponent('zone-manager', {
       end_chamber_06: ['tunnel_06', 'junction_dome']
     };
 
-    // Define preload map (what to PRELOAD when entering a zone - zones you could go to next)
-    this.preloadMap = {
+    // AGGRESSIVE preload: what must be loaded when entering a zone
+    // Including destinations of all tunnels to prevent blank rooms
+    this.aggressivePreloadMap = {
+      tunnel_01: ['aya_dome', 'entrance_chamber', 'tunnel_02', 'tunnel_03'], // Load destination immediately
+      aya_dome: ['tunnel_01', 'tunnel_02', 'tunnel_03', 'sphere_dome_import', 'nde_dome_import', 'entrance_chamber'], // Hub - load all connected
+      sphere_dome_import: ['tunnel_02', 'tunnel_04', 'aya_dome', 'junction_dome'], // Load all paths
+      nde_dome_import: ['tunnel_03', 'tunnel_05', 'aya_dome', 'junction_dome'], // Load all paths
+      junction_dome: ['tunnel_04', 'tunnel_05', 'tunnel_06', 'nde_dome_import', 'sphere_dome_import', 'end_chamber_06'], // Hub - load everything
+      tunnel_06: ['junction_dome', 'end_chamber_06', 'tunnel_04', 'tunnel_05'], // Load destination + connected
+      tunnel_02: ['aya_dome', 'sphere_dome_import', 'tunnel_01'], // Load both ends
+      tunnel_03: ['aya_dome', 'nde_dome_import', 'tunnel_01'], // Load both ends
+      tunnel_04: ['sphere_dome_import', 'junction_dome', 'tunnel_06'], // Load both ends
+      tunnel_05: ['nde_dome_import', 'junction_dome', 'tunnel_06'], // Load both ends
+      entrance_chamber: ['tunnel_01', 'aya_dome'],
+      end_chamber_06: ['tunnel_06', 'junction_dome']
+    };
+
+    // Tunnel connections - when entering tunnel, IMMEDIATELY load destination
+    this.tunnelDestinations = {
       tunnel_01: ['aya_dome', 'entrance_chamber'],
-      aya_dome: ['tunnel_01', 'tunnel_02', 'tunnel_03', 'sphere_dome_import', 'nde_dome_import', 'entrance_chamber'],
-      sphere_dome_import: ['tunnel_02', 'tunnel_04', 'aya_dome', 'junction_dome'],
-      nde_dome_import: ['tunnel_03', 'tunnel_05', 'aya_dome', 'junction_dome'],
-      junction_dome: ['tunnel_04', 'tunnel_05', 'tunnel_06', 'nde_dome_import', 'sphere_dome_import', 'end_chamber_06'],
-      tunnel_06: ['junction_dome', 'end_chamber_06'],
       tunnel_02: ['aya_dome', 'sphere_dome_import'],
       tunnel_03: ['aya_dome', 'nde_dome_import'],
       tunnel_04: ['sphere_dome_import', 'junction_dome'],
       tunnel_05: ['nde_dome_import', 'junction_dome'],
-      entrance_chamber: ['tunnel_01'],
-      end_chamber_06: ['tunnel_06']
+      tunnel_06: ['junction_dome', 'end_chamber_06']
     };
 
     // Discover zones
     this._discoverZones();
     
-    // Start all zones as unloaded except starting area
+    // Initialize all zones
     this._initializeZones();
     
     this._checkInterval = 0;
@@ -20402,9 +20413,9 @@ AFRAME.registerComponent('zone-manager', {
           id: id,
           element: el,
           position: new THREE.Vector3(),
-          radius: this._estimateRadius(el)
+          triggerRadius: this._getTriggerRadius(id),
+          preloadRadius: this._getPreloadRadius(id)
         });
-        // Update position
         el.object3D.getWorldPosition(this.zones.get(id).position);
       } else if (this.data.debugMode) {
         console.warn(`[zone-manager] Zone not found: ${id}`);
@@ -20412,13 +20423,22 @@ AFRAME.registerComponent('zone-manager', {
     });
   },
 
-  _estimateRadius: function (el) {
-    // Estimate zone trigger radius based on name
-    const id = el.id;
-    if (id.includes('tunnel')) return 6.0;
-    if (id.includes('dome')) return 12.0;
-    if (id.includes('chamber')) return 8.0;
-    return 10.0;
+  _getTriggerRadius: function (id) {
+    // MUCH larger trigger radii - activate zone before you reach it
+    if (id.includes('tunnel')) return 15.0; // Very aggressive for tunnels
+    if (id.includes('junction_dome')) return 22.0; // Junction is huge
+    if (id.includes('dome')) return 18.0; // Large domes
+    if (id.includes('chamber')) return 14.0;
+    return 15.0;
+  },
+
+  _getPreloadRadius: function (id) {
+    // Even larger preload radius - start loading early
+    if (id.includes('tunnel')) return 25.0;
+    if (id.includes('junction_dome')) return 35.0;
+    if (id.includes('dome')) return 30.0;
+    if (id.includes('chamber')) return 25.0;
+    return 25.0;
   },
 
   _initializeZones: function () {
@@ -20428,169 +20448,159 @@ AFRAME.registerComponent('zone-manager', {
       zone.element.object3D.visible = false;
     });
     
-    // Activate starting zones (entrance area)
-    this._setZoneActive('entrance_chamber');
-    this._setZoneActive('tunnel_01');
-    this._preloadZone('aya_dome');
+    // Aggressively load starting area + immediate connections
+    this._loadZone('entrance_chamber');
+    this._loadZone('tunnel_01');
+    this._loadZone('aya_dome');
+    this._loadZone('tunnel_02');
+    this._loadZone('tunnel_03');
     
     this.currentZone = 'entrance_chamber';
   },
 
-  _setZoneActive: function (zoneId) {
+  _loadZone: function (zoneId) {
     const zone = this.zones.get(zoneId);
     if (!zone) return;
     
-    const prevState = this.zoneStates.get(zoneId);
-    if (prevState === 'active') return;
+    if (this.zoneStates.get(zoneId) === 'loaded') return;
     
-    this.zoneStates.set(zoneId, 'active');
+    this.zoneStates.set(zoneId, 'loaded');
     zone.element.object3D.visible = true;
-    this.recentlyVisited.add(zoneId);
-    
-    // Clear any pending unload
-    if (this.unloadTimers.has(zoneId)) {
-      clearTimeout(this.unloadTimers.get(zoneId));
-      this.unloadTimers.delete(zoneId);
-    }
+    this.loadedZones.add(zoneId);
     
     if (this.data.debugMode) {
-      console.log(`[zone-manager] ACTIVE: ${zoneId}`);
+      console.log(`[zone-manager] LOADED: ${zoneId}`);
     }
-  },
-
-  _preloadZone: function (zoneId) {
-    const zone = this.zones.get(zoneId);
-    if (!zone) return;
-    
-    const state = this.zoneStates.get(zoneId);
-    if (state === 'active' || state === 'preloading') return;
-    
-    // Clear any pending unload
-    if (this.unloadTimers.has(zoneId)) {
-      clearTimeout(this.unloadTimers.get(zoneId));
-      this.unloadTimers.delete(zoneId);
-    }
-    
-    this.zoneStates.set(zoneId, 'preloading');
-    
-    // Delayed activation to give time for assets to load
-    setTimeout(() => {
-      zone.element.object3D.visible = true;
-      if (this.data.debugMode) {
-        console.log(`[zone-manager] PRELOADED: ${zoneId}`);
-      }
-    }, this.data.preloadDelayMs);
-  },
-
-  _scheduleUnload: function (zoneId) {
-    const zone = this.zones.get(zoneId);
-    if (!zone) return;
-    
-    // Don't unload if already scheduled
-    if (this.unloadTimers.has(zoneId)) return;
-    
-    // Don't unload active zone
-    if (this.zoneStates.get(zoneId) === 'active') return;
-    
-    const timer = setTimeout(() => {
-      this._unloadZone(zoneId);
-      this.unloadTimers.delete(zoneId);
-    }, this.data.unloadDelayMs);
-    
-    this.unloadTimers.set(zoneId, timer);
   },
 
   _unloadZone: function (zoneId) {
     const zone = this.zones.get(zoneId);
     if (!zone) return;
     
-    const state = this.zoneStates.get(zoneId);
-    
-    // Never unload active zones
-    if (state === 'active') return;
-    
     this.zoneStates.set(zoneId, 'unloaded');
     zone.element.object3D.visible = false;
-    this.recentlyVisited.delete(zoneId);
+    this.loadedZones.delete(zoneId);
     
     if (this.data.debugMode) {
       console.log(`[zone-manager] UNLOADED: ${zoneId}`);
     }
   },
 
-  _updateZoneVisibility: function (newZone) {
-    if (newZone === this.currentZone) return;
+  _updateZones: function (playerPos) {
+    const nearbyZones = new Set();
+    const approachingZones = new Set();
     
-    const visibleZones = new Set([newZone]);
-    const preloadZones = new Set();
-    
-    // Add visible zones
-    const visible = this.visibilityMap[newZone] || [];
-    visible.forEach(z => visibleZones.add(z));
-    
-    // Add preload zones
-    const toPreload = this.preloadMap[newZone] || [];
-    toPreload.forEach(z => {
-      if (!visibleZones.has(z)) {
-        preloadZones.add(z);
-      }
-    });
-    
-    // Set visible zones to active
-    visibleZones.forEach(zoneId => {
-      this._setZoneActive(zoneId);
-    });
-    
-    // Preload adjacent zones
-    preloadZones.forEach(zoneId => {
-      this._preloadZone(zoneId);
-    });
-    
-    // Schedule unload for zones that are no longer needed
-    this.zones.forEach((zone, zoneId) => {
-      if (!visibleZones.has(zoneId) && !preloadZones.has(zoneId)) {
-        // Keep recently visited for a bit longer
-        if (this.recentlyVisited.has(zoneId) && this.zoneStates.get(zoneId) !== 'unloaded') {
-          this._scheduleUnload(zoneId);
-        } else if (!this.recentlyVisited.has(zoneId)) {
-          this._unloadZone(zoneId);
-        }
-      }
-    });
-    
-    this.currentZone = newZone;
-    
-    if (this.data.debugMode) {
-      console.log(`[zone-manager] Current: ${newZone}, Visible: [${Array.from(visibleZones).join(', ')}], Preload: [${Array.from(preloadZones).join(', ')}]`);
-    }
-  },
-
-  tick: function (time, dt) {
-    if (!this.data.playerRig) return;
-    
-    // Only check every ~200ms
-    this._checkInterval += dt;
-    if (this._checkInterval < 200) return;
-    this._checkInterval = 0;
-    
-    const playerPos = new THREE.Vector3();
-    this.data.playerRig.object3D.getWorldPosition(playerPos);
-    
-    // Find closest zone
-    let closestZone = null;
-    let closestDist = Infinity;
-    
+    // Find zones we're IN or NEAR
     this.zones.forEach((zone, id) => {
       const dist = playerPos.distanceTo(zone.position);
-      if (dist < zone.radius && dist < closestDist) {
+      
+      if (dist < zone.triggerRadius) {
+        nearbyZones.add(id);
+      }
+      
+      if (dist < zone.preloadRadius) {
+        approachingZones.add(id);
+      }
+    });
+    
+    // Determine current zone (closest among nearby)
+    let closestZone = this.currentZone;
+    let closestDist = Infinity;
+    nearbyZones.forEach(id => {
+      const zone = this.zones.get(id);
+      const dist = playerPos.distanceTo(zone.position);
+      if (dist < closestDist) {
         closestDist = dist;
         closestZone = id;
       }
     });
     
-    if (closestZone && closestZone !== this.currentZone) {
-      this._updateZoneVisibility(closestZone);
+    const zoneChanged = closestZone !== this.currentZone;
+    
+    if (zoneChanged) {
+      this.previousZone = this.currentZone;
+      this.currentZone = closestZone;
+      
+      if (this.data.debugMode) {
+        console.log(`[zone-manager] ENTERED ZONE: ${closestZone}`);
+      }
+      
+      // CRITICAL: If entering a tunnel, IMMEDIATELY load destinations
+      if (closestZone && closestZone.includes('tunnel')) {
+        const destinations = this.tunnelDestinations[closestZone] || [];
+        destinations.forEach(dest => this._loadZone(dest));
+      }
     }
+    
+    // Build required load set
+    const mustLoad = new Set();
+    
+    // 1. Always load current zone
+    if (closestZone) {
+      mustLoad.add(closestZone);
+    }
+    
+    // 2. Load everything visible from current zone
+    const visible = this.visibilityMap[closestZone] || [];
+    visible.forEach(z => mustLoad.add(z));
+    
+    // 3. AGGRESSIVELY preload connected zones
+    const aggressive = this.aggressivePreloadMap[closestZone] || [];
+    aggressive.forEach(z => mustLoad.add(z));
+    
+    // 4. Preload zones we're approaching (even if not in current zone)
+    approachingZones.forEach(z => mustLoad.add(z));
+    
+    // 5. If moving, predict and load zones in movement direction
+    if (this.playerVelocity.lengthSq() > 0.01) {
+      const lookAheadDist = 20.0;
+      const futurePos = playerPos.clone().add(
+        this.playerVelocity.clone().normalize().multiplyScalar(lookAheadDist)
+      );
+      
+      this.zones.forEach((zone, id) => {
+        if (futurePos.distanceTo(zone.position) < zone.preloadRadius) {
+          mustLoad.add(id);
+        }
+      });
+    }
+    
+    // Load all required zones
+    mustLoad.forEach(zoneId => this._loadZone(zoneId));
+    
+    // CONSERVATIVE unloading - only unload if far away AND not needed
+    const keepDistance = 45.0; // Keep zones loaded even if far
+    this.loadedZones.forEach(zoneId => {
+      if (mustLoad.has(zoneId)) return; // Keep if needed
+      
+      const zone = this.zones.get(zoneId);
+      if (!zone) return;
+      
+      const dist = playerPos.distanceTo(zone.position);
+      
+      // Only unload if VERY far away
+      if (dist > keepDistance) {
+        this._unloadZone(zoneId);
+      }
+    });
+  },
+
+  tick: function (time, dt) {
+    if (!this.data.playerRig) return;
+    
+    // Check frequently - every ~100ms
+    this._checkInterval += dt;
+    if (this._checkInterval < 100) return;
+    this._checkInterval = 0;
+    
+    const playerPos = new THREE.Vector3();
+    this.data.playerRig.object3D.getWorldPosition(playerPos);
+    
+    // Calculate velocity for predictive loading
+    this.playerVelocity.subVectors(playerPos, this.lastPlayerPos).divideScalar(dt / 1000);
+    this.lastPlayerPos.copy(playerPos);
+    
+    this._updateZones(playerPos);
   }
 });
 
