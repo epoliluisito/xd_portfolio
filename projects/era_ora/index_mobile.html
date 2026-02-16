@@ -1036,6 +1036,47 @@ AFRAME.registerComponent('light-beam', {
     width: 100%;
   }
 
+  /* Landscape Orientation Prompt */
+  #landscapePrompt{
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.95);
+    z-index: 9999;
+    backdrop-filter: blur(10px);
+  }
+  #landscapePrompt.show{
+    display: flex;
+  }
+  #landscapePromptCard{
+    text-align: center;
+    color: rgba(255,255,255,0.95);
+    padding: 40px 30px;
+  }
+  #landscapePromptCard .rotate-icon{
+    font-size: 64px;
+    margin-bottom: 20px;
+    animation: rotatePhone 2s ease-in-out infinite;
+  }
+  @keyframes rotatePhone {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(90deg); }
+  }
+  #landscapePromptCard h2{
+    margin: 0 0 12px 0;
+    font-size: 22px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  #landscapePromptCard p{
+    margin: 0;
+    font-size: 16px;
+    opacity: 0.85;
+    line-height: 1.5;
+  }
+
 </style>
 <!-- ===== NPC SYSTEM (characters: James, Louise, Frank, Kate) ===== -->
 <style>
@@ -2514,6 +2555,15 @@ const far = this.data.avoidDist;
   <div id="mobileTouchButtons">
     <button class="mobile-touch-btn" id="mobileBtnE" type="button">E</button>
     <button class="mobile-touch-btn" id="mobileBtnF" type="button">F</button>
+  </div>
+</div>
+
+<!-- Landscape Orientation Prompt (Mobile) -->
+<div id="landscapePrompt">
+  <div id="landscapePromptCard">
+    <div class="rotate-icon">📱</div>
+    <h2>Rotate Your Device</h2>
+    <p>Please rotate your device to landscape mode for the best experience.</p>
   </div>
 </div>
 
@@ -6874,6 +6924,10 @@ function startOverlayVideo(){
     // Close camera view dialog if open
     const cameraViewConfirm = document.getElementById('cameraViewConfirm');
     if (cameraViewConfirm) cameraViewConfirm.classList.remove('show');
+    
+    // Hide mobile controls during video
+    const mobileControls = document.getElementById('mobileControlsContainer');
+    if (mobileControls) mobileControls.classList.remove('active');
 
     // Stop Fear Room audio as soon as descent is confirmed.
     hardStopAllAudio(rideVideo);
@@ -7790,84 +7844,135 @@ AFRAME.registerComponent('racer-controller', {
   const mobileBtnF = document.getElementById('mobileBtnF');
   const gyroPermission = document.getElementById('gyroPermission');
   const gyroPermissionBtn = document.getElementById('gyroPermissionBtn');
+  const landscapePrompt = document.getElementById('landscapePrompt');
 
-  if (!mobileControls) return;
+  if (!mobileControls || !joystick || !landscapePrompt) return;
 
-  // Show mobile controls
-  mobileControls.classList.add('active');
+  // ===== ORIENTATION CHECK =====
+  function isLandscape() {
+    return window.innerWidth > window.innerHeight;
+  }
+
+  function checkOrientation() {
+    if (isLandscape()) {
+      landscapePrompt.classList.remove('show');
+    } else {
+      landscapePrompt.classList.add('show');
+    }
+  }
+
+  // Check orientation on load and on resize/orientation change
+  checkOrientation();
+  window.addEventListener('resize', checkOrientation);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(checkOrientation, 100); // Small delay for orientation to settle
+  });
+
+  // ===== CONTROLS ACTIVATION (ONLY AFTER INTRO) =====
+  let controlsActivated = false;
+  let gyroEnabled = false;
+
+  function activateMobileControls() {
+    if (controlsActivated) return;
+    controlsActivated = true;
+
+    // Show mobile controls
+    mobileControls.classList.add('active');
+
+    // Initialize joystick
+    initJoystick();
+
+    // Show gyroscope permission after a brief delay
+    setTimeout(() => {
+      if (!gyroEnabled && gyroPermission) {
+        gyroPermission.classList.add('show');
+      }
+    }, 1500);
+
+    // Start E/F button checks
+    startButtonVisibilityChecks();
+  }
+
+  // Listen for gameplay start
+  window.addEventListener('fearroom-activate', () => {
+    console.log('Mobile controls: Gameplay started, activating controls');
+    activateMobileControls();
+  });
 
   // ===== VIRTUAL JOYSTICK =====
   let joystickActive = false;
-  let joystickDelta = { x: 0, y: 0 }; // -1 to 1 range
+  let joystickDelta = { x: 0, y: 0 };
+  const joystickRadius = 35;
 
-  const joystickRadius = 35; // Max distance knob can move from center
-
-  function handleJoystickStart(e) {
-    joystickActive = true;
-    updateJoystick(e);
-  }
-
-  function handleJoystickMove(e) {
-    if (!joystickActive) return;
-    e.preventDefault();
-    updateJoystick(e);
-  }
-
-  function handleJoystickEnd(e) {
-    joystickActive = false;
-    joystickDelta = { x: 0, y: 0 };
-    joystickKnob.style.transform = 'translate(-50%, -50%)';
-  }
-
-  function updateJoystick(e) {
-    const touch = e.touches ? e.touches[0] : e;
-    const rect = joystick.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-
-    let deltaX = touch.clientX - centerX;
-    let deltaY = touch.clientY - centerY;
-
-    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-    
-    if (distance > joystickRadius) {
-      const angle = Math.atan2(deltaY, deltaX);
-      deltaX = Math.cos(angle) * joystickRadius;
-      deltaY = Math.sin(angle) * joystickRadius;
+  function initJoystick() {
+    function handleJoystickStart(e) {
+      if (!controlsActivated) return;
+      joystickActive = true;
+      updateJoystick(e);
     }
 
-    joystickKnob.style.transform = `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px))`;
+    function handleJoystickMove(e) {
+      if (!joystickActive || !controlsActivated) return;
+      e.preventDefault();
+      updateJoystick(e);
+    }
 
-    // Normalize to -1 to 1 range
-    joystickDelta.x = deltaX / joystickRadius;
-    joystickDelta.y = deltaY / joystickRadius;
-  }
-
-  joystick.addEventListener('touchstart', handleJoystickStart, { passive: false });
-  joystick.addEventListener('touchmove', handleJoystickMove, { passive: false });
-  joystick.addEventListener('touchend', handleJoystickEnd);
-  joystick.addEventListener('touchcancel', handleJoystickEnd);
-
-  // Inject joystick movement into rig-walk
-  const rig = document.querySelector('#rig');
-  if (rig && rig.components && rig.components['rig-walk']) {
-    const originalTick = rig.components['rig-walk'].tick;
-    rig.components['rig-walk'].tick = function(t, dt) {
-      // Inject joystick as virtual WASD
-      if (joystickActive && (Math.abs(joystickDelta.x) > 0.1 || Math.abs(joystickDelta.y) > 0.1)) {
-        // Map joystick to WASD keys
-        this.keys = this.keys || {};
-        this.keys['KeyW'] = joystickDelta.y < -0.2;
-        this.keys['KeyS'] = joystickDelta.y > 0.2;
-        this.keys['KeyA'] = joystickDelta.x < -0.2;
-        this.keys['KeyD'] = joystickDelta.x > 0.2;
+    function handleJoystickEnd(e) {
+      joystickActive = false;
+      joystickDelta = { x: 0, y: 0 };
+      if (joystickKnob) {
+        joystickKnob.style.transform = 'translate(-50%, -50%)';
       }
-      originalTick.call(this, t, dt);
-    };
+    }
+
+    function updateJoystick(e) {
+      const touch = e.touches ? e.touches[0] : e;
+      const rect = joystick.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+
+      let deltaX = touch.clientX - centerX;
+      let deltaY = touch.clientY - centerY;
+
+      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+      
+      if (distance > joystickRadius) {
+        const angle = Math.atan2(deltaY, deltaX);
+        deltaX = Math.cos(angle) * joystickRadius;
+        deltaY = Math.sin(angle) * joystickRadius;
+      }
+
+      if (joystickKnob) {
+        joystickKnob.style.transform = `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px))`;
+      }
+
+      joystickDelta.x = deltaX / joystickRadius;
+      joystickDelta.y = deltaY / joystickRadius;
+    }
+
+    joystick.addEventListener('touchstart', handleJoystickStart, { passive: false });
+    joystick.addEventListener('touchmove', handleJoystickMove, { passive: false });
+    joystick.addEventListener('touchend', handleJoystickEnd);
+    joystick.addEventListener('touchcancel', handleJoystickEnd);
+
+    // Inject joystick into rig-walk
+    const rig = document.querySelector('#rig');
+    if (rig && rig.components && rig.components['rig-walk']) {
+      const originalTick = rig.components['rig-walk'].tick;
+      rig.components['rig-walk'].tick = function(t, dt) {
+        if (controlsActivated && joystickActive && (Math.abs(joystickDelta.x) > 0.1 || Math.abs(joystickDelta.y) > 0.1)) {
+          this.keys = this.keys || {};
+          this.keys['KeyW'] = joystickDelta.y < -0.2;
+          this.keys['KeyS'] = joystickDelta.y > 0.2;
+          this.keys['KeyA'] = joystickDelta.x < -0.2;
+          this.keys['KeyD'] = joystickDelta.x > 0.2;
+        }
+        originalTick.call(this, t, dt);
+      };
+    }
   }
 
   // ===== GYROSCOPE CONTROLS =====
-  let gyroEnabled = false;
   let lastAlpha = null;
   let lastBeta = null;
   let lastGamma = null;
@@ -7880,8 +7985,7 @@ AFRAME.registerComponent('racer-controller', {
         if (permission === 'granted') {
           enableGyro();
         } else {
-          console.log('Gyroscope permission denied');
-          // Fallback to touch-drag (already works via pointer lock)
+          console.log('Gyroscope permission denied - touch-drag fallback available');
         }
       } catch (error) {
         console.error('Gyroscope permission error:', error);
@@ -7890,20 +7994,26 @@ AFRAME.registerComponent('racer-controller', {
       // Android or older iOS - no permission needed
       enableGyro();
     }
-    gyroPermission.classList.remove('show');
+    
+    if (gyroPermission) {
+      gyroPermission.classList.remove('show');
+    }
   }
 
   function enableGyro() {
     gyroEnabled = true;
-    window.addEventListener('deviceorientation', handleOrientation);
+    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+    console.log('Mobile controls: Gyroscope enabled');
   }
 
   function handleOrientation(e) {
-    if (!gyroEnabled) return;
+    if (!gyroEnabled || !controlsActivated) return;
 
-    const alpha = e.alpha; // Z-axis rotation (compass)
-    const beta = e.beta;   // X-axis rotation (front-back tilt)
-    const gamma = e.gamma; // Y-axis rotation (left-right tilt)
+    const alpha = e.alpha;
+    const beta = e.beta;
+    const gamma = e.gamma;
+
+    if (alpha === null || beta === null || gamma === null) return;
 
     if (lastAlpha === null) {
       lastAlpha = alpha;
@@ -7912,12 +8022,11 @@ AFRAME.registerComponent('racer-controller', {
       return;
     }
 
-    // Calculate deltas
     let deltaAlpha = alpha - lastAlpha;
     let deltaBeta = beta - lastBeta;
     let deltaGamma = gamma - lastGamma;
 
-    // Handle wraparound for alpha (0-360)
+    // Handle wraparound
     if (deltaAlpha > 180) deltaAlpha -= 360;
     if (deltaAlpha < -180) deltaAlpha += 360;
 
@@ -7925,128 +8034,135 @@ AFRAME.registerComponent('racer-controller', {
     lastBeta = beta;
     lastGamma = gamma;
 
-    // Apply to camera based on mode
-    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
     const sensitivity = 0.3;
+    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
 
-    if (isThirdPerson) {
-      // Third-person: rotate racerYaw and camPitch
-      const racerYaw = document.querySelector('#racerYaw');
-      const camPitch = document.querySelector('#camPitch');
-      
-      if (racerYaw) {
-        racerYaw.object3D.rotation.y -= deltaGamma * sensitivity * Math.PI / 180;
-      }
-      if (camPitch) {
-        const newPitch = camPitch.object3D.rotation.x + deltaBeta * sensitivity * Math.PI / 180;
-        const minPitch = -25 * Math.PI / 180;
-        const maxPitch = 18 * Math.PI / 180;
-        camPitch.object3D.rotation.x = Math.max(minPitch, Math.min(maxPitch, newPitch));
-      }
-    } else {
-      // First-person: use look-controls if available
-      const cam = document.querySelector('#firstPersonCam');
-      if (cam && cam.components['look-controls']) {
-        const lc = cam.components['look-controls'];
-        if (lc.yawObject) {
-          lc.yawObject.rotation.y -= deltaGamma * sensitivity * Math.PI / 180;
+    try {
+      if (isThirdPerson) {
+        const racerYaw = document.querySelector('#racerYaw');
+        const camPitch = document.querySelector('#camPitch');
+        
+        if (racerYaw) {
+          racerYaw.object3D.rotation.y -= deltaGamma * sensitivity * Math.PI / 180;
         }
-        if (lc.pitchObject) {
-          const newPitch = lc.pitchObject.rotation.x + deltaBeta * sensitivity * Math.PI / 180;
-          const minPitch = -80 * Math.PI / 180;
-          const maxPitch = 80 * Math.PI / 180;
-          lc.pitchObject.rotation.x = Math.max(minPitch, Math.min(maxPitch, newPitch));
+        if (camPitch) {
+          const newPitch = camPitch.object3D.rotation.x + deltaBeta * sensitivity * Math.PI / 180;
+          const minPitch = -25 * Math.PI / 180;
+          const maxPitch = 18 * Math.PI / 180;
+          camPitch.object3D.rotation.x = Math.max(minPitch, Math.min(maxPitch, newPitch));
+        }
+      } else {
+        const cam = document.querySelector('#firstPersonCam');
+        if (cam && cam.components && cam.components['look-controls']) {
+          const lc = cam.components['look-controls'];
+          if (lc.yawObject) {
+            lc.yawObject.rotation.y -= deltaGamma * sensitivity * Math.PI / 180;
+          }
+          if (lc.pitchObject) {
+            const newPitch = lc.pitchObject.rotation.x + deltaBeta * sensitivity * Math.PI / 180;
+            const minPitch = -80 * Math.PI / 180;
+            const maxPitch = 80 * Math.PI / 180;
+            lc.pitchObject.rotation.x = Math.max(minPitch, Math.min(maxPitch, newPitch));
+          }
         }
       }
+    } catch (error) {
+      console.error('Gyroscope orientation error:', error);
     }
   }
 
-  // Show gyro permission on first touch
-  let gyroPromptShown = false;
-  function showGyroPrompt() {
-    if (!gyroPromptShown) {
-      gyroPromptShown = true;
-      setTimeout(() => {
-        gyroPermission.classList.add('show');
-      }, 1000); // Small delay so user sees the scene first
-    }
-  }
-
-  gyroPermissionBtn.addEventListener('click', requestGyroPermission);
-  
-  // Trigger gyro prompt when scene is ready
-  const scene = document.querySelector('a-scene');
-  if (scene) {
-    scene.addEventListener('loaded', () => {
-      setTimeout(showGyroPrompt, 2000);
-    });
+  if (gyroPermissionBtn) {
+    gyroPermissionBtn.addEventListener('click', requestGyroPermission);
   }
 
   // ===== MOBILE E AND F BUTTONS =====
-  // These mirror the desktop E/F key functionality
-  
-  // Show/hide E button based on elevator proximity (same as desktop)
-  function checkElevatorProximity() {
-    const elevator = document.querySelector('#industrial_elevator_1');
-    const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
-    
-    if (!elevator || !callPanel) return;
+  function startButtonVisibilityChecks() {
+    // Check E button (elevator proximity)
+    function checkElevatorProximity() {
+      if (!controlsActivated || !mobileBtnE) return;
 
-    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
-    const cam = isThirdPerson 
-      ? document.querySelector('#thirdPersonCam')
-      : document.querySelector('#firstPersonCam');
-    
-    if (!cam) return;
+      try {
+        const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
+        if (!callPanel) return;
 
-    const camPos = new THREE.Vector3();
-    const panelPos = new THREE.Vector3();
-    
-    cam.object3D.getWorldPosition(camPos);
-    callPanel.object3D.getWorldPosition(panelPos);
-    
-    const distance = camPos.distanceTo(panelPos);
-    const USE_DISTANCE = 3.8;
+        const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+        const cam = isThirdPerson 
+          ? document.querySelector('#thirdPersonCam')
+          : document.querySelector('#firstPersonCam');
+        
+        if (!cam) return;
 
-    if (distance <= USE_DISTANCE) {
-      mobileBtnE.classList.add('show');
-    } else {
-      mobileBtnE.classList.remove('show');
+        const camPos = new THREE.Vector3();
+        const panelPos = new THREE.Vector3();
+        
+        cam.object3D.getWorldPosition(camPos);
+        callPanel.object3D.getWorldPosition(panelPos);
+        
+        const distance = camPos.distanceTo(panelPos);
+        const USE_DISTANCE = 3.8;
+
+        if (distance <= USE_DISTANCE) {
+          mobileBtnE.classList.add('show');
+        } else {
+          mobileBtnE.classList.remove('show');
+        }
+      } catch (error) {
+        // Silently fail - element might not be ready yet
+      }
     }
-  }
 
-  // Show/hide F button based on elevator state (mirroring desktop logic)
-  function checkFButtonVisibility() {
-    const guide = document.getElementById('elevatorGuide');
-    if (guide && guide.classList.contains('show')) {
-      mobileBtnF.classList.add('show');
-    } else {
-      mobileBtnF.classList.remove('show');
+    // Check F button (elevator guide visibility)
+    function checkFButtonVisibility() {
+      if (!controlsActivated || !mobileBtnF) return;
+
+      try {
+        const guide = document.getElementById('elevatorGuide');
+        if (guide && guide.classList.contains('show')) {
+          mobileBtnF.classList.add('show');
+        } else {
+          mobileBtnF.classList.remove('show');
+        }
+      } catch (error) {
+        // Silently fail
+      }
     }
-  }
 
-  // Check every frame
-  setInterval(() => {
-    checkElevatorProximity();
-    checkFButtonVisibility();
-  }, 100);
+    // Check every 100ms
+    setInterval(() => {
+      checkElevatorProximity();
+      checkFButtonVisibility();
+    }, 100);
+  }
 
   // Mobile E button - trigger elevator doors
-  mobileBtnE.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    const elevator = document.querySelector('#industrial_elevator_1');
-    if (elevator) {
-      elevator.emit('elevator1-toggle');
-    }
-  });
+  if (mobileBtnE) {
+    mobileBtnE.addEventListener('touchstart', (e) => {
+      if (!controlsActivated) return;
+      e.preventDefault();
+      try {
+        const elevator = document.querySelector('#industrial_elevator_1');
+        if (elevator) {
+          elevator.emit('elevator1-toggle');
+        }
+      } catch (error) {
+        console.error('Mobile E button error:', error);
+      }
+    });
+  }
 
   // Mobile F button - trigger autopilot/confirm
-  mobileBtnF.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    // Simulate F key press by creating keyboard event
-    const event = new KeyboardEvent('keydown', { code: 'KeyF', key: 'f' });
-    window.dispatchEvent(event);
-  });
+  if (mobileBtnF) {
+    mobileBtnF.addEventListener('touchstart', (e) => {
+      if (!controlsActivated) return;
+      e.preventDefault();
+      try {
+        const event = new KeyboardEvent('keydown', { code: 'KeyF', key: 'f' });
+        window.dispatchEvent(event);
+      } catch (error) {
+        console.error('Mobile F button error:', error);
+      }
+    });
+  }
 
 })();
 
