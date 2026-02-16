@@ -1765,7 +1765,7 @@ AFRAME.registerComponent('render-order', {
       anchor:   { type: 'selector' },      // capsule root (distance anchor)
       rig:      { type: 'selector' },      // #rig
       cam:      { type: 'selector' },      // #playerCam
-      distance: { type: 'number', default: 3.0 },
+      distance: { type: 'number', default: 4.0 },
       openKey:  { type: 'string', default: 'KeyE' },
       enterKey: { type: 'string', default: 'KeyF' }
     },
@@ -1784,6 +1784,12 @@ AFRAME.registerComponent('render-order', {
         dur: 650,
         fromPos: null,
         toPos: null,
+        fromRigRot: null,
+        toRigRot: null,
+        fromCamPos: null,
+        toCamPos: null,
+        fromCamRot: null,
+        toCamRot: null,
         neutralRigPos: null,
         neutralRigRot: null,
         neutralCamPos: null,
@@ -1817,6 +1823,12 @@ AFRAME.registerComponent('render-order', {
       const k = (e.key || '').toLowerCase();
       if (code.startsWith('Key') && code.length === 4) return k === code.slice(3).toLowerCase();
       return false;
+    },
+
+    _lerpAngle: function (a, b, t) {
+      // Degrees, shortest path.
+      let d = ((b - a + 540) % 360) - 180;
+      return a + d * t;
     },
 
     _setWalkEnabled: function (enabled) {
@@ -1863,7 +1875,7 @@ AFRAME.registerComponent('render-order', {
       if (!isOpen) {
         this._showGuide('Press <span class="kbd">E</span> to open capsule');
       } else {
-        this._showGuide('Press <span class="kbd">F</span> to enter capsule');
+        this._showGuide('Press <span class="kbd">F</span> to enter capsule &nbsp;•&nbsp; Press <span class="kbd">E</span> to close capsule');
       }
     },
 
@@ -1895,13 +1907,17 @@ AFRAME.registerComponent('render-order', {
       const localTarget = new THREE.Vector3(0, 0.32, 0);
       const worldTarget = anchor.object3D.localToWorld(localTarget.clone());
 
-      // Lying camera: low height + slightly back.
-      cam.setAttribute('position', { x: 0, y: 0.42, z: 0.15 });
-      cam.setAttribute('rotation', { x: -70, y: 0, z: 0 });
+      // Targets for a smooth "lie down" animation.
+      this.state.fromCamPos = new THREE.Vector3(cp.x, cp.y, cp.z);
+      this.state.toCamPos   = new THREE.Vector3(0, 0.42, 0.15);
 
-      // Rig yaw aligned to capsule.
+      this.state.fromCamRot = { x: cr.x, y: cr.y, z: cr.z };
+      this.state.toCamRot   = { x: -70, y: cr.y, z: cr.z };
+
+      // Rig yaw aligned to capsule (animated, not snapped).
       const aRot = anchor.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
-      this.state.targetRigRot = { x: 0, y: aRot.y, z: 0 };
+      this.state.fromRigRot = { x: rr.x, y: rr.y, z: rr.z };
+      this.state.toRigRot   = { x: 0, y: aRot.y, z: 0 };
 
       // Smooth translate in.
       const from = rig.object3D.position.clone();
@@ -1911,10 +1927,7 @@ AFRAME.registerComponent('render-order', {
       this.state.entering = true;
       this.state.inside = true;
       this.state.t0 = performance.now();
-      this.state.dur = 650;
-
-      // Apply target rotation immediately to avoid drift while moving.
-      rig.setAttribute('rotation', this.state.targetRigRot);
+      this.state.dur = 1200;
 
       this._updateGuide();
     },
@@ -1980,9 +1993,9 @@ AFRAME.registerComponent('render-order', {
       const t = this._getToggle();
       const isOpen = t && t.isOpen ? t.isOpen() : false;
 
-      if (isOpenKey && !isOpen) {
+      if (isOpenKey) {
         e.preventDefault();
-        if (t && t.toggleNow) t.toggleNow();
+        if (t && t.toggleNow) t.toggleNow(); // toggles open/close
         this._updateGuide();
         return;
       }
@@ -2018,8 +2031,29 @@ AFRAME.registerComponent('render-order', {
         const s = Math.min(1, Math.max(0, t));
         const ease = (s < 0.5) ? (2 * s * s) : (1 - Math.pow(-2 * s + 2, 2) / 2);
 
+        // Rig translate.
         const p = this.state.fromPos.clone().lerp(this.state.toPos, ease);
         rig.setAttribute('position', { x: p.x, y: p.y, z: p.z });
+
+        // Rig rotate (ease yaw into alignment).
+        if (this.state.fromRigRot && this.state.toRigRot) {
+          const rx = this._lerpAngle(this.state.fromRigRot.x || 0, this.state.toRigRot.x || 0, ease);
+          const ry = this._lerpAngle(this.state.fromRigRot.y || 0, this.state.toRigRot.y || 0, ease);
+          const rz = this._lerpAngle(this.state.fromRigRot.z || 0, this.state.toRigRot.z || 0, ease);
+          rig.setAttribute('rotation', { x: rx, y: ry, z: rz });
+        }
+
+        // Camera animate into lying pose (no snap).
+        const cam = this.data.cam;
+        if (cam && this.state.fromCamPos && this.state.toCamPos && this.state.fromCamRot && this.state.toCamRot) {
+          const cp = this.state.fromCamPos.clone().lerp(this.state.toCamPos, ease);
+          cam.setAttribute('position', { x: cp.x, y: cp.y, z: cp.z });
+
+          const cx = this._lerpAngle(this.state.fromCamRot.x || 0, this.state.toCamRot.x || 0, ease);
+          const cy = this._lerpAngle(this.state.fromCamRot.y || 0, this.state.toCamRot.y || 0, ease);
+          const cz = this._lerpAngle(this.state.fromCamRot.z || 0, this.state.toCamRot.z || 0, ease);
+          cam.setAttribute('rotation', { x: cx, y: cy, z: cz });
+        }
 
         if (s >= 1) {
           this.state.entering = false;
@@ -20228,7 +20262,7 @@ AFRAME.registerComponent('ion-wind-field', {
         enabled:    true;
         useFrom:    #rig;
         useAnchor:  #capsule_03;
-        useDistance: 3.0" junction-capsule-interaction="anchor:#capsule_03; rig:#rig; cam:#playerCam; distance:3.0; openKey:KeyE; enterKey:KeyF"></a-entity>
+        useDistance: 4.0" junction-capsule-interaction="anchor:#capsule_03; rig:#rig; cam:#playerCam; distance:4.0; openKey:KeyE; enterKey:KeyF"></a-entity>
         </a-entity>
     <!-- === /Capsules === -->
 
