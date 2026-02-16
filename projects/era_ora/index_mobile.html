@@ -926,7 +926,7 @@ AFRAME.registerComponent('light-beam', {
   #mobileJoystick{
     position: fixed;
     bottom: 20px;
-    left: 20px;
+    right: 20px;
     width: 120px;
     height: 120px;
     z-index: 220;
@@ -956,7 +956,7 @@ AFRAME.registerComponent('light-beam', {
   /* Mobile Touch Buttons (E and F) */
   #mobileTouchButtons{
     position: fixed;
-    bottom: 20px;
+    bottom: 152px;
     right: 20px;
     z-index: 220;
     display: flex;
@@ -986,6 +986,48 @@ AFRAME.registerComponent('light-beam', {
   .mobile-touch-btn:active{
     background: rgba(255,255,255,0.2);
     transform: scale(0.95);
+  }
+
+  /* Landscape Orientation Prompt */
+  #landscapePrompt{
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.95);
+    z-index: 9999;
+    backdrop-filter: blur(10px);
+  }
+  #landscapePrompt.show{
+    display: flex;
+  }
+  #landscapePromptCard{
+    width: min(300px, calc(100vw - 48px));
+    text-align: center;
+    color: rgba(255,255,255,0.95);
+  }
+  #landscapePromptCard .icon{
+    font-size: 64px;
+    margin-bottom: 20px;
+    animation: rotatePhone 2s ease-in-out infinite;
+  }
+  #landscapePromptCard h3{
+    margin: 0 0 12px 0;
+    font-size: 18px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  #landscapePromptCard p{
+    margin: 0;
+    font-size: 14px;
+    opacity: 0.85;
+    line-height: 1.4;
+  }
+  @keyframes rotatePhone {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-15deg); }
+    75% { transform: rotate(15deg); }
   }
 
   /* Gyroscope Permission Prompt */
@@ -2563,6 +2605,15 @@ const far = this.data.avoidDist;
   <div id="landscapePromptCard">
     <div class="rotate-icon">📱</div>
     <h2>Rotate Your Device</h2>
+    <p>Please rotate your device to landscape mode for the best experience.</p>
+  </div>
+</div>
+
+<!-- Landscape Orientation Prompt (Mobile) -->
+<div id="landscapePrompt">
+  <div id="landscapePromptCard">
+    <div class="icon">📱➜📱</div>
+    <h3>Rotate Your Device</h3>
     <p>Please rotate your device to landscape mode for the best experience.</p>
   </div>
 </div>
@@ -7835,6 +7886,8 @@ AFRAME.registerComponent('racer-controller', {
   // Detect if device has touch capability
   const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
   
+  console.log('Mobile Controls: Touch device detected:', isTouchDevice);
+  
   if (!isTouchDevice) return; // Skip mobile controls on desktop
 
   const mobileControls = document.getElementById('mobileControlsContainer');
@@ -7876,15 +7929,18 @@ AFRAME.registerComponent('racer-controller', {
     if (controlsActivated) return;
     controlsActivated = true;
 
+    console.log('Mobile controls: Activating controls after intro');
+
     // Show mobile controls
     mobileControls.classList.add('active');
 
     // Initialize joystick
     initJoystick();
 
-    // Show gyroscope permission after a brief delay
+    // Request gyroscope permission after a small delay
     setTimeout(() => {
-      if (!gyroEnabled && gyroPermission) {
+      if (!gyroEnabled && gyroPermission && isLandscape()) {
+        console.log('Mobile controls: Requesting gyroscope permission');
         gyroPermission.classList.add('show');
       }
     }, 1500);
@@ -7895,7 +7951,7 @@ AFRAME.registerComponent('racer-controller', {
 
   // Listen for gameplay start
   window.addEventListener('fearroom-activate', () => {
-    console.log('Mobile controls: Gameplay started, activating controls');
+    console.log('Mobile controls: Gameplay started (fearroom-activate event)');
     activateMobileControls();
   });
 
@@ -8001,20 +8057,38 @@ AFRAME.registerComponent('racer-controller', {
   }
 
   function enableGyro() {
-    gyroEnabled = true;
-    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-    console.log('Mobile controls: Gyroscope enabled');
+    if (gyroEnabled) return; // Already enabled
+    
+    try {
+      gyroEnabled = true;
+      console.log('Mobile controls: Gyroscope enabled');
+      window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+      
+      // Initialize last values as null
+      lastAlpha = null;
+      lastBeta = null;
+      lastGamma = null;
+    } catch (error) {
+      console.error('Failed to enable gyroscope:', error);
+      gyroEnabled = false;
+    }
   }
+
+  let lastAlpha = null;
+  let lastBeta = null;
+  let lastGamma = null;
 
   function handleOrientation(e) {
     if (!gyroEnabled || !controlsActivated) return;
 
+    // Safety check for null values
     const alpha = e.alpha;
     const beta = e.beta;
     const gamma = e.gamma;
 
     if (alpha === null || beta === null || gamma === null) return;
 
+    // Initialize on first valid reading
     if (lastAlpha === null) {
       lastAlpha = alpha;
       lastBeta = beta;
@@ -8022,30 +8096,34 @@ AFRAME.registerComponent('racer-controller', {
       return;
     }
 
+    // Calculate deltas
     let deltaAlpha = alpha - lastAlpha;
     let deltaBeta = beta - lastBeta;
     let deltaGamma = gamma - lastGamma;
 
-    // Handle wraparound
+    // Handle alpha wraparound (0-360)
     if (deltaAlpha > 180) deltaAlpha -= 360;
     if (deltaAlpha < -180) deltaAlpha += 360;
 
+    // Update last values
     lastAlpha = alpha;
     lastBeta = beta;
     lastGamma = gamma;
 
+    // Apply rotation with sensitivity
     const sensitivity = 0.3;
-    const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
 
     try {
+      const isThirdPerson = window.isThirdPersonMode && window.isThirdPersonMode();
+
       if (isThirdPerson) {
         const racerYaw = document.querySelector('#racerYaw');
         const camPitch = document.querySelector('#camPitch');
         
-        if (racerYaw) {
+        if (racerYaw && racerYaw.object3D) {
           racerYaw.object3D.rotation.y -= deltaGamma * sensitivity * Math.PI / 180;
         }
-        if (camPitch) {
+        if (camPitch && camPitch.object3D) {
           const newPitch = camPitch.object3D.rotation.x + deltaBeta * sensitivity * Math.PI / 180;
           const minPitch = -25 * Math.PI / 180;
           const maxPitch = 18 * Math.PI / 180;
@@ -8068,6 +8146,7 @@ AFRAME.registerComponent('racer-controller', {
       }
     } catch (error) {
       console.error('Gyroscope orientation error:', error);
+      // Don't disable gyro on single error, just log it
     }
   }
 
@@ -8163,6 +8242,14 @@ AFRAME.registerComponent('racer-controller', {
       }
     });
   }
+
+  // Mobile controls initialized
+  console.log('Mobile Controls: System initialized');
+  console.log('- Landscape prompt:', landscapePrompt ? 'Ready' : 'Missing');
+  console.log('- Joystick:', joystick ? 'Ready' : 'Missing');
+  console.log('- Gyroscope:', gyroPermission ? 'Ready' : 'Missing');
+  console.log('- Touch buttons:', (mobileBtnE && mobileBtnF) ? 'Ready' : 'Missing');
+  console.log('- Waiting for fearroom-activate event to show controls');
 
 })();
 
