@@ -9950,15 +9950,16 @@ AFRAME.registerComponent('solidify-from-ring', {
    ============================================================ */
 AFRAME.registerComponent('capsule-lay-controller', {
   schema: {
-    triggerDist: { type: 'number', default: 2.0 },
+    triggerDist: { type: 'number', default: 50.0 },  // TESTING: huge distance
     triggerHysteresis: { type: 'number', default: 0.3 },
     layCamHeight: { type: 'number', default: 0.25 },  // head height when laying
     autopilotDurationMs: { type: 'number', default: 1200 },
     standUpDurationMs: { type: 'number', default: 800 },
-    debugAlwaysShow: { type: 'boolean', default: true }  // TEMP: always show guide for testing
+    debugAlwaysShow: { type: 'boolean', default: true }  // Debug mode ON
   },
 
   init: function () {
+    console.log('[capsule-lay-controller] *** COMPONENT INITIALIZING ***');
     this.rig = null;
     this.cam = null;
     this.capsule = null;
@@ -9966,6 +9967,11 @@ AFRAME.registerComponent('capsule-lay-controller', {
 
     this.guide = document.getElementById('capsuleGuide');
     this.guideBody = document.getElementById('capsuleGuideBody');
+    
+    if (!this.guide) console.error('[capsule-lay-controller] ✗ Could not find #capsuleGuide element!');
+    if (!this.guideBody) console.error('[capsule-lay-controller] ✗ Could not find #capsuleGuideBody element!');
+    
+    console.log('[capsule-lay-controller] Guide elements:', this.guide ? 'OK' : 'MISSING', this.guideBody ? 'OK' : 'MISSING');
 
     // TEST: Force show guide immediately to verify it works
     if (this.data.debugAlwaysShow) {
@@ -10101,18 +10107,30 @@ AFRAME.registerComponent('capsule-lay-controller', {
     if (!this.capsule) {
       this.capsule = document.querySelector('#capsule_03');
       if (this.capsule) {
-        console.log('[capsule-lay-controller] Found capsule_03!');
+        console.log('[capsule-lay-controller] ✓ Found capsule_03!');
         // Find the capsule-split-toggle controller
         const controllers = this.capsule.querySelectorAll('[capsule-split-toggle]');
         if (controllers.length > 0) {
           this.capsuleController = controllers[0].components['capsule-split-toggle'];
-          console.log('[capsule-lay-controller] Found capsule controller');
+          console.log('[capsule-lay-controller] ✓ Found capsule controller');
+        } else {
+          console.warn('[capsule-lay-controller] ⚠ Capsule found but no controller');
         }
       }
     }
     
     // If we still don't have the capsule, it means the zone isn't loaded yet
     if (!this.capsule) return;
+
+    // Log every 60 frames (~1 second) when we have the capsule
+    if (!this._frameCount) this._frameCount = 0;
+    this._frameCount++;
+    if (this._frameCount % 60 === 0) {
+      this.rig.object3D.getWorldPosition(this._rigWorld);
+      this.capsule.object3D.getWorldPosition(this._capsuleWorld);
+      const dist = this._capsuleWorld.distanceTo(this._rigWorld);
+      console.log(`[capsule-lay-controller] Player at (${this._rigWorld.x.toFixed(1)}, ${this._rigWorld.y.toFixed(1)}, ${this._rigWorld.z.toFixed(1)}), Capsule at (${this._capsuleWorld.x.toFixed(1)}, ${this._capsuleWorld.y.toFixed(1)}, ${this._capsuleWorld.z.toFixed(1)}), Distance: ${dist.toFixed(2)}m, Trigger: ${this.data.triggerDist}m, Step: ${this.state.step}`);
+    }
 
     // Stand-up animation
     if (this.state.standAnim) {
@@ -10205,41 +10223,30 @@ AFRAME.registerComponent('capsule-lay-controller', {
     const onDist = this.data.triggerDist;
     const offDist = this.data.triggerDist + this.data.triggerHysteresis;
 
-    // Debug logging (can be removed later)
-    if (Math.random() < 0.01) { // Log ~1% of frames to avoid spam
-      console.log('[capsule-lay-controller] Distance to capsule:', dist.toFixed(2), 'm, trigger:', onDist, 'm, step:', this.state.step);
-    }
-
     const capsuleOpen = this._isCapsuleOpen();
 
     if (dist <= onDist) {
       if (this.state.step !== 1) {
-        console.log('[capsule-lay-controller] Entering proximity range, showing guide');
+        console.log('[capsule-lay-controller] → Entering proximity, showing guide');
         this.state.step = 1;
         this._updateProximityGuide(capsuleOpen);
       } else {
-        // Update guide if capsule state changed
+        // Update guide if capsule state changed (but don't spam)
         this._updateProximityGuide(capsuleOpen);
       }
     } else if (this.state.step === 1 && dist > offDist) {
-      console.log('[capsule-lay-controller] Leaving proximity range, hiding guide');
+      console.log('[capsule-lay-controller] ← Leaving proximity, hiding guide');
       this.state.step = 0;
       this._hideGuide();
     }
   },
 
   _isCapsuleOpen: function () {
-    if (!this.capsuleController) {
-      console.log('[capsule-lay-controller] No capsule controller found');
-      return false;
-    }
-    const isOpen = this.capsuleController._open === true;
-    console.log('[capsule-lay-controller] Capsule open status:', isOpen);
-    return isOpen;
+    if (!this.capsuleController) return false;
+    return this.capsuleController._open === true;
   },
 
   _updateProximityGuide: function (capsuleOpen) {
-    console.log('[capsule-lay-controller] Updating guide, capsule open:', capsuleOpen);
     if (capsuleOpen) {
       this._showGuide('Press <span class="kbd">F</span> to enter the capsule');
     } else {
@@ -10419,14 +10426,12 @@ AFRAME.registerComponent('capsule-lay-controller', {
       console.warn('[capsule-lay-controller] Guide elements not found');
       return;
     }
-    console.log('[capsule-lay-controller] Showing guide:', html);
     this.guideBody.innerHTML = html;
     this.guide.classList.add('visible');
   },
 
   _hideGuide: function () {
     if (!this.guide) return;
-    console.log('[capsule-lay-controller] Hiding guide');
     this.guide.classList.remove('visible');
   }
 });
