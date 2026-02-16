@@ -9962,41 +9962,9 @@ AFRAME.registerComponent('capsule-lay-controller', {
     this.cam = null;
     this.capsule = null;
     this.capsuleController = null;
-    this._initialized = false;
 
     this.guide = document.getElementById('capsuleGuide');
     this.guideBody = document.getElementById('capsuleGuideBody');
-    
-    // Defer element lookup until scene is ready
-    const tryInit = () => {
-      if (this._initialized) return;
-      
-      this.rig = document.querySelector('#rig');
-      this.cam = document.querySelector('#playerCam');
-      this.capsule = document.querySelector('#capsule_03');
-      
-      if (!this.rig || !this.cam || !this.capsule) {
-        // Not ready yet, try again next frame
-        requestAnimationFrame(tryInit);
-        return;
-      }
-      
-      // Find the capsule-split-toggle controller
-      const controllers = this.capsule.querySelectorAll('[capsule-split-toggle]');
-      if (controllers.length > 0) {
-        this.capsuleController = controllers[0].components['capsule-split-toggle'];
-      }
-      
-      this._initialized = true;
-      console.log('[capsule-lay-controller] Initialized successfully');
-    };
-    
-    // Start trying after scene loads
-    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) {
-      setTimeout(tryInit, 100);
-    } else if (this.el.sceneEl) {
-      this.el.sceneEl.addEventListener('loaded', () => setTimeout(tryInit, 100));
-    }
 
     this._capsuleWorld = new THREE.Vector3();
     this._rigWorld = new THREE.Vector3();
@@ -10107,7 +10075,27 @@ AFRAME.registerComponent('capsule-lay-controller', {
   },
 
   tick: function () {
-    if (!this._initialized || !this.rig || !this.cam || !this.capsule) return;
+    // Always try to get rig/cam if we don't have them yet
+    if (!this.rig) this.rig = document.querySelector('#rig');
+    if (!this.cam) this.cam = document.querySelector('#playerCam');
+    if (!this.rig || !this.cam) return;
+
+    // Try to find capsule if we don't have it yet (zone might not be loaded)
+    if (!this.capsule) {
+      this.capsule = document.querySelector('#capsule_03');
+      if (this.capsule) {
+        console.log('[capsule-lay-controller] Found capsule_03!');
+        // Find the capsule-split-toggle controller
+        const controllers = this.capsule.querySelectorAll('[capsule-split-toggle]');
+        if (controllers.length > 0) {
+          this.capsuleController = controllers[0].components['capsule-split-toggle'];
+          console.log('[capsule-lay-controller] Found capsule controller');
+        }
+      }
+    }
+    
+    // If we still don't have the capsule, it means the zone isn't loaded yet
+    if (!this.capsule) return;
 
     // Stand-up animation
     if (this.state.standAnim) {
