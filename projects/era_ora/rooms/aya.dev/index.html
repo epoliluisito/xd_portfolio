@@ -1651,8 +1651,9 @@ AFRAME.registerComponent('junction-capsule-03-interact', {
     this.rig = document.querySelector('#rig');
     this.cam = document.querySelector('#playerCam');
 
-    this.capsuleEl = this.data.capsule;
-    this.deckEl = this.data.deck;
+    // Targets can be null at init time depending on DOM load order; resolve after scene load.
+    this.capsuleEl = null;
+    this.deckEl = null;
 
     this.guide = document.getElementById('userGuide');
     this.guideBody = document.getElementById('userGuideBody');
@@ -1675,12 +1676,26 @@ AFRAME.registerComponent('junction-capsule-03-interact', {
       neutralLookYaw: 0,
       neutralLookPitch: 0,
       originalWalkSpeed: null,
-      anim: null, // {kind:'lay'|'stand', t0, dur, fromPos, toPos, fromYawRad, toYawRad, fromCamY,toCamY, fromLookYaw,toLookYaw, fromLookPitch,toLookPitch}
+      anim: null,
       noOpArmed: false
     };
 
-    // Snapshot neutral pose once scene stabilizes.
-    setTimeout(() => { this._captureNeutral(); }, 0);
+    this._resolveTargets = () => {
+      // Re-query each time; robust to late-loaded entities.
+      this.capsuleEl = document.querySelector('#capsule_03');
+      this.deckEl = document.querySelector('#capsule_03_innerDeck');
+      this._controllerEl = null;
+      this._toggleComp = null;
+      this._ensureToggleComp();
+    };
+
+    // Ensure targets exist once the scene is ready.
+    const scene = this.el.sceneEl;
+    if (scene && scene.hasLoaded) this._resolveTargets();
+    else if (scene) scene.addEventListener('loaded', this._resolveTargets, { once: true });
+
+    this._captureNeutral = this._captureNeutral.bind(this);
+    this._ensureToggleComp = this._ensureToggleComp.bind(this);
 
     this._bindKey = (e) => {
       if (e.repeat) return;
@@ -1723,25 +1738,22 @@ AFRAME.registerComponent('junction-capsule-03-interact', {
       }
 
       if (isF) {
-        this._ensureToggleComp();
         const open = (this._toggleComp && this._toggleComp.isOpen && this._toggleComp.isOpen());
         if (!open) return;
-
         e.preventDefault();
         if (e.stopImmediatePropagation) e.stopImmediatePropagation();
         e.stopPropagation();
 
         this._startLayDown();
-        return;
       }
     };
 
-    // Capture so we can win over other E handlers only when we're in range / relevant.
-    window.addEventListener('keydown', this._bindKey, { passive: false, capture: true });
+    // Capture keys before other handlers (e.g., elevator "E") when in-range.
+    window.addEventListener('keydown', this._bindKey, true);
 
-    const scene = this.el.sceneEl;
-    if (scene && scene.hasLoaded) this._ensureToggleComp();
-    else if (scene) scene.addEventListener('loaded', () => this._ensureToggleComp(), { once: true });
+    // Snapshot neutral pose once at start.
+    setTimeout(() => { this._captureNeutral(); }, 0);
+
   },
 
   _captureNeutral: function () {
