@@ -1675,6 +1675,10 @@ AFRAME.registerComponent('play-gltf-clip', {
 
       this.guide = document.getElementById('userGuide');
       this.guideBody = document.getElementById('userGuideBody');
+      // Preserve whatever other systems might be showing in the User Guide.
+      this._guideOwned = false;
+      this._prevGuideHTML = '';
+      this._prevGuideVisible = false;
 
       this._onKeyDownCapture = this._onKeyDownCapture.bind(this);
       window.addEventListener('keydown', this._onKeyDownCapture, true);
@@ -1743,13 +1747,25 @@ AFRAME.registerComponent('play-gltf-clip', {
 
     _showGuide: function (html) {
       if (!this.guide || !this.guideBody) return;
+      if (!this._guideOwned) {
+        this._prevGuideHTML = this.guideBody.innerHTML;
+        this._prevGuideVisible = this.guide.classList.contains('visible');
+        this._guideOwned = true;
+      }
       this.guideBody.innerHTML = html;
       this.guide.classList.add('visible');
     },
 
     _hideGuide: function () {
       if (!this.guide) return;
-      this.guide.classList.remove('visible');
+      if (!this._guideOwned) return;
+
+      // Restore prior content/visibility so other systems keep working.
+      if (this.guideBody) this.guideBody.innerHTML = this._prevGuideHTML;
+      if (this._prevGuideVisible) this.guide.classList.add('visible');
+      else this.guide.classList.remove('visible');
+
+      this._guideOwned = false;
     },
 
     _updatePrompt: function () {
@@ -20019,7 +20035,8 @@ AFRAME.registerComponent('ion-wind-field', {
                 procedural-capsule-glass="side: R; radius: 1.35; segments: 96"></a-entity>
     </a-entity>
   
-      <a-entity id="capsule_01_trigger" position="-1.660 -1.1250 -4.950"></a-entity>
+      <!-- Proximity trigger (local to capsule_01; entry side is +Z) -->
+      <a-entity id="capsule_01_trigger" position="0 0.20 1.25"></a-entity>
 
     <!-- Proximity controller (E/F/ESC gated) -->
     <a-entity id="capsule_01_proximity"
