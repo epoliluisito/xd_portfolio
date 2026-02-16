@@ -72,6 +72,34 @@
   
     /* Hide mouse cursor only during experience playback */
     body.hide-pointer, body.hide-pointer * { cursor: none !important; }
+
+    /* === CAPSULE USER GUIDE === */
+    #capsuleGuide {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%);
+      max-width: 720px;
+      width: calc(100% - 64px);
+      padding: 14px 16px;
+      background: rgba(0,0,0,0.62);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 12px;
+      color: #e9f2ff;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      font-size: 14px;
+      line-height: 1.35;
+      letter-spacing: 0.2px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+      z-index: 9999;
+      user-select: none;
+    }
+    #capsuleGuide.visible { opacity: 1; }
 </style>
 
 <style>
@@ -1329,14 +1357,6 @@ AFRAME.registerComponent('play-gltf-clip', {
       this.el.addEventListener('model-loaded', this._onLoaded);
     },
     tick: function (t, dt) {
-    // Late-bind refs (userGuide lives after </a-scene>, and entities may resolve late)
-    if (!this.rig) this.rig = document.querySelector('#rig');
-    if (!this.cam) this.cam = document.querySelector('#playerCam');
-    if ((!this.capsuleEl || !this.deckEl || !this.guide || !this.guideBody || !this._toggleComp) && this._resolveTargets) {
-      this._resolveTargets();
-    }
-    if (!this.rig || !this.cam || !this.capsuleEl || !this.deckEl) return;
-
       if (!this.mixer) return;
       this.mixer.update((dt || 0) / 1000);
     },
@@ -1357,7 +1377,7 @@ AFRAME.registerComponent('play-gltf-clip', {
 <script>
 /* ============================================================
    Capsule v2 (glass + sliding base + inner platform/step)
-   - Toggle open/close via script-controlled interaction (no O key).
+   - Press O to toggle open/close.
    - Glass halves slide wider than the base halves.
    - Base uses the same material maps as the elevator doors (elevMetal* assets).
    ============================================================ */
@@ -1527,549 +1547,135 @@ AFRAME.registerComponent('play-gltf-clip', {
   }
 });
 
-  // --- Toggle: move half-modules left/right with optional glass tuck (programmatic; no key binding) ---
-AFRAME.registerComponent('capsule-split-toggle', {
-  schema: {
-    leftHalf:  { type: 'selector' },
-    rightHalf: { type: 'selector' },
-    leftGlass: { type: 'selector' },
-    rightGlass:{ type: 'selector' },
-    openX:     { type: 'number', default: 0.75 },
-    tuckY:     { type: 'number', default: 0.06 },
-    dur:       { type: 'int',    default: 650 }
-  },
+  // --- Toggle: move half-modules left/right with optional glass tuck (Press O) ---
+  AFRAME.registerComponent('capsule-split-toggle', {
+    schema: {
+      leftHalf:  { type: 'selector' },
+      rightHalf: { type: 'selector' },
+      leftGlass: { type: 'selector' },
+      rightGlass:{ type: 'selector' },
+      openX:     { type: 'number', default: 0.75 },
+      tuckY:     { type: 'number', default: 0.06 },
+      dur:       { type: 'int',    default: 650 },
+      enabled:  { type: 'boolean', default: true },
+      key:      { type: 'string',  default: 'KeyO' }
+    },
 
-  init: function () {
-    this._open = false;
-    this._anim = null;
+    init: function () {
+      this._open = false;
+      this._anim = null;
 
-    this._resolve = this._resolve.bind(this);
+      this._resolve = this._resolve.bind(this);
+      this._onKeyDown = this._onKeyDown.bind(this);
 
-    const scene = this.el.sceneEl;
-    if (scene && scene.hasLoaded) this._resolve();
-    else if (scene) scene.addEventListener('loaded', this._resolve, { once: true });
-  },
+      const scene = this.el.sceneEl;
+      if (scene && scene.hasLoaded) this._resolve();
+      else if (scene) scene.addEventListener('loaded', this._resolve, { once: true });
 
-  _resolve: function () {
-    const d = this.data;
+      if (this.data.enabled) {
+        window.addEventListener('keydown', this._onKeyDown, { passive: false });
+      }
+    },
 
-    this._L = d.leftHalf;
-    this._R = d.rightHalf;
-    this._gL = d.leftGlass;
-    this._gR = d.rightGlass;
+    _resolve: function () {
+      const d = this.data;
 
-    if (!this._L || !this._R) {
-      console.warn('[capsule-split-toggle] Missing leftHalf/rightHalf selectors.');
-      return;
-    }
+      this._L = d.leftHalf;
+      this._R = d.rightHalf;
+      this._gL = d.leftGlass;
+      this._gR = d.rightGlass;
 
-    // Cache closed poses (local positions).
-    this._pL0 = this._L.object3D.position.clone();
-    this._pR0 = this._R.object3D.position.clone();
+      if (!this._L || !this._R) {
+        console.warn('[capsule-split-toggle] Missing leftHalf/rightHalf selectors.');
+        return;
+      }
 
-    if (this._gL) this._gL0y = this._gL.object3D.position.y;
-    if (this._gR) this._gR0y = this._gR.object3D.position.y;
-  },
+      // Cache closed poses (local positions).
+      this._pL0 = this._L.object3D.position.clone();
+      this._pR0 = this._R.object3D.position.clone();
 
-  toggle: function () {
-    this.setOpen(!this._open);
-  },
+      if (this._gL) this._gL0y = this._gL.object3D.position.y;
+      if (this._gR) this._gR0y = this._gR.object3D.position.y;
+    },
 
-  setOpen: function (open) {
-    // If not resolved yet, try now.
-    if (!this._L || !this._R) this._resolve();
-    if (!this._L || !this._R) return;
-
-    const d = this.data;
-    this._open = !!open;
-
-    const now = performance.now();
-
-    const pLfrom = this._L.object3D.position.clone();
-    const pRfrom = this._R.object3D.position.clone();
-
-    const pLtoOpen = this._pL0.clone().add(new THREE.Vector3(-d.openX, 0, 0));
-    const pRtoOpen = this._pR0.clone().add(new THREE.Vector3( d.openX, 0, 0));
-
-    const pLclosed = this._pL0.clone();
-    const pRclosed = this._pR0.clone();
-
-    this._anim = {
-      t0: now,
-      dur: Math.max(1, d.dur|0),
-      pLfrom, pRfrom,
-      pLto: this._open ? pLtoOpen : pLclosed,
-      pRto: this._open ? pRtoOpen : pRclosed
-    };
-
-    // Glass tuck (instant start target; eased in tick).
-    if (this._gL != null && this._gL0y != null) {
-      this._gL_targetY = this._open ? (this._gL0y - d.tuckY) : this._gL0y;
-    }
-    if (this._gR != null && this._gR0y != null) {
-      this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
-    }
-  },
-
-  isOpen: function () {
-    return !!this._open;
-  },
-
-  tick: function () {
-    if (!this._anim) return;
-
-    const a = this._anim;
-    const t = (performance.now() - a.t0) / a.dur;
-    const u = t >= 1 ? 1 : (t <= 0 ? 0 : t);
-
-    // Smoothstep ease.
-    const e = u*u*(3 - 2*u);
-
-    this._L.object3D.position.lerpVectors(a.pLfrom, a.pLto, e);
-    this._R.object3D.position.lerpVectors(a.pRfrom, a.pRto, e);
-
-    // Glass tuck (y only).
-    if (this._gL && this._gL_targetY != null) {
-      const y = this._gL.object3D.position.y;
-      this._gL.object3D.position.y = y + (this._gL_targetY - y) * (0.25 + 0.75*e);
-    }
-    if (this._gR && this._gR_targetY != null) {
-      const y = this._gR.object3D.position.y;
-      this._gR.object3D.position.y = y + (this._gR_targetY - y) * (0.25 + 0.75*e);
-    }
-
-    if (u >= 1) this._anim = null;
-  }
-});
-
-// --- Junction Dome: Capsule_03 proximity USER GUIDE + E toggle (2m) + F enter (lay down) + ESC stand up ---
-AFRAME.registerComponent('junction-capsule-03-interact', {
-  schema: {
-    triggerDist: { type: 'number', default: 2.0 },
-    hysteresis:  { type: 'number', default: 0.25 },
-    capsule:     { type: 'selector', default: '#capsule_03' },
-    deck:        { type: 'selector', default: '#capsule_03_innerDeck' },
-    layCamHeight:{ type: 'number', default: 0.85 },
-    layDurationMs:{ type: 'number', default: 950 },
-    standDurationMs:{ type: 'number', default: 650 },
-    lookUpPitchRad:{ type: 'number', default: 1.20 } // ~69°
-  },
-
-  init: function () {
-    this.rig = document.querySelector('#rig');
-    this.cam = document.querySelector('#playerCam');
-
-    // Targets can be null at init time depending on DOM load order; resolve after scene load.
-    this.capsuleEl = null;
-    this.deckEl = null;
-
-    this.guide = null;
-    this.guideBody = null;
-
-    this._rigW = new THREE.Vector3();
-    this._capW = new THREE.Vector3();
-    this._deckW = new THREE.Vector3();
-
-    this._inRange = false;
-    this._shownByMe = false;
-
-    this._controllerEl = null;
-    this._toggleComp = null;
-
-    this.state = {
-      mode: 0, // 0 proximity, 1 laying
-      neutralRigPos: null,
-      neutralRigYaw: null,
-      neutralCamY: null,
-      neutralLookYaw: 0,
-      neutralLookPitch: 0,
-      originalWalkSpeed: null,
-      anim: null,
-      noOpArmed: false
-    };
-
-    this._resolveTargets = () => {
-      // Re-query each time; robust to late-loaded entities.
-      this.capsuleEl = document.querySelector('#capsule_03');
-      this.deckEl = document.querySelector('#capsule_03_innerDeck');
-      this.guide = document.getElementById('userGuide');
-      this.guideBody = document.getElementById('userGuideBody');
-      this._controllerEl = null;
-      this._toggleComp = null;
-      this._ensureToggleComp();
-    };
-
-    // Ensure targets exist once the scene is ready.
-    const scene = this.el.sceneEl;
-    if (scene && scene.hasLoaded) this._resolveTargets();
-    else if (scene) scene.addEventListener('loaded', this._resolveTargets, { once: true });
-
-    this._captureNeutral = this._captureNeutral.bind(this);
-    this._ensureToggleComp = this._ensureToggleComp.bind(this);
-
-    this._bindKey = (e) => {
+    _onKeyDown: function (e) {
       if (e.repeat) return;
+      const d = this.data;
+      if (!d.enabled) return;
+      const k = (d.key || 'KeyO');
+      const match = (e.code === k) || ((k.length === 4 && k.startsWith('Key')) && (e.key && e.key.toLowerCase() === k.slice(3).toLowerCase()));
+      if (!match) return;
 
-      const isE   = (e.code === 'KeyE' || e.key === 'e' || e.key === 'E');
-      const isF   = (e.code === 'KeyF' || e.key === 'f' || e.key === 'F');
-      const isEsc = (e.code === 'Escape' || e.key === 'Escape');
+      // Prevent page scroll / other handlers if any.
+      e.preventDefault();
 
-      // Laying mode: ESC stands up, F is (future) no-op.
-      if (this.state.mode === 1) {
-        if (isEsc) {
-          e.preventDefault();
-          this._startStandUp();
-          return;
-        }
-        if (isF) {
-          // Future: start gravity experience. For now: do nothing.
-          e.preventDefault();
-          this.state.noOpArmed = true;
-          return;
-        }
-        return;
+      // If not resolved yet, try now.
+      if (!this._L || !this._R) this._resolve();
+      if (!this._L || !this._R) return;
+
+      this._open = !this._open;
+
+      // d already defined above
+      const now = performance.now();
+
+      const pLfrom = this._L.object3D.position.clone();
+      const pRfrom = this._R.object3D.position.clone();
+
+      const pLto = this._pL0.clone().add(new THREE.Vector3(-d.openX, 0, 0));
+      const pRto = this._pR0.clone().add(new THREE.Vector3( d.openX, 0, 0));
+
+      const pLclosed = this._pL0.clone();
+      const pRclosed = this._pR0.clone();
+
+      this._anim = {
+        t0: now,
+        dur: Math.max(1, d.dur|0),
+        pLfrom, pRfrom,
+        pLto: this._open ? pLto : pLclosed,
+        pRto: this._open ? pRto : pRclosed
+      };
+
+      // Glass tuck (instant start target; eased in tick).
+      if (this._gL != null && this._gL0y != null) {
+        this._gL_targetY = this._open ? (this._gL0y - d.tuckY) : this._gL0y;
+      }
+      if (this._gR != null && this._gR0y != null) {
+        this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
+      }
+    },
+
+    tick: function () {
+      if (!this._anim) return;
+
+      const a = this._anim;
+      const t = (performance.now() - a.t0) / a.dur;
+      const u = t >= 1 ? 1 : (t <= 0 ? 0 : t);
+
+      // Smoothstep ease.
+      const e = u*u*(3 - 2*u);
+
+      this._L.object3D.position.lerpVectors(a.pLfrom, a.pLto, e);
+      this._R.object3D.position.lerpVectors(a.pRfrom, a.pRto, e);
+
+      // Glass tuck (y only).
+      if (this._gL && this._gL_targetY != null) {
+        const y = this._gL.object3D.position.y;
+        this._gL.object3D.position.y = y + (this._gL_targetY - y) * (0.25 + 0.75*e);
+      }
+      if (this._gR && this._gR_targetY != null) {
+        const y = this._gR.object3D.position.y;
+        this._gR.object3D.position.y = y + (this._gR_targetY - y) * (0.25 + 0.75*e);
       }
 
-      // Proximity mode:
-      if (!this._inRange) return;
+      if (u >= 1) this._anim = null;
+    },
 
-      // Consume E/F only when close to capsule_03.
-      if (isE) {
-        e.preventDefault();
-        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-        e.stopPropagation();
-
-        this._ensureToggleComp();
-        if (!this._toggleComp) return;
-
-        this._toggleComp.toggle();
-        this._updateGuideText();
-        return;
-      }
-
-      if (isF) {
-        const open = (this._toggleComp && this._toggleComp.isOpen && this._toggleComp.isOpen());
-        if (!open) return;
-        e.preventDefault();
-        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-        e.stopPropagation();
-
-        this._startLayDown();
-      }
-    };
-
-    // Capture keys before other handlers (e.g., elevator "E") when in-range.
-    window.addEventListener('keydown', this._bindKey, true);
-
-    // Snapshot neutral pose once at start.
-    setTimeout(() => { this._captureNeutral(); }, 0);
-
-  },
-
-  _captureNeutral: function () {
-    if (!this.rig || !this.cam) return;
-    if (this.state.neutralRigPos) return;
-
-    const rp = this.rig.getAttribute('position') || { x: 0, y: 0, z: 0 };
-    const rr = this.rig.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
-    const cp = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
-
-    this.state.neutralRigPos = new THREE.Vector3(rp.x, rp.y, rp.z);
-    this.state.neutralRigYaw = (rr.y || 0);
-    this.state.neutralCamY = cp.y;
-
-    const lc = this.cam.components && this.cam.components['look-controls'];
-    if (lc) {
-      try {
-        this.state.neutralLookYaw = lc.yawObject.rotation.y;
-        this.state.neutralLookPitch = lc.pitchObject.rotation.x;
-      } catch (e) {}
+    remove: function () {
+      window.removeEventListener('keydown', this._onKeyDown);
     }
-  },
+  });
 
-  _ensureToggleComp: function () {
-    if (!this.capsuleEl) this.capsuleEl = document.querySelector('#capsule_03');
-    if (!this.deckEl) this.deckEl = document.querySelector('#capsule_03_innerDeck');
-    if (!this.capsuleEl) return;
-
-    if (!this._controllerEl) {
-      this._controllerEl = this.capsuleEl.querySelector('[capsule-split-toggle]');
-    }
-    if (this._controllerEl) {
-      this._toggleComp = this._controllerEl.components['capsule-split-toggle'];
-    }
-  },
-
-  _setWalkEnabled: function (enabled) {
-    if (!this.rig) return;
-    const rigWalk = this.rig.components && this.rig.components['rig-walk'];
-    if (!rigWalk) return;
-
-    if (enabled) {
-      // Restore speed if we previously captured it.
-      if (this.state.originalWalkSpeed != null) {
-        try { this.rig.setAttribute('rig-walk', 'speed', this.state.originalWalkSpeed); } catch (e) {}
-      }
-      if (rigWalk.play) rigWalk.play();
-      if (rigWalk.resume) rigWalk.resume();
-    } else {
-      // Capture speed once.
-      if (this.state.originalWalkSpeed == null) {
-        try {
-          const rw = this.rig.getAttribute('rig-walk');
-          if (rw && typeof rw.speed === 'number') this.state.originalWalkSpeed = rw.speed;
-        } catch (e) {}
-      }
-      try { this.rig.setAttribute('rig-walk', 'speed', 0); } catch (e) {}
-      if (rigWalk.pause) rigWalk.pause();
-      if (rigWalk.stop) rigWalk.stop();
-    }
-  },
-
-  _showGuide: function () {
-    if (!this.guide) return;
-    this._shownByMe = true;
-    this._updateGuideText();
-    this.guide.classList.add('visible');
-  },
-
-  _hideGuide: function () {
-    if (!this.guide) return;
-    if (!this._shownByMe) return;
-    this.guide.classList.remove('visible');
-    this._shownByMe = false;
-  },
-
-  _updateGuideText: function () {
-    if (!this.guideBody) return;
-
-    if (this.state.mode === 1) {
-      this.guideBody.innerHTML =
-        'Lying down.<br>' +
-        'Press <span class="kbd">F</span> to begin.<br>' +
-        'Press <span class="kbd">ESC</span> to stand up.';
-      return;
-    }
-
-    const open = (this._toggleComp && this._toggleComp.isOpen && this._toggleComp.isOpen());
-    const verb = open ? 'close' : 'open';
-
-    if (open) {
-      this.guideBody.innerHTML =
-        `Press <span class="kbd">E</span> to ${verb} the capsule.<br>` +
-        `Press <span class="kbd">F</span> to enter the capsule.`;
-    } else {
-      this.guideBody.innerHTML = `Press <span class="kbd">E</span> to ${verb} the capsule.`;
-    }
-  },
-
-  _startLayDown: function () {
-    if (!this.rig || !this.cam) return;
-
-    this._captureNeutral();
-    if (!this.state.neutralRigPos) return;
-
-    this._ensureToggleComp();
-
-    // Target XZ: inner deck world position.
-    if (this.deckEl) this.deckEl.object3D.getWorldPosition(this._deckW);
-    else this.capsuleEl.object3D.getWorldPosition(this._deckW);
-
-    // Build target rig position: move in XZ to deck, keep current rig Y.
-    const fromPos = this.rig.object3D.position.clone();
-    const toPos = new THREE.Vector3(this._deckW.x, fromPos.y, this._deckW.z);
-
-    // Bias slightly toward capsule's "shell side" (local +X).
-    if (this.capsuleEl) {
-      const bias = new THREE.Vector3(1,0,0);
-      bias.applyQuaternion(this.capsuleEl.object3D.quaternion);
-      bias.y = 0;
-      const len = bias.length();
-      if (len > 0.0001) {
-        bias.multiplyScalar(1 / len);
-        toPos.addScaledVector(bias, 0.35);
-      }
-    }
-
-    // Yaw: align with capsule yaw.
-    const fromYawRad = (this.rig.object3D.rotation.y || 0);
-    let toYawRad = fromYawRad;
-    if (this.capsuleEl) {
-      toYawRad = this.capsuleEl.object3D.rotation.y;
-    }
-
-    // Camera local Y: lower to "lay" height.
-    const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
-    const fromCamY = camPos.y;
-    const toCamY = this.data.layCamHeight;
-
-    // Look-controls: animate head yaw to 0 (relative) and pitch upward.
-    const lc = this.cam.components && this.cam.components['look-controls'];
-    let fromLookYaw = 0;
-    let fromLookPitch = 0;
-    if (lc) {
-      try {
-        fromLookYaw = lc.yawObject.rotation.y;
-        fromLookPitch = lc.pitchObject.rotation.x;
-      } catch (e) {}
-    }
-    const toLookYaw = 0;
-    const toLookPitch = this.data.lookUpPitchRad;
-
-    this._setWalkEnabled(false);
-
-    this.state.anim = {
-      kind: 'lay',
-      t0: performance.now(),
-      dur: this.data.layDurationMs,
-      fromPos, toPos,
-      fromYawRad, toYawRad,
-      fromCamY, toCamY,
-      fromLookYaw, toLookYaw,
-      fromLookPitch, toLookPitch
-    };
-
-    this.state.mode = 1;
-    this._showGuide();
-  },
-
-  _startStandUp: function () {
-    if (!this.rig || !this.cam) return;
-    if (!this.state.neutralRigPos) { this._captureNeutral(); }
-    if (!this.state.neutralRigPos) return;
-
-    // Current
-    const fromPos = this.rig.object3D.position.clone();
-    const fromYawRad = this.rig.object3D.rotation.y || 0;
-
-    // Targets: neutral pose
-    const toPos = this.state.neutralRigPos.clone();
-    const toYawRad = (this.state.neutralRigYaw || 0) * Math.PI / 180;
-
-    const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
-    const fromCamY = camPos.y;
-    const toCamY = this.state.neutralCamY != null ? this.state.neutralCamY : 1.6;
-
-    const lc = this.cam.components && this.cam.components['look-controls'];
-    let fromLookYaw = 0;
-    let fromLookPitch = 0;
-    if (lc) {
-      try {
-        fromLookYaw = lc.yawObject.rotation.y;
-        fromLookPitch = lc.pitchObject.rotation.x;
-      } catch (e) {}
-    }
-
-    const toLookYaw = this.state.neutralLookYaw || 0;
-    const toLookPitch = this.state.neutralLookPitch || 0;
-
-    this.state.anim = {
-      kind: 'stand',
-      t0: performance.now(),
-      dur: this.data.standDurationMs,
-      fromPos, toPos,
-      fromYawRad, toYawRad,
-      fromCamY, toCamY,
-      fromLookYaw, toLookYaw,
-      fromLookPitch, toLookPitch
-    };
-
-    // Keep mode=1 until anim completes; guide stays visible.
-    this._showGuide();
-  },
-
-  tick: function () {
-    // Late-bind UI in case this component initialized before #userGuide exists.
-    if (!this.guide || !this.guideBody) {
-      this.guide = document.getElementById('userGuide');
-      this.guideBody = document.getElementById('userGuideBody');
-    }
-
-    if (!this.rig || !this.capsuleEl) return;
-
-    if (!this._toggleComp) this._ensureToggleComp();
-
-    // Animate if needed (lay/stand).
-    if (this.state.anim) {
-      const a = this.state.anim;
-      const u = Math.min(1, (performance.now() - a.t0) / a.dur);
-      const s = u * u * (3 - 2 * u); // smoothstep
-
-      // Position
-      this.rig.object3D.position.lerpVectors(a.fromPos, a.toPos, s);
-
-      // Yaw
-      const yaw = a.fromYawRad + (a.toYawRad - a.fromYawRad) * s;
-      this.rig.object3D.rotation.y = yaw;
-
-      // Camera Y
-      const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
-      const y = (a.fromCamY + (a.toCamY - a.fromCamY) * s);
-      this.cam.setAttribute('position', `${camPos.x} ${y} ${camPos.z}`);
-
-      // Look-controls yaw/pitch
-      const lc = this.cam.components && this.cam.components['look-controls'];
-      if (lc) {
-        try {
-          lc.yawObject.rotation.y = a.fromLookYaw + (a.toLookYaw - a.fromLookYaw) * s;
-          lc.pitchObject.rotation.x = a.fromLookPitch + (a.toLookPitch - a.fromLookPitch) * s;
-        } catch (e) {}
-      }
-
-      if (u >= 1) {
-        const finished = a.kind;
-        this.state.anim = null;
-
-        if (finished === 'stand') {
-          this.state.mode = 0;
-          this._setWalkEnabled(true);
-
-          // If user is still in proximity, keep proximity guide; else hide.
-          // Proximity evaluation below will handle visibility this frame.
-        } else if (finished === 'lay') {
-          // Ensure laying guide is correct.
-          this._updateGuideText();
-        }
-      }
-
-      // While animating, keep guide text aligned.
-      this._updateGuideText();
-      return;
-    }
-
-    // In laying mode (no anim): keep laying guide visible.
-    if (this.state.mode === 1) {
-      this._showGuide();
-      return;
-    }
-
-    // Proximity mode.
-    this.rig.object3D.getWorldPosition(this._rigW);
-    this.capsuleEl.object3D.getWorldPosition(this._capW);
-
-    const dist = this._rigW.distanceTo(this._capW);
-    const enter = dist <= this.data.triggerDist;
-    const exit  = dist > (this.data.triggerDist + this.data.hysteresis);
-
-    if (!this._inRange && enter) {
-      this._inRange = true;
-      this._showGuide();
-    } else if (this._inRange && exit) {
-      this._inRange = false;
-      this._hideGuide();
-    } else if (this._inRange && this._shownByMe) {
-      this._updateGuideText();
-    }
-  },
-
-  remove: function () {
-    window.removeEventListener('keydown', this._bindKey, true);
-    this._hideGuide();
-    this._setWalkEnabled(true);
-  }
-});
-
-})();;
+})();
 </script>
 </head>
 <body>
@@ -10324,6 +9930,449 @@ AFRAME.registerComponent('solidify-from-ring', {
 });
 
 /* ============================================================
+   Capsule #03 — Proximity-triggered USER GUIDE + Autopilot lay down
+   - Step 1: within ~2m of capsule_03 => show guide (E to open)
+   - Step 2: capsule open => show guide (F to enter)
+   - Step 3: F pressed => autopilot to laying position
+   - Step 4: laying down => show guide (F to start experience / ESC to get up)
+   ============================================================ */
+AFRAME.registerComponent('capsule-lay-controller', {
+  schema: {
+    triggerDist: { type: 'number', default: 2.0 },
+    triggerHysteresis: { type: 'number', default: 0.3 },
+    layCamHeight: { type: 'number', default: 0.25 },  // head height when laying
+    autopilotDurationMs: { type: 'number', default: 1200 },
+    standUpDurationMs: { type: 'number', default: 800 }
+  },
+
+  init: function () {
+    this.rig = document.querySelector('#rig');
+    this.cam = document.querySelector('#playerCam');
+    this.capsule = document.querySelector('#capsule_03');
+    
+    // Find the capsule-split-toggle controller
+    this.capsuleController = null;
+    if (this.capsule) {
+      const controllers = this.capsule.querySelectorAll('[capsule-split-toggle]');
+      if (controllers.length > 0) {
+        this.capsuleController = controllers[0].components['capsule-split-toggle'];
+      }
+    }
+
+    this.guide = document.getElementById('capsuleGuide');
+    this.guideBody = document.getElementById('capsuleGuideBody');
+
+    this._capsuleWorld = new THREE.Vector3();
+    this._rigWorld = new THREE.Vector3();
+
+    this.state = {
+      step: 0,  // 0: out of range, 1: near capsule, 2: laying down
+      autopilot: false,
+      apStart: 0,
+      apFrom: new THREE.Vector3(),
+      apTo: new THREE.Vector3(),
+      apYawFromRad: null,
+      apYawToRad: null,
+      apPitchFromRad: null,
+      apPitchToRad: null,
+      neutralRigPos: null,
+      neutralRigYaw: null,
+      neutralCamY: null,
+      layingRigPos: null,
+      standAnim: false,
+      standStart: 0,
+      standFromY: 0,
+      standToY: 0,
+      apLookYawFrom: null,
+      apLookYawTo: null,
+      apLookPitchFrom: null,
+      apLookPitchTo: null
+    };
+
+    this._suppressPointerLockUntil = 0;
+
+    // Cache neutral pose at load
+    const initNeutral = () => {
+      if (!this.rig || !this.cam) return;
+      const rp = this.rig.getAttribute('position') || { x: 0, y: 0, z: 0 };
+      const rr = this.rig.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+      const cp = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
+      this.state.neutralRigPos = new THREE.Vector3(rp.x, rp.y, rp.z);
+      this.state.neutralRigYaw = rr.y || 0;
+      this.state.neutralCamY = cp.y;
+    };
+    setTimeout(initNeutral, 0);
+
+    this._wasPointerLocked = !!document.pointerLockElement;
+
+    // Key handling (E / F / ESC)
+    this._onKeyDown = (e) => {
+      if (e.repeat) return;
+
+      const isE = (e.code === 'KeyE' || e.key === 'e' || e.key === 'E');
+      const isF = (e.code === 'KeyF' || e.key === 'f' || e.key === 'F');
+      const isEsc = (e.code === 'Escape' || e.key === 'Escape');
+
+      // ESC: get up from laying position
+      if (isEsc) {
+        if (this.state.step === 2 && !this.state.autopilot) {
+          e.preventDefault();
+          this._standUpInPlace();
+          return;
+        }
+      }
+
+      // Step 1: F to enter capsule (autopilot to laying position)
+      if (isF && this.state.step === 1 && !this.state.autopilot && this._isCapsuleOpen()) {
+        e.preventDefault();
+        this._startAutopilotToLay();
+        return;
+      }
+
+      // Step 2: F to start gravity experience (placeholder for now)
+      if (isF && this.state.step === 2 && !this.state.autopilot && !this.state.standAnim) {
+        e.preventDefault();
+        // TODO: Start gravity experience in next iteration
+        this._showGuide('Press <span class="kbd">F</span> to start GRAVITY EXPERIENCE<br>Press <span class="kbd">ESC</span> to get back up');
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', this._onKeyDown, { passive: false });
+
+    // Pointer lock handler
+    this._onPointerLockChange = () => {
+      if (!this.state) return;
+      if (this.state.autopilot) return;
+      if (performance.now() < this._suppressPointerLockUntil) {
+        this._wasPointerLocked = !!document.pointerLockElement;
+        return;
+      }
+
+      const nowLocked = !!document.pointerLockElement;
+      const released = (this._wasPointerLocked && !nowLocked);
+      this._wasPointerLocked = nowLocked;
+
+      if (!released) return;
+
+      // If laying down and pointer lock released, treat as ESC (get up)
+      if (this.state.step === 2 && this.state.layingRigPos) {
+        this._standUpInPlace();
+      }
+    };
+    document.addEventListener('pointerlockchange', this._onPointerLockChange);
+
+    this._hideGuide();
+  },
+
+  remove: function () {
+    window.removeEventListener('keydown', this._onKeyDown);
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+  },
+
+  tick: function () {
+    if (!this.rig || !this.cam || !this.capsule) return;
+
+    // Stand-up animation
+    if (this.state.standAnim) {
+      const u = Math.min(1, (performance.now() - this.state.standStart) / this.data.standUpDurationMs);
+      const s = u * u * (3 - 2 * u); // smoothstep
+      const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
+      const y = (this.state.standFromY + (this.state.standToY - this.state.standFromY) * s);
+      this.cam.setAttribute('position', `${camPos.x} ${y.toFixed(3)} ${camPos.z}`);
+
+      if (u >= 1) {
+        this.state.standAnim = false;
+        this._setWalkEnabled(true);
+        this.state.step = 0;
+      }
+    }
+
+    // Autopilot animation
+    if (this.state.autopilot) {
+      const u = Math.min(1, (performance.now() - this.state.apStart) / this.data.autopilotDurationMs);
+      const s = u * u * (3 - 2 * u); // smoothstep
+      this.rig.object3D.position.lerpVectors(this.state.apFrom, this.state.apTo, s);
+
+      // Rig yaw interpolation
+      if (this.state.apYawFromRad != null && this.state.apYawToRad != null) {
+        const norm = (a) => {
+          let x = a;
+          while (x <= -Math.PI) x += Math.PI * 2;
+          while (x > Math.PI) x -= Math.PI * 2;
+          return x;
+        };
+        const lerpAngle = (a, b, t) => a + norm(b - a) * t;
+
+        const yawRad = lerpAngle(this.state.apYawFromRad, this.state.apYawToRad, s);
+        const yawDeg = yawRad * 180 / Math.PI;
+
+        const r = this.rig.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+        this.rig.setAttribute('rotation', `${r.x} ${yawDeg.toFixed(3)} ${r.z}`);
+      }
+
+      // Look-controls interpolation
+      if (this.state.apLookYawFrom != null && this.state.apLookYawTo != null) {
+        const norm = (a) => {
+          let x = a;
+          while (x <= -Math.PI) x += Math.PI * 2;
+          while (x > Math.PI) x -= Math.PI * 2;
+          return x;
+        };
+        const lerpAngle = (a, b, t) => a + norm(b - a) * t;
+
+        const lc = this.cam.components && this.cam.components['look-controls'];
+        if (lc) {
+          try {
+            const ly = lerpAngle(this.state.apLookYawFrom, this.state.apLookYawTo, s);
+            const lp = (this.state.apLookPitchFrom != null && this.state.apLookPitchTo != null)
+              ? (this.state.apLookPitchFrom + (this.state.apLookPitchTo - this.state.apLookPitchFrom) * s)
+              : (lc.pitchObject.rotation.x || 0);
+
+            lc.yawObject.rotation.y = norm(ly);
+            lc.pitchObject.rotation.x = lp;
+          } catch (err) {}
+        }
+      }
+
+      // Camera height interpolation (for smooth laying down)
+      if (u < 1) {
+        const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
+        const startY = this.state.neutralCamY || 1.6;
+        const endY = this.data.layCamHeight;
+        const currentY = startY + (endY - startY) * s;
+        this.cam.setAttribute('position', `${camPos.x} ${currentY.toFixed(3)} ${camPos.z}`);
+      }
+
+      if (u >= 1) {
+        this.state.autopilot = false;
+        this._finishLayPose();
+      }
+      return;
+    }
+
+    // While laying down, maintain state
+    if (this.state.step === 2) {
+      return;
+    }
+
+    // Proximity check to capsule
+    this.rig.object3D.getWorldPosition(this._rigWorld);
+    this.capsule.object3D.getWorldPosition(this._capsuleWorld);
+    
+    const dist = this._capsuleWorld.distanceTo(this._rigWorld);
+    const onDist = this.data.triggerDist;
+    const offDist = this.data.triggerDist + this.data.triggerHysteresis;
+
+    const capsuleOpen = this._isCapsuleOpen();
+
+    if (dist <= onDist) {
+      if (this.state.step !== 1) {
+        this.state.step = 1;
+        this._updateProximityGuide(capsuleOpen);
+      } else {
+        // Update guide if capsule state changed
+        this._updateProximityGuide(capsuleOpen);
+      }
+    } else if (this.state.step === 1 && dist > offDist) {
+      this.state.step = 0;
+      this._hideGuide();
+    }
+  },
+
+  _isCapsuleOpen: function () {
+    if (!this.capsuleController) return false;
+    return this.capsuleController._open === true;
+  },
+
+  _updateProximityGuide: function (capsuleOpen) {
+    if (capsuleOpen) {
+      this._showGuide('Press <span class="kbd">F</span> to enter the capsule');
+    } else {
+      this._showGuide('Press <span class="kbd">E</span> to open the capsule');
+    }
+  },
+
+  _setWalkEnabled: function (enabled) {
+    if (!this.rig) return;
+    const rigWalk = this.rig.components && this.rig.components['rig-walk'];
+    if (!rigWalk) return;
+    if (enabled) {
+      if (rigWalk.play) rigWalk.play();
+      if (rigWalk.resume) rigWalk.resume();
+    } else {
+      if (rigWalk.pause) rigWalk.pause();
+      if (rigWalk.stop) rigWalk.stop();
+    }
+  },
+
+  _calculateLayingPosition: function () {
+    // Calculate laying position based on capsule_03's world transform
+    // Target: head toward shell side (-Z in capsule local space), looking up at ceiling (+Y)
+    
+    const capsuleWorld = new THREE.Vector3();
+    const capsuleQuat = new THREE.Quaternion();
+    this.capsule.object3D.getWorldPosition(capsuleWorld);
+    this.capsule.object3D.getWorldQuaternion(capsuleQuat);
+
+    // In capsule local space, characters are at (0, 0, 0)
+    // We want the rig positioned so the camera (user's head) ends up at that spot
+    // The deck is at y=0.17 in capsule local space (from innerDeck position)
+    // Characters are at y=0 in capsule local, scale 0.75
+    
+    // Target position: center of capsule deck
+    const localTarget = new THREE.Vector3(0, 0, 0);
+    const worldTarget = localTarget.applyQuaternion(capsuleQuat).add(capsuleWorld);
+    
+    // Adjust for rig Y (we want camera at the deck level, not rig)
+    const rigY = this.rig.object3D.position.y;
+    const targetRigPos = new THREE.Vector3(worldTarget.x, rigY, worldTarget.z);
+
+    // Calculate yaw: capsule rotation -90° means looking along capsule's -Z axis (toward shell)
+    // We want to look UP (pitch up) at the ceiling
+    // Capsule rotation affects which direction is "forward"
+    const capsuleRot = this.capsule.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+    const capsuleYaw = capsuleRot.y || 0;
+    
+    // The capsule is rotated -90° (looking along its local +X, which points to the shell side)
+    // We want the user's head to point toward that direction too
+    // But we also want them looking UP at the ceiling
+    const targetYaw = capsuleYaw; // Align with capsule's rotation
+    const targetPitch = Math.PI / 3; // Look up at ~60° angle to see ceiling
+
+    return {
+      position: targetRigPos,
+      yawRad: targetYaw * Math.PI / 180,
+      pitchRad: targetPitch
+    };
+  },
+
+  _startAutopilotToLay: function () {
+    if (!this.rig || !this.cam || !this.capsule) return;
+
+    this._setWalkEnabled(false);
+
+    const layingPose = this._calculateLayingPosition();
+
+    // Current state
+    this.rig.object3D.getWorldPosition(this._rigWorld);
+    const r0 = this.rig.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+    const rigYawRad = (r0.y || 0) * Math.PI / 180;
+
+    // Look-controls current state
+    const lc = this.cam.components && this.cam.components['look-controls'];
+    let lookYawFrom = 0;
+    let lookPitchFrom = 0;
+    if (lc) {
+      try {
+        lookYawFrom = lc.yawObject.rotation.y;
+        lookPitchFrom = lc.pitchObject.rotation.x;
+      } catch (err) {}
+    }
+
+    const norm = (a) => {
+      let x = a;
+      while (x <= -Math.PI) x += Math.PI * 2;
+      while (x > Math.PI) x -= Math.PI * 2;
+      return x;
+    };
+
+    // Target orientation: align head to body, pitch up to look at ceiling
+    const lookYawTo = 0;  // Align yaw with rig
+    const lookPitchTo = layingPose.pitchRad;
+
+    this.state.apYawFromRad = rigYawRad;
+    this.state.apYawToRad = norm(layingPose.yawRad);
+
+    this.state.apLookYawFrom = norm(lookYawFrom);
+    this.state.apLookYawTo = norm(lookYawTo);
+    this.state.apLookPitchFrom = lookPitchFrom;
+    this.state.apLookPitchTo = lookPitchTo;
+
+    this.state.apFrom.copy(this.rig.object3D.position);
+    this.state.apTo.copy(layingPose.position);
+    this.state.apStart = performance.now();
+    this.state.autopilot = true;
+
+    this._showGuide('Laying down…');
+  },
+
+  _finishLayPose: function () {
+    if (!this.cam || !this.rig) return;
+
+    // Store laying rig position
+    this.state.layingRigPos = this.rig.object3D.position.clone();
+
+    // Set final camera height
+    const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
+    this.cam.setAttribute('position', `${camPos.x} ${this.data.layCamHeight.toFixed(3)} ${camPos.z}`);
+
+    // Ensure final rig orientation
+    if (this.state.apYawToRad != null) {
+      const r = this.rig.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+      const yawDeg = (this.state.apYawToRad * 180 / Math.PI);
+      this.rig.setAttribute('rotation', `${r.x} ${yawDeg.toFixed(3)} ${r.z}`);
+    }
+    this.state.apYawFromRad = null;
+    this.state.apYawToRad = null;
+
+    // Set final look orientation
+    const lc = this.cam.components && this.cam.components['look-controls'];
+    if (lc) {
+      try {
+        if (this.state.apLookYawTo != null) lc.yawObject.rotation.y = this.state.apLookYawTo;
+        if (this.state.apLookPitchTo != null) lc.pitchObject.rotation.x = this.state.apLookPitchTo;
+      } catch (err) {}
+    }
+    this.state.apLookYawFrom = null;
+    this.state.apLookYawTo = null;
+    this.state.apLookPitchFrom = null;
+    this.state.apLookPitchTo = null;
+
+    // Keep movement disabled while laying
+    this._setWalkEnabled(false);
+
+    this.state.step = 2;
+    this._showGuide('Press <span class="kbd">F</span> to start GRAVITY EXPERIENCE<br>Press <span class="kbd">ESC</span> to get back up');
+  },
+
+  _standUpInPlace: function () {
+    if (!this.rig || !this.cam) return;
+
+    // If not laying, ignore
+    if (this.state.step !== 2) return;
+
+    // Restore POV height smoothly
+    this._setWalkEnabled(false);
+
+    const camPos = this.cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
+    const fromY = camPos.y;
+    const toY = (this.state.neutralCamY != null) ? this.state.neutralCamY : 1.6;
+
+    this.state.standAnim = true;
+    this.state.standStart = performance.now();
+    this.state.standFromY = fromY;
+    this.state.standToY = toY;
+
+    // Clear laying marker
+    this.state.layingRigPos = null;
+
+    this._showGuide('Getting back up…');
+  },
+
+  _showGuide: function (html) {
+    if (!this.guide || !this.guideBody) return;
+    this.guideBody.innerHTML = html;
+    this.guide.classList.add('visible');
+  },
+
+  _hideGuide: function () {
+    if (!this.guide) return;
+    this.guide.classList.remove('visible');
+  }
+});
+
+/* ============================================================
    Aya — Seat-triggered USER GUIDE + Autopilot sit + Video start
    - Step 1: within ~2m of a rock seat => show guide (E)
    - Step 2: after autopilot 'sit' => show guide (F)
@@ -10350,8 +10399,8 @@ AFRAME.registerComponent('aya-seat-experience', {
     this.overlay = document.getElementById('ayaFullscreenOverlay');
     this.overlayVideo = document.getElementById('ayaFullscreenVideo');
 
-    this.guide = null;
-    this.guideBody = null;
+    this.guide = document.getElementById('userGuide');
+    this.guideBody = document.getElementById('userGuideBody');
 
     this.seats = [
       document.querySelector('#rock_seat_01'),
@@ -11124,8 +11173,8 @@ AFRAME.registerComponent('endchamber-lift', {
     this.rig = document.querySelector('#rig');
     this.cam = document.querySelector('#playerCam');
 
-    this.guide = null;
-    this.guideBody = null;
+    this.guide = document.getElementById('userGuide');
+    this.guideBody = document.getElementById('userGuideBody');
 
     this._a = new THREE.Vector3();
     this._b = new THREE.Vector3();
@@ -11396,8 +11445,8 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     this.rig = document.querySelector('#rig');
     this.cam = document.querySelector('#playerCam');
 
-    this.guide = null;
-    this.guideBody = null;
+    this.guide = document.getElementById('userGuide');
+    this.guideBody = document.getElementById('userGuideBody');
 
     this._a = new THREE.Vector3();
     this._b = new THREE.Vector3();
@@ -16774,7 +16823,9 @@ AFRAME.registerComponent('ion-wind-field', {
 
 
 
-  <a-scene zone-manager="playerRig: #rig; debugMode: false" adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #capsule_01, #capsule_02, #capsule_03" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  <a-scene zone-manager="playerRig: #rig; debugMode: false" 
+           capsule-lay-controller
+           adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06, #capsule_01, #capsule_02, #capsule_03" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -20162,7 +20213,8 @@ AFRAME.registerComponent('ion-wind-field', {
         rightGlass: #capsule_01_glassR;
         openX:      0.5;
         tuckY:      0.06;
-        dur:        650; "></a-entity>
+        dur:        650;
+        enabled:    false"></a-entity>
         </a-entity>
 
 <a-entity id="capsule_02" position="-1.879 -1.1250 4.871" rotation="0 158.909 0" scale="1.5 1.5 1.5">
@@ -20244,7 +20296,8 @@ AFRAME.registerComponent('ion-wind-field', {
         rightGlass: #capsule_02_glassR;
         openX:      0.5;
         tuckY:      0.06;
-        dur:        650; "></a-entity>
+        dur:        650;
+        enabled:    false"></a-entity>
         </a-entity>
 
 <a-entity id="capsule_03" position="5.221 -1.1250 0.000" rotation="0 -90.000 0" scale="1.5 1.5 1.5">
@@ -20318,9 +20371,9 @@ AFRAME.registerComponent('ion-wind-field', {
         openX:      0.5;
         tuckY:      0.06;
         dur:        650;
-        enabled:    false;" ></a-entity>
+        key:        KeyE;
+        enabled:    true"></a-entity>
         </a-entity>
-    <a-entity id="junctionCapsule03Interact" junction-capsule-03-interact></a-entity>
     <!-- === /Capsules === -->
 
 </a-entity>
@@ -20343,6 +20396,10 @@ AFRAME.registerComponent('ion-wind-field', {
   <div id="userGuide" aria-live="polite">
     <div class="title">USER GUIDE</div>
     <div id="userGuideBody">...</div>
+  </div>
+
+  <div id="capsuleGuide" aria-live="polite">
+    <div id="capsuleGuideBody"></div>
   </div>
 
 
