@@ -1530,7 +1530,10 @@ AFRAME.registerComponent('play-gltf-clip', {
       tuckY:     { type: 'number', default: 0.06 },
       dur:       { type: 'int',    default: 650 },
       enabled:  { type: 'boolean', default: true },
-      key:      { type: 'string',  default: 'KeyO' }
+      key:      { type: 'string',  default: 'KeyO' },
+      useFrom:   { type: 'selector' },
+      useAnchor: { type: 'selector' },
+      useDistance: { type: 'number', default: 0 }
     },
 
     init: function () {
@@ -1556,6 +1559,10 @@ AFRAME.registerComponent('play-gltf-clip', {
       this._R = d.rightHalf;
       this._gL = d.leftGlass;
       this._gR = d.rightGlass;
+      this._useFrom = d.useFrom || null;
+      this._useAnchor = d.useAnchor || null;
+      // Fallback anchor: the component entity itself.
+      if (!this._useAnchor) this._useAnchor = this.el;
 
       if (!this._L || !this._R) {
         console.warn('[capsule-split-toggle] Missing leftHalf/rightHalf selectors.');
@@ -1578,7 +1585,18 @@ AFRAME.registerComponent('play-gltf-clip', {
       const match = (e.code === k) || ((k.length === 4 && k.startsWith('Key')) && (e.key && e.key.toLowerCase() === k.slice(3).toLowerCase()));
       if (!match) return;
 
-      // Prevent page scroll / other handlers if any.
+            // Optional proximity gating (only allow toggle when within useDistance of useAnchor).
+      if (d.useDistance && d.useDistance > 0) {
+        if (!this._useFrom) this._useFrom = d.useFrom || document.querySelector('#rig');
+        if (!this._useAnchor) this._useAnchor = d.useAnchor || this.el;
+        if (this._useFrom && this._useAnchor && this._useFrom.object3D && this._useAnchor.object3D) {
+          const a = this._useFrom.object3D.getWorldPosition(new THREE.Vector3());
+          const b = this._useAnchor.object3D.getWorldPosition(new THREE.Vector3());
+          if (a.distanceTo(b) > d.useDistance) return;
+        }
+      }
+
+// Prevent page scroll / other handlers if any.
       e.preventDefault();
 
       // If not resolved yet, try now.
@@ -1614,7 +1632,45 @@ AFRAME.registerComponent('play-gltf-clip', {
       if (this._gR != null && this._gR0y != null) {
         this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
       }
+    ,
+
+    // Programmatic toggle (used by proximity-driven interaction controller).
+    toggleNow: function () {
+      // If not resolved yet, try now.
+      if (!this._L || !this._R) this._resolve();
+      if (!this._L || !this._R) return;
+
+      this._open = !this._open;
+      const d = this.data;
+      const now = performance.now();
+
+      const pLfrom = this._L.object3D.position.clone();
+      const pRfrom = this._R.object3D.position.clone();
+
+      const pLto = this._pL0.clone().add(new THREE.Vector3(-d.openX, 0, 0));
+      const pRto = this._pR0.clone().add(new THREE.Vector3( d.openX, 0, 0));
+
+      const pLclosed = this._pL0.clone();
+      const pRclosed = this._pR0.clone();
+
+      this._anim = {
+        t0: now,
+        dur: Math.max(1, d.dur|0),
+        pLfrom, pRfrom,
+        pLto: this._open ? pLto : pLclosed,
+        pRto: this._open ? pRto : pRclosed
+      };
+
+      if (this._gL != null && this._gL0y != null) {
+        this._gL_targetY = this._open ? (this._gL0y - d.tuckY) : this._gL0y;
+      }
+      if (this._gR != null && this._gR0y != null) {
+        this._gR_targetY = this._open ? (this._gR0y - d.tuckY) : this._gR0y;
+      }
     },
+
+    isOpen: function () { return !!this._open; }
+},
 
     tick: function () {
       if (!this._anim) return;
@@ -1703,6 +1759,277 @@ AFRAME.registerComponent('render-order', {
     setTimeout(apply, 0);
   }
 });
+
+  // --- Junction Dome: proximity-gated capsule guide + enter/exit controller (E / F / ESC) ---
+  AFRAME.registerComponent('junction-capsule-interaction', {
+    schema: {
+      anchor:   { type: 'selector' },      // capsule root (distance anchor)
+      rig:      { type: 'selector' },      // #rig
+      cam:      { type: 'selector' },      // #playerCam
+      distance: { type: 'number', default: 3.0 },
+      openKey:  { type: 'string', default: 'KeyE' },
+      enterKey: { type: 'string', default: 'KeyF' }
+    },
+
+    init: function () {
+      this.toggle = null;
+
+      this.guide = document.getElementById('userGuide');
+      this.guideBody = document.getElementById('userGuideBody');
+
+      this.state = {
+        inRange: false,
+        inside: false,
+        entering: false,
+        t0: 0,
+        dur: 650,
+        fromPos: null,
+        toPos: null,
+        neutralRigPos: null,
+        neutralRigRot: null,
+        neutralCamPos: null,
+        neutralCamRot: null,
+        targetRigRot: null,
+        targetCamRot: null
+      };
+
+      this._tmpA = new THREE.Vector3();
+      this._tmpB = new THREE.Vector3();
+
+      this._onKeyDown = this._onKeyDown.bind(this);
+
+      window.addEventListener('keydown', this._onKeyDown, { passive: false });
+    },
+
+    remove: function () {
+      window.removeEventListener('keydown', this._onKeyDown);
+      this._hideGuide();
+    },
+
+    _getToggle: function () {
+      if (this.toggle) return this.toggle;
+      this.toggle = this.el.components && this.el.components['capsule-split-toggle'];
+      return this.toggle;
+    },
+
+    _isKey: function (e, code) {
+      if (!code) return false;
+      if (e.code && e.code === code) return true;
+      const k = (e.key || '').toLowerCase();
+      if (code.startsWith('Key') && code.length === 4) return k === code.slice(3).toLowerCase();
+      return false;
+    },
+
+    _setWalkEnabled: function (enabled) {
+      const rig = this.data.rig;
+      if (!rig) return;
+      const rigWalk = rig.components && rig.components['rig-walk'];
+      if (!rigWalk) return;
+      if (enabled) {
+        if (rigWalk.play) rigWalk.play();
+        if (rigWalk.resume) rigWalk.resume();
+      } else {
+        if (rigWalk.pause) rigWalk.pause();
+        if (rigWalk.stop) rigWalk.stop();
+      }
+    },
+
+    _showGuide: function (html) {
+      if (!this.guide || !this.guideBody) return;
+      this.guideBody.innerHTML = html;
+      this.guide.classList.add('visible');
+    },
+
+    _hideGuide: function () {
+      if (!this.guide) return;
+      this.guide.classList.remove('visible');
+    },
+
+    _updateGuide: function () {
+      if (!this.state.inRange) {
+        if (!this.state.inside) this._hideGuide();
+        return;
+      }
+
+      const t = this._getToggle();
+      const isOpen = t && t.isOpen ? t.isOpen() : false;
+
+      if (this.state.inside) {
+        this._showGuide(
+          'Press <span class="kbd">ESC</span> to exit &nbsp;•&nbsp; Press <span class="kbd">F</span> to begin'
+        );
+        return;
+      }
+
+      if (!isOpen) {
+        this._showGuide('Press <span class="kbd">E</span> to open capsule');
+      } else {
+        this._showGuide('Press <span class="kbd">F</span> to enter capsule');
+      }
+    },
+
+    _enterCapsule: function () {
+      const rig = this.data.rig;
+      const cam = this.data.cam;
+      const anchor = this.data.anchor;
+      if (!rig || !cam || !anchor) return;
+
+      // Cache neutral pose.
+      const rp = rig.getAttribute('position') || { x: 0, y: 0, z: 0 };
+      const rr = rig.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+      const cp = cam.getAttribute('position') || { x: 0, y: 1.6, z: 0 };
+      const cr = cam.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+
+      this.state.neutralRigPos = new THREE.Vector3(rp.x, rp.y, rp.z);
+      this.state.neutralRigRot = { x: rr.x, y: rr.y, z: rr.z };
+      this.state.neutralCamPos = { x: cp.x, y: cp.y, z: cp.z };
+      this.state.neutralCamRot = { x: cr.x, y: cr.y, z: cr.z };
+
+      // Disable movement + lock view (no mouse look).
+      this._setWalkEnabled(false);
+      cam.setAttribute('look-controls', 'enabled: false');
+
+      // If pointer lock is active, release it so mouse won't move the view indirectly.
+      try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) {}
+
+      // Target: center of capsule, slightly above inner deck.
+      const localTarget = new THREE.Vector3(0, 0.32, 0);
+      const worldTarget = anchor.object3D.localToWorld(localTarget.clone());
+
+      // Lying camera: low height + slightly back.
+      cam.setAttribute('position', { x: 0, y: 0.42, z: 0.15 });
+      cam.setAttribute('rotation', { x: -70, y: 0, z: 0 });
+
+      // Rig yaw aligned to capsule.
+      const aRot = anchor.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
+      this.state.targetRigRot = { x: 0, y: aRot.y, z: 0 };
+
+      // Smooth translate in.
+      const from = rig.object3D.position.clone();
+      this.state.fromPos = from;
+      this.state.toPos = new THREE.Vector3(worldTarget.x, worldTarget.y, worldTarget.z);
+
+      this.state.entering = true;
+      this.state.inside = true;
+      this.state.t0 = performance.now();
+      this.state.dur = 650;
+
+      // Apply target rotation immediately to avoid drift while moving.
+      rig.setAttribute('rotation', this.state.targetRigRot);
+
+      this._updateGuide();
+    },
+
+    _exitCapsule: function () {
+      const rig = this.data.rig;
+      const cam = this.data.cam;
+      if (!rig || !cam || !this.state.neutralRigPos) return;
+
+      // Restore pose.
+      rig.setAttribute('position', {
+        x: this.state.neutralRigPos.x,
+        y: this.state.neutralRigPos.y,
+        z: this.state.neutralRigPos.z
+      });
+      rig.setAttribute('rotation', this.state.neutralRigRot || { x: 0, y: 0, z: 0 });
+
+      cam.setAttribute('position', this.state.neutralCamPos || { x: 0, y: 1.6, z: 0 });
+      cam.setAttribute('look-controls', 'enabled: true');
+
+      // Restore camera rotation after re-enabling look-controls (prevents re-init overrides).
+      setTimeout(() => {
+        try {
+          cam.setAttribute('rotation', this.state.neutralCamRot || { x: 0, y: 0, z: 0 });
+        } catch (err) {}
+      }, 0);
+
+      this._setWalkEnabled(true);
+
+      this.state.entering = false;
+      this.state.inside = false;
+
+      this._updateGuide();
+    },
+
+    _onKeyDown: function (e) {
+      if (e.repeat) return;
+
+      const openKey = this.data.openKey || 'KeyE';
+      const enterKey = this.data.enterKey || 'KeyF';
+      const isOpenKey = this._isKey(e, openKey);
+      const isEnterKey = this._isKey(e, enterKey);
+      const isEsc = (e.code === 'Escape' || e.key === 'Escape');
+
+      // Inside capsule controls.
+      if (this.state.inside) {
+        if (isEsc) {
+          e.preventDefault();
+          this._exitCapsule();
+          return;
+        }
+        if (isEnterKey) {
+          e.preventDefault();
+          // Hook for later experience start.
+          this.el.emit('capsule-experience-start', { anchor: this.data.anchor ? this.data.anchor.id : null });
+          return;
+        }
+        return;
+      }
+
+      if (!this.state.inRange) return;
+
+      const t = this._getToggle();
+      const isOpen = t && t.isOpen ? t.isOpen() : false;
+
+      if (isOpenKey && !isOpen) {
+        e.preventDefault();
+        if (t && t.toggleNow) t.toggleNow();
+        this._updateGuide();
+        return;
+      }
+
+      if (isEnterKey && isOpen) {
+        e.preventDefault();
+        this._enterCapsule();
+        return;
+      }
+    },
+
+    tick: function () {
+      const rig = this.data.rig;
+      const anchor = this.data.anchor;
+      if (!rig || !anchor) return;
+
+      // Range check.
+      rig.object3D.getWorldPosition(this._tmpA);
+      anchor.object3D.getWorldPosition(this._tmpB);
+      const inRangeNow = this._tmpA.distanceTo(this._tmpB) <= (this.data.distance || 3.0);
+
+      if (inRangeNow !== this.state.inRange) {
+        this.state.inRange = inRangeNow;
+        this._updateGuide();
+      } else if (inRangeNow && !this.state.inside) {
+        // If capsule state changed externally, keep guide accurate.
+        this._updateGuide();
+      }
+
+      // Smooth enter translation if active.
+      if (this.state.entering && this.state.fromPos && this.state.toPos) {
+        const t = (performance.now() - this.state.t0) / Math.max(1, this.state.dur);
+        const s = Math.min(1, Math.max(0, t));
+        const ease = (s < 0.5) ? (2 * s * s) : (1 - Math.pow(-2 * s + 2, 2) / 2);
+
+        const p = this.state.fromPos.clone().lerp(this.state.toPos, ease);
+        rig.setAttribute('position', { x: p.x, y: p.y, z: p.z });
+
+        if (s >= 1) {
+          this.state.entering = false;
+        }
+      }
+    }
+  });
+
+
 
 // ===== Mercurial torch kit (ported from dome_safe_01) =====
 // Futuristic flame core (procedural additive planes + inner hotspot)
@@ -19899,7 +20226,10 @@ AFRAME.registerComponent('ion-wind-field', {
         tuckY:      0.06;
         dur:        650;
         key:        KeyE;
-        enabled:    true"></a-entity>
+        enabled:    true;
+        useFrom:    #rig;
+        useAnchor:  #capsule_03;
+        useDistance: 3.0" junction-capsule-interaction="anchor:#capsule_03; rig:#rig; cam:#playerCam; distance:3.0; openKey:KeyE; enterKey:KeyF"></a-entity>
         </a-entity>
     <!-- === /Capsules === -->
 
