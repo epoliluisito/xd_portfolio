@@ -100,6 +100,18 @@
       user-select: none;
     }
     #capsuleGuide.visible { opacity: 1; }
+    #capsuleGuide .kbd {
+      display: inline-block;
+      padding: 2px 8px;
+      margin: 0 2px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.08);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.3;
+      vertical-align: baseline;
+    }
 </style>
 
 <style>
@@ -9946,21 +9958,45 @@ AFRAME.registerComponent('capsule-lay-controller', {
   },
 
   init: function () {
-    this.rig = document.querySelector('#rig');
-    this.cam = document.querySelector('#playerCam');
-    this.capsule = document.querySelector('#capsule_03');
-    
-    // Find the capsule-split-toggle controller
+    this.rig = null;
+    this.cam = null;
+    this.capsule = null;
     this.capsuleController = null;
-    if (this.capsule) {
+    this._initialized = false;
+
+    this.guide = document.getElementById('capsuleGuide');
+    this.guideBody = document.getElementById('capsuleGuideBody');
+    
+    // Defer element lookup until scene is ready
+    const tryInit = () => {
+      if (this._initialized) return;
+      
+      this.rig = document.querySelector('#rig');
+      this.cam = document.querySelector('#playerCam');
+      this.capsule = document.querySelector('#capsule_03');
+      
+      if (!this.rig || !this.cam || !this.capsule) {
+        // Not ready yet, try again next frame
+        requestAnimationFrame(tryInit);
+        return;
+      }
+      
+      // Find the capsule-split-toggle controller
       const controllers = this.capsule.querySelectorAll('[capsule-split-toggle]');
       if (controllers.length > 0) {
         this.capsuleController = controllers[0].components['capsule-split-toggle'];
       }
+      
+      this._initialized = true;
+      console.log('[capsule-lay-controller] Initialized successfully');
+    };
+    
+    // Start trying after scene loads
+    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) {
+      setTimeout(tryInit, 100);
+    } else if (this.el.sceneEl) {
+      this.el.sceneEl.addEventListener('loaded', () => setTimeout(tryInit, 100));
     }
-
-    this.guide = document.getElementById('capsuleGuide');
-    this.guideBody = document.getElementById('capsuleGuideBody');
 
     this._capsuleWorld = new THREE.Vector3();
     this._rigWorld = new THREE.Vector3();
@@ -10071,7 +10107,7 @@ AFRAME.registerComponent('capsule-lay-controller', {
   },
 
   tick: function () {
-    if (!this.rig || !this.cam || !this.capsule) return;
+    if (!this._initialized || !this.rig || !this.cam || !this.capsule) return;
 
     // Stand-up animation
     if (this.state.standAnim) {
@@ -10164,10 +10200,16 @@ AFRAME.registerComponent('capsule-lay-controller', {
     const onDist = this.data.triggerDist;
     const offDist = this.data.triggerDist + this.data.triggerHysteresis;
 
+    // Debug logging (can be removed later)
+    if (Math.random() < 0.01) { // Log ~1% of frames to avoid spam
+      console.log('[capsule-lay-controller] Distance to capsule:', dist.toFixed(2), 'm, trigger:', onDist, 'm, step:', this.state.step);
+    }
+
     const capsuleOpen = this._isCapsuleOpen();
 
     if (dist <= onDist) {
       if (this.state.step !== 1) {
+        console.log('[capsule-lay-controller] Entering proximity range, showing guide');
         this.state.step = 1;
         this._updateProximityGuide(capsuleOpen);
       } else {
@@ -10175,17 +10217,24 @@ AFRAME.registerComponent('capsule-lay-controller', {
         this._updateProximityGuide(capsuleOpen);
       }
     } else if (this.state.step === 1 && dist > offDist) {
+      console.log('[capsule-lay-controller] Leaving proximity range, hiding guide');
       this.state.step = 0;
       this._hideGuide();
     }
   },
 
   _isCapsuleOpen: function () {
-    if (!this.capsuleController) return false;
-    return this.capsuleController._open === true;
+    if (!this.capsuleController) {
+      console.log('[capsule-lay-controller] No capsule controller found');
+      return false;
+    }
+    const isOpen = this.capsuleController._open === true;
+    console.log('[capsule-lay-controller] Capsule open status:', isOpen);
+    return isOpen;
   },
 
   _updateProximityGuide: function (capsuleOpen) {
+    console.log('[capsule-lay-controller] Updating guide, capsule open:', capsuleOpen);
     if (capsuleOpen) {
       this._showGuide('Press <span class="kbd">F</span> to enter the capsule');
     } else {
@@ -10361,13 +10410,18 @@ AFRAME.registerComponent('capsule-lay-controller', {
   },
 
   _showGuide: function (html) {
-    if (!this.guide || !this.guideBody) return;
+    if (!this.guide || !this.guideBody) {
+      console.warn('[capsule-lay-controller] Guide elements not found');
+      return;
+    }
+    console.log('[capsule-lay-controller] Showing guide:', html);
     this.guideBody.innerHTML = html;
     this.guide.classList.add('visible');
   },
 
   _hideGuide: function () {
     if (!this.guide) return;
+    console.log('[capsule-lay-controller] Hiding guide');
     this.guide.classList.remove('visible');
   }
 });
