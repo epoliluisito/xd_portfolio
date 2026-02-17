@@ -73,28 +73,6 @@
     /* Hide mouse cursor only during experience playback */
     body.hide-pointer, body.hide-pointer * { cursor: none !important; }
 </style>
-<style>
-  #capsuleGuide {
-    position:fixed; left:50%; bottom:28px; transform:translateX(-50%);
-    max-width:720px; width:calc(100% - 64px); padding:14px 16px;
-    background:rgba(0,0,0,0.62); border:1px solid rgba(255,255,255,0.16);
-    border-radius:12px; color:#e9f2ff;
-    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
-    font-size:14px; line-height:1.55; letter-spacing:0.2px;
-    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
-    box-shadow:0 10px 24px rgba(0,0,0,0.35);
-    opacity:0; pointer-events:none; transition:opacity 180ms ease;
-    z-index:9999; user-select:none;
-  }
-  #capsuleGuide.visible { opacity:1; }
-  #capsuleGuide .kbd {
-    display:inline-block; padding:2px 8px; margin:0 2px;
-    border-radius:8px; border:1px solid rgba(255,255,255,0.22);
-    background:rgba(255,255,255,0.08);
-    font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
-    font-size:12px; line-height:1.3; vertical-align:baseline;
-  }
-</style>
 
 <style>
   /* === Fullscreen video overlay (Mercury Pool Experience) === */
@@ -10662,6 +10640,86 @@ return chosen * 180 / Math.PI;
       this.state.lastSeatedGuideKey = '';
       this._updateSeatedGuide(true);
 });
+
+
+AFRAME.registerComponent('capsule-guide-proximity', {
+  schema: {
+    target: { type: 'selector' },                 // e.g. #capsule_03
+    triggerPoint: { type: 'vec3', default: {x:0, y:0, z:0} }, // fallback if target not found
+    triggerDist: { type: 'number', default: 2.0 },           // meters
+    triggerHysteresis: { type: 'number', default: 0.25 },    // meters
+    horizontalOnly: { type: 'boolean', default: true },
+    messageHtml: { type: 'string', default:
+      'Capsule interface.<br>Press <span class="kbd">E</span> to open / close.'
+    }
+  },
+
+  init: function () {
+    this.rig = document.querySelector('#rig');
+    this.cam = document.querySelector('#playerCam');
+    this.guide = document.getElementById('userGuide');
+    this.guideBody = document.getElementById('userGuideBody');
+
+    this._rigWorld = new THREE.Vector3();
+    this._targetWorld = new THREE.Vector3();
+    this._hasShown = false;
+
+    this.ownerKey = 'capsule-guide-proximity';
+  },
+
+  tick: function () {
+    if (!this.guide || !this.guideBody || !this.rig) return;
+
+    // Rig world position
+    this.rig.object3D.getWorldPosition(this._rigWorld);
+
+    // Target world position (prefer entity, otherwise fixed point)
+    const t = this.data.target;
+    if (t && t.object3D) {
+      t.object3D.getWorldPosition(this._targetWorld);
+    } else {
+      this._targetWorld.set(this.data.triggerPoint.x, this.data.triggerPoint.y, this.data.triggerPoint.z);
+    }
+
+    let dx = this._rigWorld.x - this._targetWorld.x;
+    let dy = this._rigWorld.y - this._targetWorld.y;
+    let dz = this._rigWorld.z - this._targetWorld.z;
+    if (this.data.horizontalOnly) dy = 0;
+
+    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+    const on = this.data.triggerDist;
+    const off = this.data.triggerDist + this.data.triggerHysteresis;
+
+    const currentOwner = this.guide.getAttribute('data-owner') || '';
+
+    if (!this._hasShown && d <= on) {
+      // Don't fight another guide.
+      if (currentOwner && currentOwner !== this.ownerKey) return;
+
+      this.guide.setAttribute('data-owner', this.ownerKey);
+      this.guideBody.innerHTML = this.data.messageHtml;
+
+      this.guide.style.opacity = 1;
+      this.guide.classList.add('visible');
+
+      this._hasShown = true;
+      return;
+    }
+
+    if (this._hasShown && d > off) {
+      // Only hide if we still own it.
+      if (currentOwner && currentOwner !== this.ownerKey) return;
+
+      this.guide.style.opacity = 0;
+      this.guide.classList.remove('visible');
+      this.guide.setAttribute('data-owner', '');
+
+      this._hasShown = false;
+    }
+  }
+});
+
   },
 
   _showOverlay: function () {
@@ -10683,13 +10741,32 @@ return chosen * 180 / Math.PI;
 
   _showGuide: function (html) {
     if (!this.guide || !this.guideBody) return;
+
+    const ownerKey = 'aya-seat-experience';
+    const currentOwner = this.guide.getAttribute('data-owner') || '';
+    // Don't fight another guide that is already showing.
+    if (currentOwner && currentOwner !== ownerKey) return;
+
+    this.guide.setAttribute('data-owner', ownerKey);
     this.guideBody.innerHTML = html;
+
+    // Keep both mechanisms in sync (some components use opacity directly).
+    this.guide.classList.add('visible');
+    this.guide.style.opacity = 1;
     this.guide.classList.add('visible');
   },
 
   _hideGuide: function () {
     if (!this.guide) return;
+
+    const ownerKey = 'aya-seat-experience';
+    const currentOwner = this.guide.getAttribute('data-owner') || '';
+    if (currentOwner && currentOwner !== ownerKey) return;
+
     this.guide.classList.remove('visible');
+    this.guide.style.opacity = 0;
+    this.guide.classList.remove('visible');
+    this.guide.setAttribute('data-owner', '');
   }
 });
 
@@ -10805,6 +10882,7 @@ AFRAME.registerComponent('endchamber-lift', {
     const owner = this.guide.getAttribute('data-owner');
     if (owner && owner !== this.state.owner) return;
     this.guide.style.opacity = 0;
+    this.guide.classList.remove('visible');
     this.guide.setAttribute('data-owner', '');
   },
 
@@ -10813,6 +10891,7 @@ AFRAME.registerComponent('endchamber-lift', {
     this.guide.setAttribute('data-owner', this.state.owner);
     this.guideBody.innerHTML = html;
     this.guide.style.opacity = 1;
+    this.guide.classList.add('visible');
   },
 
   _captureShaftLights: function () {
@@ -11238,6 +11317,7 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     const owner = this.guide.getAttribute('data-owner');
     if (owner && owner !== this.state.owner) return;
     this.guide.style.opacity = 0;
+    this.guide.classList.remove('visible');
     this.guide.setAttribute('data-owner', '');
   },
 
@@ -11246,6 +11326,7 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     this.guide.setAttribute('data-owner', this.state.owner);
     this.guideBody.innerHTML = html;
     this.guide.style.opacity = 1;
+    this.guide.classList.add('visible');
   },
 
   _syncAboveGroundState: function () {
@@ -19849,7 +19930,7 @@ AFRAME.registerComponent('ion-wind-field', {
         enabled:    false"></a-entity>
         </a-entity>
 
-<a-entity id="capsule_03" position="5.221 -1.1250 0.000" rotation="0 -90.000 0" scale="1.5 1.5 1.5">
+<a-entity id="capsule_03" position="5.221 -1.1250 0.000" rotation="0 -90.000 0" scale="1.5 1.5 1.5" capsule-guide-proximity="target: #capsule_03; triggerDist: 2.0; triggerHysteresis: 0.25; horizontalOnly: true; messageHtml: Capsule interface.<br>Press <span class=kbd>E</span> to open / close.">
   
     <!-- Inner deck (fixed, walkable) -->
     <a-cylinder id="capsule_03_innerDeck"
@@ -19946,7 +20027,6 @@ AFRAME.registerComponent('ion-wind-field', {
     <div class="title">USER GUIDE</div>
     <div id="userGuideBody">...</div>
   </div>
-  <div id="capsuleGuide" aria-live="polite"><div id="capsuleGuideBody"></div></div>
 
 
 <script id="bootLoader">
@@ -20511,176 +20591,6 @@ AFRAME.registerComponent('zone-manager', {
   if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
   if (QC) QC.addEventListener('click', (e) => { if (e.target === QC) closeQuitConfirm(); });
   if (Q_OK) Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
-})();
-</script>
-
-<script>
-/* ── Capsule 03 guide — plain JS, no A-Frame component ── */
-(function () {
-  var guide     = document.getElementById('capsuleGuide');
-  var guideBody = document.getElementById('capsuleGuideBody');
-
-  // World position of capsule_03 (confirmed from console: -41.4, 0.1, 38.8)
-  var CAP_X = -41.44, CAP_Y = 0.08, CAP_Z = 38.79;
-  var TRIGGER = 2.2, HYSTERESIS = 0.4;
-
-  var step       = 0;   // 0=idle 1=near 2=laying
-  var lastOpen   = false;
-  var autopilot  = false;
-  var standAnim  = false;
-  var apStart, apFromX, apFromZ, apToX, apToZ;
-  var apRYFrom, apRYTo, apLYFrom, apLYTo, apLPFrom, apLPTo, apCamFrom;
-  var saStart, saFromY, saToY;
-  var neutralCamY = 1.6;
-  var AP_MS = 1400, STAND_MS = 900, LAY_CAM_Y = 0.15;
-  var toggle = null;  // capsule-split-toggle component ref
-
-  var rig, cam;
-
-  function showGuide(html) { guideBody.innerHTML = html; guide.classList.add('visible'); }
-  function hideGuide()      { guide.classList.remove('visible'); }
-
-  function N(a) { while(a<=-Math.PI)a+=Math.PI*2; while(a>Math.PI)a-=Math.PI*2; return a; }
-  function LA(a,b,t) { return a + N(b-a)*t; }
-  function smooth(u) { return u*u*(3-2*u); }
-
-  function walk(on) {
-    if (!rig) return;
-    var w = rig.components && rig.components['rig-walk'];
-    if (!w) return;
-    if (on) { w.play&&w.play(); w.resume&&w.resume(); }
-    else     { w.pause&&w.pause(); w.stop&&w.stop(); }
-  }
-
-  function isOpen() { return !!(toggle && toggle._open); }
-
-  function startLay() {
-    walk(false);
-    var r0  = rig.getAttribute('rotation') || {y:0};
-    var cp  = cam.getAttribute('position') || {y:1.6};
-    var lc  = cam.components && cam.components['look-controls'];
-    var ly0 = 0, lp0 = 0;
-    if (lc) { try { ly0=lc.yawObject.rotation.y; lp0=lc.pitchObject.rotation.x; } catch(e){} }
-
-    apFromX = rig.object3D.position.x;
-    apFromZ = rig.object3D.position.z;
-    apToX   = CAP_X;
-    apToZ   = CAP_Z;
-    apRYFrom = N((r0.y||0)*Math.PI/180);
-    apRYTo   = N(-90*Math.PI/180);  // capsule faces -90° Y
-    apLYFrom = N(ly0); apLYTo = 0;
-    apLPFrom = lp0;    apLPTo = Math.PI/2.2;  // look up
-    apCamFrom = cp.y;
-    apStart   = performance.now();
-    autopilot = true;
-    showGuide('Laying down…');
-  }
-
-  function finishLay() {
-    var cp = cam.getAttribute('position')||{x:0,y:1.6,z:0};
-    cam.setAttribute('position', cp.x+' '+LAY_CAM_Y.toFixed(3)+' '+cp.z);
-    var lc = cam.components && cam.components['look-controls'];
-    if (lc) { try { lc.yawObject.rotation.y=0; lc.pitchObject.rotation.x=apLPTo; } catch(e){} }
-    walk(false);
-    step = 2;
-    showGuide('Press <span class="kbd">F</span> to start GRAVITY EXPERIENCE<br>Press <span class="kbd">ESC</span> to get back up');
-  }
-
-  function startStand() {
-    var cp = cam.getAttribute('position')||{y:LAY_CAM_Y};
-    saFromY = cp.y; saToY = neutralCamY;
-    saStart = performance.now();
-    standAnim = true;
-    showGuide('Getting back up…');
-  }
-
-  window.addEventListener('keydown', function(e) {
-    if (e.repeat || !rig || !cam) return;
-    var isF   = e.code==='KeyF'   || e.key==='f' || e.key==='F';
-    var isEsc = e.code==='Escape' || e.key==='Escape';
-
-    if (isF && step===1 && !autopilot && isOpen())               { e.preventDefault(); startLay(); }
-    else if (isEsc && step===2 && !autopilot && !standAnim)      { e.preventDefault(); startStand(); }
-    else if (isF && step===2 && !autopilot && !standAnim)        { e.preventDefault(); /* TODO gravity */ }
-  }, { passive: false });
-
-  var rigV = new THREE.Vector3();
-
-  function loop() {
-    requestAnimationFrame(loop);
-
-    // Grab refs lazily — safe even before scene loads
-    if (!rig) rig = document.querySelector('#rig');
-    if (!cam) cam = document.querySelector('#playerCam');
-    if (!rig || !cam) return;
-
-    // Cache neutral cam height once
-    if (neutralCamY === 1.6) {
-      var cp0 = cam.getAttribute('position');
-      if (cp0 && cp0.y && cp0.y > 0.5) neutralCamY = cp0.y;
-    }
-
-    // Grab toggle lazily
-    if (!toggle) {
-      var capEl = document.querySelector('#capsule_03');
-      if (capEl) {
-        var child = capEl.querySelector('[capsule-split-toggle]');
-        if (child && child.components['capsule-split-toggle']) {
-          toggle = child.components['capsule-split-toggle'];
-        }
-      }
-    }
-
-    var now = performance.now();
-
-    // ── Autopilot ──
-    if (autopilot) {
-      var u = Math.min(1, (now-apStart)/AP_MS), s = smooth(u);
-      rig.object3D.position.x = apFromX + (apToX-apFromX)*s;
-      rig.object3D.position.z = apFromZ + (apToZ-apFromZ)*s;
-      var r = rig.getAttribute('rotation')||{x:0,y:0,z:0};
-      rig.setAttribute('rotation', r.x+' '+(LA(apRYFrom,apRYTo,s)*180/Math.PI).toFixed(3)+' '+r.z);
-      var lc = cam.components && cam.components['look-controls'];
-      if (lc) { try {
-        lc.yawObject.rotation.y   = N(LA(apLYFrom,apLYTo,s));
-        lc.pitchObject.rotation.x = apLPFrom+(apLPTo-apLPFrom)*s;
-      } catch(e){} }
-      var cp = cam.getAttribute('position')||{x:0,y:1.6,z:0};
-      cam.setAttribute('position', cp.x+' '+(apCamFrom+(LAY_CAM_Y-apCamFrom)*s).toFixed(3)+' '+cp.z);
-      if (u>=1) { autopilot=false; finishLay(); }
-      return;
-    }
-
-    // ── Stand-up ──
-    if (standAnim) {
-      var u = Math.min(1, (now-saStart)/STAND_MS), s = smooth(u);
-      var cp = cam.getAttribute('position')||{x:0,y:1.6,z:0};
-      cam.setAttribute('position', cp.x+' '+(saFromY+(saToY-saFromY)*s).toFixed(3)+' '+cp.z);
-      if (u>=1) { standAnim=false; walk(true); step=0; hideGuide(); }
-      return;
-    }
-
-    if (step===2) return;
-
-    // ── Proximity (hardcoded world pos — always reliable) ──
-    rig.object3D.getWorldPosition(rigV);
-    var dx=rigV.x-CAP_X, dz=rigV.z-CAP_Z;
-    var dist = Math.sqrt(dx*dx+dz*dz);
-    var open = isOpen();
-
-    if (dist <= TRIGGER) {
-      if (step!==1 || open!==lastOpen) {
-        step=1; lastOpen=open;
-        showGuide(open
-          ? 'Press <span class="kbd">F</span> to enter the capsule'
-          : 'Press <span class="kbd">E</span> to open the capsule');
-      }
-    } else if (step===1 && dist > TRIGGER+HYSTERESIS) {
-      step=0; lastOpen=false; hideGuide();
-    }
-  }
-
-  loop();
 })();
 </script>
 
