@@ -73,46 +73,29 @@
     /* Hide mouse cursor only during experience playback */
     body.hide-pointer, body.hide-pointer * { cursor: none !important; }
 </style>
-
 <style>
-  /* === CAPSULE USER GUIDE === */
   #capsuleGuide {
-    position: fixed;
-    left: 50%;
-    bottom: 28px;
+    position: fixed; left: 50%; bottom: 28px;
     transform: translateX(-50%);
-    max-width: 720px;
-    width: calc(100% - 64px);
+    max-width: 720px; width: calc(100% - 64px);
     padding: 14px 16px;
     background: rgba(0,0,0,0.62);
     border: 1px solid rgba(255,255,255,0.16);
-    border-radius: 12px;
-    color: #e9f2ff;
+    border-radius: 12px; color: #e9f2ff;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-    font-size: 14px;
-    line-height: 1.55;
-    letter-spacing: 0.2px;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    font-size: 14px; line-height: 1.55; letter-spacing: 0.2px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     box-shadow: 0 10px 24px rgba(0,0,0,0.35);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 180ms ease;
-    z-index: 9999;
-    user-select: none;
+    opacity: 0; pointer-events: none;
+    transition: opacity 180ms ease; z-index: 9999; user-select: none;
   }
   #capsuleGuide.visible { opacity: 1; }
   #capsuleGuide .kbd {
-    display: inline-block;
-    padding: 2px 8px;
-    margin: 0 2px;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.22);
+    display: inline-block; padding: 2px 8px; margin: 0 2px;
+    border-radius: 8px; border: 1px solid rgba(255,255,255,0.22);
     background: rgba(255,255,255,0.08);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 12px;
-    line-height: 1.3;
-    vertical-align: baseline;
+    font-size: 12px; line-height: 1.3; vertical-align: baseline;
   }
 </style>
 
@@ -1693,176 +1676,154 @@ AFRAME.registerComponent('play-gltf-clip', {
 </script>
 
 <script>
-/* ============================================================
-   Capsule #03 — Lay-down experience controller
-   Attached directly to #capsule_03 so it initialises the moment
-   the junction_dome zone loads — no polling needed.
-
-   States:
-     0  idle (user not near)
-     1  near (show E / F hint)
-     2  laying down (show F / ESC hint)
-   ============================================================ */
+/* capsule-lay-controller
+   Attached directly on #capsule_03 — initialises the moment junction_dome loads.
+   States: 0=idle  1=near  2=laying
+*/
 AFRAME.registerComponent('capsule-lay-controller', {
   schema: {
-    triggerDist:       { type: 'number', default: 2.2  },
-    hysteresis:        { type: 'number', default: 0.35 },
-    layCamHeight:      { type: 'number', default: 0.18 },
-    autopilotMs:       { type: 'number', default: 1400 },
-    standUpMs:         { type: 'number', default: 900  }
+    triggerDist: { type: 'number', default: 2.2 },
+    hysteresis:  { type: 'number', default: 0.4 },
+    layCamY:     { type: 'number', default: 0.15 },
+    autopilotMs: { type: 'number', default: 1400 },
+    standUpMs:   { type: 'number', default: 900  }
   },
 
   init: function () {
-    this.rig   = document.querySelector('#rig');
-    this.cam   = document.querySelector('#playerCam');
-    this.guide = document.getElementById('capsuleGuide');
-    this.guideBody = document.getElementById('capsuleGuideBody');
+    // These always exist — they're in the base scene, not in a zone
+    this._rig  = document.querySelector('#rig');
+    this._cam  = document.querySelector('#playerCam');
+    this._guide     = document.getElementById('capsuleGuide');
+    this._guideBody = document.getElementById('capsuleGuideBody');
 
-    // capsule-split-toggle lives on a child entity
-    this._splitToggle = null;
-    const child = this.el.querySelector('[capsule-split-toggle]');
-    if (child) this._splitToggle = child.components['capsule-split-toggle'];
+    // The capsule-split-toggle is on a child — may not be ready yet, fetch lazily in tick
+    this._toggle = null;
 
-    this._rigWorld     = new THREE.Vector3();
-    this._capsuleWorld = new THREE.Vector3();
+    // Vectors reused every tick
+    this._rigW = new THREE.Vector3();
+    this._capW = new THREE.Vector3();
 
-    this._step       = 0;   // 0 idle | 1 near | 2 laying
-    this._autopilot  = false;
-    this._standAnim  = false;
-    this._apStart    = 0;
-    this._apFrom     = new THREE.Vector3();
-    this._apTo       = new THREE.Vector3();
-    this._apYawFrom  = 0;
-    this._apYawTo    = 0;
-    this._apLYFrom   = 0;
-    this._apLYTo     = 0;
-    this._apLPFrom   = 0;
-    this._apLPTo     = 0;
-    this._apCamFrom  = 1.6;
-    this._apCamTo    = this.data.layCamHeight;
-    this._saStart    = 0;
-    this._saFromY    = 0;
-    this._saToY      = 1.6;
-    this._neutralCamY = null;
-    this._suppressPL = 0;
-    this._wasPL      = !!document.pointerLockElement;
-    this._lastOpen   = false;
+    // State
+    this._step      = 0;
+    this._lastOpen  = false;
+    this._autopilot = false;
+    this._standAnim = false;
+    this._apStart   = 0;
+    this._apFrom    = new THREE.Vector3();
+    this._apTo      = new THREE.Vector3();
+    this._apRigYawFrom = 0; this._apRigYawTo = 0;
+    this._apLYFrom  = 0;    this._apLYTo     = 0;
+    this._apLPFrom  = 0;    this._apLPTo     = 0;
+    this._apCamFrom = 1.6;
+    this._saStart   = 0;
+    this._saFromY   = 0;
+    this._saToY     = 1.6;
+    this._neutralCamY = 1.6;
 
-    // Cache neutral camera height once
+    // Cache neutral camera height once rig is ready
     setTimeout(() => {
-      if (!this.cam) return;
-      const cp = this.cam.getAttribute('position') || { y: 1.6 };
-      this._neutralCamY = cp.y;
-    }, 0);
+      if (!this._cam) return;
+      const p = this._cam.getAttribute('position');
+      if (p && p.y != null) this._neutralCamY = p.y;
+    }, 500);
 
+    // Key handler — only F and ESC; E is already handled by capsule-split-toggle
     this._onKey = (e) => {
       if (e.repeat) return;
       const isF   = e.code === 'KeyF'   || e.key === 'f' || e.key === 'F';
       const isEsc = e.code === 'Escape' || e.key === 'Escape';
 
-      // F while near + capsule open → lay down
       if (isF && this._step === 1 && !this._autopilot && this._isOpen()) {
-        e.preventDefault();
-        this._startLay();
-        return;
+        e.preventDefault(); this._startLay(); return;
       }
-      // ESC while laying → stand up
       if (isEsc && this._step === 2 && !this._autopilot && !this._standAnim) {
-        e.preventDefault();
-        this._startStand();
-        return;
+        e.preventDefault(); this._startStand(); return;
       }
-      // F while laying → gravity experience (placeholder)
+      // F while laying → gravity experience placeholder
       if (isF && this._step === 2 && !this._autopilot && !this._standAnim) {
-        e.preventDefault();
-        // TODO: gravity experience next iteration
-        return;
+        e.preventDefault(); return; // TODO next iteration
       }
     };
     window.addEventListener('keydown', this._onKey, { passive: false });
-
-    this._onPLC = () => {
-      if (performance.now() < this._suppressPL) {
-        this._wasPL = !!document.pointerLockElement; return;
-      }
-      const now = !!document.pointerLockElement;
-      const released = this._wasPL && !now;
-      this._wasPL = now;
-      if (released && this._step === 2 && !this._autopilot) this._startStand();
-    };
-    document.addEventListener('pointerlockchange', this._onPLC);
-
-    this._hideGuide();
   },
 
   remove: function () {
     window.removeEventListener('keydown', this._onKey);
-    document.removeEventListener('pointerlockchange', this._onPLC);
+    this._hideGuide();
   },
 
-  tick: function (t, dt) {
-    if (!this.rig || !this.cam) return;
+  tick: function () {
+    if (!this._rig || !this._cam) return;
 
-    const norm = (a) => { let x=a; while(x<=-Math.PI)x+=Math.PI*2; while(x>Math.PI)x-=Math.PI*2; return x; };
-    const lerp = (a,b,t) => a + norm(b-a)*t;
+    // Lazy-fetch the split-toggle component (child may not be ready at init time)
+    if (!this._toggle) {
+      const child = this.el.querySelector('[capsule-split-toggle]');
+      if (child && child.components['capsule-split-toggle']) {
+        this._toggle = child.components['capsule-split-toggle'];
+      }
+    }
 
-    // ── Autopilot (lay down) ──────────────────────────────
+    const N = (a) => { let x=a; while(x<=-Math.PI)x+=Math.PI*2; while(x>Math.PI)x-=Math.PI*2; return x; };
+    const LA = (a,b,t) => a + N(b-a)*t;
+
+    // ── Autopilot animation (lay down) ──
     if (this._autopilot) {
-      const u = Math.min(1, (performance.now() - this._apStart) / this.data.autopilotMs);
+      const u = Math.min(1, (performance.now()-this._apStart)/this.data.autopilotMs);
       const s = u*u*(3-2*u);
 
-      this.rig.object3D.position.lerpVectors(this._apFrom, this._apTo, s);
+      this._rig.object3D.position.lerpVectors(this._apFrom, this._apTo, s);
 
-      const yawDeg = lerp(this._apYawFrom, this._apYawTo, s) * 180 / Math.PI;
-      const r = this.rig.getAttribute('rotation') || {x:0,y:0,z:0};
-      this.rig.setAttribute('rotation', `${r.x} ${yawDeg.toFixed(3)} ${r.z}`);
+      const r = this._rig.getAttribute('rotation')||{x:0,y:0,z:0};
+      this._rig.setAttribute('rotation',
+        `${r.x} ${(LA(this._apRigYawFrom,this._apRigYawTo,s)*180/Math.PI).toFixed(3)} ${r.z}`);
 
-      const lc = this.cam.components && this.cam.components['look-controls'];
+      const lc = this._cam.components && this._cam.components['look-controls'];
       if (lc) { try {
-        lc.yawObject.rotation.y   = norm(lerp(this._apLYFrom, this._apLYTo, s));
-        lc.pitchObject.rotation.x = this._apLPFrom + (this._apLPTo - this._apLPFrom) * s;
-      } catch(e){} }
+        lc.yawObject.rotation.y   = N(LA(this._apLYFrom, this._apLYTo, s));
+        lc.pitchObject.rotation.x = this._apLPFrom + (this._apLPTo - this._apLPFrom)*s;
+      } catch(_){} }
 
-      const camY = this._apCamFrom + (this._apCamTo - this._apCamFrom) * s;
-      const cp = this.cam.getAttribute('position') || {x:0,y:1.6,z:0};
-      this.cam.setAttribute('position', `${cp.x} ${camY.toFixed(3)} ${cp.z}`);
+      const cy = this._apCamFrom + (this.data.layCamY - this._apCamFrom)*s;
+      const cp = this._cam.getAttribute('position')||{x:0,y:1.6,z:0};
+      this._cam.setAttribute('position', `${cp.x} ${cy.toFixed(3)} ${cp.z}`);
 
       if (u >= 1) { this._autopilot = false; this._finishLay(); }
       return;
     }
 
-    // ── Stand-up animation ────────────────────────────────
+    // ── Stand-up animation ──
     if (this._standAnim) {
-      const u = Math.min(1, (performance.now() - this._saStart) / this.data.standUpMs);
+      const u = Math.min(1, (performance.now()-this._saStart)/this.data.standUpMs);
       const s = u*u*(3-2*u);
-      const y = this._saFromY + (this._saToY - this._saFromY) * s;
-      const cp = this.cam.getAttribute('position') || {x:0,y:1.6,z:0};
-      this.cam.setAttribute('position', `${cp.x} ${y.toFixed(3)} ${cp.z}`);
+      const y = this._saFromY + (this._saToY-this._saFromY)*s;
+      const cp = this._cam.getAttribute('position')||{x:0,y:1.6,z:0};
+      this._cam.setAttribute('position', `${cp.x} ${y.toFixed(3)} ${cp.z}`);
       if (u >= 1) {
         this._standAnim = false;
-        this._setWalk(true);
+        this._walk(true);
         this._step = 0;
-        // proximity will re-trigger guide naturally next tick
+        this._hideGuide();
       }
       return;
     }
 
-    // ── Laying — no proximity update needed ───────────────
+    // ── While laying, do nothing ──
     if (this._step === 2) return;
 
-    // ── Proximity check ───────────────────────────────────
-    this.rig.object3D.getWorldPosition(this._rigWorld);
-    this.el.object3D.getWorldPosition(this._capsuleWorld);
-    const dist = this._rigWorld.distanceTo(this._capsuleWorld);
-
-    const isOpen = this._isOpen();
+    // ── Proximity check ──
+    this._rig.object3D.getWorldPosition(this._rigW);
+    this.el.object3D.getWorldPosition(this._capW);
+    const dist = this._rigW.distanceTo(this._capW);
+    const open = this._isOpen();
 
     if (dist <= this.data.triggerDist) {
-      // Update guide any time open state changes
-      if (this._step !== 1 || isOpen !== this._lastOpen) {
+      if (this._step !== 1 || open !== this._lastOpen) {
         this._step = 1;
-        this._lastOpen = isOpen;
-        this._updateGuide(isOpen);
+        this._lastOpen = open;
+        this._showGuide(open
+          ? 'Press <span class="kbd">F</span> to enter the capsule'
+          : 'Press <span class="kbd">E</span> to open the capsule'
+        );
       }
     } else if (this._step === 1 && dist > this.data.triggerDist + this.data.hysteresis) {
       this._step = 0;
@@ -1871,85 +1832,71 @@ AFRAME.registerComponent('capsule-lay-controller', {
     }
   },
 
-  // ── Helpers ───────────────────────────────────────────────
-
   _isOpen: function () {
-    return !!(this._splitToggle && this._splitToggle._open);
+    return !!(this._toggle && this._toggle._open);
   },
 
-  _setWalk: function (on) {
-    if (!this.rig) return;
-    const w = this.rig.components && this.rig.components['rig-walk'];
+  _walk: function (on) {
+    const w = this._rig.components && this._rig.components['rig-walk'];
     if (!w) return;
-    on ? (w.play && w.play(), w.resume && w.resume())
-       : (w.pause && w.pause(), w.stop && w.stop());
-  },
-
-  _updateGuide: function (open) {
-    if (open) {
-      this._showGuide('Press <span class="kbd">F</span> to enter the capsule');
-    } else {
-      this._showGuide('Press <span class="kbd">E</span> to open the capsule');
-    }
+    on ? (w.play&&w.play(), w.resume&&w.resume()) : (w.pause&&w.pause(), w.stop&&w.stop());
   },
 
   _startLay: function () {
-    if (!this.rig || !this.cam) return;
-    this._setWalk(false);
+    this._walk(false);
 
-    // ── Target position: inside capsule, head toward dome wall ──
-    // Capsule world position + a small offset along capsule's -Z (into the shell)
-    this.el.object3D.getWorldPosition(this._capsuleWorld);
+    // World position of capsule centre
+    this.el.object3D.getWorldPosition(this._capW);
     const capsuleQuat = new THREE.Quaternion();
     this.el.object3D.getWorldQuaternion(capsuleQuat);
 
-    // Character lies along capsule local -Z; head is ~1m toward -Z from centre
-    const localHead = new THREE.Vector3(0, 0, -1.0);
-    localHead.applyQuaternion(capsuleQuat);
-    const targetPos = this._capsuleWorld.clone().add(localHead);
-    targetPos.y = this.rig.object3D.position.y; // keep rig Y
+    // Target rig XZ = directly over capsule centre, Y unchanged
+    const rigTo = new THREE.Vector3(
+      this._capW.x,
+      this._rig.object3D.position.y,
+      this._capW.z
+    );
 
-    // ── Target yaw: face same direction as capsule (-Z in world) ──
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(capsuleQuat);
-    fwd.y = 0; fwd.normalize();
-    const targetYaw = Math.atan2(-fwd.x, -fwd.z); // A-Frame: forward=-Z
+    // Target yaw: capsule local -Z mapped to world (character lies along -Z in capsule space)
+    const fwdLocal = new THREE.Vector3(0, 0, -1);
+    fwdLocal.applyQuaternion(capsuleQuat);
+    fwdLocal.y = 0; fwdLocal.normalize();
+    const targetRigYaw = Math.atan2(-fwdLocal.x, -fwdLocal.z);
 
     // Current state
-    const r0 = this.rig.getAttribute('rotation') || {y:0};
-    const lc = this.cam.components && this.cam.components['look-controls'];
+    const r0 = this._rig.getAttribute('rotation')||{y:0};
+    const cp  = this._cam.getAttribute('position')||{y:1.6};
+    const lc  = this._cam.components && this._cam.components['look-controls'];
     let ly0=0, lp0=0;
-    if (lc) { try { ly0=lc.yawObject.rotation.y; lp0=lc.pitchObject.rotation.x; } catch(e){} }
+    if (lc) { try { ly0=lc.yawObject.rotation.y; lp0=lc.pitchObject.rotation.x; } catch(_){} }
 
-    const cp = this.cam.getAttribute('position') || {y:1.6};
-    this._apCamFrom = cp.y;
-    this._apCamTo   = this.data.layCamHeight;
+    const N = (a) => { let x=a; while(x<=-Math.PI)x+=Math.PI*2; while(x>Math.PI)x-=Math.PI*2; return x; };
 
-    this._apFrom.copy(this.rig.object3D.position);
-    this._apTo.copy(targetPos);
-    this._apYawFrom = (r0.y || 0) * Math.PI / 180;
-    this._apYawTo   = targetYaw;
-    this._apLYFrom  = ly0;
-    this._apLYTo    = 0;         // align head with body
-    this._apLPFrom  = lp0;
-    this._apLPTo    = Math.PI / 2.5; // look up toward ceiling
-
-    this._apStart   = performance.now();
-    this._autopilot = true;
+    this._apFrom.copy(this._rig.object3D.position);
+    this._apTo.copy(rigTo);
+    this._apRigYawFrom = N((r0.y||0)*Math.PI/180);
+    this._apRigYawTo   = N(targetRigYaw);
+    this._apLYFrom     = N(ly0);
+    this._apLYTo       = 0;              // head aligns with body
+    this._apLPFrom     = lp0;
+    this._apLPTo       = Math.PI/2.2;   // look up toward ceiling
+    this._apCamFrom    = cp.y;
+    this._apStart      = performance.now();
+    this._autopilot    = true;
 
     this._showGuide('Laying down…');
   },
 
   _finishLay: function () {
-    if (!this.cam || !this.rig) return;
-    // Snap finals
-    const cp = this.cam.getAttribute('position') || {x:0,y:1.6,z:0};
-    this.cam.setAttribute('position', `${cp.x} ${this.data.layCamHeight.toFixed(3)} ${cp.z}`);
-    const lc = this.cam.components && this.cam.components['look-controls'];
+    // Snap final values precisely
+    const cp = this._cam.getAttribute('position')||{x:0,y:1.6,z:0};
+    this._cam.setAttribute('position', `${cp.x} ${this.data.layCamY.toFixed(3)} ${cp.z}`);
+    const lc = this._cam.components && this._cam.components['look-controls'];
     if (lc) { try {
       lc.yawObject.rotation.y   = 0;
       lc.pitchObject.rotation.x = this._apLPTo;
-    } catch(e){} }
-    this._setWalk(false);
+    } catch(_){} }
+    this._walk(false);
     this._step = 2;
     this._showGuide(
       'Press <span class="kbd">F</span> to start GRAVITY EXPERIENCE<br>' +
@@ -1958,27 +1905,22 @@ AFRAME.registerComponent('capsule-lay-controller', {
   },
 
   _startStand: function () {
-    if (!this.rig || !this.cam) return;
-    this._setWalk(false);
-    const cp = this.cam.getAttribute('position') || {y:this.data.layCamHeight};
-    const toY = (this._neutralCamY != null) ? this._neutralCamY : 1.6;
+    const cp = this._cam.getAttribute('position')||{y:this.data.layCamY};
     this._saFromY  = cp.y;
-    this._saToY    = toY;
+    this._saToY    = this._neutralCamY;
     this._saStart  = performance.now();
     this._standAnim = true;
-    this._step = 2; // keep locked until anim finishes
     this._showGuide('Getting back up…');
   },
 
   _showGuide: function (html) {
-    if (!this.guide || !this.guideBody) return;
-    this.guideBody.innerHTML = html;
-    this.guide.classList.add('visible');
+    if (!this._guide||!this._guideBody) return;
+    this._guideBody.innerHTML = html;
+    this._guide.classList.add('visible');
   },
 
   _hideGuide: function () {
-    if (!this.guide) return;
-    this.guide.classList.remove('visible');
+    if (this._guide) this._guide.classList.remove('visible');
   }
 });
 </script>
@@ -20259,10 +20201,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <div class="title">USER GUIDE</div>
     <div id="userGuideBody">...</div>
   </div>
-
-  <div id="capsuleGuide" aria-live="polite">
-    <div id="capsuleGuideBody"></div>
-  </div>
+  <div id="capsuleGuide" aria-live="polite"><div id="capsuleGuideBody"></div></div>
 
 
 <script id="bootLoader">
