@@ -11241,19 +11241,24 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     const pWorld = new THREE.Vector3();
     p.object3D.getWorldPosition(pWorld);
 
-    // Target yaw: face the panel (panel sits at platform local +Z, offset 1.41)
+    // Target world yaw: face the panel (panel sits at platform local +Z, offset 1.41)
     const panelLocal = new THREE.Vector3(0, 0, 1.41);
     const panelWorld = panelLocal.clone().applyMatrix4(p.object3D.matrixWorld);
     const toPanelDir = new THREE.Vector3(panelWorld.x - pWorld.x, 0, panelWorld.z - pWorld.z).normalize();
-    // rig yaw θ → camera forward (-sinθ, 0, -cosθ) = toPanelDir
-    const toRigYaw = Math.atan2(-toPanelDir.x, -toPanelDir.z);
+    const targetWorldYaw = Math.atan2(-toPanelDir.x, -toPanelDir.z);
+
+    // Only animate lcYaw — keep rig body frozen so there's a single clean shortest-path arc.
+    // Target lcYaw = world yaw needed minus the (fixed) rig body yaw, normalised to [-π, π].
+    let targetLcYaw = targetWorldYaw - rigYaw;
+    while (targetLcYaw >  Math.PI) targetLcYaw -= Math.PI * 2;
+    while (targetLcYaw < -Math.PI) targetLcYaw += Math.PI * 2;
 
     // Phases (ms):  Move XZ: 0→1500  Turn: 600→2200  Level pitch: 800→2000
     this.state.apAnim = {
       t0:   performance.now(),
       dur:  2200,
       from: { rigX: rigPos.x, rigZ: rigPos.z, rigYaw, lcYaw, lcPitch },
-      to:   { rigX: pWorld.x, rigZ: pWorld.z, rigYaw: toRigYaw, lcYaw: 0, lcPitch: 0 }
+      to:   { rigX: pWorld.x, rigZ: pWorld.z, rigYaw, lcYaw: targetLcYaw, lcPitch: 0 }
     };
 
     this.state.autopilot = true;
@@ -11294,8 +11299,8 @@ AFRAME.registerComponent('endchamber-ascent-test', {
 
     this.rig.object3D.position.x = lr(A.from.rigX, A.to.rigX, pMove);
     this.rig.object3D.position.z = lr(A.from.rigZ, A.to.rigZ, pMove);
-    this.rig.object3D.rotation.y = la(A.from.rigYaw, A.to.rigYaw, pTurn);
-    try { lc.yawObject.rotation.y   = la(A.from.lcYaw,   A.to.lcYaw,   pTurn); } catch(err){}
+    // Rig body yaw stays frozen — only lcYaw rotates (single shortest-path arc)
+    try { lc.yawObject.rotation.y   = la(A.from.lcYaw, A.to.lcYaw, pTurn); } catch(err){}
     try { lc.pitchObject.rotation.x = lr(A.from.lcPitch, A.to.lcPitch, pLevel); } catch(err){}
 
     if (t >= A.dur) this._finishBoardAutopilot();
@@ -11307,7 +11312,7 @@ AFRAME.registerComponent('endchamber-ascent-test', {
       const lc = this.cam.components && this.cam.components['look-controls'];
       this.rig.object3D.position.x = A.to.rigX;
       this.rig.object3D.position.z = A.to.rigZ;
-      this.rig.object3D.rotation.y = A.to.rigYaw;
+      // Rig body yaw unchanged
       if (lc) {
         try { lc.yawObject.rotation.y   = A.to.lcYaw;   } catch(err){}
         try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
@@ -11762,15 +11767,27 @@ _applyPlatformReflectionFade: function (factor) {
           this._disableAscentLookLock();
           this._hideGuideIfOwner();
 
-          // Scene transition: fade to black -> loading bar -> navigate
-          const overlay     = document.getElementById('ayaFullscreenOverlay');
-          const loadOverlay = document.getElementById('loadingOverlay');
-          const loadPhase   = document.getElementById('loadingPhase');
-          const loadFill    = document.getElementById('loadingBarFill');
-
-          if (overlay) overlay.classList.add('visible');
+          // Use a dedicated plain black div — NOT #ayaFullscreenOverlay which shows the experience video
+          let transOverlay = document.getElementById('_sceneTransOverlay');
+          if (!transOverlay) {
+            transOverlay = document.createElement('div');
+            transOverlay.id = '_sceneTransOverlay';
+            Object.assign(transOverlay.style, {
+              position: 'fixed', inset: '0', background: '#000',
+              opacity: '0', transition: 'opacity 280ms ease',
+              zIndex: '99999', pointerEvents: 'none'
+            });
+            document.body.appendChild(transOverlay);
+          }
+          // Force reflow then fade in
+          transOverlay.offsetHeight;
+          transOverlay.style.opacity = '1';
 
           setTimeout(() => {
+            const loadOverlay = document.getElementById('loadingOverlay');
+            const loadPhase   = document.getElementById('loadingPhase');
+            const loadFill    = document.getElementById('loadingBarFill');
+
             if (loadPhase)  loadPhase.textContent = 'Arriving at the surface…';
             if (loadFill)   loadFill.style.transform = 'scaleX(0)';
             if (loadOverlay) {
