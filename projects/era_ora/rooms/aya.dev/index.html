@@ -10981,8 +10981,10 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     this._b = new THREE.Vector3();
 
     this.state = {
-      step: 0,          // 0 none, 1 near platform, 2 boarded/ready
+      step: 0,          // 0 none, 1 near platform
       running: false,
+      autopilot: false,
+      apAnim: null,
       owner: 'endchamber-ascent-test',
       originalSpeed: null,
 
@@ -11077,13 +11079,12 @@ AFRAME.registerComponent('endchamber-ascent-test', {
       if (e.repeat) return;
       const isF = (e.code === 'KeyF' || e.key === 'f' || e.key === 'F');
       if (!isF) return;
-      if (this.state.step !== 1 && this.state.step !== 2) return;
+      if (this.state.step !== 1 || this.state.autopilot || this.state.running) return;
 
       e.preventDefault();
       e.stopPropagation();
 
-      if (this.state.step === 1) this._boardPlatform();
-      else this._activateAscent();
+      this._startBoardAutopilot();
     };
 
     window.addEventListener('keydown', this._onKeyDown, { capture: true });
@@ -11176,6 +11177,17 @@ AFRAME.registerComponent('endchamber-ascent-test', {
 
     if (pitch > maxUp) pitch = maxUp;
 
+    // Clamp yaw: soft ±15° window around the panel-facing direction.
+    const YAW_RANGE = 15 * DEG2RAD;
+    let yaw = lc.yawObject.rotation.y || 0;
+    const yawCenter = this.state.lookYawCenter || 0;
+    let yawDelta = yaw - yawCenter;
+    while (yawDelta >  Math.PI) yawDelta -= Math.PI * 2;
+    while (yawDelta < -Math.PI) yawDelta += Math.PI * 2;
+    if (yawDelta >  YAW_RANGE) yawDelta =  YAW_RANGE;
+    if (yawDelta < -YAW_RANGE) yawDelta = -YAW_RANGE;
+    lc.yawObject.rotation.y = yawCenter + yawDelta;
+
     lc.pitchObject.rotation.x = pitch;
   },
 
@@ -11184,31 +11196,129 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     const p = this.data.platform;
     if (!this.rig || !this.cam || !p) return;
 
+    // Autopilot: drive the boarding animation
+    if (this.state.autopilot) {
+      this._tickBoardAutopilot();
+      return;
+    }
+
     if (this.state.running) return;
 
     this.cam.object3D.getWorldPosition(this._a);
     p.object3D.getWorldPosition(this._b);
     const d = this._a.distanceTo(this._b);
 
-    const on = this.data.triggerDist;
+    const on  = this.data.triggerDist;
     const off = on + 0.35;
 
     if (this.state.step === 0 && d <= on) {
       this.state.step = 1;
-      this._showGuide('Approach the platform.<br><b>F</b> — Step onto platform');
+      this._showGuide('<span class="kbd">F</span> Board platform');
       return;
     }
 
-    if ((this.state.step === 1 || this.state.step === 2) && d > off) {
+    if (this.state.step === 1 && d > off) {
       this._hideGuideIfOwner();
       this.state.step = 0;
       return;
     }
+  },
 
-    if (this.state.step === 1 && d <= this.data.boardDist) {
-      this.state.step = 2;
-      this._showGuide('On platform.<br><b>F</b> — Ascend (test)');
+  // ── Cinematic autopilot: board + face panel before ascent ─────────────────
+
+  _startBoardAutopilot: function () {
+    const p = this.data.platform;
+    if (!p || !this.rig || !this.cam) return;
+    const lc = this.cam.components && this.cam.components['look-controls'];
+    if (!lc) return;
+
+    const rigPos  = this.rig.object3D.position.clone();
+    const rigYaw  = this.rig.object3D.rotation.y;
+    const lcYaw   = lc.yawObject   ? lc.yawObject.rotation.y  : 0;
+    const lcPitch = lc.pitchObject ? lc.pitchObject.rotation.x : 0;
+
+    // Target XZ: platform world centre
+    const pWorld = new THREE.Vector3();
+    p.object3D.getWorldPosition(pWorld);
+
+    // Target yaw: face the panel (panel sits at platform local +Z, offset 1.41)
+    const panelLocal = new THREE.Vector3(0, 0, 1.41);
+    const panelWorld = panelLocal.clone().applyMatrix4(p.object3D.matrixWorld);
+    const toPanelDir = new THREE.Vector3(panelWorld.x - pWorld.x, 0, panelWorld.z - pWorld.z).normalize();
+    // rig yaw θ → camera forward (-sinθ, 0, -cosθ) = toPanelDir
+    const toRigYaw = Math.atan2(-toPanelDir.x, -toPanelDir.z);
+
+    // Phases (ms):  Move XZ: 0→1500  Turn: 600→2200  Level pitch: 800→2000
+    this.state.apAnim = {
+      t0:   performance.now(),
+      dur:  2200,
+      from: { rigX: rigPos.x, rigZ: rigPos.z, rigYaw, lcYaw, lcPitch },
+      to:   { rigX: pWorld.x, rigZ: pWorld.z, rigYaw: toRigYaw, lcYaw: 0, lcPitch: 0 }
+    };
+
+    this.state.autopilot = true;
+
+    const rw = this.rig.components && this.rig.components['rig-walk'];
+    if (rw) {
+      if (rw.pause) rw.pause();
+      if (rw.keys) Object.keys(rw.keys).forEach(k => rw.keys[k] = false);
     }
+
+    this._showGuide('Boarding…');
+  },
+
+  _tickBoardAutopilot: function () {
+    const A = this.state.apAnim;
+    if (!A || !this.rig || !this.cam) return;
+    const lc = this.cam.components && this.cam.components['look-controls'];
+    if (!lc) return;
+
+    const t  = Math.min(A.dur, performance.now() - A.t0);
+    const ss = (u) => u * u * (3 - 2 * u);
+    const lr = (a, b, p) => a + (b - a) * p;
+    const la = (a, b, p) => {
+      let d = b - a;
+      while (d >  Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      return a + d * p;
+    };
+    const pp = (t, t0, t1) => {
+      if (t <= t0) return 0;
+      if (t >= t1) return 1;
+      return ss((t - t0) / (t1 - t0));
+    };
+
+    const pMove  = pp(t,   0, 1500);
+    const pTurn  = pp(t, 600, 2200);
+    const pLevel = pp(t, 800, 2000);
+
+    this.rig.object3D.position.x = lr(A.from.rigX, A.to.rigX, pMove);
+    this.rig.object3D.position.z = lr(A.from.rigZ, A.to.rigZ, pMove);
+    this.rig.object3D.rotation.y = la(A.from.rigYaw, A.to.rigYaw, pTurn);
+    try { lc.yawObject.rotation.y   = la(A.from.lcYaw,   A.to.lcYaw,   pTurn); } catch(err){}
+    try { lc.pitchObject.rotation.x = lr(A.from.lcPitch, A.to.lcPitch, pLevel); } catch(err){}
+
+    if (t >= A.dur) this._finishBoardAutopilot();
+  },
+
+  _finishBoardAutopilot: function () {
+    const A = this.state.apAnim;
+    if (A && this.rig) {
+      const lc = this.cam.components && this.cam.components['look-controls'];
+      this.rig.object3D.position.x = A.to.rigX;
+      this.rig.object3D.position.z = A.to.rigZ;
+      this.rig.object3D.rotation.y = A.to.rigYaw;
+      if (lc) {
+        try { lc.yawObject.rotation.y   = A.to.lcYaw;   } catch(err){}
+        try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
+      }
+    }
+    this.state.apAnim    = null;
+    this.state.autopilot = false;
+
+    // Board then activate — no second F required
+    this._boardPlatform();
+    this._activateAscent();
   },
 
   _hideGuideIfOwner: function () {
@@ -11531,7 +11641,6 @@ _applyPlatformReflectionFade: function (factor) {
     this.rig.object3D.position.set(wp.x, platformTopY, wp.z);
 
     this.state.step = 2;
-    this._showGuide('On platform.<br><b>F</b> — Ascend (test)');
   },
 
   _activateAscent: function () {
@@ -11543,7 +11652,8 @@ _applyPlatformReflectionFade: function (factor) {
     if (this.state.running) return;
 
     this.state.running = true;
-    // Record ascent start height so the outside lunar ramp can begin immediately when ascent starts.
+    // Background prefetch so the page is likely cached before arrival.
+    try { fetch(this.data.nextUrl || 'lia_room.html', { cache: 'force-cache' }).catch(() => {}); } catch(e) {}
     try {
       const _pW = new THREE.Vector3();
       if (p.object3D) { p.object3D.getWorldPosition(_pW); this._ascentStartYWorld = _pW.y; }
@@ -11649,25 +11759,40 @@ _applyPlatformReflectionFade: function (factor) {
         const baseI = (typeof this._oculusSpotBaseI === 'number') ? this._oculusSpotBaseI : 0;
 
         const finishArrival = () => {
-          // Unlock view limits only once travel is complete (and arrival lighting has settled).
           this._disableAscentLookLock();
-          // Restore speed (unlock WASD) only after the spotlight has been faded off.
-          if (this.state.originalSpeed !== null) {
-            try { this.rig.setAttribute('rig-walk', 'speed', this.state.originalSpeed); } catch (e) {}
-          }
-
-          // Panel indicator: stop blinking once ascent travel completes.
-          try {
-            const _panelLight = document.querySelector('#endchamber_panel_light');
-            if (_panelLight) {
-              _panelLight.emit('ascent-stop');
-              _panelLight.setAttribute('material', 'emissiveIntensity', 0.0);
-            }
-          } catch (e) {}
-
           this._hideGuideIfOwner();
-          this.state.step = 0;
-          this.state.running = false;
+
+          // Scene transition: fade to black -> loading bar -> navigate
+          const overlay     = document.getElementById('ayaFullscreenOverlay');
+          const loadOverlay = document.getElementById('loadingOverlay');
+          const loadPhase   = document.getElementById('loadingPhase');
+          const loadFill    = document.getElementById('loadingBarFill');
+
+          if (overlay) overlay.classList.add('visible');
+
+          setTimeout(() => {
+            if (loadPhase)  loadPhase.textContent = 'Arriving at the surface…';
+            if (loadFill)   loadFill.style.transform = 'scaleX(0)';
+            if (loadOverlay) {
+              loadOverlay.style.background = 'transparent';
+              loadOverlay.classList.remove('hidden');
+            }
+
+            let prog = 0;
+            const barInterval = setInterval(() => {
+              prog = Math.min(0.92, prog + (0.92 - prog) * 0.08);
+              if (loadFill) loadFill.style.transform = 'scaleX(' + prog.toFixed(3) + ')';
+            }, 80);
+
+            const nextUrl = this.data.nextUrl || 'lia_room.html';
+            fetch(nextUrl, { cache: 'force-cache' })
+              .catch(() => {})
+              .finally(() => {
+                clearInterval(barInterval);
+                if (loadFill) loadFill.style.transform = 'scaleX(1)';
+                setTimeout(() => { window.location.replace(nextUrl); }, 350);
+              });
+          }, 320);
         };
 
         if (spotEl && baseI > 0) {
@@ -19624,7 +19749,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
   <!-- Lift interaction controller (F twice: board -> activate) -->
   <a-entity id="endchamber_lift_controller"
-            endchamber-ascent-test="platform: #endchamber_platform; inner: #end_chamber_06_inner; outer: #end_chamber_06_outer; triggerDist: 3.0; boardDist: 2.0; targetPlatformY: 12.880; durationMs: 17500"></a-entity>
+            endchamber-ascent-test="platform: #endchamber_platform; inner: #end_chamber_06_inner; outer: #end_chamber_06_outer; triggerDist: 3.0; boardDist: 2.0; targetPlatformY: 12.880; durationMs: 17500; nextUrl: lia_room.html"></a-entity>
 
 </a-entity>
 </a-entity>
