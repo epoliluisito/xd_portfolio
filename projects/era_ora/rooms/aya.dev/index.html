@@ -11213,7 +11213,7 @@ AFRAME.registerComponent('endchamber-ascent-test', {
 
     if (this.state.step === 0 && d <= on) {
       this.state.step = 1;
-      this._showGuide('<span class="kbd">F</span> Board platform');
+      this._showGuide('<span class="kbd">F</span> Activate platform');
       return;
     }
 
@@ -11632,19 +11632,7 @@ _applyPlatformReflectionFade: function (factor) {
   },
 
   _boardPlatform: function () {
-    const p = this.data.platform;
-    if (!p || !this.rig || !this.cam) return;
-
-    // Snap rig onto platform center (world), then keep step=2.
-    const wp = new THREE.Vector3();
-    p.object3D.getWorldPosition(wp);
-
-    // Rig's position is in world (direct child of scene).
-    // Put feet slightly above platform top so we don't clip.
-    const platformTopY = wp.y + 0.08;
-
-    this.rig.object3D.position.set(wp.x, platformTopY, wp.z);
-
+    // Autopilot has already moved the rig to platform centre smoothly — just advance state.
     this.state.step = 2;
   },
 
@@ -20773,7 +20761,33 @@ AFRAME.registerComponent('capsule-03-experience', {
     if (isF && this._phase === 'idle' && this._isNear() && this._capsuleIsOpen()) {
       e.preventDefault();
       this._startLayDown();
+      return;
     }
+
+    if (isF && this._phase === 'laid') {
+      e.preventDefault();
+      this._startFabricTransition();
+    }
+  },
+
+  _startFabricTransition: function () {
+    // Fade to black then navigate to the_fabric.html
+    let overlay = document.getElementById('_fabricTransOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = '_fabricTransOverlay';
+      Object.assign(overlay.style, {
+        position: 'fixed', inset: '0', background: '#000',
+        opacity: '0', transition: 'opacity 600ms ease',
+        zIndex: '99999', pointerEvents: 'none'
+      });
+      document.body.appendChild(overlay);
+    }
+    overlay.offsetHeight; // reflow
+    overlay.style.opacity = '1';
+    setTimeout(() => {
+      window.location.replace('the_fabric.html');
+    }, 650);
   },
 
   _onPLC: function () {
@@ -20842,20 +20856,23 @@ AFRAME.registerComponent('capsule-03-experience', {
     if (!lc) return;
 
     const fromPitch = lc.pitchObject ? lc.pitchObject.rotation.x : Math.PI / 2;
+    const fromX = this.rig.object3D.position.x;
+    const fromZ = this.rig.object3D.position.z;
+    const toX = this._entryPos ? this._entryPos.x : fromX;
+    const toZ = this._entryPos ? this._entryPos.z : fromZ;
 
-    // ── Animation: pitch only, ceiling → straight ahead ───────────────
-    // Total duration: ~2000 ms — simple and clean
+    // Pitch: ceiling → 0 over first 1400ms
+    // Position: stay put until 600ms, then glide back to entry position by 2000ms
     this._anim = {
-      dir:      'up',
-      t0:       performance.now(),
-      dur:      2000,
-      from: { lcPitch: fromPitch },
-      to:   { lcPitch: 0 }
+      dir:  'up',
+      t0:   performance.now(),
+      dur:  2000,
+      from: { lcPitch: fromPitch, rigX: fromX, rigZ: fromZ },
+      to:   { lcPitch: 0, rigX: toX, rigZ: toZ }
     };
 
     this._phase = 'anim_up';
 
-    // Re-enable look-controls; suppress PLC to avoid spurious stand-up trigger
     this._suppressPLCUntil = performance.now() + 800;
     if (this.cam) this.cam.setAttribute('look-controls', 'enabled: true');
 
@@ -20906,9 +20923,12 @@ AFRAME.registerComponent('capsule-03-experience', {
       const endPitch = lr(midPitch, A.to.lcPitch, pPitch);
       try { lc.pitchObject.rotation.x = endPitch; } catch(err){}
 
-    } else { // 'up' — pitch only, ceiling → straight ahead
-      const pPitch = this._pp(t, 0, A.dur);
+    } else { // 'up' — pitch levels then position glides back to entry
+      const pPitch = this._pp(t,   0, 1400);
+      const pMove  = this._pp(t, 600, 2000);
       try { lc.pitchObject.rotation.x = lr(A.from.lcPitch, A.to.lcPitch, pPitch); } catch(err){}
+      this.rig.object3D.position.x = lr(A.from.rigX, A.to.rigX, pMove);
+      this.rig.object3D.position.z = lr(A.from.rigZ, A.to.rigZ, pMove);
     }
 
     if (t >= A.dur) this._finishAnim();
@@ -20943,22 +20963,17 @@ AFRAME.registerComponent('capsule-03-experience', {
       );
 
     } else { // 'up'
-      // Snap pitch to exactly straight ahead
       if (lc) {
         try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
       }
-      // Restore position to where the user was standing before they entered
-      if (this._entryPos) {
-        this.rig.object3D.position.x = this._entryPos.x;
-        this.rig.object3D.position.z = this._entryPos.z;
-        this._entryPos = null;
-      }
+      this.rig.object3D.position.x = A.to.rigX;
+      this.rig.object3D.position.z = A.to.rigZ;
+      this._entryPos = null;
       this._anim = null;
 
-      // Back on feet
       this._phase = 'idle';
       this._setWalkEnabled(true);
-      this._hideGuide();  // proximity tick will repopulate if still near
+      this._hideGuide();
     }
   },
 
