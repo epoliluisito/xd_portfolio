@@ -10712,10 +10712,21 @@ AFRAME.registerComponent('capsule-guide-proximity', {
 
     playerObj.getWorldPosition(this._p);
 
-    // Resolve target position (prefer target, then this.el, then fallback point).
+    // Resolve target position.
+    // Prefer geometry-based center (Box3) so the trigger matches the visible capsule even if the entity origin is offset.
     const tgtEl = this.data.target || this.el;
-    if (tgtEl && tgtEl.object3D) {
-      tgtEl.object3D.getWorldPosition(this._t);
+    const tgtObj = (tgtEl && tgtEl.object3D) ? tgtEl.object3D : null;
+
+    if (tgtObj) {
+      // If the object has renderable children, use its world-space bounding box center.
+      // This is more reliable than the entity origin for GLTFs/procedural groups with internal offsets.
+      if (!this._box) this._box = new THREE.Box3();
+      this._box.setFromObject(tgtObj);
+      if (isFinite(this._box.min.x) && isFinite(this._box.max.x)) {
+        this._box.getCenter(this._t);
+      } else {
+        tgtObj.getWorldPosition(this._t);
+      }
     } else {
       this._t.set(this.data.triggerPoint.x, this.data.triggerPoint.y, this.data.triggerPoint.z);
     }
