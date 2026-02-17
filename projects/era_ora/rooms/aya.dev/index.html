@@ -10640,86 +10640,6 @@ return chosen * 180 / Math.PI;
       this.state.lastSeatedGuideKey = '';
       this._updateSeatedGuide(true);
 });
-
-
-AFRAME.registerComponent('capsule-guide-proximity', {
-  schema: {
-    target: { type: 'selector' },                 // e.g. #capsule_03
-    triggerPoint: { type: 'vec3', default: {x:0, y:0, z:0} }, // fallback if target not found
-    triggerDist: { type: 'number', default: 2.0 },           // meters
-    triggerHysteresis: { type: 'number', default: 0.25 },    // meters
-    horizontalOnly: { type: 'boolean', default: true },
-    messageHtml: { type: 'string', default:
-      'Capsule interface.<br>Press <span class="kbd">E</span> to open / close.'
-    }
-  },
-
-  init: function () {
-    this.rig = document.querySelector('#rig');
-    this.cam = document.querySelector('#playerCam');
-    this.guide = document.getElementById('userGuide');
-    this.guideBody = document.getElementById('userGuideBody');
-
-    this._rigWorld = new THREE.Vector3();
-    this._targetWorld = new THREE.Vector3();
-    this._hasShown = false;
-
-    this.ownerKey = 'capsule-guide-proximity';
-  },
-
-  tick: function () {
-    if (!this.guide || !this.guideBody || !this.rig) return;
-
-    // Rig world position
-    this.rig.object3D.getWorldPosition(this._rigWorld);
-
-    // Target world position (prefer entity, otherwise fixed point)
-    const t = this.data.target;
-    if (t && t.object3D) {
-      t.object3D.getWorldPosition(this._targetWorld);
-    } else {
-      this._targetWorld.set(this.data.triggerPoint.x, this.data.triggerPoint.y, this.data.triggerPoint.z);
-    }
-
-    let dx = this._rigWorld.x - this._targetWorld.x;
-    let dy = this._rigWorld.y - this._targetWorld.y;
-    let dz = this._rigWorld.z - this._targetWorld.z;
-    if (this.data.horizontalOnly) dy = 0;
-
-    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-    const on = this.data.triggerDist;
-    const off = this.data.triggerDist + this.data.triggerHysteresis;
-
-    const currentOwner = this.guide.getAttribute('data-owner') || '';
-
-    if (!this._hasShown && d <= on) {
-      // Don't fight another guide.
-      if (currentOwner && currentOwner !== this.ownerKey) return;
-
-      this.guide.setAttribute('data-owner', this.ownerKey);
-      this.guideBody.innerHTML = this.data.messageHtml;
-
-      this.guide.style.opacity = 1;
-      this.guide.classList.add('visible');
-
-      this._hasShown = true;
-      return;
-    }
-
-    if (this._hasShown && d > off) {
-      // Only hide if we still own it.
-      if (currentOwner && currentOwner !== this.ownerKey) return;
-
-      this.guide.style.opacity = 0;
-      this.guide.classList.remove('visible');
-      this.guide.setAttribute('data-owner', '');
-
-      this._hasShown = false;
-    }
-  }
-});
-
   },
 
   _showOverlay: function () {
@@ -10741,37 +10661,104 @@ AFRAME.registerComponent('capsule-guide-proximity', {
 
   _showGuide: function (html) {
     if (!this.guide || !this.guideBody) return;
-
-    const ownerKey = 'aya-seat-experience';
-    const currentOwner = this.guide.getAttribute('data-owner') || '';
-    // Don't fight another guide that is already showing.
-    if (currentOwner && currentOwner !== ownerKey) return;
-
-    this.guide.setAttribute('data-owner', ownerKey);
     this.guideBody.innerHTML = html;
-
-    // Keep both mechanisms in sync (some components use opacity directly).
-    this.guide.classList.add('visible');
-    this.guide.style.opacity = 1;
     this.guide.classList.add('visible');
   },
 
   _hideGuide: function () {
     if (!this.guide) return;
-
-    const ownerKey = 'aya-seat-experience';
-    const currentOwner = this.guide.getAttribute('data-owner') || '';
-    if (currentOwner && currentOwner !== ownerKey) return;
-
     this.guide.classList.remove('visible');
-    this.guide.style.opacity = 0;
-    this.guide.classList.remove('visible');
-    this.guide.setAttribute('data-owner', '');
   }
 });
 
 </script>
 <script>
+/* ==== Capsule proximity USER GUIDE (uses same #userGuide UI as rock seats) ==== */
+AFRAME.registerComponent('capsule-guide-proximity', {
+  schema: {
+    target: { type: 'selector' }, // optional; if omitted, uses this.el
+    triggerPoint: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }, // fallback if target missing
+    triggerDist: { type: 'number', default: 2.0 },
+    triggerHysteresis: { type: 'number', default: 0.25 },
+    horizontalOnly: { type: 'boolean', default: true },
+    messageHtml: { type: 'string', default: 'Capsule interface.<br>Press <span class="kbd">E</span> to open / close.' }
+  },
+
+  init: function () {
+    this.sceneEl = this.el.sceneEl;
+    this.rig =
+      document.querySelector('#rig') ||
+      document.querySelector('#cameraRig') ||
+      document.querySelector('[camera]') ||
+      null;
+
+    this.guide = document.getElementById('userGuide');
+    this.guideBody = document.getElementById('userGuideBody');
+
+    this._p = new THREE.Vector3();
+    this._t = new THREE.Vector3();
+
+    this._shown = false;
+    this._ownerKey = 'capsule';
+  },
+
+  tick: function () {
+    if (!this.guide || !this.guideBody) return;
+
+    // Resolve a stable "player" position.
+    const camEl = (this.sceneEl && this.sceneEl.camera && this.sceneEl.camera.el) ? this.sceneEl.camera.el : null;
+    const playerObj = (this.rig && this.rig.object3D) ? this.rig.object3D : (camEl ? camEl.object3D : null);
+    if (!playerObj) return;
+
+    playerObj.getWorldPosition(this._p);
+
+    // Resolve target position (prefer target, then this.el, then fallback point).
+    const tgtEl = this.data.target || this.el;
+    if (tgtEl && tgtEl.object3D) {
+      tgtEl.object3D.getWorldPosition(this._t);
+    } else {
+      this._t.set(this.data.triggerPoint.x, this.data.triggerPoint.y, this.data.triggerPoint.z);
+    }
+
+    let dx = this._p.x - this._t.x;
+    let dy = this._p.y - this._t.y;
+    let dz = this._p.z - this._t.z;
+    if (this.data.horizontalOnly) dy = 0;
+
+    const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+    const on = this.data.triggerDist;
+    const off = this.data.triggerDist + this.data.triggerHysteresis;
+
+    // Simple ownership lock to avoid guide-fighting.
+    const owner = this.guide.getAttribute('data-owner') || '';
+
+    if (!this._shown && d <= on) {
+      if (owner && owner !== this._ownerKey) return;
+
+      this.guide.setAttribute('data-owner', this._ownerKey);
+      this.guideBody.innerHTML = this.data.messageHtml;
+
+      this.guide.classList.add('visible');
+      // keep inline opacity in sync for any components that rely on it
+      this.guide.style.opacity = 1;
+
+      this._shown = true;
+      return;
+    }
+
+    if (this._shown && d > off) {
+      if (owner && owner !== this._ownerKey) return;
+
+      this.guide.classList.remove('visible');
+      this.guide.style.opacity = 0;
+      this.guide.setAttribute('data-owner', '');
+
+      this._shown = false;
+    }
+  }
+});
+
 /* ==== Imported glue + components (perfect merge) ==== */
 (function () {
   if (!window.AFRAME) return;
@@ -10882,7 +10869,6 @@ AFRAME.registerComponent('endchamber-lift', {
     const owner = this.guide.getAttribute('data-owner');
     if (owner && owner !== this.state.owner) return;
     this.guide.style.opacity = 0;
-    this.guide.classList.remove('visible');
     this.guide.setAttribute('data-owner', '');
   },
 
@@ -10891,7 +10877,6 @@ AFRAME.registerComponent('endchamber-lift', {
     this.guide.setAttribute('data-owner', this.state.owner);
     this.guideBody.innerHTML = html;
     this.guide.style.opacity = 1;
-    this.guide.classList.add('visible');
   },
 
   _captureShaftLights: function () {
@@ -11317,7 +11302,6 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     const owner = this.guide.getAttribute('data-owner');
     if (owner && owner !== this.state.owner) return;
     this.guide.style.opacity = 0;
-    this.guide.classList.remove('visible');
     this.guide.setAttribute('data-owner', '');
   },
 
@@ -11326,7 +11310,6 @@ AFRAME.registerComponent('endchamber-ascent-test', {
     this.guide.setAttribute('data-owner', this.state.owner);
     this.guideBody.innerHTML = html;
     this.guide.style.opacity = 1;
-    this.guide.classList.add('visible');
   },
 
   _syncAboveGroundState: function () {
@@ -19930,7 +19913,7 @@ AFRAME.registerComponent('ion-wind-field', {
         enabled:    false"></a-entity>
         </a-entity>
 
-<a-entity id="capsule_03" position="5.221 -1.1250 0.000" rotation="0 -90.000 0" scale="1.5 1.5 1.5" capsule-guide-proximity="target: #capsule_03; triggerDist: 2.0; triggerHysteresis: 0.25; horizontalOnly: true; messageHtml: Capsule interface.<br>Press <span class=kbd>E</span> to open / close.">
+<a-entity id="capsule_03" position="5.221 -1.1250 0.000" rotation="0 -90.000 0" scale="1.5 1.5 1.5" capsule-guide-proximity="triggerDist: 2.0; triggerHysteresis: 0.25; horizontalOnly: true; messageHtml: Capsule interface.<br>Press <span class=\"kbd\">E</span> to open / close.">
   
     <!-- Inner deck (fixed, walkable) -->
     <a-cylinder id="capsule_03_innerDeck"
