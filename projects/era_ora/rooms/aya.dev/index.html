@@ -8,7 +8,7 @@
   <link rel="dns-prefetch" href="https://raw.githubusercontent.com">
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
   <link rel="dns-prefetch" href="https://unpkg.com">
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="../../vendor/aframe/aframe-1.5.0.min.js"></script>
   <!-- Imported (dome_tunnel.html deps) -->
   <script src="https://unpkg.com/three@0.152.2/examples/js/loaders/RGBELoader.js"></script>
   <script src="https://unpkg.com/three@0.152.2/examples/js/postprocessing/EffectComposer.js"></script>
@@ -4184,329 +4184,7 @@ AFRAME.registerComponent('dome-ring-barrier', {
   }
 });
 
-AFRAME.
-/* === Junction dome: capsule_03 laydown autopilot (F / ESC) === */
-AFRAME.registerComponent('capsule-laydown', {
-  schema: {
-    capsule: { type: 'selector' },          // #capsule_03 root
-    controllerQuery: { type: 'string', default: '[capsule-split-toggle*="#capsule_03_halfL"]' },
-    rig: { type: 'selector', default: '#rig' },
-    cam: { type: 'selector', default: '#playerCam' },
-    nearRadius: { type: 'number', default: 6.0 }, // meters from capsule root to allow F
-    durMs: { type: 'int', default: 2200 }
-  },
-
-  init: function () {
-    this.state = 'standing'; // standing | layingTransition | laying | standingTransition
-    this._t0 = 0;
-
-    this._saved = null;      // standing pose snapshot
-    this._target = null;     // laying target pose snapshot
-
-    this._onKeyDown = this._onKeyDown.bind(this);
-    window.addEventListener('keydown', this._onKeyDown, { passive: false });
-
-    // Cache initial movement + clamp so we can restore exactly.
-    this._rigEl = this.data.rig || this.el.sceneEl.querySelector('#rig');
-    this._camEl = this.data.cam || this.el.sceneEl.querySelector('#playerCam');
-    this._rigWalkWas = null;
-    this._pitchClampWas = null;
-    this._lookControlsWas = null;
-  },
-
-  remove: function () {
-    window.removeEventListener('keydown', this._onKeyDown);
-  },
-
-  _isCapsuleOpen: function () {
-    const scene = this.el.sceneEl;
-    const q = this.data.controllerQuery;
-    const ctrl = scene && scene.querySelector(q);
-    if (!ctrl) return false;
-    const c = ctrl.components && ctrl.components['capsule-split-toggle'];
-    return !!(c && c._open);
-  },
-
-  _nearCapsule: function () {
-    if (!this.data.capsule || !this._rigEl) return false;
-    const rp = this._rigEl.object3D.position;
-    const cp = new THREE.Vector3();
-    this.data.capsule.object3D.getWorldPosition(cp);
-    const dx = rp.x - cp.x, dz = rp.z - cp.z;
-    return (dx*dx + dz*dz) <= (this.data.nearRadius * this.data.nearRadius);
-  },
-
-  _snapshotStanding: function () {
-    const rig3 = this._rigEl.object3D;
-    const cam3 = this._camEl.object3D;
-
-    // Rig yaw stored as rotation.y (radians) in object3D
-    this._saved = {
-      rigPos: rig3.position.clone(),
-      rigYaw: rig3.rotation.y,
-      camPos: cam3.position.clone(),
-      camRot: cam3.rotation.clone()
-    };
-
-    // Cache rig-walk + pitch-clamp attributes as strings to restore.
-    const rw = this._rigEl.getAttribute('rig-walk');
-    this._rigWalkWas = rw ? { speed: rw.speed, radius: rw.radius } : null;
-
-    const pc = this._camEl.getAttribute('pitch-clamp');
-    this._pitchClampWas = pc ? { min: pc.min, max: pc.max } : null;
-
-    // look-controls can be toggled by setting enabled flag; preserve if present.
-    const lc = this._camEl.getAttribute('look-controls');
-    this._lookControlsWas = lc ? Object.assign({}, lc) : null;
-  },
-
-  _computeTarget: function () {
-    // Target is anchored to capsule_03 space:
-    // - move the rig slightly inside the capsule (toward -Z local), head near shell side
-    // - yaw to face the room (capsule yaw + 180deg)
-    // - lower camera Y and pitch up to look at ceiling
-    const cap = this.data.capsule;
-    const rig3 = this._rigEl.object3D;
-
-    const capWorldPos = new THREE.Vector3();
-    const capWorldQuat = new THREE.Quaternion();
-    cap.object3D.getWorldPosition(capWorldPos);
-    cap.object3D.getWorldQuaternion(capWorldQuat);
-
-    // Local offset inside capsule (meters). Negative Z = deeper into capsule; small Y lift to avoid floor clipping.
-    const localOffset = new THREE.Vector3(0.0, 0.0, -0.55);
-    const worldOffset = localOffset.clone().applyQuaternion(capWorldQuat);
-
-    // Keep current rig Y (standing floor reference), but we'll "lie down" by lowering camera within rig.
-    const tgtRigPos = new THREE.Vector3(
-      capWorldPos.x + worldOffset.x,
-      rig3.position.y,
-      capWorldPos.z + worldOffset.z
-    );
-
-    // Capsule yaw from world quaternion (extract yaw around Y).
-    const e = new THREE.Euler(0, 0, 0, 'YXZ');
-    e.setFromQuaternion(capWorldQuat);
-    const capYaw = e.y;
-    const tgtRigYaw = capYaw + Math.PI; // face inward (opposite capsule forward)
-
-    // Camera local position: from 1.6 down to ~0.65 for lying feel
-    const cam3 = this._camEl.object3D;
-    const tgtCamPos = cam3.position.clone();
-    tgtCamPos.y = 0.65;
-
-    // Camera pitch up: look at ceiling (negative X rotation for looking up in A-Frame)
-    const tgtCamRot = cam3.rotation.clone();
-    tgtCamRot.x = -Math.PI / 2; // -90deg
-
-    this._target = {
-      rigPos: tgtRigPos,
-      rigYaw: tgtRigYaw,
-      camPos: tgtCamPos,
-      camRot: tgtCamRot
-    };
-  },
-
-  _setMovementEnabled: function (enabled) {
-    if (!this._rigEl) return;
-
-    // Freeze by speed=0 (keeps collisions), restore previous speed on enable.
-    if (!enabled) {
-      const rw = this._rigEl.getAttribute('rig-walk');
-      if (rw) this._rigEl.setAttribute('rig-walk', `speed: 0; radius: ${rw.radius}`);
-      const comp = this._rigEl.components && this._rigEl.components['rig-walk'];
-      if (comp && comp._clearKeys) comp._clearKeys();
-    } else if (this._rigWalkWas) {
-      this._rigEl.setAttribute('rig-walk', `speed: ${this._rigWalkWas.speed}; radius: ${this._rigWalkWas.radius}`);
-    }
-  },
-
-  _setLookEnabled: function (enabled) {
-    if (!this._camEl) return;
-
-    // Disable/enable look-controls cleanly without losing settings.
-    // If look-controls attr was missing, do nothing.
-    const lc = this._camEl.getAttribute('look-controls');
-    if (!lc && !this._lookControlsWas) return;
-
-    const base = this._lookControlsWas || lc || {};
-    const merged = Object.assign({}, base, { enabled: !!enabled });
-    this._camEl.setAttribute('look-controls', merged);
-  },
-
-  _setPitchClamp: function (minDeg, maxDeg) {
-    if (!this._camEl) return;
-    this._camEl.setAttribute('pitch-clamp', `min: ${minDeg}; max: ${maxDeg}`);
-  },
-
-  _easeInOutCubic: function (t) {
-    return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
-  },
-
-  _lerp: function (a, b, t) { return a + (b - a) * t; },
-
-  _lerpVec3: function (va, vb, t) {
-    return new THREE.Vector3(
-      this._lerp(va.x, vb.x, t),
-      this._lerp(va.y, vb.y, t),
-      this._lerp(va.z, vb.z, t)
-    );
-  },
-
-  _lerpEuler: function (ea, eb, t) {
-    // For our constrained use (small set), linear is fine.
-    return new THREE.Euler(
-      this._lerp(ea.x, eb.x, t),
-      this._lerp(ea.y, eb.y, t),
-      this._lerp(ea.z, eb.z, t),
-      ea.order || 'YXZ'
-    );
-  },
-
-  _startLaydown: function () {
-    if (!this._rigEl || !this._camEl || !this.data.capsule) return;
-
-    this._snapshotStanding();
-    this._computeTarget();
-
-    // Prevent user from fighting the move during transition.
-    this._setMovementEnabled(false);
-    this._setLookEnabled(false);
-
-    // Allow full pitch for ceiling view during laydown.
-    // Keep it slightly shy of ±90 to avoid gimbal weirdness.
-    this._setPitchClamp(-90, 90);
-
-    this.state = 'layingTransition';
-    this._t0 = performance.now();
-  },
-
-  _finishLaydown: function () {
-    this.state = 'laying';
-    // Re-enable look so the user can subtly look around while lying down.
-    this._setLookEnabled(true);
-    // Movement stays disabled while laying.
-  },
-
-  _startStandUp: function () {
-    if (!this._saved) return;
-
-    // User shouldn't control during stand-up transition.
-    this._setLookEnabled(false);
-
-    this.state = 'standingTransition';
-    this._t0 = performance.now();
-  },
-
-  _finishStandUp: function () {
-    this.state = 'standing';
-
-    // Restore camera pose and constraints exactly as before.
-    if (this._pitchClampWas) this._setPitchClamp(this._pitchClampWas.min, this._pitchClampWas.max);
-
-    this._setMovementEnabled(true);
-    this._setLookEnabled(true);
-  },
-
-  _onKeyDown: function (e) {
-    if (e.repeat) return;
-
-    const isF = (e.code === 'KeyF' || e.key === 'f' || e.key === 'F');
-    const isEsc = (e.code === 'Escape' || e.key === 'Escape');
-
-    // Only act on F / ESC for this feature.
-    if (!isF && !isEsc) return;
-
-    // Never interfere while transitioning.
-    if (this.state === 'layingTransition' || this.state === 'standingTransition') return;
-
-    // F: only if capsule open + near capsule, and currently standing.
-    if (isF && this.state === 'standing') {
-      if (!this._isCapsuleOpen()) return;
-      if (!this._nearCapsule()) return;
-
-      e.preventDefault();
-      this._startLaydown();
-      return;
-    }
-
-    // F again while laying: reserved (no-op for now)
-    if (isF && this.state === 'laying') {
-      e.preventDefault();
-      return;
-    }
-
-    // ESC: only once fully laying (per spec)
-    if (isEsc && this.state === 'laying') {
-      e.preventDefault();
-      this._startStandUp();
-      return;
-    }
-  },
-
-  tick: function () {
-    if (!this._rigEl || !this._camEl) return;
-    if (this.state !== 'layingTransition' && this.state !== 'standingTransition') return;
-
-    const now = performance.now();
-    const dur = Math.max(1, this.data.durMs);
-    let t = (now - this._t0) / dur;
-    if (t < 0) t = 0;
-    if (t > 1) t = 1;
-    const k = this._easeInOutCubic(t);
-
-    const rig3 = this._rigEl.object3D;
-    const cam3 = this._camEl.object3D;
-
-    if (this.state === 'layingTransition') {
-      // Two-phase feel:
-      // 0..0.55: move + yaw toward target (cinematic "turn into space")
-      // 0.55..1: lower head + pitch up (the "lie down" part)
-      const p1 = Math.min(1, k / 0.55);
-      const p2 = k <= 0.55 ? 0 : (k - 0.55) / 0.45;
-
-      // Rig move + yaw
-      const rigPos = this._lerpVec3(this._saved.rigPos, this._target.rigPos, this._easeInOutCubic(p1));
-      rig3.position.copy(rigPos);
-      rig3.rotation.y = this._lerp(this._saved.rigYaw, this._target.rigYaw, this._easeInOutCubic(p1));
-
-      // Camera: keep stance until p2 starts, then lower + pitch up
-      const camPos = this._lerpVec3(this._saved.camPos, this._target.camPos, this._easeInOutCubic(p2));
-      cam3.position.copy(camPos);
-
-      // Only pitch (x) changes; preserve yaw/roll from saved
-      const camRot = this._lerpEuler(this._saved.camRot, this._target.camRot, this._easeInOutCubic(p2));
-      cam3.rotation.x = camRot.x;
-
-      if (t >= 1) this._finishLaydown();
-      return;
-    }
-
-    if (this.state === 'standingTransition') {
-      // Reverse: 0..0.45 raise + pitch down, then move + yaw back
-      const p1 = Math.min(1, k / 0.45);
-      const p2 = k <= 0.45 ? 0 : (k - 0.45) / 0.55;
-
-      // Camera first (feel like "sitting up")
-      const camPos = this._lerpVec3(this._target.camPos, this._saved.camPos, this._easeInOutCubic(p1));
-      cam3.position.copy(camPos);
-      const camRot = this._lerpEuler(this._target.camRot, this._saved.camRot, this._easeInOutCubic(p1));
-      cam3.rotation.x = camRot.x;
-
-      // Then rig back
-      const rigPos = this._lerpVec3(this._target.rigPos, this._saved.rigPos, this._easeInOutCubic(p2));
-      rig3.position.copy(rigPos);
-      rig3.rotation.y = this._lerp(this._target.rigYaw, this._saved.rigYaw, this._easeInOutCubic(p2));
-
-      if (t >= 1) this._finishStandUp();
-      return;
-    }
-  }
-});
-
-
-
-registerComponent('rig-walk', {
+AFRAME.registerComponent('rig-walk', {
   schema: { speed: { type: 'number', default: 2.4 }, radius: { type: 'number', default: 0.28 } },
   init: function () {
     this.keys = Object.create(null);
@@ -18844,6 +18522,7 @@ AFRAME.registerComponent('ion-wind-field', {
 
   
     <a-entity id="aya_seat_experience" aya-seat-experience></a-entity>
+    <a-entity id="capsule_03_experience" capsule-03-experience></a-entity>
 
 
   <!-- ============================================================
@@ -19953,8 +19632,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <!-- ===== JUNCTION DOME (HUB): tunnel_04 + tunnel_05 + tunnel_06 ===== -->
   <a-entity id="junction_dome"
             position="-46.660 1.200 38.790"
-            rotation="0 0 0" visible="true"
-            capsule-laydown="capsule: #capsule_03; nearRadius: 7.0; durMs: 2400">
+            rotation="0 0 0" visible="true">
 
 <!-- Inner dome shell -->
     <a-entity id="junction_dome_inner"
@@ -20781,6 +20459,426 @@ AFRAME.registerComponent('zone-manager', {
   }
 });
 
+</script>
+
+<script id="capsule03ExperienceScript">
+/* ==========================================================================
+   CAPSULE 03 — Proximity-gated interaction + cinematic lie-down / stand-up
+   ========================================================================== */
+AFRAME.registerComponent('capsule-03-experience', {
+
+  init: function () {
+    this.rig   = document.querySelector('#rig');
+    this.cam   = document.querySelector('#playerCam');
+    this.cap03 = document.querySelector('#capsule_03');
+
+    // The capsule-split-toggle controller lives as a child of #capsule_03
+    this._toggleEl = document.querySelector('#capsule_03 [capsule-split-toggle]');
+
+    // Shared guide elements
+    this._guide     = document.getElementById('userGuide');
+    this._guideBody = document.getElementById('userGuideBody');
+
+    // ── State machine ──────────────────────────────────────────────────
+    // 'idle' | 'anim_down' | 'laid' | 'anim_up'
+    this._phase    = 'idle';
+    this._guideOwn = false;   // true when this component is showing the guide
+
+    // ── Proximity radius (m) ───────────────────────────────────────────
+    this.PROX = 3.8;
+
+    // ── Reusable THREE vectors ─────────────────────────────────────────
+    this._vCap   = new THREE.Vector3();
+    this._vRig   = new THREE.Vector3();
+    this._vDeck  = new THREE.Vector3();
+    this._vDome  = new THREE.Vector3();
+
+    // ── Animation data object (null when idle) ─────────────────────────
+    this._anim    = null;
+
+    // ── Stored neutral pose (populated when lie-down starts) ───────────
+    this._neutral = null;
+
+    // ── Pointer-lock suppression (avoid spurious stand-up on enable) ───
+    this._suppressPLCUntil = 0;
+    this._wasLocked = !!document.pointerLockElement;
+
+    // ── Bind & register handlers ───────────────────────────────────────
+    this._onKeyCap = this._onKeyCap.bind(this);
+    this._onKey    = this._onKey.bind(this);
+    this._onPLC    = this._onPLC.bind(this);
+
+    // Capture-phase: proximity-gate E; intercept ESC while laid
+    window.addEventListener('keydown', this._onKeyCap, { capture: true,  passive: false });
+    // Bubble-phase: handle F (start experience)
+    window.addEventListener('keydown', this._onKey,    { capture: false, passive: false });
+    // Pointer-lock release (ESC can release lock before keydown fires)
+    document.addEventListener('pointerlockchange', this._onPLC);
+  },
+
+  remove: function () {
+    window.removeEventListener('keydown', this._onKeyCap, { capture: true });
+    window.removeEventListener('keydown', this._onKey);
+    document.removeEventListener('pointerlockchange', this._onPLC);
+    this._hideGuide();
+  },
+
+  // ── Tiny helpers ───────────────────────────────────────────────────────────
+
+  _lc: function () {
+    return this.cam && this.cam.components && this.cam.components['look-controls'];
+  },
+
+  _capsuleIsOpen: function () {
+    const comp = this._toggleEl &&
+                 this._toggleEl.components &&
+                 this._toggleEl.components['capsule-split-toggle'];
+    return !!(comp && comp._open);
+  },
+
+  _isNear: function () {
+    if (!this.rig || !this.cap03) return false;
+    this.rig.object3D.getWorldPosition(this._vRig);
+    this.cap03.object3D.getWorldPosition(this._vCap);
+    return this._vRig.distanceTo(this._vCap) <= this.PROX;
+  },
+
+  _setWalkEnabled: function (on) {
+    if (!this.rig) return;
+    const rw = this.rig.components && this.rig.components['rig-walk'];
+    if (!rw) return;
+    if (on) {
+      if (rw.play)   rw.play();
+      if (rw.resume) rw.resume();
+    } else {
+      if (rw.pause) rw.pause();
+      if (rw._clearKeys) rw._clearKeys();
+    }
+  },
+
+  _showGuide: function (html) {
+    if (!this._guide || !this._guideBody) return;
+    this._guideBody.innerHTML = html;
+    this._guide.classList.add('visible');
+    this._guideOwn = true;
+  },
+
+  _hideGuide: function () {
+    if (!this._guide) return;
+    this._guide.classList.remove('visible');
+    this._guideOwn = false;
+  },
+
+  // Smoothstep easing
+  _ss: function (u) { return u * u * (3 - 2 * u); },
+
+  // Progress of a phase window [t0,t1] from elapsed ms t, smoothstepped → [0,1]
+  _pp: function (t, t0, t1) {
+    if (t <= t0) return 0;
+    if (t >= t1) return 1;
+    return this._ss((t - t0) / (t1 - t0));
+  },
+
+  // Lerp two angles (shortest path, radians)
+  _lerpA: function (a, b, p) {
+    let d = b - a;
+    while (d >  Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return a + d * p;
+  },
+
+  // ── Key handlers ───────────────────────────────────────────────────────────
+
+  _onKeyCap: function (e) {
+    if (e.repeat) return;
+
+    const isE   = (e.code === 'KeyE'   || e.key === 'e' || e.key === 'E');
+    const isEsc = (e.code === 'Escape' || e.key === 'Escape');
+
+    // ── E: proximity gate ──────────────────────────────────────────────
+    if (isE) {
+      // Block E entirely while inside the capsule sequence
+      if (this._phase !== 'idle') {
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
+      // Block E if player is not close enough
+      if (!this._isNear()) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+      // If near + idle: let event reach capsule-split-toggle normally
+      return;
+    }
+
+    // ── ESC: stand up only when fully laid down ────────────────────────
+    if (isEsc && this._phase === 'laid') {
+      e.stopPropagation();
+      e.preventDefault();
+      this._startStandUp();
+    }
+  },
+
+  _onKey: function (e) {
+    if (e.repeat) return;
+    const isF = (e.code === 'KeyF' || e.key === 'f' || e.key === 'F');
+
+    if (isF && this._phase === 'idle' && this._isNear() && this._capsuleIsOpen()) {
+      e.preventDefault();
+      this._startLayDown();
+    }
+  },
+
+  _onPLC: function () {
+    if (performance.now() < this._suppressPLCUntil) {
+      this._wasLocked = !!document.pointerLockElement;
+      return;
+    }
+    const nowLocked = !!document.pointerLockElement;
+    const released  = this._wasLocked && !nowLocked;
+    this._wasLocked = nowLocked;
+
+    if (released && this._phase === 'laid') {
+      this._startStandUp();
+    }
+  },
+
+  // ── Lie down ───────────────────────────────────────────────────────────────
+
+  _startLayDown: function () {
+    if (!this.rig || !this.cam || !this.cap03) return;
+    const lc = this._lc();
+    if (!lc) return;
+
+    // ── Current pose snapshot ──────────────────────────────────────────
+    const rigPos  = this.rig.object3D.position.clone();
+    const rigYaw  = this.rig.object3D.rotation.y;
+    const lcYaw   = lc.yawObject   ? lc.yawObject.rotation.y   : 0;
+    const lcPitch = lc.pitchObject ? lc.pitchObject.rotation.x  : 0;
+    const camY    = this.cam.object3D.position.y;
+
+    // ── Target: capsule centre XZ ──────────────────────────────────────
+    this.cap03.object3D.getWorldPosition(this._vCap);
+
+    // ── Target cam Y: eyes just above deck surface ─────────────────────
+    // Derive deck world Y from the inner deck entity
+    const deckEl = document.querySelector('#capsule_03_innerDeck');
+    if (deckEl) deckEl.object3D.getWorldPosition(this._vDeck);
+    else        this._vDeck.set(this._vCap.x, this._vCap.y + 0.26, this._vCap.z);
+    // Lying cam Y within rig = deck_world_Y - rig_world_Y + 0.08 (eyes ~8cm above deck)
+    const lyingCamY = Math.max(0.08, this._vDeck.y - rigPos.y + 0.08);
+
+    // ── Target yaw: face toward dome centre (entry direction of capsule) ──
+    // Use capsule's local +Z (entry side) transformed to world as the lie-down facing vector.
+    const entryLocal = new THREE.Vector3(0, 0, 1);
+    const entryWorld = entryLocal.clone().transformDirection(this.cap03.object3D.matrixWorld);
+    entryWorld.y = 0;
+    entryWorld.normalize();
+    // Camera forward in world after rig rotation θ: (-sin θ, 0, -cos θ)
+    // We want that = entryWorld → θ = atan2(-entryWorld.x, -entryWorld.z)
+    const toRigYaw = Math.atan2(-entryWorld.x, -entryWorld.z);
+
+    // ── Store neutral for restoration ─────────────────────────────────
+    this._neutral = {
+      rigX: rigPos.x, rigY: rigPos.y, rigZ: rigPos.z,
+      rigYaw, lcYaw, lcPitch, camY
+    };
+
+    // ── Build animation descriptor ─────────────────────────────────────
+    // Total duration: ~5800 ms
+    // Phase windows (ms):
+    //   Move XZ   :    0 → 2200  (player walks into capsule centre)
+    //   Turn       : 1200 → 3100  (player turns to face dome, overlaps move end)
+    //   Level pitch: 1500 → 2800  (gently brings any existing pitch back toward 0)
+    //   Lower cam  : 3000 → 4200  (body sinks onto the deck)
+    //   Pitch up   : 4000 → 5800  (head rotates back to face ceiling)
+    this._anim = {
+      dir:      'down',
+      t0:       performance.now(),
+      dur:      5800,
+      from: { rigX: rigPos.x, rigZ: rigPos.z, rigYaw, lcYaw, lcPitch, camY },
+      to:   { rigX: this._vCap.x, rigZ: this._vCap.z,
+              rigYaw: toRigYaw, lcYaw: 0,
+              lcPitch: -Math.PI / 2, camY: lyingCamY }
+    };
+
+    this._phase = 'anim_down';
+    this._setWalkEnabled(false);
+    this._showGuide('Lying down…');
+  },
+
+  // ── Stand up ───────────────────────────────────────────────────────────────
+
+  _startStandUp: function () {
+    if (!this.rig || !this.cam || !this._neutral) return;
+    const lc = this._lc();
+    if (!lc) return;
+
+    const rigPos  = this.rig.object3D.position;
+    const fromCamY = this.cam.object3D.position.y;
+
+    // ── Build reverse animation descriptor ────────────────────────────
+    // Total duration: ~4500 ms
+    // Phase windows (ms):
+    //   Pitch down :    0 → 1800  (head rotates forward from ceiling)
+    //   Raise cam  : 1500 → 2800  (body rises off deck)
+    //   Turn back  : 2600 → 3800  (player turns to original facing)
+    //   Move XZ    : 3500 → 4500  (player steps back to original position)
+    this._anim = {
+      dir: 'up',
+      t0:  performance.now(),
+      dur: 4500,
+      from: {
+        rigX: rigPos.x, rigZ: rigPos.z,
+        rigYaw: this.rig.object3D.rotation.y,
+        lcYaw:  lc.yawObject   ? lc.yawObject.rotation.y   : 0,
+        lcPitch:lc.pitchObject ? lc.pitchObject.rotation.x  : 0,
+        camY:  fromCamY
+      },
+      to: {
+        rigX:    this._neutral.rigX,
+        rigZ:    this._neutral.rigZ,
+        rigYaw:  this._neutral.rigYaw,
+        lcYaw:   this._neutral.lcYaw,
+        lcPitch: 0,   // look straight ahead when back on feet
+        camY:    this._neutral.camY
+      }
+    };
+
+    this._phase = 'anim_up';
+
+    // Re-enable look-controls before the animation; suppress PLC to avoid
+    // a spurious stand-up trigger from the re-enable itself.
+    this._suppressPLCUntil = performance.now() + 800;
+    if (this.cam) this.cam.setAttribute('look-controls', 'enabled: true');
+
+    this._showGuide('Getting up…');
+  },
+
+  // ── Tick ───────────────────────────────────────────────────────────────────
+
+  tick: function () {
+    if (this._phase === 'anim_down' || this._phase === 'anim_up') {
+      this._tickAnim();
+      return;
+    }
+    if (this._phase === 'idle') {
+      this._tickProximityGuide();
+    }
+    // While 'laid': look-controls is disabled; nothing to drive.
+  },
+
+  _tickAnim: function () {
+    const A = this._anim;
+    if (!A || !this.rig || !this.cam) return;
+    const lc = this._lc();
+    if (!lc) return;
+
+    const t  = Math.min(A.dur, performance.now() - A.t0);
+    const lr = (a, b, p) => a + (b - a) * p;
+
+    if (A.dir === 'down') {
+      const pMove   = this._pp(t,    0, 2200);
+      const pTurn   = this._pp(t, 1200, 3100);
+      const pLevel  = this._pp(t, 1500, 2800);  // pitch levelling pass
+      const pLower  = this._pp(t, 3000, 4200);
+      const pPitch  = this._pp(t, 4000, 5800);
+
+      // Position XZ (rig walks into capsule)
+      this.rig.object3D.position.x = lr(A.from.rigX, A.to.rigX, pMove);
+      this.rig.object3D.position.z = lr(A.from.rigZ, A.to.rigZ, pMove);
+
+      // Yaw: rig body + look-controls yaw both converge to target
+      this.rig.object3D.rotation.y = this._lerpA(A.from.rigYaw, A.to.rigYaw,  pTurn);
+      try { lc.yawObject.rotation.y   = this._lerpA(A.from.lcYaw,   A.to.lcYaw,   pTurn);  } catch(err){}
+
+      // Camera Y descends onto the deck
+      this.cam.object3D.position.y = lr(A.from.camY, A.to.camY, pLower);
+
+      // Pitch: first gently level (any existing tilt → 0), then pitch to ceiling
+      const midPitch = lr(A.from.lcPitch, 0, pLevel);
+      const endPitch = lr(midPitch, A.to.lcPitch, pPitch);
+      try { lc.pitchObject.rotation.x = endPitch; } catch(err){}
+
+    } else { // 'up'
+      const pPitch = this._pp(t,    0, 1800);
+      const pRaise = this._pp(t, 1500, 2800);
+      const pTurn  = this._pp(t, 2600, 3800);
+      const pMove  = this._pp(t, 3500, 4500);
+
+      // Pitch comes down first (ceiling → forward)
+      try { lc.pitchObject.rotation.x = lr(A.from.lcPitch, A.to.lcPitch, pPitch); } catch(err){}
+
+      // Body rises and camera raises
+      this.cam.object3D.position.y  = lr(A.from.camY,   A.to.camY,   pRaise);
+
+      // Yaw turns back to neutral
+      this.rig.object3D.rotation.y  = this._lerpA(A.from.rigYaw, A.to.rigYaw, pTurn);
+      try { lc.yawObject.rotation.y = this._lerpA(A.from.lcYaw,  A.to.lcYaw,  pTurn); } catch(err){}
+
+      // Position returns to where player was standing
+      this.rig.object3D.position.x  = lr(A.from.rigX, A.to.rigX, pMove);
+      this.rig.object3D.position.z  = lr(A.from.rigZ, A.to.rigZ, pMove);
+    }
+
+    if (t >= A.dur) this._finishAnim();
+  },
+
+  _finishAnim: function () {
+    const A = this._anim;
+    if (!A) return;
+    const lc = this._lc();
+
+    // Snap everything to the exact final values
+    this.rig.object3D.position.x = A.to.rigX;
+    this.rig.object3D.position.z = A.to.rigZ;
+    this.rig.object3D.rotation.y = A.to.rigYaw;
+    this.cam.object3D.position.y = A.to.camY;
+    if (lc) {
+      try { lc.yawObject.rotation.y   = A.to.lcYaw;   } catch(err){}
+      try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
+    }
+    this._anim = null;
+
+    if (A.dir === 'down') {
+      // Fully laid: lock look-controls so mouse can't disturb the pose
+      this._suppressPLCUntil = performance.now() + 500;
+      if (this.cam) this.cam.setAttribute('look-controls', 'enabled: false');
+      this._phase = 'laid';
+      this._showGuide(
+        '<span class="kbd">ESC</span> Get up &nbsp;&nbsp; <span class="kbd">F</span> Start experience'
+      );
+    } else {
+      // Back on feet
+      this._phase = 'idle';
+      this._setWalkEnabled(true);
+      this._hideGuide();  // proximity tick will repopulate if still near
+    }
+  },
+
+  // ── Proximity guide (idle only) ────────────────────────────────────────────
+
+  _tickProximityGuide: function () {
+    const near = this._isNear();
+    const open = this._capsuleIsOpen();
+
+    if (!near) {
+      if (this._guideOwn) this._hideGuide();
+      return;
+    }
+
+    const msg = open
+      ? '<span class="kbd">E</span> Close capsule &nbsp;&nbsp; <span class="kbd">F</span> Enter'
+      : '<span class="kbd">E</span> Open capsule';
+
+    // Only update DOM if the message changed (avoid thrashing)
+    if (!this._guideOwn || this._guideBody.innerHTML !== msg) {
+      this._showGuide(msg);
+    }
+  }
+
+});
 </script>
 
 <script id="quitUiScript">
