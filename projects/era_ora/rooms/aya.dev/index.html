@@ -20597,13 +20597,18 @@ AFRAME.registerComponent('capsule-03-experience', {
 
     // ── E: proximity gate ──────────────────────────────────────────────
     if (isE) {
-      // Block E entirely while inside the capsule sequence
-      if (this._phase !== 'idle') {
+      // Block E entirely while animating (not while laid — capsule toggle stays live)
+      if (this._phase === 'anim_down' || this._phase === 'anim_up') {
         e.stopPropagation();
         e.preventDefault();
         return;
       }
-      // Block E if player is not close enough
+      // While laid: let E reach capsule-split-toggle, then refresh the guide
+      if (this._phase === 'laid') {
+        // Don't block — let the event through. Update guide on next tick.
+        return;
+      }
+      // Idle: block E if player is not close enough
       if (!this._isNear()) {
         e.stopPropagation();
         e.preventDefault();
@@ -20656,51 +20661,31 @@ AFRAME.registerComponent('capsule-03-experience', {
     const rigYaw  = this.rig.object3D.rotation.y;
     const lcYaw   = lc.yawObject   ? lc.yawObject.rotation.y   : 0;
     const lcPitch = lc.pitchObject ? lc.pitchObject.rotation.x  : 0;
-    const camY    = this.cam.object3D.position.y;
 
     // ── Target: capsule centre XZ ──────────────────────────────────────
     this.cap03.object3D.getWorldPosition(this._vCap);
 
-    // ── Target cam Y: eyes just above deck surface ─────────────────────
-    // Derive deck world Y from the inner deck entity
-    const deckEl = document.querySelector('#capsule_03_innerDeck');
-    if (deckEl) deckEl.object3D.getWorldPosition(this._vDeck);
-    else        this._vDeck.set(this._vCap.x, this._vCap.y + 0.26, this._vCap.z);
-    // Lying cam Y within rig = deck_world_Y - rig_world_Y + 0.08 (eyes ~8cm above deck)
-    const lyingCamY = Math.max(0.08, this._vDeck.y - rigPos.y + 0.08);
-
-    // ── Target yaw: face toward dome centre (entry direction of capsule) ──
-    // Use capsule's local +Z (entry side) transformed to world as the lie-down facing vector.
+    // ── Target yaw: face toward dome interior (entry direction of capsule) ──
     const entryLocal = new THREE.Vector3(0, 0, 1);
     const entryWorld = entryLocal.clone().transformDirection(this.cap03.object3D.matrixWorld);
     entryWorld.y = 0;
     entryWorld.normalize();
-    // Camera forward in world after rig rotation θ: (-sin θ, 0, -cos θ)
-    // We want that = entryWorld → θ = atan2(-entryWorld.x, -entryWorld.z)
     const toRigYaw = Math.atan2(-entryWorld.x, -entryWorld.z);
 
-    // ── Store neutral for restoration ─────────────────────────────────
-    this._neutral = {
-      rigX: rigPos.x, rigY: rigPos.y, rigZ: rigPos.z,
-      rigYaw, lcYaw, lcPitch, camY
-    };
-
     // ── Build animation descriptor ─────────────────────────────────────
-    // Total duration: ~5800 ms
+    // Total duration: ~5000 ms
     // Phase windows (ms):
-    //   Move XZ   :    0 → 2200  (player walks into capsule centre)
-    //   Turn       : 1200 → 3100  (player turns to face dome, overlaps move end)
-    //   Level pitch: 1500 → 2800  (gently brings any existing pitch back toward 0)
-    //   Lower cam  : 3000 → 4200  (body sinks onto the deck)
-    //   Pitch up   : 4000 → 5800  (head rotates back to face ceiling)
+    //   Move XZ    :    0 → 2200  (player walks into capsule centre)
+    //   Turn        : 1200 → 3100  (player turns to face dome, overlaps move end)
+    //   Level pitch : 1500 → 2800  (gently brings any existing pitch back toward 0)
+    //   Pitch up    : 2800 → 5000  (head rotates to face ceiling)
     this._anim = {
-      dir:      'down',
-      t0:       performance.now(),
-      dur:      5800,
-      from: { rigX: rigPos.x, rigZ: rigPos.z, rigYaw, lcYaw, lcPitch, camY },
+      dir:  'down',
+      t0:   performance.now(),
+      dur:  5000,
+      from: { rigX: rigPos.x, rigZ: rigPos.z, rigYaw, lcYaw, lcPitch },
       to:   { rigX: this._vCap.x, rigZ: this._vCap.z,
-              rigYaw: toRigYaw, lcYaw: 0,
-              lcPitch: Math.PI / 2, camY: lyingCamY }
+              rigYaw: toRigYaw, lcYaw: 0, lcPitch: Math.PI / 2 }
     };
 
     this._phase = 'anim_down';
@@ -20711,45 +20696,25 @@ AFRAME.registerComponent('capsule-03-experience', {
   // ── Stand up ───────────────────────────────────────────────────────────────
 
   _startStandUp: function () {
-    if (!this.rig || !this.cam || !this._neutral) return;
+    if (!this.rig || !this.cam) return;
     const lc = this._lc();
     if (!lc) return;
 
-    const rigPos  = this.rig.object3D.position;
-    const fromCamY = this.cam.object3D.position.y;
+    const fromPitch = lc.pitchObject ? lc.pitchObject.rotation.x : Math.PI / 2;
 
-    // ── Build reverse animation descriptor ────────────────────────────
-    // Total duration: ~4500 ms
-    // Phase windows (ms):
-    //   Pitch down :    0 → 1800  (head rotates forward from ceiling)
-    //   Raise cam  : 1500 → 2800  (body rises off deck)
-    //   Turn back  : 2600 → 3800  (player turns to original facing)
-    //   Move XZ    : 3500 → 4500  (player steps back to original position)
+    // ── Animation: pitch only, ceiling → straight ahead ───────────────
+    // Total duration: ~2000 ms — simple and clean
     this._anim = {
-      dir: 'up',
-      t0:  performance.now(),
-      dur: 4500,
-      from: {
-        rigX: rigPos.x, rigZ: rigPos.z,
-        rigYaw: this.rig.object3D.rotation.y,
-        lcYaw:  lc.yawObject   ? lc.yawObject.rotation.y   : 0,
-        lcPitch:lc.pitchObject ? lc.pitchObject.rotation.x  : 0,
-        camY:  fromCamY
-      },
-      to: {
-        rigX:    this._neutral.rigX,
-        rigZ:    this._neutral.rigZ,
-        rigYaw:  this._neutral.rigYaw,
-        lcYaw:   this._neutral.lcYaw,
-        lcPitch: 0,   // look straight ahead when back on feet
-        camY:    this._neutral.camY
-      }
+      dir:      'up',
+      t0:       performance.now(),
+      dur:      2000,
+      from: { lcPitch: fromPitch },
+      to:   { lcPitch: 0 }
     };
 
     this._phase = 'anim_up';
 
-    // Re-enable look-controls before the animation; suppress PLC to avoid
-    // a spurious stand-up trigger from the re-enable itself.
+    // Re-enable look-controls; suppress PLC to avoid spurious stand-up trigger
     this._suppressPLCUntil = performance.now() + 800;
     if (this.cam) this.cam.setAttribute('look-controls', 'enabled: true');
 
@@ -20765,8 +20730,11 @@ AFRAME.registerComponent('capsule-03-experience', {
     }
     if (this._phase === 'idle') {
       this._tickProximityGuide();
+      return;
     }
-    // While 'laid': look-controls is disabled; nothing to drive.
+    if (this._phase === 'laid') {
+      this._tickLaidGuide();
+    }
   },
 
   _tickAnim: function () {
@@ -20781,45 +20749,25 @@ AFRAME.registerComponent('capsule-03-experience', {
     if (A.dir === 'down') {
       const pMove   = this._pp(t,    0, 2200);
       const pTurn   = this._pp(t, 1200, 3100);
-      const pLevel  = this._pp(t, 1500, 2800);  // pitch levelling pass
-      const pLower  = this._pp(t, 3000, 4200);
-      const pPitch  = this._pp(t, 4000, 5800);
+      const pLevel  = this._pp(t, 1500, 2800);
+      const pPitch  = this._pp(t, 2800, 5000);
 
-      // Position XZ (rig walks into capsule)
+      // Position XZ
       this.rig.object3D.position.x = lr(A.from.rigX, A.to.rigX, pMove);
       this.rig.object3D.position.z = lr(A.from.rigZ, A.to.rigZ, pMove);
 
-      // Yaw: rig body + look-controls yaw both converge to target
-      this.rig.object3D.rotation.y = this._lerpA(A.from.rigYaw, A.to.rigYaw,  pTurn);
-      try { lc.yawObject.rotation.y   = this._lerpA(A.from.lcYaw,   A.to.lcYaw,   pTurn);  } catch(err){}
+      // Yaw: rig body + look-controls yaw converge to target
+      this.rig.object3D.rotation.y = this._lerpA(A.from.rigYaw, A.to.rigYaw, pTurn);
+      try { lc.yawObject.rotation.y = this._lerpA(A.from.lcYaw, A.to.lcYaw, pTurn); } catch(err){}
 
-      // Camera Y descends onto the deck
-      this.cam.object3D.position.y = lr(A.from.camY, A.to.camY, pLower);
-
-      // Pitch: first gently level (any existing tilt → 0), then pitch to ceiling
+      // Pitch: level first (any tilt → 0), then rotate to ceiling
       const midPitch = lr(A.from.lcPitch, 0, pLevel);
       const endPitch = lr(midPitch, A.to.lcPitch, pPitch);
       try { lc.pitchObject.rotation.x = endPitch; } catch(err){}
 
-    } else { // 'up'
-      const pPitch = this._pp(t,    0, 1800);
-      const pRaise = this._pp(t, 1500, 2800);
-      const pTurn  = this._pp(t, 2600, 3800);
-      const pMove  = this._pp(t, 3500, 4500);
-
-      // Pitch comes down first (ceiling → forward)
+    } else { // 'up' — pitch only, ceiling → straight ahead
+      const pPitch = this._pp(t, 0, A.dur);
       try { lc.pitchObject.rotation.x = lr(A.from.lcPitch, A.to.lcPitch, pPitch); } catch(err){}
-
-      // Body rises and camera raises
-      this.cam.object3D.position.y  = lr(A.from.camY,   A.to.camY,   pRaise);
-
-      // Yaw turns back to neutral
-      this.rig.object3D.rotation.y  = this._lerpA(A.from.rigYaw, A.to.rigYaw, pTurn);
-      try { lc.yawObject.rotation.y = this._lerpA(A.from.lcYaw,  A.to.lcYaw,  pTurn); } catch(err){}
-
-      // Position returns to where player was standing
-      this.rig.object3D.position.x  = lr(A.from.rigX, A.to.rigX, pMove);
-      this.rig.object3D.position.z  = lr(A.from.rigZ, A.to.rigZ, pMove);
     }
 
     if (t >= A.dur) this._finishAnim();
@@ -20830,30 +20778,54 @@ AFRAME.registerComponent('capsule-03-experience', {
     if (!A) return;
     const lc = this._lc();
 
-    // Snap everything to the exact final values
-    this.rig.object3D.position.x = A.to.rigX;
-    this.rig.object3D.position.z = A.to.rigZ;
-    this.rig.object3D.rotation.y = A.to.rigYaw;
-    this.cam.object3D.position.y = A.to.camY;
-    if (lc) {
-      try { lc.yawObject.rotation.y   = A.to.lcYaw;   } catch(err){}
-      try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
-    }
-    this._anim = null;
-
     if (A.dir === 'down') {
+      // Snap final position and rotation
+      this.rig.object3D.position.x = A.to.rigX;
+      this.rig.object3D.position.z = A.to.rigZ;
+      this.rig.object3D.rotation.y = A.to.rigYaw;
+      if (lc) {
+        try { lc.yawObject.rotation.y   = A.to.lcYaw;   } catch(err){}
+        try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
+      }
+      this._anim = null;
+
       // Fully laid: lock look-controls so mouse can't disturb the pose
       this._suppressPLCUntil = performance.now() + 500;
       if (this.cam) this.cam.setAttribute('look-controls', 'enabled: false');
       this._phase = 'laid';
+      const open = this._capsuleIsOpen();
+      const eLabel = open ? 'Close capsule' : 'Open capsule';
       this._showGuide(
-        '<span class="kbd">ESC</span> Get up &nbsp;&nbsp; <span class="kbd">F</span> Start experience'
+        '<span class="kbd">E</span> ' + eLabel +
+        ' &nbsp;&nbsp; <span class="kbd">ESC</span> Get up' +
+        ' &nbsp;&nbsp; <span class="kbd">F</span> Start experience'
       );
-    } else {
+
+    } else { // 'up'
+      // Snap pitch to exactly straight ahead
+      if (lc) {
+        try { lc.pitchObject.rotation.x = A.to.lcPitch; } catch(err){}
+      }
+      this._anim = null;
+
       // Back on feet
       this._phase = 'idle';
       this._setWalkEnabled(true);
       this._hideGuide();  // proximity tick will repopulate if still near
+    }
+  },
+
+  // ── Laid guide (updates E label when capsule is toggled) ──────────────────
+
+  _tickLaidGuide: function () {
+    const open = this._capsuleIsOpen();
+    const eLabel = open ? 'Close capsule' : 'Open capsule';
+    const msg =
+      '<span class="kbd">E</span> ' + eLabel +
+      ' &nbsp;&nbsp; <span class="kbd">ESC</span> Get up' +
+      ' &nbsp;&nbsp; <span class="kbd">F</span> Start experience';
+    if (!this._guideOwn || this._guideBody.innerHTML !== msg) {
+      this._showGuide(msg);
     }
   },
 
