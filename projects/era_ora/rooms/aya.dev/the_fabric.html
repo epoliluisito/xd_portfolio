@@ -31,11 +31,46 @@
     font-family:monospace; font-size:9px;
     letter-spacing:8px; color:rgba(100,180,220,0.3);
   }
+/* ── USER GUIDE (return) ─────────────────────────────────────────────── */
+#userGuide {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(10, 18, 28, 0.38);
+  border: 1px solid rgba(160, 210, 255, 0.10);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-family: monospace;
+  font-size: 10px;
+  letter-spacing: 1.6px;
+  color: rgba(200, 235, 255, 0.72);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 350ms ease;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+#userGuide.visible { opacity: 1; }
+#userGuide .kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(200, 235, 255, 0.22);
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(220, 245, 255, 0.90);
+  margin-right: 6px;
+}
 </style>
 </head>
 <body>
 <div id="veil"></div>
 <div id="cursor"></div>
+
+<div id="userGuide"><span class="kbd">ESC</span> Return</div>
 <div id="enter">ENTER</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -459,7 +494,7 @@ function init() {
   buildStars();
   placeGlimpses();
 
-  window.addEventListener('keydown', e => { keys[e.code] = true; });
+  window.addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Escape') { e.preventDefault(); if (started) exitFabric(); } });
   window.addEventListener('keyup',   e => { keys[e.code] = false; });
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('resize', onResize);
@@ -848,6 +883,36 @@ function startAudio() {
 }
 
 // ─── INPUT ────────────────────────────────────────────────────────────────────
+let returnArmed = false;
+function showReturnGuide(on) {
+  const g = document.getElementById('userGuide');
+  if (!g) return;
+  g.classList.toggle('visible', !!on);
+}
+
+function exitFabric() {
+  if (returnArmed) return;
+  returnArmed = true;
+
+  // Fade to black using existing veil
+  const veil = document.getElementById('veil');
+  if (veil) {
+    veil.style.transition = 'opacity 600ms ease';
+    veil.style.opacity = '1';
+  }
+
+  try { document.exitPointerLock?.(); } catch(_) {}
+
+  // Prefer history back if possible, else fall back to index.html
+  setTimeout(() => {
+    if (window.history && history.length > 1) {
+      history.back();
+    } else {
+      window.location.href = 'index.html';
+    }
+  }, 650);
+}
+
 function onMouseMove(e) {
   if (!started) return;
   pitchYaw.y -= e.movementX * 0.0014;
@@ -858,6 +923,7 @@ function onMouseMove(e) {
 function enter() {
   if (started) return;
   started = true;
+  showReturnGuide(true);
   const el = document.getElementById('enter');
   el.style.opacity='0'; setTimeout(()=>el.remove(),2000);
   document.getElementById('veil').style.opacity='0';
