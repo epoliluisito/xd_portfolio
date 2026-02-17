@@ -165,7 +165,37 @@
       }
     });
 
-    // WASD rig-walk
+    // IBL: scene-level env map driving all PBR metalness/roughness — must match aya.dev
+    // aya.dev uses simple-ibl="intensity: 0.35; color: #e4ebf4" on the a-scene
+    AFRAME.registerComponent('simple-ibl', {
+      schema: { intensity: { type: 'number', default: 1.25 }, color: { type: 'color', default: '#dfe6ef' } },
+      init: function () {
+        const sceneObj = this.el.sceneEl.object3D;
+        const mkCanvas = () => {
+          const cv = document.createElement('canvas'); cv.width = cv.height = 2;
+          const ctx = cv.getContext('2d');
+          const g = ctx.createLinearGradient(0,0,2,2);
+          g.addColorStop(0, this.data.color);
+          g.addColorStop(1, '#aeb7c3');
+          ctx.fillStyle = g; ctx.fillRect(0,0,2,2);
+          return cv;
+        };
+        const cube = new THREE.CubeTexture([mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas()]);
+        cube.needsUpdate = true;
+        sceneObj.environment = cube;
+        const applyIntensity = () => {
+          sceneObj.traverse(o => {
+            if (!o || !o.isMesh) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => {
+              if (m && m.isMeshStandardMaterial) { m.envMapIntensity = this.data.intensity; m.needsUpdate = true; }
+            });
+          });
+        };
+        applyIntensity();
+        this.el.sceneEl.addEventListener('object3dset', applyIntensity);
+      }
+    });
     AFRAME.registerComponent('rig-walk', {
       schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
       init: function () {
@@ -230,6 +260,7 @@
 </div>
 
 <a-scene
+  simple-ibl="intensity: 0.35; color: #e4ebf4"
   renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance"
   fog="type: none"
   vr-mode-ui="enabled: false"
