@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>The Fabric</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#00010a; overflow:hidden; }
+  #cursor {
+    position:fixed; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    width:2px; height:2px; border-radius:50%;
+    background:rgba(180,220,255,0.22);
+    pointer-events:none; z-index:10;
+    transition: all 0.8s;
+  }
+  #cursor.near {
+    width:5px; height:5px;
+    background:rgba(200,235,255,0.4);
+    box-shadow: 0 0 14px rgba(120,200,255,0.28);
+  }
+  #veil {
+    position:fixed; inset:0; background:#00010a;
+    pointer-events:none; z-index:5;
+    transition: opacity 3.5s ease;
+  }
+  #enter {
+    position:fixed; inset:0; display:flex;
+    align-items:center; justify-content:center;
+    z-index:20; cursor:pointer;
+    font-family:monospace; font-size:9px;
+    letter-spacing:8px; color:rgba(100,180,220,0.3);
+  }
+</style>
+</head>
+<body>
+<div id="veil"></div>
+<div id="cursor"></div>
+<div id="enter">ENTER</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/*
+  THE FABRIC — v3
+  ────────────────
+  The lattice is what exists before observation.
+  You look somewhere: the fabric there begins to remember something.
+  Lines draw themselves out of the grid — slowly, organically.
+  A room. The sea. A cathedral. A ship's hull at rest.
+  Never fully. Never permanent.
+  Some lines keep growing even as others dissolve.
+  Creation and dissolution are the same motion.
+  You are not visiting these places.
+  You are the reason they exist at all.
+*/
+
+let scene, camera, renderer;
+let audioCtx, masterGain, droneNodes = [], glimpseOsc, glimpseGainNode;
+let started = false;
+const keys = {};
+const pitchYaw = { x:0, y:0 };
+let clock = 0;
+
+const STEP = 88;
+const HALF = 7;
+const RANGE = HALF * STEP;
+const MOVE_SPEED = 1.4;   // much slower
+
+const gridLines = [];
+const ripples   = [];
+
+// ─── GLIMPSE SYSTEM ───────────────────────────────────────────────────────────
+const glimpses = [];
+const GLIMPSE_SLOTS = 14;
+const LOOK_DOT      = 0.87;
+const MIN_DIST      = 90;
+const MAX_DIST      = 650;
+const MAX_VISIBLE   = 2;
+
+// Each glimpse holds segments with individual progress values
+// so they can grow/dissolve independently — the organic feeling
+function makeSegment(ax, ay, az, bx, by, bz) {
+  return {
+    // world-space endpoints
+    ax, ay, az, bx, by, bz,
+    // current progress: 0 = collapsed at A, 1 = fully extended to B
+    // during dissolution we can overshoot slightly for that alive feeling
+    prog: 0,
+    // growth speed varies per segment → staggered, not uniform
+    growSpeed:  0.0015 + Math.random() * 0.004,
+    dissolveSpeed: 0.0008 + Math.random() * 0.002,
+    // creation delay: later segments start growing after earlier ones
+    delay: Math.random(),   // 0-1, mapped to actual delay on appear
+    // oscillation phase during visible state
+    phase: Math.random() * Math.PI * 2,
+    // small random overshoot during dissolve — the continuous-creating feel
+    overshootTimer: 0,
+  };
+}
+
+// ─── PLACE BUILDERS ───────────────────────────────────────────────────────────
+// All return flat segment arrays. No meshes — pure geometry blueprint.
+
+function buildRoom() {
+  const W=160,H=110,D=200, hw=W/2,hh=H/2,hd=D/2;
+  const s = [];
+  // Outer box
+  const box = [
+    [-hw,-hh,-hd, hw,-hh,-hd],[hw,-hh,-hd,hw,-hh,hd],[hw,-hh,hd,-hw,-hh,hd],[-hw,-hh,hd,-hw,-hh,-hd],
+    [-hw,hh,-hd,hw,hh,-hd],[hw,hh,-hd,hw,hh,hd],[hw,hh,hd,-hw,hh,hd],[-hw,hh,hd,-hw,hh,-hd],
+    [-hw,-hh,-hd,-hw,hh,-hd],[hw,-hh,-hd,hw,hh,-hd],[hw,-hh,hd,hw,hh,hd],[-hw,-hh,hd,-hw,hh,hd],
+  ];
+  // Floor cross
+  box.push( [0,-hh,-hd,0,-hh,hd], [-hw,-hh,0,hw,-hh,0] );
+  // Window
+  const wx1=hw*0.15, wx2=hw*0.7, wy1=0, wy2=hh*0.72;
+  box.push([wx1,wy1,-hd,wx2,wy1,-hd],[wx2,wy1,-hd,wx2,wy2,-hd],[wx2,wy2,-hd,wx1,wy2,-hd],[wx1,wy2,-hd,wx1,wy1,-hd]);
+  // Window cross
+  box.push([(wx1+wx2)/2,wy1,-hd,(wx1+wx2)/2,wy2,-hd],[wx1,(wy1+wy2)/2,-hd,wx2,(wy1+wy2)/2,-hd]);
+  // Doorway
+  const dx1=-hw*0.5, dx2=-hw*0.12, dh=hh*0.65;
+  box.push([dx1,-hh,hd,dx1,dh,hd],[dx2,-hh,hd,dx2,dh,hd],[dx1,dh,hd,dx2,dh,hd]);
+  return box.map(([ax,ay,az,bx,by,bz]) => makeSegment(ax,ay,az,bx,by,bz));
+}
+
+function buildSea() {
+  const segs = [];
+  const res=14, sz=340;
+  const h=(x,z)=>Math.sin(x*0.05)*18+Math.sin(z*0.038+x*0.018)*13+Math.sin((x+z)*0.028)*8;
+  for (let i=0;i<=res;i++) {
+    for (let j=0;j<res;j++) {
+      const x0=(i/res)*sz-sz/2, z0=(j/res)*sz-sz/2, z1=z0+sz/res;
+      const x1=x0;
+      segs.push(makeSegment(x0,h(x0,z0),z0, x1,h(x1,z1),z1));
+    }
+    for (let j=0;j<res;j++) {
+      const z0=(i/res)*sz-sz/2, x0=(j/res)*sz-sz/2, x1=x0+sz/res;
+      segs.push(makeSegment(x0,h(x0,z0),z0, x1,h(x1,z0),z0));
+    }
+  }
+  // Horizon rays
+  for (let a=0;a<8;a++) {
+    const t = a/8*Math.PI;
+    segs.push(makeSegment(Math.cos(t)*sz/2,h(Math.cos(t)*sz/2,-sz/2),-sz/2,
+                           Math.cos(t)*sz/2,h(Math.cos(t)*sz/2,sz/2),sz/2));
+  }
+  return segs;
+}
+
+function buildCorridor() {
+  const W=90,H=100,D=620, hw=W/2,hh=H/2;
+  const segs=[];
+  segs.push(...[
+    makeSegment(-hw,-hh,0,-hw,-hh,D),makeSegment(hw,-hh,0,hw,-hh,D),
+    makeSegment(-hw,hh,0,-hw,hh,D),makeSegment(hw,hh,0,hw,hh,D),
+    makeSegment(0,0,0,0,0,D),
+  ]);
+  for (let z=0;z<=D;z+=70)
+    segs.push(makeSegment(-hw,-hh,z,hw,-hh,z),makeSegment(hw,-hh,z,hw,hh,z),
+              makeSegment(hw,hh,z,-hw,hh,z),makeSegment(-hw,hh,z,-hw,-hh,z));
+  return segs;
+}
+
+function buildStaircase() {
+  const segs=[], steps=12, sw=130, sd=48, sh=28;
+  for (let i=0;i<steps;i++) {
+    const y=i*sh, z=-i*sd;
+    segs.push(
+      makeSegment(-sw/2,y,z, sw/2,y,z), makeSegment(sw/2,y,z,sw/2,y,z+sd),
+      makeSegment(sw/2,y,z+sd,-sw/2,y,z+sd), makeSegment(-sw/2,y,z+sd,-sw/2,y,z),
+      makeSegment(-sw/2,y,z,-sw/2,y-sh,z), makeSegment(sw/2,y,z,sw/2,y-sh,z),
+    );
+    if (i<steps-1) {
+      segs.push(makeSegment(-sw/2,y,z,-sw/2,y+sh,z-sd),makeSegment(sw/2,y,z,sw/2,y+sh,z-sd));
+    }
+  }
+  return segs;
+}
+
+function buildCathedral() {
+  const segs=[], W=260,H=340,D=300, nA=5;
+  for (let a=0;a<nA;a++) {
+    const z = a*(D/(nA-1)) - D/2;
+    const pts=16;
+    for (let i=0;i<pts;i++) {
+      const t0=i/pts,t1=(i+1)/pts;
+      const ang0=Math.PI*t0, ang1=Math.PI*t1;
+      segs.push(makeSegment(
+        -W/2+W*t0, Math.sin(ang0)*H, z,
+        -W/2+W*t1, Math.sin(ang1)*H, z
+      ));
+    }
+    segs.push(makeSegment(-W/2,0,z,-W/2,-50,z),makeSegment(W/2,0,z,W/2,-50,z));
+    if (a<nA-1) {
+      const z2=z+D/(nA-1);
+      segs.push(makeSegment(-W/2,H*0.38,z,-W/2,H*0.38,z2),
+                makeSegment(W/2,H*0.38,z,W/2,H*0.38,z2),
+                makeSegment(0,H,z,0,H,z2));
+    }
+  }
+  segs.push(makeSegment(-W/2,-50,-D/2,W/2,-50,-D/2),makeSegment(-W/2,-50,D/2,W/2,-50,D/2),
+            makeSegment(-W/2,-50,-D/2,-W/2,-50,D/2),makeSegment(W/2,-50,-D/2,W/2,-50,D/2));
+  return segs;
+}
+
+function buildForest() {
+  const segs=[], count=24;
+  for (let i=0;i<count;i++) {
+    const ang=(i/count)*Math.PI*2+i*0.27;
+    const r=35+Math.sin(i*1.3)*28+i*3.2;
+    const x=Math.cos(ang)*r, z=Math.sin(ang)*r;
+    const h=75+Math.sin(i*0.7)*55+Math.cos(i*1.1)*25;
+    segs.push(makeSegment(x,-20,z, x,-20+h,z));
+    segs.push(makeSegment(x,-20+h*0.6,z, x+16,-20+h*0.48,z+7));
+    segs.push(makeSegment(x,-20+h*0.78,z, x-12,-20+h*0.62,z-4));
+    segs.push(makeSegment(x,-20+h*0.9,z, x+8,-20+h*0.8,z-9));
+  }
+  for (let i=0;i<8;i++) {
+    const t=(i/8)*Math.PI*2;
+    segs.push(makeSegment(Math.cos(t)*85,-20,Math.sin(t)*85,Math.cos(t+0.4)*60,-20,Math.sin(t+0.4)*60));
+  }
+  return segs;
+}
+
+function buildDoorway() {
+  const W=80,H=160, segs=[];
+  segs.push(
+    makeSegment(-W/2,-H/2,0,-W/2,H/2,0),makeSegment(W/2,-H/2,0,W/2,H/2,0),
+    makeSegment(-W/2,H/2,0,W/2,H/2,0),
+    makeSegment(-W/2,-H/2,0,-W/2,-H/2,10),makeSegment(W/2,-H/2,0,W/2,-H/2,10),
+    makeSegment(-W/2,H/2,0,-W/2,H/2,10),makeSegment(W/2,H/2,0,W/2,H/2,10),
+    makeSegment(-W/2,H/2,10,W/2,H/2,10),makeSegment(-W/2,-H/2,10,W/2,-H/2,10),
+    makeSegment(0,0,10,0,0,350),
+    makeSegment(-W/4,0,10,-W/2,0,280),makeSegment(W/4,0,10,W/2,0,280),
+    makeSegment(0,H/4,10,0,H/2,260),makeSegment(0,-H/4,10,0,-H/2,260),
+  );
+  return segs;
+}
+
+function buildBridge() {
+  const segs=[], W=80,H=80,D=500;
+  // Deck
+  for (let z=0;z<=D;z+=50)
+    segs.push(makeSegment(-W/2,0,z,W/2,0,z));
+  segs.push(makeSegment(-W/2,0,0,-W/2,0,D),makeSegment(W/2,0,0,W/2,0,D));
+  // Cables from top chord
+  const nTowers=3;
+  for (let t=0;t<=nTowers;t++) {
+    const z=t*(D/nTowers);
+    segs.push(makeSegment(-W/2,0,z,-W/2,H,z),makeSegment(W/2,0,z,W/2,H,z),
+              makeSegment(-W/2,H,z,W/2,H,z));
+    if (t>0) {
+      segs.push(makeSegment(-W/2,H,z-D/nTowers,-W/2,H,z),makeSegment(W/2,H,z-D/nTowers,W/2,H,z));
+    }
+    // Hangers
+    for (let i=1;i<5;i++) {
+      const hz=z-i*(D/nTowers/5);
+      if (hz>=0) segs.push(makeSegment(-W/2,H,z,-W/2,0,hz),makeSegment(W/2,H,z,W/2,0,hz));
+    }
+  }
+  return segs;
+}
+
+function buildLibrary() {
+  const segs=[], shelfH=40, shelfD=28, levels=5, bays=4, W=240;
+  const bayW=W/bays;
+  for (let b=0;b<bays;b++) {
+    const x=b*bayW-W/2;
+    for (let l=0;l<levels;l++) {
+      const y=l*shelfH-80;
+      segs.push(makeSegment(x,y,0,x+bayW,y,0),
+                makeSegment(x,y,0,x,y,shelfD),
+                makeSegment(x+bayW,y,0,x+bayW,y,shelfD),
+                makeSegment(x,y,shelfD,x+bayW,y,shelfD));
+      // Book spines suggestion
+      for (let book=0;book<5;book++) {
+        const bx=x+book*(bayW/5)+3;
+        segs.push(makeSegment(bx,y,3,bx,y+shelfH*0.82,3));
+      }
+    }
+    // Verticals
+    segs.push(makeSegment(x,-80,0,x,-80+levels*shelfH,0),
+              makeSegment(x+bayW,-80,0,x+bayW,-80+levels*shelfH,0));
+  }
+  // Reading light suggestion from above
+  segs.push(makeSegment(0,levels*shelfH-80+20,shelfD/2, 0,-80,shelfD/2));
+  return segs;
+}
+
+function buildObservatory() {
+  const segs=[], R=140, H=60;
+  const ringsY=[-20,0,H*0.5,H];
+  const nRing=20;
+  ringsY.forEach((y,ri) => {
+    const r2=ri<2?R:R*(1-(ri-1)/(ringsY.length)*0.7);
+    for (let i=0;i<nRing;i++) {
+      const a0=(i/nRing)*Math.PI*2, a1=((i+1)/nRing)*Math.PI*2;
+      segs.push(makeSegment(Math.cos(a0)*r2,y,Math.sin(a0)*r2, Math.cos(a1)*r2,y,Math.sin(a1)*r2));
+    }
+  });
+  // Meridians
+  const nMer=12;
+  for (let i=0;i<nMer;i++) {
+    const a=(i/nMer)*Math.PI*2;
+    const nH=10;
+    for (let j=0;j<nH;j++) {
+      const t0=j/nH, t1=(j+1)/nH;
+      const phi0=t0*Math.PI, phi1=t1*Math.PI;
+      // Full sphere up top
+      segs.push(makeSegment(
+        Math.cos(a)*Math.sin(phi0)*R, Math.cos(phi0)*R+H, Math.sin(a)*Math.sin(phi0)*R,
+        Math.cos(a)*Math.sin(phi1)*R, Math.cos(phi1)*R+H, Math.sin(a)*Math.sin(phi1)*R
+      ));
+    }
+  }
+  // Floor ring
+  for (let i=0;i<nRing;i++) {
+    const a0=(i/nRing)*Math.PI*2, a1=((i+1)/nRing)*Math.PI*2;
+    segs.push(makeSegment(Math.cos(a0)*R,-20,Math.sin(a0)*R, Math.cos(a1)*R,-20,Math.sin(a1)*R));
+  }
+  return segs;
+}
+
+function buildRuins() {
+  const segs=[], W=200, H=120, D=140;
+  // Broken walls
+  const walls=[
+    [-W/2,-50,D/2, -W/2,H*0.4,D/2], [-W/2,H*0.4,D/2, -W/2+50,H*0.4,D/2],
+    [-W/2,-50,-D/2, -W/2,H*0.7,-D/2], [-W/2,H*0.7,-D/2, W/2*0.3,H*0.7,-D/2],
+    [W/2,-50,-D/2, W/2,H,-D/2], [W/2,H,-D/2, W/2,H,D/2*0.4],
+    [W/2,-50,D/2*0.4, W/2,H*0.5,D/2*0.4],
+    // Fallen column
+    [0,-50,0, 0,-50+H,D/3], [0,-50,0, 0,-50,D/3],
+    // Arch remnant
+    [-W/6,H*0.4,D/2, -W/6,H,D/2], [W/6,H*0.4,D/2, W/6,H,D/2],
+    [-W/6,H,D/2, 0,H+30,D/2], [0,H+30,D/2, W/6,H,D/2],
+    // Ground cracks
+    [-W/2,-50,-D/2, W/2*0.5,-50,D/2], [-W/3,-50,D/2, W/4,-50,-D/3],
+  ];
+  return walls.map(([ax,ay,az,bx,by,bz]) => makeSegment(ax,ay,az,bx,by,bz));
+}
+
+function buildShipDeck() {
+  const segs=[], L=360, W=90, H=60;
+  const hl=L/2, hw=W/2;
+  // Hull curves (approximated)
+  const hull=14;
+  for (let i=0;i<hull;i++) {
+    const t=i/hull, t2=(i+1)/hull;
+    const y0=-H*(1-Math.pow(Math.abs(2*t-1),0.7));
+    const y1=-H*(1-Math.pow(Math.abs(2*t2-1),0.7));
+    const z0=(t*2-1)*hl, z1=(t2*2-1)*hl;
+    segs.push(makeSegment(-hw,y0,z0,-hw,y1,z1),makeSegment(hw,y0,z0,hw,y1,z1));
+    segs.push(makeSegment(-hw,y0,z0,hw,y0,z0));
+  }
+  // Deck
+  segs.push(makeSegment(-hw,0,-hl,hw,0,-hl),makeSegment(-hw,0,hl,hw,0,hl),
+            makeSegment(-hw,0,-hl,-hw,0,hl),makeSegment(hw,0,-hl,hw,0,hl));
+  for (let z=-hl;z<=hl;z+=50)
+    segs.push(makeSegment(-hw,0,z,hw,0,z));
+  // Mast
+  segs.push(makeSegment(0,0,0,0,H*2.2,0));
+  segs.push(makeSegment(-hw*0.8,0,0,0,H*2.2,0),makeSegment(hw*0.8,0,0,0,H*2.2,0));
+  segs.push(makeSegment(-hw*1.1,0,-hl*0.8, 0,H*2.2,0));
+  return segs;
+}
+
+function buildSpiralStair() {
+  const segs=[], turns=3, stepsPerTurn=14, R=50, risePerStep=16;
+  const total=turns*stepsPerTurn;
+  for (let i=0;i<total;i++) {
+    const a0=(i/stepsPerTurn)*Math.PI*2, a1=((i+1)/stepsPerTurn)*Math.PI*2;
+    const y0=i*risePerStep, y1=(i+1)*risePerStep;
+    const x0=Math.cos(a0)*R, z0=Math.sin(a0)*R;
+    const x1=Math.cos(a1)*R, z1=Math.sin(a1)*R;
+    // Tread
+    segs.push(makeSegment(0,y0,0,x0,y0,z0),makeSegment(x0,y0,z0,x1,y0,z1),makeSegment(x1,y0,z1,0,y1,0));
+    // Railing above
+    segs.push(makeSegment(x0,y0+risePerStep*0.7,z0, x1,y1+risePerStep*0.7,z1));
+    // Newel
+    segs.push(makeSegment(0,y0,0,0,y1,0));
+  }
+  return segs;
+}
+
+function buildCave() {
+  const segs=[], R=180, depth=300;
+  // Entrance arch
+  const archPts=16;
+  for (let i=0;i<archPts;i++) {
+    const a0=Math.PI+i*(Math.PI/archPts), a1=Math.PI+(i+1)*(Math.PI/archPts);
+    segs.push(makeSegment(Math.cos(a0)*R,Math.sin(a0)*R*0.8,-depth/2,
+                          Math.cos(a1)*R,Math.sin(a1)*R*0.8,-depth/2));
+  }
+  // Ceiling ribs receding inward
+  const nRibs=6;
+  for (let r=0;r<nRibs;r++) {
+    const t=(r+1)/(nRibs+1), z=-depth/2+t*depth;
+    const rScale=1-t*0.55;
+    for (let i=0;i<12;i++) {
+      const a0=Math.PI+i*(Math.PI/12), a1=Math.PI+(i+1)*(Math.PI/12);
+      segs.push(makeSegment(Math.cos(a0)*R*rScale,Math.sin(a0)*R*0.8*rScale,z,
+                            Math.cos(a1)*R*rScale,Math.sin(a1)*R*0.8*rScale,z));
+    }
+  }
+  // Floor
+  for (let i=-3;i<=3;i++)
+    segs.push(makeSegment(i*40,-R*0.8,-depth/2, i*40*0.3,-R*0.8*0.5,depth/2));
+  // Stalactites suggestion
+  for (let i=0;i<8;i++) {
+    const x=(Math.random()-.5)*R*1.2, z=(Math.random()-.5)*depth;
+    const h=20+Math.random()*60;
+    segs.push(makeSegment(x,0,z, x,-h,z));
+  }
+  return segs;
+}
+
+function buildGarden() {
+  const segs=[];
+  // Central path
+  segs.push(makeSegment(-15,-30,-200,-15,-30,200),makeSegment(15,-30,-200,15,-30,200));
+  // Hedges
+  for (let side of [-1,1]) {
+    const x=side*80;
+    for (let z=-180;z<=180;z+=30)
+      segs.push(makeSegment(x,-30,z, x,20,z),makeSegment(x,20,z,x+side*(-5),20,z+15));
+    segs.push(makeSegment(x,-30,-180,x,-30,180),makeSegment(x,20,-180,x,20,180));
+  }
+  // Central fountain
+  const fR=35, fY=-25, nFount=12;
+  for (let i=0;i<nFount;i++) {
+    const a0=(i/nFount)*Math.PI*2, a1=((i+1)/nFount)*Math.PI*2;
+    segs.push(makeSegment(Math.cos(a0)*fR,fY,Math.sin(a0)*fR, Math.cos(a1)*fR,fY,Math.sin(a1)*fR));
+    segs.push(makeSegment(Math.cos(a0)*fR,fY,Math.sin(a0)*fR, Math.cos(a0)*fR*0.6,fY+25,Math.sin(a0)*fR*0.6));
+  }
+  segs.push(makeSegment(0,fY,0, 0,fY+45,0));
+  return segs;
+}
+
+const BUILDERS = [
+  buildRoom, buildSea, buildCorridor, buildStaircase, buildCathedral,
+  buildForest, buildDoorway, buildBridge, buildLibrary, buildObservatory,
+  buildRuins, buildShipDeck, buildSpiralStair, buildCave, buildGarden
+];
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+function init() {
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x00010a, 0.0011);
+  scene.background = new THREE.Color(0x00010a);
+  camera = new THREE.PerspectiveCamera(68, innerWidth/innerHeight, 0.5, 2600);
+  camera.position.set(0, 0, 0);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  buildGrid();
+  buildStars();
+  placeGlimpses();
+
+  window.addEventListener('keydown', e => { keys[e.code] = true; });
+  window.addEventListener('keyup',   e => { keys[e.code] = false; });
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('resize', onResize);
+  document.getElementById('enter').addEventListener('click', enter);
+  animate();
+}
+
+// ─── GRID ─────────────────────────────────────────────────────────────────────
+function buildGrid() {
+  for (let a=-HALF; a<=HALF; a++) {
+    for (let b=-HALF; b<=HALF; b++) {
+      [[a*STEP,b*STEP,-RANGE,a*STEP,b*STEP,RANGE],
+       [-RANGE,a*STEP,b*STEP,RANGE,a*STEP,b*STEP],
+       [a*STEP,-RANGE,b*STEP,a*STEP,RANGE,b*STEP]
+      ].forEach(([ax,ay,az,bx,by,bz]) => {
+        const ov = new Float32Array([ax,ay,az,bx,by,bz]);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(ov.slice(), 3));
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+          color: 0x00b8e8, transparent:true, opacity:0.09,
+          blending:THREE.AdditiveBlending, depthWrite:false
+        }));
+        scene.add(line);
+        gridLines.push({ line, ov });
+      });
+    }
+  }
+  const nv=[];
+  for (let x=-HALF;x<=HALF;x+=2) for (let y=-HALF;y<=HALF;y+=2) for (let z=-HALF;z<=HALF;z+=2)
+    nv.push(x*STEP,y*STEP,z*STEP);
+  const ng=new THREE.BufferGeometry();
+  ng.setAttribute('position',new THREE.Float32BufferAttribute(nv,3));
+  scene.add(new THREE.Points(ng,new THREE.PointsMaterial({
+    color:0x00d0ff,size:1.1,transparent:true,opacity:0.12,
+    blending:THREE.AdditiveBlending,depthWrite:false
+  })));
+}
+
+function buildStars() {
+  const v=[];
+  for (let i=0;i<10000;i++) v.push((Math.random()-.5)*5000,(Math.random()-.5)*5000,(Math.random()-.5)*5000);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(v,3));
+  scene.add(new THREE.Points(g,new THREE.PointsMaterial({
+    color:0x0c1828,size:0.65,transparent:true,opacity:0.6,blending:THREE.AdditiveBlending
+  })));
+}
+
+// ─── GLIMPSE PLACEMENT ────────────────────────────────────────────────────────
+function placeGlimpses() {
+  const positions = [];
+  for (let i=0; i<GLIMPSE_SLOTS; i++) {
+    let pos, ok, tries=0;
+    do {
+      pos = new THREE.Vector3(
+        (Math.random()-.5)*1300,
+        (Math.random()-.5)*650,
+        (Math.random()-.5)*1300
+      );
+      ok = pos.length()>160 && positions.every(p=>p.distanceTo(pos)>320);
+      tries++;
+    } while (!ok && tries<80);
+    positions.push(pos);
+
+    const builderFn = BUILDERS[i % BUILDERS.length];
+    glimpses.push(createGlimpse(pos, builderFn));
+  }
+}
+
+function createGlimpse(pos, builderFn) {
+  const segments = builderFn();
+
+  // Create one LineSegments object where each pair of verts is a segment
+  // We'll animate each segment's second endpoint toward its target
+  const totalVerts = segments.length * 2;
+  const posArr = new Float32Array(totalVerts * 3);
+  // Initially both endpoints = A (zero length)
+  segments.forEach((seg, i) => {
+    posArr[i*6+0]=seg.ax; posArr[i*6+1]=seg.ay; posArr[i*6+2]=seg.az;
+    posArr[i*6+3]=seg.ax; posArr[i*6+4]=seg.ay; posArr[i*6+5]=seg.az;
+  });
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  const mat = new THREE.LineBasicMaterial({
+    color: 0xc4e8ff, transparent:true, opacity:0,
+    blending:THREE.AdditiveBlending, depthWrite:false
+  });
+  const lines = new THREE.LineSegments(geo, mat);
+
+  const group = new THREE.Group();
+  group.add(lines);
+  group.position.copy(pos);
+  // Orient randomly but consistently
+  group.rotation.y = Math.random() * Math.PI * 2;
+
+  scene.add(group);
+
+  return {
+    group, lines, segments,
+    pos: pos.clone(),
+    builderFn,
+    alpha: 0,
+    state: 'dormant',   // dormant | forming | visible | dissolving
+    cooldown: Math.floor(Math.random()*300),
+    // wave front for formation — which segment is currently "growing"
+    formWave: 0,        // 0..segments.length
+    dissolveWave: 0,
+  };
+}
+
+function resetGlimpse(g, newPos, newBuilder) {
+  scene.remove(g.group);
+  g.group.remove(g.lines);
+  g.lines.geometry.dispose();
+  g.lines.material.dispose();
+
+  const segments = newBuilder();
+  const totalVerts = segments.length * 2;
+  const posArr = new Float32Array(totalVerts * 3);
+  segments.forEach((seg, i) => {
+    posArr[i*6+0]=seg.ax; posArr[i*6+1]=seg.ay; posArr[i*6+2]=seg.az;
+    posArr[i*6+3]=seg.ax; posArr[i*6+4]=seg.ay; posArr[i*6+5]=seg.az;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  const mat = new THREE.LineBasicMaterial({
+    color:0xc4e8ff, transparent:true, opacity:0,
+    blending:THREE.AdditiveBlending, depthWrite:false
+  });
+  const lines = new THREE.LineSegments(geo, mat);
+  const group = new THREE.Group();
+  group.add(lines);
+  group.position.copy(newPos);
+  group.rotation.y = Math.random()*Math.PI*2;
+  scene.add(group);
+
+  g.group   = group;
+  g.lines   = lines;
+  g.segments= segments;
+  g.pos     = newPos.clone();
+  g.builderFn= newBuilder;
+  g.alpha   = 0;
+  g.state   = 'dormant';
+  g.cooldown= 280 + Math.floor(Math.random()*200);
+  g.formWave= 0;
+  g.dissolveWave= 0;
+}
+
+// ─── GLIMPSE UPDATE ───────────────────────────────────────────────────────────
+const camDir = new THREE.Vector3();
+const toG    = new THREE.Vector3();
+
+function updateGlimpses() {
+  camera.getWorldDirection(camDir);
+  const visible = glimpses.filter(g=>g.state==='forming'||g.state==='visible').length;
+
+  glimpses.forEach(g => {
+    if (g.cooldown>0) { g.cooldown--; return; }
+
+    toG.subVectors(g.pos, camera.position);
+    const dist = toG.length();
+    const dot  = camDir.dot(toG.normalize());
+    const looking = dot>LOOK_DOT && dist>MIN_DIST && dist<MAX_DIST;
+
+    const n = g.segments.length;
+
+    if (g.state==='dormant') {
+      if (looking && visible<MAX_VISIBLE) {
+        g.state = 'forming';
+        g.formWave = 0;
+      }
+    }
+    else if (g.state==='forming') {
+      // Wave front advances through segments
+      // Each segment grows only when wave passes it (staggered in sequence,
+      // but segments within ±10 of wave all grow simultaneously for width)
+      g.formWave = Math.min(n, g.formWave + 0.28);
+
+      g.segments.forEach((seg, i) => {
+        const wavePos = i / n * n;           // just i
+        const behind  = g.formWave - i;
+        if (behind > 0) {
+          // Sigmoid-shaped growth — slow start, fast middle, slow end
+          const raw = Math.min(1, behind * seg.growSpeed * 120);
+          seg.prog = raw < 0.5 ? 2*raw*raw : 1-Math.pow(-2*raw+2,2)/2;
+        }
+      });
+
+      // Opacity: fades in with the wave
+      g.alpha = Math.min(0.52, g.alpha + 0.006);
+      if (!looking) g.state = 'dissolving';
+      if (g.formWave >= n && g.alpha >= 0.52) g.state = 'visible';
+    }
+    else if (g.state==='visible') {
+      // Subtle breathing — segments oscillate slightly
+      g.segments.forEach((seg, i) => {
+        const oscillation = 0.015 * Math.sin(clock * 0.8 + seg.phase);
+        seg.prog = Math.max(0, Math.min(1, seg.prog + oscillation));
+      });
+      if (!looking) g.state = 'dissolving';
+    }
+    else if (g.state==='dissolving') {
+      // Key behavior: dissolution isn't uniform.
+      // Some segments retract, others momentarily grow MORE before retracting.
+      // This gives the "continuously creating even while dissolving" feeling.
+      g.segments.forEach((seg, i) => {
+        const isFarBack = i < g.segments.length * 0.4;
+
+        // Random small bursts forward even during dissolve
+        if (Math.random() < 0.001) {
+          seg.prog = Math.min(1.08, seg.prog + 0.12 + Math.random()*0.2);
+        }
+
+        // Gently pull back — but not uniformly
+        const pullRate = seg.dissolveSpeed * (0.7 + 0.6*Math.sin(clock*1.2+seg.phase));
+        seg.prog -= pullRate;
+
+        if (isFarBack) seg.prog -= seg.dissolveSpeed * 0.5; // back dissolves faster
+
+        seg.prog = Math.max(-0.01, seg.prog);
+      });
+
+      // Check if still being looked at — can re-form
+      if (looking && visible < MAX_VISIBLE) {
+        g.state = 'forming';
+      }
+
+      // Fade overall opacity more slowly than segment progress
+      g.alpha = Math.max(0, g.alpha - 0.0012);
+
+      // Done when segments are mostly gone
+      const avgProg = g.segments.reduce((s,seg)=>s+seg.prog,0)/n;
+      if (avgProg <= 0.01 && g.alpha <= 0) {
+        // Relocate
+        let newPos, ok, tries=0;
+        do {
+          newPos = new THREE.Vector3(
+            camera.position.x + (Math.random()-.5)*1400,
+            camera.position.y + (Math.random()-.5)*650,
+            camera.position.z + (Math.random()-.5)*1400
+          );
+          ok = newPos.distanceTo(camera.position)>200
+            && glimpses.every(o=>o.pos.distanceTo(newPos)>260);
+          tries++;
+        } while(!ok && tries<40);
+
+        const usedBuilders = new Set(glimpses.filter(o=>o!==g).map(o=>o.builderFn));
+        const fresh = BUILDERS.filter(b=>!usedBuilders.has(b));
+        const newBuilder = (fresh.length>0?fresh:BUILDERS)[Math.floor(Math.random()*(fresh.length||BUILDERS.length))];
+        resetGlimpse(g, newPos, newBuilder);
+        return;
+      }
+    }
+
+    // ── Render: push segment endpoints into geometry ─────────────────────────
+    const posArr = g.lines.geometry.attributes.position.array;
+    g.segments.forEach((seg, i) => {
+      const p = Math.max(0, Math.min(1, seg.prog));
+      posArr[i*6+0] = seg.ax;
+      posArr[i*6+1] = seg.ay;
+      posArr[i*6+2] = seg.az;
+      posArr[i*6+3] = seg.ax + (seg.bx - seg.ax) * p;
+      posArr[i*6+4] = seg.ay + (seg.by - seg.ay) * p;
+      posArr[i*6+5] = seg.az + (seg.bz - seg.az) * p;
+    });
+    g.lines.geometry.attributes.position.needsUpdate = true;
+    g.lines.material.opacity = g.alpha;
+  });
+
+  // Cursor hint
+  const anyForming = glimpses.some(g => g.state==='forming'||g.state==='visible');
+  document.getElementById('cursor').classList.toggle('near', anyForming);
+}
+
+// ─── GRID ─────────────────────────────────────────────────────────────────────
+function addRipple(pos) { ripples.push({ pos:pos.clone(), t:0 }); }
+
+function updateGrid() {
+  for (let i=ripples.length-1;i>=0;i--) {
+    ripples[i].t += 0.015;
+    if (ripples[i].t>4.5) ripples.splice(i,1);
+  }
+  const cp = camera.position;
+  gridLines.forEach(({line,ov}) => {
+    const attr = line.geometry.attributes.position;
+    for (let i=0;i<2;i++) {
+      const ox=ov[i*3],oy=ov[i*3+1],oz=ov[i*3+2];
+      let dx=0,dy=0,dz=0;
+      const cx=ox-cp.x,cy=oy-cp.y,cz=oz-cp.z;
+      const cd=Math.sqrt(cx*cx+cy*cy+cz*cz);
+      if (cd<310&&cd>0.5) {
+        const t=1-cd/310, pull=t*t*50;
+        dx-=(cx/cd)*pull; dy-=(cy/cd)*pull; dz-=(cz/cd)*pull;
+      }
+      ripples.forEach(r => {
+        const rx=ox-r.pos.x,ry=oy-r.pos.y,rz=oz-r.pos.z;
+        const d=Math.sqrt(rx*rx+ry*ry+rz*rz);
+        if (d<1) return;
+        const front=r.t*260;
+        const env=Math.exp(-((d-front)**2)/(58*58));
+        const w=Math.sin((d-front)*0.065)*env*Math.exp(-r.t*0.42);
+        const amp=65*w;
+        dx+=(rx/d)*amp; dy+=(ry/d)*amp; dz+=(rz/d)*amp;
+      });
+      attr.setXYZ(i,ox+dx,oy+dy,oz+dz);
+    }
+    attr.needsUpdate=true;
+    const mx=(attr.getX(0)+attr.getX(1))*0.5;
+    const my=(attr.getY(0)+attr.getY(1))*0.5;
+    const mz=(attr.getZ(0)+attr.getZ(1))*0.5;
+    const d=cp.distanceTo(new THREE.Vector3(mx,my,mz));
+    const prox=Math.max(0,1-d/370);
+    line.material.opacity=0.05+prox*0.3;
+    line.material.color.setRGB(prox*0.45, 0.72+prox*0.28, 1.0);
+  });
+}
+
+// ─── AUDIO ────────────────────────────────────────────────────────────────────
+function startAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.14;
+  masterGain.connect(audioCtx.destination);
+
+  const filt = audioCtx.createBiquadFilter();
+  filt.type='lowpass'; filt.frequency.value=850;
+  filt.connect(masterGain);
+
+  [40,80.2,120.5,161,241].forEach((f,i)=>{
+    const o=audioCtx.createOscillator();
+    o.type=i<2?'sine':'triangle';
+    o.frequency.value=f;
+    const g=audioCtx.createGain();
+    g.gain.value=[0.3,0.14,0.065,0.03,0.018][i];
+    o.connect(g); g.connect(filt); o.start();
+    droneNodes.push({osc:o,baseFreq:f});
+  });
+
+  glimpseGainNode = audioCtx.createGain();
+  glimpseGainNode.gain.value=0;
+  const gf = audioCtx.createBiquadFilter();
+  gf.type='bandpass'; gf.frequency.value=528; gf.Q.value=8;
+  glimpseGainNode.connect(gf); gf.connect(masterGain);
+  glimpseOsc = audioCtx.createOscillator();
+  glimpseOsc.type='sine'; glimpseOsc.frequency.value=528;
+  glimpseOsc.connect(glimpseGainNode); glimpseOsc.start();
+
+  const lfo=audioCtx.createOscillator();
+  lfo.frequency.value=0.052;
+  const lg=audioCtx.createGain(); lg.gain.value=0.018;
+  lfo.connect(lg); lg.connect(masterGain.gain); lfo.start();
+
+  setTimeout(()=>addRipple(new THREE.Vector3(0,0,-220)),2000);
+}
+
+// ─── INPUT ────────────────────────────────────────────────────────────────────
+function onMouseMove(e) {
+  if (!started) return;
+  pitchYaw.y -= e.movementX * 0.0014;
+  pitchYaw.x -= e.movementY * 0.0014;
+  pitchYaw.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitchYaw.x));
+}
+
+function enter() {
+  if (started) return;
+  started = true;
+  const el = document.getElementById('enter');
+  el.style.opacity='0'; setTimeout(()=>el.remove(),2000);
+  document.getElementById('veil').style.opacity='0';
+  startAudio();
+  renderer.domElement.requestPointerLock?.();
+}
+
+// ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+function update() {
+  clock += 0.011;
+
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+  let moving = false;
+
+  // WASD + Arrow keys
+  if (keys['KeyW']||keys['ArrowUp'])    { camera.position.addScaledVector(dir, MOVE_SPEED);    moving=true; }
+  if (keys['KeyS']||keys['ArrowDown'])  { camera.position.addScaledVector(dir,-MOVE_SPEED);    moving=true; }
+  if (keys['KeyA']||keys['ArrowLeft'])  { camera.position.addScaledVector(right,-MOVE_SPEED);  moving=true; }
+  if (keys['KeyD']||keys['ArrowRight']) { camera.position.addScaledVector(right, MOVE_SPEED);  moving=true; }
+  if (keys['Space'])                    { camera.position.y += MOVE_SPEED; moving=true; }
+  if (keys['ShiftLeft']||keys['ShiftRight']) { camera.position.y -= MOVE_SPEED; moving=true; }
+
+  if (started) camera.rotation.set(pitchYaw.x, pitchYaw.y, 0, 'YXZ');
+
+  updateGrid();
+  updateGlimpses();
+
+  if (audioCtx) {
+    const maxAlpha = Math.max(0,...glimpses.map(g=>g.alpha));
+    glimpseGainNode?.gain.setTargetAtTime(maxAlpha*0.1, audioCtx.currentTime, 1.2);
+    const f = moving ? 1.016:1.0;
+    droneNodes.forEach(({osc,baseFreq})=>osc.frequency.setTargetAtTime(baseFreq*f,audioCtx.currentTime,0.8));
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  update();
+  renderer.render(scene, camera);
+}
+
+function onResize() {
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+}
+
+init();
+</script>
+</body>
+</html>
