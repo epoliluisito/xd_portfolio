@@ -7,7 +7,10 @@
   <script src="../../vendor/aframe/aframe-1.5.0.min.js"></script>
 
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #020202; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+
+    /* Flash fix: cover the canvas immediately at the CSS level before JS runs */
+    a-scene { background: #000; }
 
     /* Fade-in overlay: starts opaque black, fades out once scene is ready */
     #fadeIn {
@@ -16,36 +19,93 @@
       background: #000;
       opacity: 1;
       pointer-events: none;
-      transition: opacity 800ms ease;
+      transition: opacity 900ms ease;
       z-index: 9999;
     }
     #fadeIn.done { opacity: 0; }
 
-    /* Quit button (minimal) */
+    /* ── Quit button — matches aya.dev exactly ── */
     #quitShell {
       position: fixed;
-      top: 14px;
-      right: 16px;
-      z-index: 9998;
+      left: 14px;
+      bottom: 14px;
+      z-index: 220;
     }
     #quitBtn {
-      background: rgba(0,0,0,0.55);
-      border: 1px solid rgba(255,255,255,0.18);
-      border-radius: 8px;
-      color: #e9f2ff;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      font-size: 11px;
-      letter-spacing: 0.12em;
-      padding: 5px 12px;
-      cursor: pointer;
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(0,0,0,0.35);
+      color: rgba(255,255,255,0.85);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+    #quitBtn:hover { border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+
+    #quitConfirm {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.62);
+      z-index: 230;
+    }
+    #quitConfirm.show { display: flex; }
+    #quitCard {
+      width: min(420px, calc(100vw - 48px));
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      padding: 18px;
+      color: rgba(255,255,255,0.92);
+      box-shadow: 0 22px 70px rgba(0,0,0,0.62);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    #quitCard h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    #quitCard p {
+      margin: 0 0 14px 0;
+      font-size: 13px;
+      opacity: 0.85;
+      line-height: 1.35;
+    }
+    #quitActions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .qbtn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.92);
+      padding: 9px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .qbtn.primary {
+      background: rgba(255,255,255,0.18);
+      border-color: rgba(255,255,255,0.32);
+      color: rgba(255,255,255,0.96);
     }
   </style>
 
   <script>
-    // ── Minimal components needed for lia_room ────────────────────────────────
+    // ── Components ────────────────────────────────────────────────────────────
 
-    // Disable fog on specific meshes (used by earth sphere)
+    // Disable fog on specific meshes (earth sphere)
     AFRAME.registerComponent('no-fog', {
       init: function () {
         const apply = (obj) => {
@@ -91,7 +151,7 @@
       }
     });
 
-    // Pitch clamp for look-controls
+    // Pitch clamp
     AFRAME.registerComponent('pitch-clamp', {
       schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
       tick: function () {
@@ -105,7 +165,7 @@
       }
     });
 
-    // Basic WASD rig-walk (simplified surface version — no colliders needed for now)
+    // WASD rig-walk
     AFRAME.registerComponent('rig-walk', {
       schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
       init: function () {
@@ -125,30 +185,21 @@
         const a = !!this.keys['KeyA'] || !!this.keys['ArrowLeft'];
         const d = !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
         if (!w && !s && !a && !d) return;
-
         const dtS = Math.min(0.05, dt / 1000);
-        const speed = this.data.speed;
         const cam = this.el.querySelector('[camera]');
         if (!cam) return;
-
-        // Use camera yaw for movement direction
         const lc = cam.components && cam.components['look-controls'];
         const yaw = lc && lc.yawObject ? lc.yawObject.rotation.y : 0;
-        const rigYaw = this.el.object3D.rotation.y || 0;
-        const totalYaw = yaw + rigYaw;
-
+        const totalYaw = yaw + (this.el.object3D.rotation.y || 0);
         let mx = 0, mz = 0;
-        if (w)  { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
-        if (s)  { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
-        if (a)  { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
-        if (d)  { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
-
+        if (w) { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
+        if (s) { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
+        if (a) { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
+        if (d) { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
         const len = Math.sqrt(mx*mx + mz*mz);
         if (len > 0) {
-          mx = (mx / len) * speed * dtS;
-          mz = (mz / len) * speed * dtS;
-          this.el.object3D.position.x += mx;
-          this.el.object3D.position.z += mz;
+          this.el.object3D.position.x += (mx / len) * this.data.speed * dtS;
+          this.el.object3D.position.z += (mz / len) * this.data.speed * dtS;
         }
       },
       remove: function () {
@@ -160,11 +211,22 @@
 </head>
 <body>
 
-<!-- Fade-in overlay (black at start, fades out once scene loads) -->
+<!-- Flash fix: black overlay present before any paint -->
 <div id="fadeIn"></div>
 
+<!-- Quit button — matches aya.dev position (bottom-left) and style -->
 <div id="quitShell">
   <button id="quitBtn" type="button">QUIT</button>
+</div>
+<div aria-hidden="true" id="quitConfirm">
+  <div aria-label="Quit experience" aria-modal="true" id="quitCard" role="dialog">
+    <h3>Quit experience</h3>
+    <p>You're about to leave the 3D experience.</p>
+    <div id="quitActions">
+      <button class="qbtn" id="quitCancel" type="button">Cancel</button>
+      <button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
+    </div>
+  </div>
 </div>
 
 <a-scene
@@ -175,60 +237,54 @@
   tabindex="0">
 
   <a-assets timeout="30000">
-    <img id="earthTex"       crossorigin="anonymous" src="./assets/earth_skin.jpg">
-    <img id="moonDiffuse"    crossorigin="anonymous" src="./assets/cave_wall/moon_diffuse.webp">
-    <img id="moonNormal"     crossorigin="anonymous" src="./assets/cave_wall/moon_normal.webp">
-    <img id="moonRough"      crossorigin="anonymous" src="./assets/cave_wall/moon_rough.png">
-    <img id="moonAO"         crossorigin="anonymous" src="./assets/cave_wall/moon_ao.png">
-    <img id="groundDiffuse"  crossorigin="anonymous" src="./assets/moon_ground/moon_ground_diffuse%20.webp">
-    <img id="groundNormal"   crossorigin="anonymous" src="./assets/moon_ground/moon_ground_normal.webp">
-    <img id="groundRough"    crossorigin="anonymous" src="./assets/moon_ground/moon_ground_rough.png">
-    <img id="groundAO"       crossorigin="anonymous" src="./assets/moon_ground/moon_ground_ao.png">
-    <img id="elevMetalColor" crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_color.webp">
-    <img id="elevMetalNormal"crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_normal.webp">
-    <img id="elevMetalRough" crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_rough.png">
-    <img id="elevMetalMetal" crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_Metalness.png">
+    <img id="earthTex"        crossorigin="anonymous" src="./assets/earth_skin.jpg">
+    <img id="moonDiffuse"     crossorigin="anonymous" src="./assets/cave_wall/moon_diffuse.webp">
+    <img id="moonNormal"      crossorigin="anonymous" src="./assets/cave_wall/moon_normal.webp">
+    <img id="moonRough"       crossorigin="anonymous" src="./assets/cave_wall/moon_rough.png">
+    <img id="moonAO"          crossorigin="anonymous" src="./assets/cave_wall/moon_ao.png">
+    <img id="groundDiffuse"   crossorigin="anonymous" src="./assets/moon_ground/moon_ground_diffuse%20.webp">
+    <img id="groundNormal"    crossorigin="anonymous" src="./assets/moon_ground/moon_ground_normal.webp">
+    <img id="groundRough"     crossorigin="anonymous" src="./assets/moon_ground/moon_ground_rough.png">
+    <img id="groundAO"        crossorigin="anonymous" src="./assets/moon_ground/moon_ground_ao.png">
+    <img id="elevMetalColor"  crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_color.webp">
+    <img id="elevMetalNormal" crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_normal.webp">
+    <img id="elevMetalRough"  crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_rough.png">
+    <img id="elevMetalMetal"  crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_Metalness.png">
   </a-assets>
 
-  <!-- ── Sky ──────────────────────────────────────────────────────────────── -->
+  <!-- ── Sky ──────────────────────────────────────────────────────── -->
   <a-sky color="#020202"></a-sky>
 
-  <!-- ── Earth ────────────────────────────────────────────────────────────── -->
-  <!-- Earthshine target at ground level (for directional light pointing) -->
+  <!-- ── Lighting — exact match to aya.dev above-ground state ─────── -->
+
+  <!-- Ambient: matches aya.dev global ambient (very subtle, just breaks pure black) -->
+  <a-entity light="type: ambient; color: #0b1220; intensity: 0.012"></a-entity>
+
+  <!-- Directional moonlight from earth direction — same values as lia_lunar_light in aya.dev -->
   <a-entity id="lia_earthshine_target" position="0 0 0"></a-entity>
-
-  <a-sphere id="lia_earth"
-            radius="11"
-            segments-width="256"
-            segments-height="256"
-            position="0 22 -220"
-            rotation="0 180 0"
-            material="shader: flat; src: #earthTex; transparent: true; opacity: 0.75"
-            earth-texture-quality
-            no-fog></a-sphere>
-
-  <!-- ── Exterior lighting ─────────────────────────────────────────────────── -->
-  <!-- Directional moonlight from earth direction -->
   <a-entity id="lia_lunar_light"
-            position="0 22 -220"
+            position="0 35 -220"
             light="type: directional; color: #d9f1ff; intensity: 1.35; castShadow: false; target: #lia_earthshine_target">
   </a-entity>
 
-  <!-- Soft sky fill -->
+  <!-- Hemisphere sky fill — same values as lia_lunar_skyfill in aya.dev -->
   <a-entity id="lia_lunar_skyfill"
             position="0 18 0"
             light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.44">
   </a-entity>
 
-  <!-- Subtle ambient so pitch-black shadows aren't total voids -->
-  <a-entity light="type: ambient; color: #0d1117; intensity: 0.35"></a-entity>
+  <!-- ── Earth — same position/material as aya.dev lia_earth ─────── -->
+  <a-sphere id="lia_earth"
+            radius="11"
+            segments-width="256"
+            segments-height="256"
+            position="0 35 -220"
+            rotation="0 180 0"
+            material="shader: flat; src: #earthTex; transparent: true; opacity: 0.75"
+            earth-texture-quality
+            no-fog></a-sphere>
 
-  <!-- ── Lunar ground ──────────────────────────────────────────────────────── -->
-  <!--
-    Platform top is at Y = 0.07 (platform center 0, height 0.14).
-    Ground ring starts at inner radius 1.555 (matching seam trim) and extends outward.
-    Positioned at Y = 0.07 — flush with platform top.
-  -->
+  <!-- ── Lunar ground ─────────────────────────────────────────────── -->
   <a-ring id="lia_lunar_ground"
           radius-inner="1.555"
           radius-outer="60"
@@ -238,11 +294,7 @@
           material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 14 14; normalScale: 1 1; side: front"
           shadow="cast:false; receive:true"></a-ring>
 
-  <!-- ── Platform ──────────────────────────────────────────────────────────── -->
-  <!--
-    Arrived at surface: platform center at Y = 0, top at Y = 0.07.
-    Matches the position as seen coming up through the shaft.
-  -->
+  <!-- ── Platform ─────────────────────────────────────────────────── -->
   <a-cylinder id="endchamber_platform"
               radius="1.55"
               height="0.14"
@@ -250,7 +302,6 @@
               material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true"
               shadow="cast:false; receive:true">
 
-    <!-- Handrail top ring -->
     <a-ring id="endchamber_handrail_top"
             radius-inner="1.42" radius-outer="1.52"
             segments-theta="256"
@@ -259,7 +310,6 @@
             material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6"
             theta-start="25" theta-length="310"></a-ring>
 
-    <!-- Panel (facing the user on arrival: local +Z of platform) -->
     <a-entity id="endchamber_panel"
               position="0 0.44 1.41"
               rotation="0 180 0">
@@ -276,7 +326,7 @@
     </a-entity>
   </a-cylinder>
 
-  <!-- Seam trim ring (hides any edge between platform hole and ground) -->
+  <!-- Seam trim ring -->
   <a-entity id="lia_seam_trim" position="0 0.0715 0">
     <a-ring id="lia_seam_flange"
             radius-inner="1.555" radius-outer="1.62"
@@ -286,7 +336,7 @@
             shadow="cast:false; receive:true"></a-ring>
   </a-entity>
 
-  <!-- Short shaft collar visible when looking down into the hole -->
+  <!-- Shaft collar (visible when looking down into hole) -->
   <a-cylinder id="lia_shaft_collar"
               radius="1.60"
               height="1.50"
@@ -296,19 +346,15 @@
               material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double"
               shadow="cast:false; receive:true"></a-cylinder>
 
-  <!-- Black cap at bottom of collar so shaft doesn't show void -->
+  <!-- Black cap so shaft doesn't show void -->
   <a-circle id="lia_shaft_cap"
             radius="1.60"
             rotation="-90 0 0"
             position="0 -1.43 0"
             material="shader: flat; color: #000000; side: front"></a-circle>
 
-  <!-- ── Player rig ─────────────────────────────────────────────────────────── -->
-  <!--
-    Spawns on the platform top (Y = 0.07).
-    Rotation Y = 180 → user faces -Z (away from labyrinth, toward earth).
-    On scene load, WASD and full look are immediately available.
-  -->
+  <!-- ── Player rig ────────────────────────────────────────────────── -->
+  <!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
   <a-entity id="rig"
             position="0 0.07 0"
             rotation="0 180 0"
@@ -326,16 +372,19 @@
 </a-scene>
 
 <script>
-// Fade in from black once the scene is ready
+// ── Fade in from black ────────────────────────────────────────────────────────
+// Flash fix: overlay is already covering everything via CSS (opacity:1 in <style>).
+// We wait for the scene `loaded` event so the first rendered frame is the real scene.
 (function () {
   const overlay = document.getElementById('fadeIn');
   if (!overlay) return;
 
   const fade = () => {
-    // Small delay so the first frame is rendered before we start fading
-    setTimeout(() => { overlay.classList.add('done'); }, 120);
-    // Remove from DOM after transition completes (keeps stacking context clean)
-    setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 1200);
+    // Two rAF passes ensure at least one real frame has been drawn before fading
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      overlay.classList.add('done');
+      setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 1100);
+    }));
   };
 
   const scene = document.querySelector('a-scene');
@@ -347,10 +396,24 @@
   }
 })();
 
-// Quit button
+// ── Quit UI — matches aya.dev ─────────────────────────────────────────────────
 (function () {
-  const btn = document.getElementById('quitBtn');
-  if (btn) btn.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
+  const QUIT    = document.getElementById('quitBtn');
+  const QC      = document.getElementById('quitConfirm');
+  const Q_CANCEL= document.getElementById('quitCancel');
+  const Q_OK    = document.getElementById('quitConfirmBtn');
+
+  function openQuitConfirm()  { if (!QC) return; QC.classList.add('show');    QC.setAttribute('aria-hidden','false'); }
+  function closeQuitConfirm() { if (!QC) return; QC.classList.remove('show'); QC.setAttribute('aria-hidden','true');  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && QC && QC.classList.contains('show')) closeQuitConfirm();
+  }, { passive: true });
+
+  if (QUIT)     QUIT.addEventListener('click', openQuitConfirm);
+  if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
+  if (QC)       QC.addEventListener('click', (e) => { if (e.target === QC) closeQuitConfirm(); });
+  if (Q_OK)     Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
 })();
 </script>
 
