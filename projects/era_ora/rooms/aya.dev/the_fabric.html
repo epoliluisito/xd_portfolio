@@ -62,7 +62,7 @@ const pitchYaw = { x:0, y:0 };
 let clock = 0;
 
 const STEP = 88;
-const HALF = 7;
+const HALF = 18;
 const RANGE = HALF * STEP;
 const MOVE_SPEED = 1.4;   // much slower
 
@@ -71,7 +71,7 @@ const ripples   = [];
 
 // ─── GLIMPSE SYSTEM ───────────────────────────────────────────────────────────
 const glimpses = [];
-const GLIMPSE_SLOTS = 14;
+const GLIMPSE_SLOTS = 28;
 const LOOK_DOT      = 0.87;
 const MIN_DIST      = 90;
 const MAX_DIST      = 650;
@@ -510,22 +510,52 @@ function buildStars() {
 
 // ─── GLIMPSE PLACEMENT ────────────────────────────────────────────────────────
 function placeGlimpses() {
+  // More even, wider distribution:
+  // - quasi-uniform directions (golden-angle spiral)
+  // - radii biased to fill volume without clustering
+  // - hard min-distance to avoid "too many in one place"
   const positions = [];
-  for (let i=0; i<GLIMPSE_SLOTS; i++) {
-    let pos, ok, tries=0;
-    do {
+  const outer = RANGE * 1.65;   // tie to grid scale
+  const inner = Math.max(260, STEP * 3.2);
+  const minSep = STEP * 5.1;    // separation between glimpses
+  const golden = Math.PI * (3 - Math.sqrt(5));
+
+  for (let i = 0; i < GLIMPSE_SLOTS; i++) {
+    let pos, tries = 0, ok = false;
+
+    while (!ok && tries < 160) {
+      // golden-angle direction on a sphere
+      const t = (i + 0.5) / GLIMPSE_SLOTS;
+      const y = 1 - 2 * t;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = (i + tries*0.37) * golden;
+      const dx = Math.cos(theta) * r;
+      const dz = Math.sin(theta) * r;
+
+      // radius: spread through volume; slight randomization per retry
+      const u = Math.random();
+      const rad = inner + (outer - inner) * Math.pow(u, 0.62);
+
+      // jitter helps avoid overly-regular feel
+      const j = STEP * 0.65;
       pos = new THREE.Vector3(
-        (Math.random()-.5)*1300,
-        (Math.random()-.5)*650,
-        (Math.random()-.5)*1300
+        dx * rad + (Math.random() - 0.5) * j,
+        y  * rad * 0.42 + (Math.random() - 0.5) * j * 0.7, // keep vertical tighter than XZ
+        dz * rad + (Math.random() - 0.5) * j
       );
-      ok = pos.length()>160 && positions.every(p=>p.distanceTo(pos)>320);
+
+      ok =
+        pos.length() > inner &&
+        positions.every(p => p.distanceTo(pos) > minSep);
+
       tries++;
-    } while (!ok && tries<80);
-    positions.push(pos);
+    }
+
+    // fallback: if we somehow couldn't place, just push the last candidate
+    positions.push(pos || new THREE.Vector3((Math.random() - 0.5) * outer, (Math.random() - 0.5) * outer * 0.4, (Math.random() - 0.5) * outer));
 
     const builderFn = BUILDERS[i % BUILDERS.length];
-    glimpses.push(createGlimpse(pos, builderFn));
+    glimpses.push(createGlimpse(positions[positions.length - 1], builderFn));
   }
 }
 
