@@ -82,7 +82,7 @@
     background: rgba(0,0,0,1);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 240ms ease;
+    transition: opacity 1500ms ease;
     z-index: 10000;
     display: flex;
     align-items: center;
@@ -97,11 +97,9 @@
     height: 100%;
     object-fit: cover;
     opacity: 0;
-    transition: opacity 240ms ease;
+    transition: opacity 1500ms ease;
   }
-  #ayaFullscreenOverlay.visible video{
-    opacity: 1;
-  }
+  /* Video opacity controlled manually in JS for crossfade timing */
 </style>
 
   <style id="loadingStyles">
@@ -10643,20 +10641,44 @@ return chosen * 180 / Math.PI;
   },
 
   _showOverlay: function () {
-    if (!this.overlay) return;
+    if (!this.overlay || !this.overlayVideo) return;
+    
+    // Ensure video starts invisible
+    this.overlayVideo.style.opacity = '0';
+    
+    // Step 1: Fade in black background (game → black over 1.5s)
     this.overlay.classList.add('visible');
+    
+    // Step 2: After brief delay, fade in video (black → video over 1.5s, overlapping with step 1)
+    // 300ms delay creates smooth crossfade through black
+    setTimeout(() => {
+      if (this.overlayVideo) {
+        this.overlayVideo.style.opacity = '1';
+      }
+    }, 300);
   },
 
   _hideOverlay: function (immediate, cb) {
     if (!this.overlay) { if (cb) cb(); return; }
+    
     if (immediate) {
       this.overlay.classList.remove('visible');
+      if (this.overlayVideo) this.overlayVideo.style.opacity = '0';
       if (cb) cb();
       return;
     }
-    this.overlay.classList.remove('visible');
-    // Match CSS transition duration (keep in sync with CSS).
-    setTimeout(() => { if (cb) cb(); }, 260);
+    
+    // Step 1: Fade out video first (video → black)
+    if (this.overlayVideo) {
+      this.overlayVideo.style.opacity = '0';
+    }
+    
+    // Step 2: After delay, fade out background (black → game)
+    setTimeout(() => {
+      this.overlay.classList.remove('visible');
+      // Callback fires after overlay background finishes fading
+      setTimeout(() => { if (cb) cb(); }, 1550);
+    }, 500);
   },
 
   _showGuide: function (html) {
@@ -21049,8 +21071,8 @@ AFRAME.registerComponent('capsule-03-experience', {
         // Capsule open: can close it or get up
         this._showGuide('<span class="kbd">E</span> Close capsule &nbsp;&nbsp; <span class="kbd">ESC</span> Get up');
       } else {
-        // Capsule closed: can only start experience
-        this._showGuide('<span class="kbd">F</span> Start experience');
+        // Capsule closed: can open it again or start experience
+        this._showGuide('<span class="kbd">E</span> Open capsule &nbsp;&nbsp; <span class="kbd">F</span> Start experience');
       }
 
     } else { // 'up'
@@ -21077,8 +21099,8 @@ AFRAME.registerComponent('capsule-03-experience', {
       // Capsule open: can close it or get up
       msg = '<span class="kbd">E</span> Close capsule &nbsp;&nbsp; <span class="kbd">ESC</span> Get up';
     } else {
-      // Capsule closed: can only start experience
-      msg = '<span class="kbd">F</span> Start experience';
+      // Capsule closed: can open it again or start experience
+      msg = '<span class="kbd">E</span> Open capsule &nbsp;&nbsp; <span class="kbd">F</span> Start experience';
     }
     if (!this._guideOwn || this._guideBody.innerHTML !== msg) {
       this._showGuide(msg);
