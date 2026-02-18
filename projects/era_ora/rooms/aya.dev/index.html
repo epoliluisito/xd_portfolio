@@ -1436,18 +1436,41 @@ AFRAME.registerComponent('racer-controller',{
 });
 
 // === Camera view toggle ===
+// Keeps look-controls yaw/pitch objects synced in 3P so experiences read correct values.
+// Auto-switches to 1P when experiences take over (detected via rig-walk pause/play proxy).
 (function(){
   var _tp=false,_origGetYaw=null;
+  var _savedTP=false,_expLock=false;
+  var _syncRAF=null;
+
   window.isThirdPersonMode=function(){return _tp;};
-  window.switchCameraMode=function(){
-    _tp=!_tp;
+
+  // --- Sync loop: while in 3P, mirror tp-mouselook values to look-controls internals ---
+  // This ensures experiences that read look-controls (aya seat, capsule) get current yaw/pitch.
+  function syncLC(){
+    if(!_tp){_syncRAF=null;return;}
+    var fp=document.getElementById('playerCam');
+    var tw=document.getElementById('racerYaw');
+    var cp=document.getElementById('camPitch');
+    if(fp&&tw){
+      var lc=fp.components&&fp.components['look-controls'];
+      var ml=tw.components&&tw.components['tp-mouselook'];
+      if(lc&&ml){
+        if(lc.yawObject)lc.yawObject.rotation.y=ml.yaw;
+        if(lc.pitchObject&&cp)lc.pitchObject.rotation.x=cp.object3D.rotation.x;
+      }
+    }
+    _syncRAF=requestAnimationFrame(syncLC);
+  }
+
+  // --- Core switch ---
+  function _doSwitch(toTP){
     var rig=document.getElementById('rig'),fp=document.getElementById('playerCam'),
         tw=document.getElementById('racerYaw'),tc=document.getElementById('tpCam'),
         ra=document.getElementById('racerAvatar'),cp=document.getElementById('camPitch');
-    if(!rig||!fp||!tw||!tc)return _tp;
+    if(!rig||!fp||!tw||!tc)return;
     var rw=rig.components&&rig.components['rig-walk'];
-    if(_tp){
-      // Transfer yaw/pitch from look-controls → tp-mouselook
+    if(toTP){
       var lc=fp.components&&fp.components['look-controls'];
       var ml=tw.components&&tw.components['tp-mouselook'];
       if(lc&&ml){
@@ -1461,11 +1484,13 @@ AFRAME.registerComponent('racer-controller',{
       fp.setAttribute('camera','active',false);fp.setAttribute('look-controls','enabled',false);
       tc.setAttribute('camera','active',true);tw.setAttribute('tp-mouselook','enabled',true);
       if(ra)ra.setAttribute('visible',true);tw.setAttribute('visible',true);
-      // Patch _getYaw to read from racerYaw
       if(rw&&!_origGetYaw)_origGetYaw=rw._getYaw.bind(rw);
       if(rw)rw._getYaw=function(){var el=document.getElementById('racerYaw');if(!el)return 0;el.object3D.getWorldQuaternion(this._tmpQuat);this._tmpEuler.setFromQuaternion(this._tmpQuat,'YXZ');return this._tmpEuler.y;};
+      // Start sync loop
+      if(!_syncRAF)_syncRAF=requestAnimationFrame(syncLC);
     }else{
-      // Transfer yaw/pitch from tp-mouselook → look-controls
+      // Stop sync loop
+      if(_syncRAF){cancelAnimationFrame(_syncRAF);_syncRAF=null;}
       var ml=tw.components&&tw.components['tp-mouselook'];
       var lc=fp.components&&fp.components['look-controls'];
       if(ml&&lc){
@@ -1476,11 +1501,40 @@ AFRAME.registerComponent('racer-controller',{
       tc.setAttribute('camera','active',false);tw.setAttribute('tp-mouselook','enabled',false);
       if(ra)ra.setAttribute('visible',false);tw.setAttribute('visible',false);
       fp.setAttribute('camera','active',true);fp.setAttribute('look-controls','enabled',true);
-      // Restore original _getYaw
       if(rw&&_origGetYaw)rw._getYaw=_origGetYaw;
     }
-    return _tp;
-  };
+    _tp=toTP;
+  }
+
+  // Public toggle (UI button)
+  window.switchCameraMode=function(){_doSwitch(!_tp);return _tp;};
+
+  // --- Proxy rig-walk pause/play for auto-switch ---
+  function installProxy(){
+    var rig=document.getElementById('rig');
+    if(!rig)return;
+    var rw=rig.components&&rig.components['rig-walk'];
+    if(!rw||rw.__viewProxied)return;
+    rw.__viewProxied=true;
+    var origPause=rw.pause.bind(rw);
+    var origPlay=rw.play.bind(rw);
+    rw.pause=function(){
+      if(_tp&&!_expLock){_savedTP=true;_expLock=true;_doSwitch(false);}
+      origPause();
+    };
+    rw.play=function(){
+      origPlay();
+      if(_expLock&&_savedTP){
+        setTimeout(function(){_expLock=false;_savedTP=false;_doSwitch(true);},150);
+      }else{_expLock=false;_savedTP=false;}
+    };
+  }
+
+  var sc=document.querySelector('a-scene');
+  if(sc){
+    if(sc.hasLoaded)setTimeout(installProxy,100);
+    else sc.addEventListener('loaded',function(){setTimeout(installProxy,100);});
+  }
 })();
 </script>
 
