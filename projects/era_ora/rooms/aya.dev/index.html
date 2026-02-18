@@ -1290,7 +1290,6 @@ AFRAME.registerComponent('sphere-dome-audio', {
 </style>
 
 <style id="cameraViewStyles">
-  /* Camera View Toggle UI */
   #cameraViewShell{
     position: fixed;
     bottom: 14px;
@@ -1302,9 +1301,7 @@ AFRAME.registerComponent('sphere-dome-audio', {
     align-items: center;
     gap: 8px;
   }
-  #cameraViewShell.show{
-    display: flex;
-  }
+  #cameraViewShell.show{ display: flex; }
   #cameraViewChevron{
     appearance: none;
     border: 1px solid rgba(255,255,255,0.16);
@@ -1318,13 +1315,8 @@ AFRAME.registerComponent('sphere-dome-audio', {
     transition: all 200ms ease;
     line-height: 1;
   }
-  #cameraViewChevron:hover{
-    border-color: rgba(255,255,255,0.32);
-    color: rgba(255,255,255,0.95);
-  }
-  #cameraViewChevron.expanded{
-    transform: rotate(180deg);
-  }
+  #cameraViewChevron:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+  #cameraViewChevron.expanded{ transform: rotate(180deg); }
   #cameraViewBtn{
     appearance:none;
     border: 1px solid rgba(255,255,255,0.16);
@@ -1340,11 +1332,8 @@ AFRAME.registerComponent('sphere-dome-audio', {
     display: none;
     transition: opacity 200ms ease;
   }
-  #cameraViewBtn.show{
-    display: block;
-  }
+  #cameraViewBtn.show{ display: block; }
   #cameraViewBtn:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
-
   #cameraViewConfirm{
     position: fixed; inset: 0;
     display:none;
@@ -1364,231 +1353,380 @@ AFRAME.registerComponent('sphere-dome-audio', {
     box-shadow: 0 22px 70px rgba(0,0,0,0.62);
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   }
-  #cameraViewCard h3{
-    margin: 0 0 8px 0;
-    font-size: 14px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-  }
-  #cameraViewCard p{
-    margin: 0 0 14px 0;
-    font-size: 13px;
-    opacity: 0.85;
-    line-height: 1.35;
-  }
-  #cameraViewActions{
-    display:flex;
-    gap: 10px;
-    justify-content:flex-end;
-  }
+  #cameraViewCard h3{ margin: 0 0 8px 0; font-size: 14px; letter-spacing: 0.16em; text-transform: uppercase; }
+  #cameraViewCard p{ margin: 0 0 14px 0; font-size: 13px; opacity: 0.85; line-height: 1.35; }
+  #cameraViewActions{ display:flex; gap: 10px; justify-content:flex-end; }
 </style>
 
-<script id="cameraToggleComponent">
-// ========== 3RD PERSON CAMERA TOGGLE ==========
-// Provides 1st ↔ 3rd person switching with a racer avatar.
-// Works with rig-walk movement and look-controls.
-
-AFRAME.registerComponent('camera-mode-toggle', {
+<script id="thirdPersonComponents">
+// === Third-person spring-arm camera (game-style) ===
+AFRAME.registerComponent('tp-camera-springarm', {
   schema: {
-    cam:           { type: 'selector', default: '#playerCam' },
-    offsetY:       { type: 'number', default: 2.4 },
-    offsetDist:    { type: 'number', default: 4.2 },
-    firstPersonY:  { type: 'number', default: 1.6 }
+    pivot: { type: 'selector' },
+    ignore: { type: 'selector' },
+    colliders: { type: 'string', default: '.collider, [data-tube="1"]' },
+    minDist: { type: 'number', default: 0.85 },
+    padding: { type: 'number', default: 0.22 },
+    smoothPos: { type: 'number', default: 0.15 },
+    smoothDist: { type: 'number', default: 0.18 },
+    sphereRadius: { type: 'number', default: 0.22 },
+    ceilingPadding: { type: 'number', default: 0.08 },
+    ceilingProbe: { type: 'number', default: 0.42 },
+    maxCeilingDrop: { type: 'number', default: 0.65 }
   },
-
   init: function () {
-    this._isThirdPerson = false;
-    this._racerEl = null;
-    this._mixer = null;
-    this._idleAction = null;
-    this._walkAction = null;
-    this._activeAnim = null;
-    this._racerReady = false;
+    this.sceneEl = this.el.sceneEl;
+    this.raycaster = new THREE.Raycaster();
+    this._pivotW = new THREE.Vector3();
+    this._desiredW = new THREE.Vector3();
+    this._finalW = new THREE.Vector3();
+    this._smoothedW = new THREE.Vector3();
+    this._dir = new THREE.Vector3();
+    this._tmp = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+    this._up = new THREE.Vector3(0, 1, 0);
+    this._offsets = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+    this._baseLocal = this.el.object3D.position.clone();
+    this._baseDist = Math.abs(this._baseLocal.z);
+    this._sign = (this._baseLocal.z >= 0) ? 1 : -1;
+    this._curDist = this._baseDist;
+    this._ceilingDrop = 0;
+    this._colliderMeshes = [];
+    this._lastRefresh = 0;
+    this.refreshColliderMeshes();
+    this.el.object3D.getWorldPosition(this._smoothedW);
+  },
+  refreshColliderMeshes: function () {
+    var ignoreObj = this.data.ignore ? this.data.ignore.object3D : null;
+    var nodes = Array.from(this.sceneEl.querySelectorAll(this.data.colliders || '.collider, [data-tube="1"]'));
+    var meshes = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var root = nodes[i].object3D;
+      if (!root) continue;
+      root.traverse(function (o) {
+        if (!o.isMesh) return;
+        if (ignoreObj) { var cur = o; while (cur) { if (cur === ignoreObj) return; cur = cur.parent; } }
+        meshes.push(o);
+      });
+    }
+    this._colliderMeshes = meshes;
+  },
+  _sphereSweepClampDist: function (origin, desired) {
+    this._tmp.copy(desired).sub(origin);
+    var desiredLen = this._tmp.length();
+    if (desiredLen < 1e-4) return this._baseDist;
+    var dir = this._tmp.normalize();
+    this._right.copy(dir).cross(this._up);
+    if (this._right.lengthSq() < 1e-6) this._right.set(1, 0, 0);
+    else this._right.normalize();
+    var up2 = this._tmp.copy(this._right).cross(dir).normalize();
+    var upVec = this._dir; upVec.copy(up2);
+    var r = Math.max(0, this.data.sphereRadius);
+    var offsets = this._offsets;
+    offsets[0].set(0,0,0);
+    offsets[1].copy(this._right).multiplyScalar(r);
+    offsets[2].copy(this._right).multiplyScalar(-r);
+    offsets[3].copy(upVec).multiplyScalar(r);
+    offsets[4].copy(upVec).multiplyScalar(-r);
+    var best = desiredLen;
+    for (var i = 0; i < offsets.length; i++) {
+      var o = this._tmp.copy(origin).add(offsets[i]);
+      this.raycaster.set(o, dir);
+      this.raycaster.near = 0;
+      this.raycaster.far = desiredLen;
+      var hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
+      if (hits && hits.length) { var d = Math.max(0, hits[0].distance - this.data.padding); if (d < best) best = d; }
+    }
+    return Math.max(this.data.minDist, Math.min(this._baseDist, best));
+  },
+  _computeCeilingDrop: function (camPos) {
+    var probeUp = Math.max(0.2, this.data.ceilingProbe);
+    this.raycaster.set(camPos, this._up);
+    this.raycaster.near = 0;
+    this.raycaster.far = probeUp;
+    var hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
+    if (!hits || !hits.length) return 0;
+    var dist = hits[0].distance;
+    var needClear = this.data.sphereRadius + this.data.ceilingPadding;
+    if (dist >= needClear) return 0;
+    return Math.min(this.data.maxCeilingDrop, (needClear - dist));
+  },
+  tick: function (t) {
+    if (!this.data.pivot) return;
+    if (t - this._lastRefresh > 1200) { this._lastRefresh = t; this.refreshColliderMeshes(); }
+    var pivotObj = this.data.pivot.object3D;
+    pivotObj.getWorldPosition(this._pivotW);
+    this._desiredW.copy(this._baseLocal);
+    pivotObj.localToWorld(this._desiredW);
+    var targetDist = this._sphereSweepClampDist(this._pivotW, this._desiredW);
+    var aDist = Math.min(1, Math.max(0, this.data.smoothDist));
+    this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
+    this._dir.copy(this._desiredW).sub(this._pivotW);
+    var len = this._dir.length();
+    if (len < 1e-4) return;
+    this._dir.multiplyScalar(1 / len);
+    this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
+    var desiredDrop = this._computeCeilingDrop(this._finalW);
+    var aPos = Math.min(1, Math.max(0, this.data.smoothPos));
+    this._ceilingDrop = this._ceilingDrop + (desiredDrop - this._ceilingDrop) * aPos;
+    if (this._ceilingDrop > 0) this._finalW.y -= this._ceilingDrop;
+    this._smoothedW.lerp(this._finalW, aPos);
+    var local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
+    local.x = this._baseLocal.x;
+    local.z = this._sign * this._curDist;
+    local.y = Math.min(this._baseLocal.y, local.y);
+    this.el.object3D.position.copy(local);
+  }
+});
 
-    // Ground raycast
-    this._raycaster = new THREE.Raycaster();
-    this._rayDir = new THREE.Vector3(0, -1, 0);
-    this._rayOrigin = new THREE.Vector3();
-    this._groundMeshes = [];
-    this._lastGroundRefresh = 0;
-
-    // Camera collision raycast
-    this._camRayDir = new THREE.Vector3();
-    this._camRayOrigin = new THREE.Vector3();
-
-    // Expose globals for UI
-    window.isThirdPersonMode = () => this._isThirdPerson;
-    window.switchCameraMode = () => {
-      this._toggle();
-      return this._isThirdPerson;
+// === Third-person mouse look ===
+AFRAME.registerComponent('tp-mouselook', {
+  schema: {
+    pitchEl: { type: 'selector' },
+    sensitivity: { type: 'number', default: 0.12 },
+    minPitch: { type: 'number', default: -25 },
+    maxPitch: { type: 'number', default: 18 },
+    enabled: { type: 'boolean', default: true }
+  },
+  init: function () {
+    this.yaw = this.el.object3D.rotation.y || 0;
+    this.pitch = 0;
+    this.enabled = this.data.enabled;
+    var self = this;
+    this._onMouseMove = function (e) {
+      if (!self._locked || !self.enabled) return;
+      self.yaw -= (e.movementX || 0) * self.data.sensitivity * 0.01;
+      self.pitch -= (e.movementY || 0) * self.data.sensitivity * 0.01;
+      var minP = THREE.MathUtils.degToRad(self.data.minPitch);
+      var maxP = THREE.MathUtils.degToRad(self.data.maxPitch);
+      self.pitch = THREE.MathUtils.clamp(self.pitch, minP, maxP);
+      self.el.object3D.rotation.y = self.yaw;
+      var pEl = self.data.pitchEl;
+      if (pEl) pEl.object3D.rotation.x = self.pitch;
     };
-
-    // Setup racer model
-    const racerEl = document.getElementById('racerModel');
-    if (racerEl) {
-      this._racerEl = racerEl;
-      racerEl.addEventListener('model-loaded', () => this._setupRacer());
-    }
-  },
-
-  _setupRacer: function () {
-    const racerEl = this._racerEl;
-    if (!racerEl) return;
-
-    const mesh = racerEl.getObject3D('mesh');
-    if (!mesh) return;
-
-    const clips = (mesh.animations && mesh.animations.length) ? mesh.animations : [];
-    if (!clips.length) { this._racerReady = true; return; }
-
-    this._mixer = new THREE.AnimationMixer(mesh);
-
-    const findClip = (hint) => {
-      const h = hint.toLowerCase();
-      return clips.find(c => (c.name || '').toLowerCase().includes(h));
+    this._onLockChange = function () {
+      self._locked = (document.pointerLockElement === (self.el.sceneEl && self.el.sceneEl.canvas));
     };
-
-    const idleClip = findClip('idle') || clips[0];
-    const walkClip = findClip('walk') || clips.find(c => c !== idleClip) || idleClip;
-
-    this._idleAction = this._mixer.clipAction(idleClip);
-    this._walkAction = this._mixer.clipAction(walkClip);
-    this._idleAction.enabled = true;
-    this._walkAction.enabled = true;
-
-    this._playAnim('idle', true);
-    this._racerReady = true;
+    this._requestLock = function () {
+      if (!self.enabled) return;
+      var canvas = self.el.sceneEl && self.el.sceneEl.canvas;
+      if (canvas && canvas.requestPointerLock) canvas.requestPointerLock();
+    };
+    this._locked = false;
+    document.addEventListener('pointerlockchange', this._onLockChange);
+    window.addEventListener('mousemove', this._onMouseMove, { passive: true });
+    this.el.sceneEl.addEventListener('click', this._requestLock);
   },
-
-  _playAnim: function (which, instant) {
-    const a = (which === 'walk') ? this._walkAction : this._idleAction;
-    if (!a || this._activeAnim === which) return;
-
-    const from = (this._activeAnim === 'walk') ? this._walkAction : this._idleAction;
-    this._activeAnim = which;
-
-    if (from && from !== a) {
-      if (instant) { from.stop(); a.reset().play(); }
-      else { from.fadeOut(0.2); a.reset().fadeIn(0.2).play(); }
-    } else {
-      a.reset().play();
-    }
+  update: function () { this.enabled = this.data.enabled; },
+  tick: function () {
+    this.yaw = this.el.object3D.rotation.y;
+    var pEl = this.data.pitchEl;
+    if (pEl) this.pitch = pEl.object3D.rotation.x;
   },
+  remove: function () {
+    document.removeEventListener('pointerlockchange', this._onLockChange);
+    window.removeEventListener('mousemove', this._onMouseMove);
+    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('click', this._requestLock);
+  }
+});
 
-  _toggle: function () {
-    this._isThirdPerson = !this._isThirdPerson;
-
-    const cam = this.data.cam;
-    const racerEl = this._racerEl;
-
-    if (this._isThirdPerson) {
-      if (racerEl) racerEl.setAttribute('visible', true);
-    } else {
-      if (racerEl) racerEl.setAttribute('visible', false);
-      if (cam) cam.object3D.position.set(0, this.data.firstPersonY, 0);
-    }
+// === Racer controller ===
+AFRAME.registerComponent('racer-controller', {
+  schema: {
+    cam: { type: 'selector' },
+    idleHint: { type: 'string', default: 'idle' },
+    walkHint: { type: 'string', default: 'walk' },
+    turnWithCamera: { type: 'boolean', default: false }
   },
-
-  _isMoving: function () {
-    const rigWalk = this.el.components && this.el.components['rig-walk'];
-    if (!rigWalk || !rigWalk.keys) return false;
-    return !!(rigWalk.keys['KeyW'] || rigWalk.keys['ArrowUp'] ||
-              rigWalk.keys['KeyS'] || rigWalk.keys['ArrowDown'] ||
-              rigWalk.keys['KeyA'] || rigWalk.keys['ArrowLeft'] ||
-              rigWalk.keys['KeyD'] || rigWalk.keys['ArrowRight']);
-  },
-
-  _refreshGroundMeshes: function () {
-    this._groundMeshes = [];
-    const scene = this.el.sceneEl;
-    if (!scene || !scene.object3D) return;
-
-    scene.object3D.traverse((obj) => {
-      if (!obj.isMesh) return;
-      if (!obj.geometry) return;
-      // Skip tiny or clearly non-ground objects
-      const bb = obj.geometry.boundingBox;
-      if (bb) {
-        const sizeY = (bb.max.y - bb.min.y);
-        if (sizeY > 20) return; // skip skybox-like meshes
-      }
-      this._groundMeshes.push(obj);
+  init: function () {
+    this.keys = Object.create(null);
+    this.mixer = null;
+    this.idleAction = null;
+    this.walkAction = null;
+    this.active = null;
+    var MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
+    var self = this;
+    this._onKeyDown = function (e) { if (MOVE_KEYS.has(e.code)) self.keys[e.code] = true; };
+    this._onKeyUp   = function (e) { if (MOVE_KEYS.has(e.code)) self.keys[e.code] = false; };
+    window.addEventListener('keydown', this._onKeyDown, { passive: true });
+    window.addEventListener('keyup', this._onKeyUp, { passive: true });
+    window.addEventListener('blur', function () { for (var k in self.keys) self.keys[k] = false; });
+    this.el.addEventListener('model-loaded', function () {
+      var mesh = self.el.getObject3D('mesh');
+      if (!mesh) return;
+      var clips = (mesh.animations && mesh.animations.length) ? mesh.animations : [];
+      if (!clips.length) return;
+      var findByHint = function (hint) { var h = (hint || '').toLowerCase(); return clips.find(function (c) { return (c.name || '').toLowerCase().includes(h); }); };
+      var idleClip = findByHint(self.data.idleHint) || clips[0];
+      var walkClip = findByHint(self.data.walkHint) || clips.find(function (c) { return c !== idleClip; }) || idleClip;
+      self.mixer = new THREE.AnimationMixer(mesh);
+      self.idleAction = self.mixer.clipAction(idleClip);
+      self.walkAction = self.mixer.clipAction(walkClip);
+      self.idleAction.enabled = true;
+      self.walkAction.enabled = true;
+      self._play('idle', true);
     });
   },
+  remove: function () {
+    window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('keyup', this._onKeyUp);
+    if (this.mixer) this.mixer.stopAllAction();
+  },
+  _isMoving: function () {
+    return !!(this.keys['KeyW'] || this.keys['KeyA'] || this.keys['KeyS'] || this.keys['KeyD'] ||
+              this.keys['ArrowUp'] || this.keys['ArrowLeft'] || this.keys['ArrowDown'] || this.keys['ArrowRight']);
+  },
+  _play: function (which, instant) {
+    var a = (which === 'walk') ? this.walkAction : this.idleAction;
+    if (!a || this.active === which) return;
+    var from = (this.active === 'walk') ? this.walkAction : this.idleAction;
+    this.active = which;
+    if (from && from !== a) { if (instant) { from.stop(); a.reset().play(); } else { from.fadeOut(0.18); a.reset().fadeIn(0.18).play(); } }
+    else { a.reset().play(); }
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+    var cam = this.data.cam;
+    if (cam && this.data.turnWithCamera) { this.el.object3D.rotation.y = cam.object3D.rotation.y + Math.PI; }
+    this._play(this._isMoving() ? 'walk' : 'idle', false);
+  }
+});
 
-  _getGroundY: function (x, z) {
-    // Raycast down to find ground height under the rig
-    if (this._groundMeshes.length === 0) return null;
-
-    this._rayOrigin.set(x, 50, z);
-    this._raycaster.set(this._rayOrigin, this._rayDir);
-    this._raycaster.far = 100;
-
-    const hits = this._raycaster.intersectObjects(this._groundMeshes, false);
-    if (hits.length > 0) {
-      // Find the highest ground point that is below a reasonable height
-      for (let i = 0; i < hits.length; i++) {
-        if (hits[i].point.y < 20) return hits[i].point.y;
+// === Stick to ground ===
+AFRAME.registerComponent('stick-to-ground', {
+  schema: {
+    offset: { type: 'number', default: 0.03 },
+    rayHeight: { type: 'number', default: 2.0 },
+    maxDrop: { type: 'number', default: 6.0 },
+    maxRise: { type: 'number', default: 1.0 },
+    minNormalY: { type: 'number', default: 0.35 },
+    maxStepHeight: { type: 'number', default: 0.38 },
+    upSpeed: { type: 'number', default: 2.2 },
+    downSpeed: { type: 'number', default: 6.5 },
+    snapDist: { type: 'number', default: 0.01 }
+  },
+  init: function () {
+    this.raycaster = new THREE.Raycaster();
+    this.origin = new THREE.Vector3();
+    this.dir = new THREE.Vector3(0, -1, 0);
+    this._meshes = [];
+    this._lastCollect = 0;
+    this._initialized = false;
+    this._wN = new THREE.Vector3();
+    this._nM = new THREE.Matrix3();
+    var self = this;
+    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) { this._initialized = true; this.collectMeshes(); }
+    else if (this.el.sceneEl) { this.el.sceneEl.addEventListener('loaded', function () { self._initialized = true; self.collectMeshes(); }); }
+  },
+  collectMeshes: function () {
+    this._meshes.length = 0;
+    var root = this.el.sceneEl && this.el.sceneEl.object3D;
+    if (!root) return;
+    var selfObj = this.el.object3D;
+    root.traverse(function (obj) {
+      if (!obj.isMesh) return;
+      if (obj.visible === false) return;
+      var p = obj;
+      while (p) { if (p === selfObj) return; p = p.parent; }
+      this._meshes.push(obj);
+    }.bind(this));
+  },
+  _pickWalkableHit: function (hits) {
+    var minNy = this.data.minNormalY;
+    for (var i = 0; i < hits.length; i++) {
+      var h = hits[i];
+      if (!h) continue;
+      if (h.face && h.object) {
+        this._nM.getNormalMatrix(h.object.matrixWorld);
+        this._wN.copy(h.face.normal).applyMatrix3(this._nM).normalize();
+        if (this._wN.y >= minNy) return h;
+        continue;
       }
+      return h;
     }
     return null;
   },
-
   tick: function (t, dt) {
-    // Always update mixer (even in 1st person, to keep animations ready)
-    if (this._mixer) this._mixer.update((dt || 0) / 1000);
-
-    if (!this._isThirdPerson) return;
-
-    const cam = this.data.cam;
-    if (!cam) return;
-
-    // Refresh ground meshes periodically
-    if (t - this._lastGroundRefresh > 4000) {
-      this._refreshGroundMeshes();
-      this._lastGroundRefresh = t;
+    if (!this.el.sceneEl || !this._initialized) return;
+    if (!this._meshes.length || (t - this._lastCollect) > 1500) {
+      this.collectMeshes(); this._lastCollect = t;
+      if (!this._meshes.length) return;
     }
-
-    // Get yaw from look-controls
-    const lc = cam.components && cam.components['look-controls'];
-    const yaw = (lc && lc.yawObject) ? lc.yawObject.rotation.y : cam.object3D.rotation.y;
-
-    // Compute 3rd person camera offset (behind and above)
-    const offY = this.data.offsetY;
-    const dist = this.data.offsetDist;
-
-    const offX = Math.sin(yaw) * dist;
-    const offZ = Math.cos(yaw) * dist;
-
-    // Simple wall-clip prevention: raycast from rig center to desired camera position
-    const rigPos = this.el.object3D.position;
-    const desiredX = offX;
-    const desiredY = offY;
-    const desiredZ = offZ;
-
-    cam.object3D.position.set(desiredX, desiredY, desiredZ);
-
-    // Update racer rotation to face the direction the camera is looking
-    if (this._racerEl && this._racerEl.object3D) {
-      this._racerEl.object3D.rotation.y = yaw + Math.PI;
-
-      // Ground-height adjustment for racer (handle uneven sand)
-      const worldX = rigPos.x;
-      const worldZ = rigPos.z;
-      const groundY = this._getGroundY(worldX, worldZ);
-      if (groundY !== null) {
-        // Racer Y is in rig-local space; rig.position.y is the rig's world Y offset
-        const localGroundY = groundY - rigPos.y;
-        this._racerEl.object3D.position.y = localGroundY;
-      }
-    }
-
-    // Update animation
-    const moving = this._isMoving();
-    this._playAnim(moving ? 'walk' : 'idle', false);
+    var dtS = Math.min(0.05, dt / 1000);
+    this.origin.copy(this.el.object3D.position);
+    this.origin.y += this.data.rayHeight;
+    this.raycaster.set(this.origin, this.dir);
+    this.raycaster.far = this.data.rayHeight + this.data.maxDrop;
+    var hits = this.raycaster.intersectObjects(this._meshes, true);
+    if (!hits || !hits.length) return;
+    var hit = this._pickWalkableHit(hits);
+    if (!hit) return;
+    var hitY = hit.point.y + this.data.offset;
+    var curY = this.el.object3D.position.y;
+    var dy = hitY - curY;
+    if (dy > this.data.maxRise || dy < -this.data.maxDrop || dy > this.data.maxStepHeight) return;
+    if (Math.abs(dy) <= this.data.snapDist) { this.el.object3D.position.y = hitY; return; }
+    var maxUp = this.data.upSpeed * dtS;
+    var maxDown = this.data.downSpeed * dtS;
+    var step = dy;
+    if (step > maxUp) step = maxUp;
+    if (step < -maxDown) step = -maxDown;
+    this.el.object3D.position.y = curY + step;
   }
 });
+
+// === Camera view toggle logic ===
+(function () {
+  var _isThirdPerson = false;
+  window.isThirdPersonMode = function () { return _isThirdPerson; };
+  window.switchCameraMode = function () {
+    _isThirdPerson = !_isThirdPerson;
+    var fpCam = document.getElementById('playerCam');
+    var tpWrapper = document.getElementById('racerYaw');
+    var tpCam = document.getElementById('tpCam');
+    var racerAvatar = document.getElementById('racerAvatar');
+    var camPitch = document.getElementById('camPitch');
+    if (!fpCam || !tpWrapper || !tpCam) return _isThirdPerson;
+    if (_isThirdPerson) {
+      var lc = fpCam.components && fpCam.components['look-controls'];
+      var tpML = tpWrapper.components && tpWrapper.components['tp-mouselook'];
+      if (lc && tpML) {
+        var lcYaw = lc.yawObject ? lc.yawObject.rotation.y : 0;
+        var lcPitch = lc.pitchObject ? lc.pitchObject.rotation.x : 0;
+        tpWrapper.object3D.rotation.y = lcYaw;
+        tpML.yaw = lcYaw;
+        if (camPitch) camPitch.object3D.rotation.x = lcPitch;
+        tpML.pitch = lcPitch;
+      }
+      fpCam.setAttribute('camera', 'active', false);
+      fpCam.setAttribute('look-controls', 'enabled', false);
+      tpCam.setAttribute('camera', 'active', true);
+      tpWrapper.setAttribute('tp-mouselook', 'enabled', true);
+      if (racerAvatar) racerAvatar.setAttribute('visible', true);
+      tpWrapper.setAttribute('visible', true);
+    } else {
+      var tpML = tpWrapper.components && tpWrapper.components['tp-mouselook'];
+      var lc = fpCam.components && fpCam.components['look-controls'];
+      if (tpML && lc) {
+        var tpYaw = tpML.yaw || tpWrapper.object3D.rotation.y;
+        var tpPitch = tpML.pitch || 0;
+        if (lc.yawObject) lc.yawObject.rotation.y = tpYaw;
+        if (lc.pitchObject) lc.pitchObject.rotation.x = tpPitch;
+      }
+      tpCam.setAttribute('camera', 'active', false);
+      tpWrapper.setAttribute('tp-mouselook', 'enabled', false);
+      if (racerAvatar) racerAvatar.setAttribute('visible', false);
+      tpWrapper.setAttribute('visible', false);
+      fpCam.setAttribute('camera', 'active', true);
+      fpCam.setAttribute('look-controls', 'enabled', true);
+    }
+    return _isThirdPerson;
+  };
+})();
 </script>
+
+
+
 
 
 
@@ -1977,7 +2115,6 @@ AFRAME.registerComponent('play-gltf-clip', {
 <button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
 </div>
 </div>
-</div>
 
 <div id="cameraViewShell">
 <button id="cameraViewBtn" type="button">CHANGE VIEW</button>
@@ -1992,6 +2129,10 @@ AFRAME.registerComponent('play-gltf-clip', {
 <button class="qbtn primary" id="cameraViewConfirmBtn" type="button">Switch View</button>
 </div>
 </div>
+</div>
+
+</div>
+
 </div>
 
 <script>
@@ -16889,7 +17030,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <!-- Capsule NPC laying assets (from aya_capsule.html) -->
     <a-asset-item id="oliviaLayingGLB" src="../../characters/olivia_laying.glb"></a-asset-item>
     <a-asset-item id="peteLayingGLB" src="../../characters/pete_laying.glb"></a-asset-item>
-    <a-asset-item id="racerGLB" src="../../characters/racer.glb"></a-asset-item>
+    <a-asset-item id="racer_glb" src="../../characters/racer.glb"></a-asset-item>
 </a-assets>
 
 
@@ -18984,7 +19125,10 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="rig"
               position="35.33 0.03 41.92"
               rotation="0 0 0"
-              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh camera-mode-toggle>
+              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh
+              stick-to-ground="offset: 0.03; rayHeight: 2.0; minNormalY: 0.35; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
+
+      <!-- === 1st Person Camera (active by default) === -->
       <a-entity id="playerCam"
                 camera="fov: 60; near: 0.1; far: 250; zoom: 1.08"
                 look-controls="pointerLockEnabled: true"
@@ -18994,14 +19138,34 @@ AFRAME.registerComponent('ion-wind-field', {
                 rotation="0 0 0">
         <a-entity cursor="rayOrigin: mouse"></a-entity>
       </a-entity>
-      <!-- 3rd person racer avatar -->
-      <a-entity id="racerModel"
-                gltf-model="#racerGLB"
-                visible="false"
-                position="0 0 0"
-                scale="1 1 1"
-                npc-ground
-                mixamo-mat-fix></a-entity>
+
+      <!-- === 3rd Person Rig (hidden by default) === -->
+      <a-entity id="racerYaw" visible="false" rotation="0 0 0"
+                tp-mouselook="pitchEl: #camPitch; sensitivity: 0.12; minPitch: -25; maxPitch: 18; enabled: false">
+
+        <a-entity id="racerAvatar"
+                  gltf-model="#racer_glb"
+                  position="0 0 0"
+                  rotation="0 180 0"
+                  scale="1 1 1"
+                  visible="false"
+                  racer-controller="cam: #racerYaw; turnWithCamera: false"
+                  npc-ground
+                  mixamo-mat-fix
+                  shadow="cast:false; receive:false"></a-entity>
+
+        <a-entity id="camPitch" position="0 1.65 0" rotation="0 0 0">
+          <a-entity id="tpCam"
+                    camera="fov: 60; near: 0.1; far: 250; zoom: 1.08; active: false"
+                    camera-enable-layer="layer: 2"
+                    tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
+                    position="0 0 1.3"
+                    rotation="0 0 0">
+            <a-entity cursor="rayOrigin: mouse"></a-entity>
+          </a-entity>
+        </a-entity>
+
+      </a-entity>
     </a-entity>
 
   
@@ -21488,21 +21652,18 @@ AFRAME.registerComponent('capsule-03-experience', {
 </script>
 
 
+
 <script id="cameraViewToggleUI">
-// ===== CAMERA VIEW TOGGLE UI LOGIC =====
 (function() {
-  const cameraViewBtn = document.getElementById('cameraViewBtn');
-  const cameraViewChevron = document.getElementById('cameraViewChevron');
-  const cameraViewConfirm = document.getElementById('cameraViewConfirm');
-  const cameraViewTitle = document.getElementById('cameraViewTitle');
-  const cameraViewDesc = document.getElementById('cameraViewDesc');
-  const cameraViewConfirmBtn = document.getElementById('cameraViewConfirmBtn');
-  const cameraViewCancel = document.getElementById('cameraViewCancel');
-
+  var cameraViewBtn = document.getElementById('cameraViewBtn');
+  var cameraViewChevron = document.getElementById('cameraViewChevron');
+  var cameraViewConfirm = document.getElementById('cameraViewConfirm');
+  var cameraViewTitle = document.getElementById('cameraViewTitle');
+  var cameraViewDesc = document.getElementById('cameraViewDesc');
+  var cameraViewConfirmBtn = document.getElementById('cameraViewConfirmBtn');
+  var cameraViewCancel = document.getElementById('cameraViewCancel');
   if (!cameraViewBtn || !cameraViewChevron || !cameraViewConfirm) return;
-
-  let isExpanded = false;
-
+  var isExpanded = false;
   function updateUI(isThirdPerson) {
     if (isThirdPerson) {
       cameraViewTitle.textContent = 'Switch to 1st Person View';
@@ -21512,52 +21673,27 @@ AFRAME.registerComponent('capsule-03-experience', {
       cameraViewDesc.textContent = 'Switch to third-person camera and see your character.';
     }
   }
-
-  // Chevron click - toggle expand/collapse
-  cameraViewChevron.addEventListener('click', () => {
+  cameraViewChevron.addEventListener('click', function () {
     isExpanded = !isExpanded;
-    if (isExpanded) {
-      cameraViewBtn.classList.add('show');
-      cameraViewChevron.classList.add('expanded');
-    } else {
-      cameraViewBtn.classList.remove('show');
-      cameraViewChevron.classList.remove('expanded');
-    }
+    if (isExpanded) { cameraViewBtn.classList.add('show'); cameraViewChevron.classList.add('expanded'); }
+    else { cameraViewBtn.classList.remove('show'); cameraViewChevron.classList.remove('expanded'); }
   });
-
-  // "CHANGE VIEW" button click - open confirmation dialog
-  cameraViewBtn.addEventListener('click', () => {
-    const isThirdPerson = window.isThirdPersonMode ? window.isThirdPersonMode() : false;
-    updateUI(isThirdPerson);
+  cameraViewBtn.addEventListener('click', function () {
+    var isTP = window.isThirdPersonMode ? window.isThirdPersonMode() : false;
+    updateUI(isTP);
     cameraViewConfirm.classList.add('show');
   });
-
-  cameraViewCancel.addEventListener('click', () => {
+  cameraViewCancel.addEventListener('click', function () { cameraViewConfirm.classList.remove('show'); });
+  cameraViewConfirmBtn.addEventListener('click', function () {
+    if (window.switchCameraMode) { var newMode = window.switchCameraMode(); updateUI(newMode); }
     cameraViewConfirm.classList.remove('show');
   });
-
-  cameraViewConfirmBtn.addEventListener('click', () => {
-    if (window.switchCameraMode) {
-      const newMode = window.switchCameraMode();
-      updateUI(newMode);
-    }
-    cameraViewConfirm.classList.remove('show');
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && cameraViewConfirm.classList.contains('show')) cameraViewConfirm.classList.remove('show');
   });
-
-  // ESC to close
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && cameraViewConfirm.classList.contains('show')) {
-      cameraViewConfirm.classList.remove('show');
-    }
-  });
-
-  // Show the camera view shell once the scene is loaded
-  const sceneEl = document.querySelector('a-scene');
+  var sceneEl = document.querySelector('a-scene');
   if (sceneEl) {
-    const showShell = () => {
-      const shell = document.getElementById('cameraViewShell');
-      if (shell) shell.classList.add('show');
-    };
+    var showShell = function () { var shell = document.getElementById('cameraViewShell'); if (shell) shell.classList.add('show'); };
     if (sceneEl.hasLoaded) showShell();
     else sceneEl.addEventListener('loaded', showShell);
   }
