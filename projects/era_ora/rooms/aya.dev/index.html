@@ -10567,39 +10567,19 @@ return chosen * 180 / Math.PI;
     this.state.step = 3;
     this._hideGuide();
 
-    // Fade in the overlay, then start playback.
+    // _showOverlay now handles both fade and video playback start
     this._showOverlay();
-
-    if (this.overlayVideo) {
-      try {
-        this.overlayVideo.currentTime = 0;
-
-        const playNow = () => {
-          try {
-            const p = this.overlayVideo.play();
-            if (p && typeof p.catch === 'function') p.catch(() => {});
-          } catch (err) {}
-        };
-
-        // Let CSS transitions take effect for a smooth fade-in.
-        requestAnimationFrame(() => setTimeout(playNow, 30));
-      } catch (err) {}
-    }
   },
 
   _stopExperience: function (byEsc) {
     if (this.state.step !== 3) return;
 
-    // Stop playback
-    if (this.overlayVideo) {
-      try { this.overlayVideo.pause(); } catch (err) {}
-      // If exited by ESC, reset to start; if ended naturally, keep at end.
-      if (byEsc) {
-        try { this.overlayVideo.currentTime = 0; } catch (err) {}
-      }
+    // If exited by ESC, reset video to start (but don't pause yet - _hideOverlay will)
+    if (byEsc && this.overlayVideo) {
+      try { this.overlayVideo.currentTime = 0; } catch (err) {}
     }
 
-    // Fade out, then restore room.
+    // Fade out (video keeps playing during fade, pauses after)
     this._hideOverlay(false, () => {
       // Keep movement disabled (we return to the seated-ready state).
       this._setWalkEnabled(false);
@@ -10643,19 +10623,27 @@ return chosen * 180 / Math.PI;
   _showOverlay: function () {
     if (!this.overlay || !this.overlayVideo) return;
     
-    // Ensure video starts invisible
-    this.overlayVideo.style.opacity = '0';
+    // Critical: Start video playback FIRST while still invisible
+    // This ensures video is running when we fade it in
+    try {
+      this.overlayVideo.currentTime = 0;
+      this.overlayVideo.style.opacity = '0';
+      const playPromise = this.overlayVideo.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+    } catch(err) {}
     
-    // Step 1: Fade in black background (game → black over 1.5s)
+    // Step 1: Fade overlay background (game → black, 1.5s)
     this.overlay.classList.add('visible');
     
-    // Step 2: After brief delay, fade in video (black → video over 1.5s, overlapping with step 1)
-    // 300ms delay creates smooth crossfade through black
+    // Step 2: Almost immediately, fade video in (black → video, 1.5s)
+    // Small delay creates the crossfade: game→black while black→video = seamless
     setTimeout(() => {
       if (this.overlayVideo) {
         this.overlayVideo.style.opacity = '1';
       }
-    }, 300);
+    }, 100);
   },
 
   _hideOverlay: function (immediate, cb) {
@@ -10663,22 +10651,34 @@ return chosen * 180 / Math.PI;
     
     if (immediate) {
       this.overlay.classList.remove('visible');
-      if (this.overlayVideo) this.overlayVideo.style.opacity = '0';
+      if (this.overlayVideo) {
+        this.overlayVideo.style.opacity = '0';
+        try { this.overlayVideo.pause(); } catch(err) {}
+      }
       if (cb) cb();
       return;
     }
     
-    // Step 1: Fade out video first (video → black)
+    // Step 1: Fade out video (video → black, 1.5s) - video KEEPS PLAYING during fade
     if (this.overlayVideo) {
       this.overlayVideo.style.opacity = '0';
     }
     
-    // Step 2: After delay, fade out background (black → game)
+    // Step 2: Shortly after, fade out background (black → game, 1.5s)
+    // Creates crossfade: video→black while black→game
     setTimeout(() => {
       this.overlay.classList.remove('visible');
-      // Callback fires after overlay background finishes fading
-      setTimeout(() => { if (cb) cb(); }, 1550);
-    }, 500);
+    }, 400);
+    
+    // Step 3: Only pause video AFTER it's fully invisible
+    setTimeout(() => {
+      if (this.overlayVideo) {
+        try { this.overlayVideo.pause(); } catch(err) {}
+      }
+    }, 1600);
+    
+    // Callback fires after everything completes
+    setTimeout(() => { if (cb) cb(); }, 2000);
   },
 
   _showGuide: function (html) {
