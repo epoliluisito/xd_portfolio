@@ -1593,30 +1593,7 @@ AFRAME.registerComponent('racer-controller', {
 });
 
 // === Stick to ground ===
-AFRAME.registerComponent('stick-to-ground', {
-  schema: {
-    offset: { type: 'number', default: 0.03 },
-    rayHeight: { type: 'number', default: 2.0 },
-    maxDrop: { type: 'number', default: 6.0 },
-    maxRise: { type: 'number', default: 1.0 },
-    minNormalY: { type: 'number', default: 0.35 },
-    maxStepHeight: { type: 'number', default: 0.38 },
-    upSpeed: { type: 'number', default: 2.2 },
-    downSpeed: { type: 'number', default: 6.5 },
-    snapDist: { type: 'number', default: 0.01 }
-  },
-  init: function () {
-    this.raycaster = new THREE.Raycaster();
-    this.origin = new THREE.Vector3();
-    this.dir = new THREE.Vector3(0, -1, 0);
-    this._meshes = [];
-    this._lastCollect = 0;
-    this._initialized = false;
-    this._wN = new THREE.Vector3();
-    this._nM = new THREE.Matrix3();
-    var self = this;
-    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) { this._initialized = true; this.collectMeshes(); }
-    else if (this.el.sceneEl) { this.el.sceneEl.addEventListener('loaded', function () { self._initialized = true; self.collectMeshes(); }); }
+// stick-to-ground removed }
   },
   collectMeshes: function () {
     this._meshes.length = 0;
@@ -1683,8 +1660,7 @@ AFRAME.registerComponent('stick-to-ground', {
 
   window.isThirdPersonMode = function () { return _tp; };
 
-  // Sync loop: while in 3P, mirror tp-mouselook yaw/pitch into look-controls internals.
-  // Experiences (aya seat, capsule) read look-controls even when it's disabled.
+  // Sync: mirror tp-mouselook yaw/pitch into look-controls so experiences read correct values
   function syncLC() {
     if (!_tp) { _syncRAF = null; return; }
     var fp = document.getElementById('playerCam');
@@ -1701,7 +1677,6 @@ AFRAME.registerComponent('stick-to-ground', {
     _syncRAF = requestAnimationFrame(syncLC);
   }
 
-  // Core switch
   function _doSwitch(toTP) {
     var rig = document.getElementById('rig'), fp = document.getElementById('playerCam'),
         tw = document.getElementById('racerYaw'), tc = document.getElementById('tpCam'),
@@ -1716,7 +1691,7 @@ AFRAME.registerComponent('stick-to-ground', {
         var p = lc.pitchObject ? lc.pitchObject.rotation.x : 0;
         tw.object3D.rotation.y = y; ml.yaw = y;
         var mn = THREE.MathUtils.degToRad(-25), mx = THREE.MathUtils.degToRad(18);
-        if (cp) { cp.object3D.rotation.x = THREE.MathUtils.clamp(p, mn, mx); }
+        if (cp) cp.object3D.rotation.x = THREE.MathUtils.clamp(p, mn, mx);
         ml.pitch = cp ? cp.object3D.rotation.x : 0;
       }
       fp.setAttribute('camera', 'active', false);
@@ -1725,7 +1700,6 @@ AFRAME.registerComponent('stick-to-ground', {
       tw.setAttribute('tp-mouselook', 'enabled', true);
       if (ra) ra.setAttribute('visible', true);
       tw.setAttribute('visible', true);
-      // Patch _getYaw to read from racerYaw so WASD follows 3P camera
       if (rw && !_origGetYaw) _origGetYaw = rw._getYaw.bind(rw);
       if (rw) rw._getYaw = function () {
         var el = document.getElementById('racerYaw'); if (!el) return 0;
@@ -1754,12 +1728,11 @@ AFRAME.registerComponent('stick-to-ground', {
     _tp = toTP;
   }
 
-  // Public toggle (UI button)
   window.switchCameraMode = function () { _doSwitch(!_tp); return _tp; };
 
-  // Proxy rig-walk pause/play: auto-switch 1P for experiences, restore 3P after.
-  // Experiences call rw.pause() on sit/lie-down (E for aya seat, F for capsule).
-  // They call rw.play() on stand-up (ESC).
+  // Proxy rig-walk pause/play for auto 1P during experiences.
+  // aya-seat calls rigWalk.pause() on E (sit), rigWalk.play() on ESC (stand up).
+  // capsule-03 calls rw.pause() on F (lie down), rw.play() on ESC (stand up).
   function installProxy() {
     var rig = document.getElementById('rig');
     if (!rig) return;
@@ -1769,13 +1742,11 @@ AFRAME.registerComponent('stick-to-ground', {
     var origPause = rw.pause.bind(rw);
     var origPlay = rw.play.bind(rw);
     rw.pause = function () {
-      // Switch to 1P BEFORE pausing so experience logic sees active look-controls
       if (_tp && !_expLock) { _savedTP = true; _expLock = true; _doSwitch(false); }
       origPause();
     };
     rw.play = function () {
       origPlay();
-      // Restore 3P after experience ends (small delay for cleanup)
       if (_expLock && _savedTP) {
         setTimeout(function () { _expLock = false; _savedTP = false; _doSwitch(true); }, 150);
       } else { _expLock = false; _savedTP = false; }
@@ -19187,8 +19158,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="rig"
               position="35.33 0.03 41.92"
               rotation="0 0 0"
-              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh
-              stick-to-ground="offset: 0.03; rayHeight: 2.0; minNormalY: 0.35; maxStepHeight: 0.38; upSpeed: 2.2; downSpeed: 6.5; snapDist: 0.01">
+              rig-walk="speed: 2.6; radius: 0.28" delayed-collider-refresh>
 
       <!-- === 1st Person Camera (active by default) === -->
       <a-entity id="playerCam"
