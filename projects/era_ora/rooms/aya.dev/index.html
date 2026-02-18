@@ -20,7 +20,38 @@
   
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #020202; }
-  </style>
+  /* ── FABRIC IFRAME OVERLAY ───────────────────────────────────────────── */
+#fabricOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99990;
+  background: rgba(0,0,0,0);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 450ms ease;
+}
+#fabricOverlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+#fabricOverlay iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #000;
+}
+#fabricOverlay .veil {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  transition: opacity 600ms ease;
+  pointer-events: none;
+}
+#fabricOverlay.visible .veil { opacity: 1; }
+</style>
 
   <style>
     /* === USER GUIDE (seat-triggered) === */
@@ -16137,13 +16168,13 @@ AFRAME.registerComponent('seam-grain-fringe', {
 --------------------------------------------------------------------------- */
 AFRAME.registerComponent('ion-wind-field', {
   schema: {
-    columns:    {type: 'int',    default: 48},
+    columns:    {type: 'int',    default: 33},
     radius:     {type: 'number', default: 6.4},
     height:     {type: 'number', default: 9.6},
     columnWidth:{type:'number',  default: 1.25},
     layers:     {type: 'int',    default: 6},   // planes per column
     opacity:    {type: 'number', default: 0.56},
-    dustCount:  {type: 'int',    default: 4800},
+    dustCount:  {type: 'int',    default: 2400},
     dustRadius: {type: 'number', default: 8.8},
     dustHeight: {type: 'number', default: 7.6},
     seed:       {type: 'int',    default: 9102}
@@ -20651,7 +20682,49 @@ AFRAME.registerComponent('capsule-03-experience', {
     // Bubble-phase: handle F (start experience)
     window.addEventListener('keydown', this._onKey,    { capture: false, passive: false });
     // Pointer-lock release (ESC can release lock before keydown fires)
-    document.addEventListener('pointerlockchange', this._onPLC);
+    document\.addEventListener\('pointerlockchange', this\._onPLC\);
+
+// ── Return-from-fabric restore (ESC Return in the_fabric.html) ─────
+try {
+  if (sessionStorage.getItem('returnToCapsule03') === '1') {
+    sessionStorage.removeItem('returnToCapsule03');
+
+    const doRestore = () => {
+      // Ensure we're near the capsule, then force open and lay down.
+      try {
+        // Teleport rig close to capsule_03 (use its world pos, offset slightly in front)
+        if (this.rig && this.cap03) {
+          const p = new THREE.Vector3();
+          this.cap03.object3D.getWorldPosition(p);
+          // Place the rig slightly in front (+z) and a bit lower, facing it
+          this.rig.object3D.position.set(p.x, this.rig.object3D.position.y, p.z + 1.2);
+          this.rig.object3D.rotation.y = Math.PI; // face toward -z (approx toward capsule)
+        }
+      } catch(_) {}
+
+      // Force capsule open (so ESC can stand-up + E can close)
+      const t = this._toggleEl && this._toggleEl.components && this._toggleEl.components['capsule-split-toggle'];
+      if (t && !t._open) {
+        try {
+          t._onKeyDown({
+            code: (t.data && t.data.key) ? t.data.key : 'KeyE',
+            key: 'e',
+            repeat: false,
+            preventDefault(){},
+            stopPropagation(){}
+          });
+        } catch(_) {}
+      }
+
+      // Start lay-down sequence
+      try { this._startLayDown(); } catch(_) {}
+    };
+
+    const scene = this.el.sceneEl;
+    if (scene && scene.hasLoaded) setTimeout(doRestore, 50);
+    else if (scene) scene.addEventListener('loaded', () => setTimeout(doRestore, 50), { once: true });
+  }
+} catch(_) {}
   },
 
   remove: function () {
@@ -20771,23 +20844,14 @@ AFRAME.registerComponent('capsule-03-experience', {
   },
 
   _startFabricTransition: function () {
-    // Fade to black then navigate to the_fabric.html
-    let overlay = document.getElementById('_fabricTransOverlay');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = '_fabricTransOverlay';
-      Object.assign(overlay.style, {
-        position: 'fixed', inset: '0', background: '#000',
-        opacity: '0', transition: 'opacity 600ms ease',
-        zIndex: '99999', pointerEvents: 'none'
-      });
-      document.body.appendChild(overlay);
+    // Open the_fabric.html as an iframe overlay (keeps capsule state intact)
+    if (typeof window.openFabricOverlay === 'function') {
+      window.openFabricOverlay('the_fabric.html');
+    } else {
+      // Fallback (should not happen)
+      window.location.href = 'the_fabric.html';
     }
-    overlay.offsetHeight; // reflow
-    overlay.style.opacity = '1';
-    setTimeout(() => {
-      window.location.replace('the_fabric.html');
-    }, 650);
+  }, 650);
   },
 
   _onPLC: function () {
@@ -21017,6 +21081,42 @@ AFRAME.registerComponent('capsule-03-experience', {
   }
 
 });
+
+/* ── FABRIC overlay control (iframe) ───────────────────────────────────── */
+(function(){
+  if (window.__fabricOverlayInstalled) return;
+  window.__fabricOverlayInstalled = true;
+
+  const overlay = () => document.getElementById('fabricOverlay');
+  const frame   = () => document.getElementById('fabricFrame');
+
+  window.openFabricOverlay = function (url) {
+    const o = overlay(), f = frame();
+    if (!o || !f) return;
+    try { document.exitPointerLock?.(); } catch(_) {}
+    o.setAttribute('aria-hidden', 'false');
+    o.classList.add('visible');
+    // load after veil begins so it feels like a transition
+    setTimeout(() => { f.src = url || 'the_fabric.html'; }, 250);
+  };
+
+  window.closeFabricOverlay = function () {
+    const o = overlay(), f = frame();
+    if (!o || !f) return;
+    o.classList.remove('visible');
+    o.setAttribute('aria-hidden', 'true');
+    // stop audio/render loop in iframe
+    setTimeout(() => { f.src = 'about:blank'; }, 400);
+  };
+
+  window.addEventListener('message', (ev) => {
+    if (!ev || !ev.data) return;
+    if (ev.data && ev.data.type === 'EXIT_FABRIC') {
+      window.closeFabricOverlay();
+    }
+  });
+})();
+
 </script>
 
 <script id="quitUiScript">
@@ -21050,5 +21150,10 @@ AFRAME.registerComponent('capsule-03-experience', {
 })();
 </script>
 
+<!-- FABRIC overlay (iframe) -->
+<div id="fabricOverlay" aria-hidden="true">
+  <div class="veil"></div>
+  <iframe id="fabricFrame" src="about:blank" allow="autoplay; fullscreen; vr; xr-spatial-tracking"></iframe>
+</div>
 </body>
 </html>
