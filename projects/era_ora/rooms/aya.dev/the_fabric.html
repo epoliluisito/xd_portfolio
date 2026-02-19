@@ -159,12 +159,16 @@ let enterTime = 0;
 const keys = {};
 const pitchYaw = { x:0, y:0 };
 
+// movement keys (only prevent defaults for these while pointer-locked)
+const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','ShiftLeft','ShiftRight']);
+
 // ─── RUNTIME / TEARDOWN ───────────────────────────────────────────────────────
 let rafId = null;
 let destroyed = false;
 
 function onKeyDown(e) {
   keys[e.code] = true;
+  if (!renderer) return;
 
   // ESC should always return once started (do not require pointer lock).
   if (e.code === 'Escape') {
@@ -224,6 +228,7 @@ function destroyFabric() {
   try { renderer?.domElement?.remove?.(); } catch(_) {}
 }
 window.addEventListener('beforeunload', destroyFabric);
+window.addEventListener('pagehide', destroyFabric);
 
 
 // Grid state
@@ -250,12 +255,16 @@ function showReturnGuide(on) {
 function exitToCapsule() {
   if (returnArmed) return;
   returnArmed = true;
+
   const veil = document.getElementById('veil');
   if (veil) {
     veil.style.transition = 'opacity 450ms ease';
     veil.style.opacity = '1';
   }
-  try { document.exitPointerLock?.(); } catch(_) {}
+
+  // Tear down GPU/audio/listeners so repeated opens don't leak contexts.
+  destroyFabric();
+
   setTimeout(() => {
     try { window.parent && window.parent.postMessage({ type: 'EXIT_FABRIC' }, '*'); } catch(_) {}
   }, 350);
@@ -373,10 +382,7 @@ function init() {
   buildGrid();
   buildStars();
   buildQuanta();
-
-  // Keyboard: do NOT blanket-prevent defaults (it breaks DevTools shortcuts).
-  // Only prevent defaults for movement keys while pointer-locked & started.
-  const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','ShiftLeft','ShiftRight']);
+  // Keyboard listeners
 
     window.addEventListener('keydown', onKeyDown, { passive:false });
   window.addEventListener('keyup', onKeyUp);
