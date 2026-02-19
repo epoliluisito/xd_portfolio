@@ -30,11 +30,53 @@
     position:fixed; inset:0;
     display:flex; align-items:center; justify-content:center;
     background:#000206;
-    font-family:monospace; font-size:10px;
-    letter-spacing:6px; color:rgba(0,180,220,0.4);
+    z-index:20; /* above veil */
     cursor:pointer;
+    user-select:none;
+    -webkit-user-select:none;
     transition:opacity 1.4s;
   }
+  #enter .enterText{
+    font-family:monospace;
+    font-size:10px;
+    letter-spacing:6px;
+    color:rgba(110,200,255,0.55);
+    text-transform:uppercase;
+    text-shadow:0 0 10px rgba(0,190,255,0.12);
+  }
+
+  #enter .enterBtn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:14px 22px;
+    border-radius:14px;
+    border:1px solid rgba(120,210,255,0.55);
+    background:linear-gradient(180deg, rgba(0,140,210,0.28), rgba(0,70,120,0.12));
+    box-shadow:0 0 26px rgba(0,190,255,0.20);
+    color:rgba(190,240,255,0.92);
+    letter-spacing:3px;
+    font-weight:600;
+    font-size:12px;
+  }
+  #enter .enterHint{
+    margin-top:12px;
+    font-family:monospace;
+    font-size:10px;
+    letter-spacing:1.8px;
+    color:rgba(160,215,245,0.55);
+    text-transform:uppercase;
+    text-align:center;
+  }
+  #enter .enterStack{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+  }
+  #enter:active .enterBtn{
+    transform:translateY(1px);
+  }
+
 
   #veil {
     position:fixed; inset:0; background:#000206;
@@ -83,7 +125,7 @@
 <div id="veil"></div>
 <div id="cursor"></div>
 <div id="userGuide"><span class="kbd">ESC</span> Return</div>
-<div id="enter">ENTER</div>
+<div id="enter"><div class="enterText">E&nbsp;&nbsp;N&nbsp;&nbsp;T&nbsp;&nbsp;E&nbsp;&nbsp;R</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -116,6 +158,73 @@ let started = false;
 let enterTime = 0;
 const keys = {};
 const pitchYaw = { x:0, y:0 };
+
+// ─── RUNTIME / TEARDOWN ───────────────────────────────────────────────────────
+let rafId = null;
+let destroyed = false;
+
+function onKeyDown(e) {
+  keys[e.code] = true;
+
+  // ESC should always return once started (do not require pointer lock).
+  if (e.code === 'Escape') {
+    if (started) {
+      e.preventDefault();
+      exitToCapsule();
+    }
+    return;
+  }
+
+  // Never interfere with browser / devtools shortcuts
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!started) return;
+  if (document.pointerLockElement !== renderer?.domElement) return;
+
+  if (MOVE_KEYS.has(e.code)) e.preventDefault();
+}
+
+function onKeyUp(e) {
+  keys[e.code] = false;
+}
+
+function destroyFabric() {
+  if (destroyed) return;
+  destroyed = true;
+
+  try { if (rafId) cancelAnimationFrame(rafId); } catch(_) {}
+
+  try { window.removeEventListener('keydown', onKeyDown, { passive:false }); } catch(_) {}
+  try { window.removeEventListener('keyup', onKeyUp); } catch(_) {}
+  try { window.removeEventListener('mousemove', onMouseMove); } catch(_) {}
+  try { window.removeEventListener('resize', onResize); } catch(_) {}
+
+  try { document.exitPointerLock?.(); } catch(_) {}
+
+  // stop audio
+  try { droneOscs.forEach(o => { try { o.stop(); } catch(_) {} }); } catch(_) {}
+  try { audioCtx?.close?.(); } catch(_) {}
+  audioCtx = null;
+
+  // dispose scene objects/materials
+  try {
+    scene?.traverse?.((obj) => {
+      if (obj.geometry) try { obj.geometry.dispose?.(); } catch(_) {}
+      if (obj.material) {
+        try {
+          if (Array.isArray(obj.material)) obj.material.forEach(m => { try { m.dispose?.(); } catch(_) {} });
+          else obj.material.dispose?.();
+        } catch(_) {}
+      }
+    });
+  } catch(_) {}
+
+  // dispose WebGL
+  try { renderer?.dispose?.(); } catch(_) {}
+  try { renderer?.forceContextLoss?.(); } catch(_) {}
+  try { renderer?.domElement?.remove?.(); } catch(_) {}
+}
+window.addEventListener('beforeunload', destroyFabric);
+
 
 // Grid state
 const gridLines = [];  // { line, axis, ov: original Float32Array }
@@ -269,29 +378,8 @@ function init() {
   // Only prevent defaults for movement keys while pointer-locked & started.
   const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','ShiftLeft','ShiftRight']);
 
-  window.addEventListener('keydown', (e) => {
-    keys[e.code] = true;
-
-    // ESC should always return once started (do not require pointer lock).
-    if (e.code === 'Escape') {
-      if (started) {
-        e.preventDefault();
-        exitToCapsule();
-      }
-      return;
-    }
-
-    // Never interfere with browser / devtools shortcuts
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (!started) return;
-    if (document.pointerLockElement !== renderer?.domElement) return;
-
-    if (MOVE_KEYS.has(e.code)) e.preventDefault();
-  }, { passive:false });
-
-  window.addEventListener('keyup', (e) => {
-    keys[e.code] = false;
-  });
+    window.addEventListener('keydown', onKeyDown, { passive:false });
+  window.addEventListener('keyup', onKeyUp);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('resize',    onResize);
 
@@ -742,20 +830,27 @@ function onMouseMove(e) {
 function enter() {
   if (started) return;
   started = true;
-  
-document.body.classList.add("started");
 
-enterTime = clock;
-const el = document.getElementById('enter');
-  el.style.opacity = '0';
-  setTimeout(() => el.remove(), 1500);
+  document.body.classList.add("started");
+  enterTime = clock;
+
+  const el = document.getElementById('enter');
+  if (el) {
+    el.style.opacity = '0';
+    setTimeout(() => { try { el.remove(); } catch(_) {} }, 1500);
+  }
+
   startAudio();
+
   // fade in scene after ENTER
-  veil.style.opacity = "0";
-  const ug = document.getElementById("userGuide");
-  if (ug) ug.style.opacity = "1";
-  renderer.domElement.requestPointerLock?.();
+  const veil = document.getElementById('veil');
+  if (veil) veil.style.opacity = "0";
+
+  showReturnGuide(true);
+
+  try { renderer?.domElement?.requestPointerLock?.(); } catch(_) {}
 }
+
 
 
 // ─── OPEN WORLD POIs (discoverable life chunks) ─────────────────────────
@@ -1228,7 +1323,8 @@ function update() {
 }
 
 function animate() {
-  requestAnimationFrame(animate);
+  if (destroyed) return;
+  rafId = requestAnimationFrame(animate);
   update();
   renderer.render(scene, camera);
 }
