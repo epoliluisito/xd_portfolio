@@ -264,6 +264,7 @@
           const z = (z1 + z2) / 2;
           mk('a-box', {
             id,
+            class: 'solid',
             position: `${x} ${H/2} ${z}`,
             width: `${T}`,
             height: `${H}`,
@@ -277,6 +278,7 @@
           const x = (x1 + x2) / 2;
           mk('a-box', {
             id,
+            class: 'solid',
             position: `${x} ${H/2} ${z}`,
             width: `${len}`,
             height: `${H}`,
@@ -291,6 +293,7 @@
           const d = orient === 'z' ? CW + T*2 : T;
           mk('a-box', {
             id,
+            class: 'solid',
             position: `${x} ${H/2} ${z}`,
             width: `${w}`,
             height: `${H}`,
@@ -390,17 +393,69 @@
     });
 
 AFRAME.registerComponent('rig-walk', {
-      schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
+      schema: { speed: { type: 'number', defaAFRAME.registerComponent('rig-walk', {
+      schema: {
+        speed:   { type: 'number', default: 2.6 },
+        radius:  { type: 'number', default: 0.28 },
+        height:  { type: 'number', default: 1.75 },
+        colliders: { type: 'string', default: '.solid' },
+        refreshMs: { type: 'number', default: 800 }
+      },
       init: function () {
         this.keys = Object.create(null);
+
         const MOVE = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
         this._onKeyDown = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
         this._onKeyUp   = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
         this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
+
         window.addEventListener('keydown', this._onKeyDown, { passive: false });
         window.addEventListener('keyup',   this._onKeyUp,   { passive: false });
         window.addEventListener('blur', this._clearKeys);
         document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
+
+        this._solids = [];
+        this._lastRefresh = -1;
+
+        this._tmpWorld = new THREE.Vector3();
+        this._tmpBoxRig = new THREE.Box3();
+        this._tmpBoxSolid = new THREE.Box3();
+
+        this._refreshSolids = () => {
+          const scene = this.el.sceneEl;
+          if (!scene) return;
+          // exclude floors etc by only tagging what we care about with .solid
+          this._solids = Array.from(scene.querySelectorAll(this.data.colliders))
+            .filter(el => el !== this.el && !this.el.contains(el));
+          this._lastRefresh = performance.now();
+        };
+
+        this._blocked = () => {
+          // build rig AABB in WORLD space
+          const r = this.data.radius;
+          const h = this.data.height;
+
+          this.el.object3D.getWorldPosition(this._tmpWorld);
+
+          this._tmpBoxRig.min.set(this._tmpWorld.x - r, this._tmpWorld.y,     this._tmpWorld.z - r);
+          this._tmpBoxRig.max.set(this._tmpWorld.x + r, this._tmpWorld.y + h, this._tmpWorld.z + r);
+
+          for (let i = 0; i < this._solids.length; i++) {
+            const s = this._solids[i];
+            if (!s || !s.object3D) continue;
+            if (s.getAttribute && s.getAttribute('visible') === false) continue;
+
+            // If GLTF not loaded yet, object3D may be empty; setFromObject will yield empty box.
+            this._tmpBoxSolid.setFromObject(s.object3D);
+            if (this._tmpBoxSolid.isEmpty()) continue;
+
+            if (this._tmpBoxRig.intersectsBox(this._tmpBoxSolid)) return true;
+          }
+          return false;
+        };
+
+        // initial capture after scene has some content
+        setTimeout(this._refreshSolids, 50);
       },
       tick: function (t, dt) {
         const w = !!this.keys['KeyW'] || !!this.keys['ArrowUp'];
@@ -408,21 +463,44 @@ AFRAME.registerComponent('rig-walk', {
         const a = !!this.keys['KeyA'] || !!this.keys['ArrowLeft'];
         const d = !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
         if (!w && !s && !a && !d) return;
+
+        const now = performance.now();
+        if (this._lastRefresh < 0 || (now - this._lastRefresh) > this.data.refreshMs) {
+          this._refreshSolids();
+        }
+
         const dtS = Math.min(0.05, dt / 1000);
         const cam = this.el.querySelector('[camera]');
         if (!cam) return;
+
         const lc = cam.components && cam.components['look-controls'];
         const yaw = lc && lc.yawObject ? lc.yawObject.rotation.y : 0;
         const totalYaw = yaw + (this.el.object3D.rotation.y || 0);
+
         let mx = 0, mz = 0;
         if (w) { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
         if (s) { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
         if (a) { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
         if (d) { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
-        const len = Math.sqrt(mx*mx + mz*mz);
-        if (len > 0) {
-          this.el.object3D.position.x += (mx / len) * this.data.speed * dtS;
-          this.el.object3D.position.z += (mz / len) * this.data.speed * dtS;
+
+        const mag = Math.hypot(mx, mz);
+        if (mag > 0.0001) { mx /= mag; mz /= mag; }
+
+        const step = this.data.speed * dtS;
+        const dx = mx * step;
+        const dz = mz * step;
+
+        const pos = this.el.object3D.position;
+        const prevX = pos.x, prevZ = pos.z;
+
+        // axis-separable collision: allows "sliding" along walls
+        if (dx) {
+          pos.x = prevX + dx;
+          if (this._blocked()) pos.x = prevX;
+        }
+        if (dz) {
+          pos.z = prevZ + dz;
+          if (this._blocked()) pos.z = prevZ;
         }
       },
       remove: function () {
@@ -430,11 +508,7 @@ AFRAME.registerComponent('rig-walk', {
         window.removeEventListener('keyup',   this._onKeyUp);
       }
     });
-  </script>
-</head>
-<body>
 
-<!-- Flash fix: black overlay present before any paint -->
 <div id="fadeIn"></div>
 
 <!-- Quit button — matches aya.dev position (bottom-left) and style -->
@@ -533,30 +607,7 @@ AFRAME.registerComponent('rig-walk', {
               position="0 0 0"
               material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true"
               shadow="cast:false; receive:true">
-
-    <a-ring id="endchamber_handrail_top"
-            radius-inner="1.42" radius-outer="1.52"
-            segments-theta="256"
-            position="0 0.58 0"
-            rotation="-90 0 0"
-            material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6"
-            theta-start="25" theta-length="310"></a-ring>
-
-    <a-entity id="endchamber_panel"
-              position="0 0.44 1.41"
-              rotation="0 180 0">
-      <a-box id="endchamber_panel_plate"
-             width="0.20" height="0.38" depth="0.03"
-             material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.7 0.7; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-box>
-      <a-cylinder id="endchamber_panel_button"
-                  radius="0.032" height="0.02"
-                  position="0 0.02 0.013" rotation="90 0 0"
-                  material="shader: standard; color: #cfcfcf; roughness: 0.4; metalness: 0.6; emissive: #ffffff; emissiveIntensity: 0.0"></a-cylinder>
-      <a-sphere id="endchamber_panel_light"
-                radius="0.012" position="0 0.092 0.013"
-                material="shader: standard; color: #0a0a0a; emissive: #d9f1ff; emissiveIntensity: 0.0; roughness: 0.9; metalness: 0.0"></a-sphere>
-    </a-entity>
-  </a-cylinder>
+</a-cylinder>
 
   <!-- Seam trim ring -->
   <a-entity id="lia_seam_trim" position="0 0.0715 0">
@@ -594,12 +645,12 @@ AFRAME.registerComponent('rig-walk', {
       material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4"></a-plane>
 
     <a-box id="transition_corridor_wall_left"  position="-2.1 2.5 0" width="0.30" height="5" depth="12"
-      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" class="solid"></a-box>
     <a-box id="transition_corridor_wall_right" position="2.1 2.5 0" width="0.30" height="5" depth="12"
-      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" class="solid"></a-box>
 
     <a-box id="transition_corridor_roof" position="0 5.15 0" width="4.8" height="0.30" depth="12.4"
-      material="shader: standard; color: #0a0a0a; roughness: 1; metalness: 0.0"></a-box>
+      material="shader: standard; color: #0a0a0a; roughness: 1; metalness: 0.0" class="solid"></a-box>
 
   </a-entity>
 
@@ -660,251 +711,251 @@ AFRAME.registerComponent('rig-walk', {
     <!-- Office walls (with offset entrance/exit openings) -->
 <!-- North wall (entrance on right) -->
 <a-box id="office_wall_north_left" position="-1.875 2.5 6.5" width="10.25" height="5" depth="0.30"
-  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0"></a-box>
+  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0" class="solid"></a-box>
 <a-box id="office_wall_north_right" position="6.375 2.5 6.5" width="1.25" height="5" depth="0.30"
-  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0"></a-box>
+  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0" class="solid"></a-box>
 
 <!-- South wall (exit on left) -->
 <a-box id="office_wall_south_left" position="-6.375 2.5 -6.5" width="1.25" height="5" depth="0.30"
-  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0"></a-box>
+  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0" class="solid"></a-box>
 <a-box id="office_wall_south_right" position="1.875 2.5 -6.5" width="10.25" height="5" depth="0.30"
-  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0"></a-box>
+  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0" class="solid"></a-box>
 
 <!-- East / West walls -->
 <a-box id="office_wall_east" position="7 2.5 0" width="0.30" height="5" depth="13"
-  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0"></a-box>
+  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0" class="solid"></a-box>
 <a-box id="office_wall_west" position="-7 2.5 0" width="0.30" height="5" depth="13"
-  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0"></a-box>
+  material="shader: standard; color: #e7e6e1; roughness: 1; metalness: 0" class="solid"></a-box>
 
 <!-- 3 station clusters (not directly in front of entrance) -->
 
     <!-- Stations cluster (copied from working_cubicles.html) -->
-    <a-entity id="cluster_01" position="-3.5 0 1.5" rotation="0 0 0">
+    <a-entity id="cluster_01" position="-4.1 0 2.6" rotation="0 0 0">
       <a-box id="wall_z0_east_01" position="0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_z0_west_01" position="-0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_x0_north_01" position="0 0.75 0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_x0_south_01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
 
       <a-entity id="station_NE_01" position="0.755 0 0.455" rotation="0 0 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_NW_01" position="-0.455 0 0.755" rotation="0 270 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SE_01" position="0.455 0 -0.755" rotation="0 90 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SW_01" position="-0.755 0 -0.455" rotation="0 180 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
     </a-entity>
 
     <!-- Stations cluster (copied from working_cubicles.html) -->
-    <a-entity id="cluster_02" position="3.5 0 -3.2" rotation="0 0 0">
+    <a-entity id="cluster_02" position="3.8 0 1.2" rotation="0 0 0">
       <a-box id="wall_z0_east_02" position="0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_z0_west_02" position="-0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_x0_north_02" position="0 0.75 0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_x0_south_02" position="0 0.75 -0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
 
       <a-entity id="station_NE_02" position="0.755 0 0.455" rotation="0 0 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_NW_02" position="-0.455 0 0.755" rotation="0 270 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SE_02" position="0.455 0 -0.755" rotation="0 90 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SW_02" position="-0.755 0 -0.455" rotation="0 180 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
     </a-entity>
 
     <!-- Stations cluster (copied from working_cubicles.html) -->
-    <a-entity id="cluster_03" position="-3.5 0 -3.2" rotation="0 0 0">
+    <a-entity id="cluster_03" position="0 0 -3.6" rotation="0 0 0">
       <a-box id="wall_z0_east_03" position="0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_z0_west_03" position="-0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_x0_north_03" position="0 0.75 0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
       <a-box id="wall_x0_south_03" position="0 0.75 -0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
-        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01"></a-box>
+        material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" class="solid"></a-box>
 
       <a-entity id="station_NE_03" position="0.755 0 0.455" rotation="0 0 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_NW_03" position="-0.455 0 0.755" rotation="0 270 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SE_03" position="0.455 0 -0.755" rotation="0 90 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SW_03" position="-0.755 0 -0.455" rotation="0 180 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
     </a-entity>
 </a-entity>
 
       <a-entity id="station_NW_04" position="-0.455 0 0.755" rotation="0 270 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SE_04" position="0.455 0 -0.755" rotation="0 90 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SW_04" position="-0.755 0 -0.455" rotation="0 180 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
     </a-entity>
 </a-entity>
 
       <a-entity id="station_NW_05" position="-0.455 0 0.755" rotation="0 270 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SE_05" position="0.455 0 -0.755" rotation="0 90 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SW_05" position="-0.755 0 -0.455" rotation="0 180 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
     </a-entity>
 </a-entity>
 
       <a-entity id="station_NW_06" position="-0.455 0 0.755" rotation="0 270 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SE_06" position="0.455 0 -0.755" rotation="0 90 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
 
       <a-entity id="station_SW_06" position="-0.755 0 -0.455" rotation="0 180 0">
-        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+        <a-box class="tabletop solid" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
           material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02"></a-box>
-        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+        <a-box class="stool solid" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
           material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
-        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+        <a-entity class="computer solid" gltf-model="#lia_pc_glb" strip-contact-shadow
           position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
       </a-entity>
     </a-entity>
@@ -917,9 +968,9 @@ AFRAME.registerComponent('rig-walk', {
     <a-plane id="corridor_floor" position="0 0.02 0" rotation="-90 0 0" width="4.2" height="12"
       material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4"></a-plane>
     <a-box id="corridor_wall_left"  position="-2.1 2.5 0" width="0.30" height="5" depth="12"
-      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" class="solid"></a-box>
     <a-box id="corridor_wall_right" position="2.1 2.5 0" width="0.30" height="5" depth="12"
-      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" class="solid"></a-box>
   </a-entity>
 
   <!-- ── Player rig ────────────────────────────────────────────────── -->
