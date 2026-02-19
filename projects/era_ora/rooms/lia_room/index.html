@@ -196,44 +196,116 @@
       }
     });
     AFRAME.registerComponent('rig-walk', {
-      schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
+      schema: {
+        speed: { type: 'number', default: 2.6 },
+        radius: { type: 'number', default: 0.28 },
+        height: { type: 'number', default: 1.6 },
+        collidableSelector: { type: 'string', default: '.solid' },
+        refreshMs: { type: 'number', default: 250 }
+      },
       init: function () {
         this.keys = Object.create(null);
+
         const MOVE = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
         this._onKeyDown = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
         this._onKeyUp   = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
         this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
+
         window.addEventListener('keydown', this._onKeyDown, { passive: false });
         window.addEventListener('keyup',   this._onKeyUp,   { passive: false });
         window.addEventListener('blur', this._clearKeys);
         document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
+
+        this._colliderEls = [];
+        this._lastRefresh = -Infinity;
+
+        // Scratch objects to avoid GC
+        this._playerBox = new THREE.Box3();
+        this._tmpBox = new THREE.Box3();
+        this._tmpV3 = new THREE.Vector3();
+
+        this._refreshColliders = () => {
+          const scene = this.el.sceneEl;
+          if (!scene) return;
+          this._colliderEls = Array.from(scene.querySelectorAll(this.data.collidableSelector));
+          this._lastRefresh = performance.now();
+        };
+
+        // Refresh once scene loads, then whenever models finish loading
+        this.el.sceneEl.addEventListener('loaded', this._refreshColliders);
+        this.el.sceneEl.addEventListener('model-loaded', this._refreshColliders);
       },
+
+      _intersectsAt: function (x, z) {
+        const r = this.data.radius;
+        const y = this.el.object3D.position.y;
+        const h = this.data.height;
+
+        this._playerBox.min.set(x - r, y, z - r);
+        this._playerBox.max.set(x + r, y + h, z + r);
+
+        for (let i = 0; i < this._colliderEls.length; i++) {
+          const el = this._colliderEls[i];
+          if (!el || !el.object3D) continue;
+
+          // If collider has no visible mesh yet, skip
+          // (Box3.setFromObject handles empty groups, but guard anyway)
+          this._tmpBox.setFromObject(el.object3D);
+          if (!isFinite(this._tmpBox.min.x) || !isFinite(this._tmpBox.max.x)) continue;
+
+          if (this._tmpBox.intersectsBox(this._playerBox)) return true;
+        }
+        return false;
+      },
+
       tick: function (t, dt) {
+        // Periodically refresh collider list in case DOM changes
+        if ((t - this._lastRefresh) > this.data.refreshMs) this._refreshColliders();
+
         const w = !!this.keys['KeyW'] || !!this.keys['ArrowUp'];
         const s = !!this.keys['KeyS'] || !!this.keys['ArrowDown'];
         const a = !!this.keys['KeyA'] || !!this.keys['ArrowLeft'];
         const d = !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
         if (!w && !s && !a && !d) return;
+
         const dtS = Math.min(0.05, dt / 1000);
         const cam = this.el.querySelector('[camera]');
         if (!cam) return;
+
         const lc = cam.components && cam.components['look-controls'];
         const yaw = lc && lc.yawObject ? lc.yawObject.rotation.y : 0;
         const totalYaw = yaw + (this.el.object3D.rotation.y || 0);
+
         let mx = 0, mz = 0;
         if (w) { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
         if (s) { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
         if (a) { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
         if (d) { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
+
         const len = Math.sqrt(mx*mx + mz*mz);
-        if (len > 0) {
-          this.el.object3D.position.x += (mx / len) * this.data.speed * dtS;
-          this.el.object3D.position.z += (mz / len) * this.data.speed * dtS;
-        }
+        if (len <= 0) return;
+
+        const step = this.data.speed * dtS;
+        const dx = (mx / len) * step;
+        const dz = (mz / len) * step;
+
+        const pos = this.el.object3D.position;
+        const x0 = pos.x;
+        const z0 = pos.z;
+
+        // Try X movement (slide)
+        const x1 = x0 + dx;
+        if (!this._intersectsAt(x1, z0)) pos.x = x1;
+
+        // Try Z movement (slide)
+        const z1 = pos.z + dz;
+        if (!this._intersectsAt(pos.x, z1)) pos.z = z1;
       },
+
       remove: function () {
         window.removeEventListener('keydown', this._onKeyDown);
         window.removeEventListener('keyup',   this._onKeyUp);
+        window.removeEventListener('blur', this._clearKeys);
       }
     });
   </script>
@@ -288,10 +360,10 @@
 <!-- ── Earth — same position/material as aya.dev lia_earth ─────── -->
 <a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.75" no-fog="" position="0 35 -220" radius="11" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
 <!-- ── Lunar ground ─────────────────────────────────────────────── -->
-<a-ring id="lia_lunar_ground" material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 14 14; normalScale: 1 1; side: front" position="0 0.07 0" radius-inner="1.555" radius-outer="60" rotation="-90 0 0" segments-theta="128" shadow="cast:false; receive:true"></a-ring>
+<a-ring id="lia_lunar_ground" material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 140 140; normalScale: 1 1; side: front" position="0 0.07 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
 <a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
-<a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
+<a-ring class="solid" id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
 <a-entity id="endchamber_panel" position="0 0.44 1.41" rotation="0 180 0">
 <a-box depth="0.03" height="0.38" id="endchamber_panel_plate" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.7 0.7; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" width="0.20"></a-box>
 <a-cylinder height="0.02" id="endchamber_panel_button" material="shader: standard; color: #cfcfcf; roughness: 0.4; metalness: 0.6; emissive: #ffffff; emissiveIntensity: 0.0" position="0 0.02 0.013" radius="0.032" rotation="90 0 0"></a-cylinder>
