@@ -102,7 +102,335 @@
     }
   </style>
 
-  
+  <script>
+    // ── Components ────────────────────────────────────────────────────────────
+
+    // Disable fog on specific meshes (earth sphere)
+    AFRAME.registerComponent('no-fog', {
+      init: function () {
+        const apply = (obj) => {
+          if (!obj || !obj.traverse) return;
+          obj.traverse((n) => {
+            if (!n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((m) => {
+              if (m && Object.prototype.hasOwnProperty.call(m, 'fog')) {
+                m.fog = false;
+                m.needsUpdate = true;
+              }
+            });
+          });
+        };
+        apply(this.el.object3D);
+        this.el.addEventListener('object3dset', () => apply(this.el.object3D));
+      }
+    });
+
+    // Improved earth texture sampling
+    AFRAME.registerComponent('earth-texture-quality', {
+      init: function () {
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          mesh.traverse((n) => {
+            if (!n.isMesh || !n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((m) => {
+              if (m.map) {
+                m.map.anisotropy = 4;
+                m.map.minFilter = THREE.LinearMipmapLinearFilter;
+                m.map.magFilter = THREE.LinearFilter;
+                m.map.needsUpdate = true;
+              }
+              m.needsUpdate = true;
+            });
+          });
+        };
+        apply();
+        this.el.addEventListener('object3dset', apply);
+      }
+    });
+
+    // Pitch clamp
+    AFRAME.registerComponent('pitch-clamp', {
+      schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
+      tick: function () {
+        const lc = this.el.components && this.el.components['look-controls'];
+        if (!lc || !lc.pitchObject) return;
+        const minR = this.data.min * Math.PI / 180;
+        const maxR = this.data.max * Math.PI / 180;
+        const p = lc.pitchObject.rotation.x;
+        if (p < minR) lc.pitchObject.rotation.x = minR;
+        if (p > maxR) lc.pitchObject.rotation.x = maxR;
+      }
+    });
+
+    // IBL: scene-level env map driving all PBR metalness/roughness — must match aya.dev
+    // aya.dev uses simple-ibl="intensity: 0.35; color: #e4ebf4" on the a-scene
+    AFRAME.registerComponent('simple-ibl', {
+      schema: { intensity: { type: 'number', default: 1.25 }, color: { type: 'color', default: '#dfe6ef' } },
+      init: function () {
+        const sceneObj = this.el.sceneEl.object3D;
+        const mkCanvas = () => {
+          const cv = document.createElement('canvas'); cv.width = cv.height = 2;
+          const ctx = cv.getContext('2d');
+          const g = ctx.createLinearGradient(0,0,2,2);
+          g.addColorStop(0, this.data.color);
+          g.addColorStop(1, '#aeb7c3');
+          ctx.fillStyle = g; ctx.fillRect(0,0,2,2);
+          return cv;
+        };
+        const cube = new THREE.CubeTexture([mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas()]);
+        cube.needsUpdate = true;
+        sceneObj.environment = cube;
+        const applyIntensity = () => {
+          sceneObj.traverse(o => {
+            if (!o || !o.isMesh) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => {
+              if (m && m.isMeshStandardMaterial) { m.envMapIntensity = this.data.intensity; m.needsUpdate = true; }
+            });
+          });
+        };
+        applyIntensity();
+        this.el.sceneEl.addEventListener('object3dset', applyIntensity);
+      }
+    });
+    
+    // Strip contact shadow meshes inside GLBs (used by workstation computers)
+    AFRAME.registerComponent('strip-contact-shadow', {
+      init: function () {
+        this.el.addEventListener('model-loaded', () => {
+          const root = this.el.getObject3D('mesh') || this.el.getObject3D('gltf-model');
+          if (!root || !root.traverse) return;
+
+          root.traverse((n) => {
+            if (!n.isMesh) return;
+
+            const name = (n.name || '').toLowerCase();
+            if (/(shadow|contact|groundshadow|shadowplane|shadow_plane|contact_shadow|ao_plane|aoplan)/.test(name)) {
+              n.visible = false;
+              return;
+            }
+
+            const mat = n.material;
+            if (!mat) return;
+
+            const isTrans = !!mat.transparent || (typeof mat.opacity === 'number' && mat.opacity < 0.999);
+            const isDark = !!mat.color && mat.color.r < 0.15 && mat.color.g < 0.15 && mat.color.b < 0.15;
+            if (!(isTrans && isDark)) return;
+
+            const g = n.geometry;
+            if (!g) return;
+            if (!g.boundingBox) g.computeBoundingBox();
+            if (!g.boundingBox) return;
+
+            const size = new THREE.Vector3();
+            g.boundingBox.getSize(size);
+            const flatEnough = size.y < 1e-4 || size.y < (Math.max(size.x, size.z) * 0.02);
+            if (flatEnough) n.visible = false;
+          });
+        });
+      }
+    });
+
+    // Build the behind-the-user maze (with dead-ends) + trail-marker signage
+    AFRAME.registerComponent('build-maze', {
+      schema: {
+        wallHeight: { type: 'number', default: 5.0 },
+        wallThick:  { type: 'number', default: 0.30 },
+        corridorW:  { type: 'number', default: 3.0 }
+      },
+      init: function () {
+        const H = this.data.wallHeight;
+        const T = this.data.wallThick;
+        const CW = this.data.corridorW;
+        const half = CW / 2;
+
+        const el = this.el;
+
+        const wallMat = 'shader: standard; color: #0b0b0b; src: #concreteBase; normalMap: #concreteNormal; roughnessMap: #concreteRough; metalness: 0.0; roughness: 1.0; normalScale: 1 1;';
+        const capMat  = wallMat;
+
+        const mk = (tag, attrs) => {
+          const n = document.createElement(tag);
+          Object.entries(attrs || {}).forEach(([k,v]) => n.setAttribute(k, v));
+          el.appendChild(n);
+          return n;
+        };
+
+        const addWallZ = (id, x, z1, z2) => {
+          const len = Math.abs(z2 - z1);
+          const z = (z1 + z2) / 2;
+          mk('a-box', {
+            id,
+            position: `${x} ${H/2} ${z}`,
+            width: `${T}`,
+            height: `${H}`,
+            depth: `${len}`,
+            material: wallMat
+          });
+        };
+
+        const addWallX = (id, z, x1, x2) => {
+          const len = Math.abs(x2 - x1);
+          const x = (x1 + x2) / 2;
+          mk('a-box', {
+            id,
+            position: `${x} ${H/2} ${z}`,
+            width: `${len}`,
+            height: `${H}`,
+            depth: `${T}`,
+            material: wallMat
+          });
+        };
+
+        const addCapAt = (id, x, z, orient) => {
+          // orient: 'x' means cap spans corridor width along X; 'z' spans along Z
+          const w = orient === 'x' ? CW + T*2 : T;
+          const d = orient === 'z' ? CW + T*2 : T;
+          mk('a-box', {
+            id,
+            position: `${x} ${H/2} ${z}`,
+            width: `${w}`,
+            height: `${H}`,
+            depth: `${d}`,
+            material: capMat
+          });
+        };
+
+        const addMarker = (id, x, y, z, rotY) => {
+          // small "trail marker" decal on the wall; user provided lia_logo.png
+          mk('a-plane', {
+            id,
+            position: `${x} ${y} ${z}`,
+            rotation: `0 ${rotY} 0`,
+            width: `0.9`,
+            height: `0.9`,
+            material: 'shader: standard; src: #liaLogo; transparent: true; alphaTest: 0.15; roughness: 0.9; metalness: 0.0; emissive: #ffffff; emissiveIntensity: 0.15; side: double'
+          });
+        };
+
+        // ── Maze layout (world coords; BEHIND user = negative Z) ───────────────
+        // Main solution corridor centerline (approx. your v2 plan)
+        // We build walls as axis-aligned corridor segments with a few branches / dead-ends.
+        // Segment A: entry corridor from z=-4 to z=-20 at x=0 (open at the north end)
+        addWallZ('maze_A_left',  -half, -4, -20);
+        addWallZ('maze_A_right',  half, -4, -20);
+
+        // Entry gate (visual cue, but leaves corridor open)
+        addWallX('maze_entry_gate_left',  -4 + T/2, -half - 2.2, -half - 0.6);
+        addWallX('maze_entry_gate_right', -4 + T/2,  half + 0.6,  half + 2.2);
+        addMarker('marker_entry', half-0.05, 2.0, -6, -90);
+
+        // Junction 1 at (0, -20): turn west
+        addWallX('maze_B_top',   -20 - half, -12, 0);
+        addWallX('maze_B_bot',   -20 + half, -12, 0);
+
+        // Continue south at x=-12
+        addWallZ('maze_C_left',  -12 - half, -20, -44);
+        addWallZ('maze_C_right', -12 + half, -20, -44);
+
+        // Branch dead-end off C (go further west then cap)
+        addWallX('maze_C_branch_top',   -28 - half, -22, -12);
+        addWallX('maze_C_branch_bot',   -28 + half, -22, -12);
+        addCapAt('maze_C_branch_cap', -22, -28, 'z');
+
+        // Junction 2 at (-12, -44): go east across
+        addWallX('maze_D_top',   -44 - half, -12, 10);
+        addWallX('maze_D_bot',   -44 + half, -12, 10);
+
+        // Branch dead-end off D (north spur)
+        addWallZ('maze_D_spur_left',  6 - half, -30, -44);
+        addWallZ('maze_D_spur_right', 6 + half, -30, -44);
+        addCapAt('maze_D_spur_cap', 6, -30, 'x');
+
+        // Continue south at x=10
+        addWallZ('maze_E_left',  10 - half, -44, -76);
+        addWallZ('maze_E_right', 10 + half, -44, -76);
+
+        // Branch dead-end off E (east spur)
+        addWallZ('maze_E_spur_left',  18 - half, -58, -70);
+        addWallZ('maze_E_spur_right', 18 + half, -58, -70);
+        addWallX('maze_E_spur_connect_top', -58 - half, 10, 18);
+        addWallX('maze_E_spur_connect_bot', -58 + half, 10, 18);
+        addCapAt('maze_E_spur_cap', 18, -70, 'x');
+
+        // Turn west at (10, -76) to x=4
+        addWallX('maze_F_top',   -76 - half, 4, 10);
+        addWallX('maze_F_bot',   -76 + half, 4, 10);
+
+        // Continue south at x=4 to -92
+        addWallZ('maze_G_left',  4 - half, -76, -92);
+        addWallZ('maze_G_right', 4 + half, -76, -92);
+
+        // Branch loop-ish: a "wrong but long" branch off G to the west then dead-end
+        addWallX('maze_G_branch_top', -84 - half, -6, 4);
+        addWallX('maze_G_branch_bot', -84 + half, -6, 4);
+        addWallZ('maze_G_branch_left',  -6 - half, -84, -104);
+        addWallZ('maze_G_branch_right', -6 + half, -84, -104);
+        addCapAt('maze_G_branch_cap', -6, -104, 'x');
+
+        // Final turn east to align with transition corridor (toward x=8, z=-92)
+        addWallX('maze_H_top',   -92 - half, 4, 8);
+        addWallX('maze_H_bot',   -92 + half, 4, 8);
+
+        // Short connector south to meet transition corridor start at x=8
+        addWallZ('maze_I_left',  8 - half, -92, -100);
+        addWallZ('maze_I_right', 8 + half, -92, -100);
+        addCapAt('maze_I_cap_south', 8, -100, 'x'); // stops before corridor entity takes over
+
+        // ── Trail markers on the correct path (subtle) ─────────────────────────
+        addMarker('marker_01',  half-0.05, 1.8, -14, -90);
+        addMarker('marker_02', -12+half-0.05, 1.8, -32, -90);
+        addMarker('marker_03',  10-half+0.05, 1.8, -58, 90);
+        addMarker('marker_04',   4+half-0.05, 1.8, -86, -90);
+        addMarker('marker_05',   8+half-0.05, 1.8, -96, -90);
+      }
+    });
+
+AFRAME.registerComponent('rig-walk', {
+      schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
+      init: function () {
+        this.keys = Object.create(null);
+        const MOVE = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
+        this._onKeyDown = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
+        this._onKeyUp   = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
+        this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
+        window.addEventListener('keydown', this._onKeyDown, { passive: false });
+        window.addEventListener('keyup',   this._onKeyUp,   { passive: false });
+        window.addEventListener('blur', this._clearKeys);
+        document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
+      },
+      tick: function (t, dt) {
+        const w = !!this.keys['KeyW'] || !!this.keys['ArrowUp'];
+        const s = !!this.keys['KeyS'] || !!this.keys['ArrowDown'];
+        const a = !!this.keys['KeyA'] || !!this.keys['ArrowLeft'];
+        const d = !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
+        if (!w && !s && !a && !d) return;
+        const dtS = Math.min(0.05, dt / 1000);
+        const cam = this.el.querySelector('[camera]');
+        if (!cam) return;
+        const lc = cam.components && cam.components['look-controls'];
+        const yaw = lc && lc.yawObject ? lc.yawObject.rotation.y : 0;
+        const totalYaw = yaw + (this.el.object3D.rotation.y || 0);
+        let mx = 0, mz = 0;
+        if (w) { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
+        if (s) { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
+        if (a) { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
+        if (d) { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
+        const len = Math.sqrt(mx*mx + mz*mz);
+        if (len > 0) {
+          this.el.object3D.position.x += (mx / len) * this.data.speed * dtS;
+          this.el.object3D.position.z += (mz / len) * this.data.speed * dtS;
+        }
+      },
+      remove: function () {
+        window.removeEventListener('keydown', this._onKeyDown);
+        window.removeEventListener('keyup',   this._onKeyUp);
+      }
+    });
+  </script>
 </head>
 <body>
 
