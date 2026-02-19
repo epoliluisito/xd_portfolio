@@ -196,7 +196,196 @@
         this.el.sceneEl.addEventListener('object3dset', applyIntensity);
       }
     });
-    AFRAME.registerComponent('rig-walk', {
+    
+    // Strip contact shadow meshes inside GLBs (used by workstation computers)
+    AFRAME.registerComponent('strip-contact-shadow', {
+      init: function () {
+        this.el.addEventListener('model-loaded', () => {
+          const root = this.el.getObject3D('mesh') || this.el.getObject3D('gltf-model');
+          if (!root || !root.traverse) return;
+
+          root.traverse((n) => {
+            if (!n.isMesh) return;
+
+            const name = (n.name || '').toLowerCase();
+            if (/(shadow|contact|groundshadow|shadowplane|shadow_plane|contact_shadow|ao_plane|aoplan)/.test(name)) {
+              n.visible = false;
+              return;
+            }
+
+            const mat = n.material;
+            if (!mat) return;
+
+            const isTrans = !!mat.transparent || (typeof mat.opacity === 'number' && mat.opacity < 0.999);
+            const isDark = !!mat.color && mat.color.r < 0.15 && mat.color.g < 0.15 && mat.color.b < 0.15;
+            if (!(isTrans && isDark)) return;
+
+            const g = n.geometry;
+            if (!g) return;
+            if (!g.boundingBox) g.computeBoundingBox();
+            if (!g.boundingBox) return;
+
+            const size = new THREE.Vector3();
+            g.boundingBox.getSize(size);
+            const flatEnough = size.y < 1e-4 || size.y < (Math.max(size.x, size.z) * 0.02);
+            if (flatEnough) n.visible = false;
+          });
+        });
+      }
+    });
+
+    // Build the behind-the-user maze (with dead-ends) + trail-marker signage
+    AFRAME.registerComponent('build-maze', {
+      schema: {
+        wallHeight: { type: 'number', default: 5.0 },
+        wallThick:  { type: 'number', default: 0.30 },
+        corridorW:  { type: 'number', default: 3.0 }
+      },
+      init: function () {
+        const H = this.data.wallHeight;
+        const T = this.data.wallThick;
+        const CW = this.data.corridorW;
+        const half = CW / 2;
+
+        const el = this.el;
+
+        const wallMat = 'shader: standard; color: #0b0b0b; src: #concreteBase; normalMap: #concreteNormal; roughnessMap: #concreteRough; metalness: 0.0; roughness: 1.0; normalScale: 1 1;';
+        const capMat  = wallMat;
+
+        const mk = (tag, attrs) => {
+          const n = document.createElement(tag);
+          Object.entries(attrs || {}).forEach(([k,v]) => n.setAttribute(k, v));
+          el.appendChild(n);
+          return n;
+        };
+
+        const addWallZ = (id, x, z1, z2) => {
+          const len = Math.abs(z2 - z1);
+          const z = (z1 + z2) / 2;
+          mk('a-box', {
+            id,
+            position: `${x} ${H/2} ${z}`,
+            width: `${T}`,
+            height: `${H}`,
+            depth: `${len}`,
+            material: wallMat
+          });
+        };
+
+        const addWallX = (id, z, x1, x2) => {
+          const len = Math.abs(x2 - x1);
+          const x = (x1 + x2) / 2;
+          mk('a-box', {
+            id,
+            position: `${x} ${H/2} ${z}`,
+            width: `${len}`,
+            height: `${H}`,
+            depth: `${T}`,
+            material: wallMat
+          });
+        };
+
+        const addCapAt = (id, x, z, orient) => {
+          // orient: 'x' means cap spans corridor width along X; 'z' spans along Z
+          const w = orient === 'x' ? CW + T*2 : T;
+          const d = orient === 'z' ? CW + T*2 : T;
+          mk('a-box', {
+            id,
+            position: `${x} ${H/2} ${z}`,
+            width: `${w}`,
+            height: `${H}`,
+            depth: `${d}`,
+            material: capMat
+          });
+        };
+
+        const addMarker = (id, x, y, z, rotY) => {
+          // small "trail marker" decal on the wall; user provided lia_logo.png
+          mk('a-plane', {
+            id,
+            position: `${x} ${y} ${z}`,
+            rotation: `0 ${rotY} 0`,
+            width: `0.9`,
+            height: `0.9`,
+            material: 'shader: standard; src: #liaLogo; transparent: true; alphaTest: 0.15; roughness: 0.9; metalness: 0.0; emissive: #ffffff; emissiveIntensity: 0.15; side: double'
+          });
+        };
+
+        // ── Maze layout (world coords; BEHIND user = negative Z) ───────────────
+        // Main solution corridor centerline (approx. your v2 plan)
+        // We build walls as axis-aligned corridor segments with a few branches / dead-ends.
+        // Segment A: from z=-8 to z=-20 at x=0
+        addWallZ('maze_A_left',  -half, -8, -20);
+        addWallZ('maze_A_right',  half, -8, -20);
+        addCapAt('maze_A_cap_north', 0, -8, 'x');     // near start (prevents walking into spawn area)
+
+        // Junction 1 at (0, -20): turn west
+        addWallX('maze_B_top',   -20 - half, -12, 0);
+        addWallX('maze_B_bot',   -20 + half, -12, 0);
+
+        // Continue south at x=-12
+        addWallZ('maze_C_left',  -12 - half, -20, -44);
+        addWallZ('maze_C_right', -12 + half, -20, -44);
+
+        // Branch dead-end off C (go further west then cap)
+        addWallX('maze_C_branch_top',   -28 - half, -22, -12);
+        addWallX('maze_C_branch_bot',   -28 + half, -22, -12);
+        addCapAt('maze_C_branch_cap', -22, -28, 'z');
+
+        // Junction 2 at (-12, -44): go east across
+        addWallX('maze_D_top',   -44 - half, -12, 10);
+        addWallX('maze_D_bot',   -44 + half, -12, 10);
+
+        // Branch dead-end off D (north spur)
+        addWallZ('maze_D_spur_left',  6 - half, -30, -44);
+        addWallZ('maze_D_spur_right', 6 + half, -30, -44);
+        addCapAt('maze_D_spur_cap', 6, -30, 'x');
+
+        // Continue south at x=10
+        addWallZ('maze_E_left',  10 - half, -44, -76);
+        addWallZ('maze_E_right', 10 + half, -44, -76);
+
+        // Branch dead-end off E (east spur)
+        addWallZ('maze_E_spur_left',  18 - half, -58, -70);
+        addWallZ('maze_E_spur_right', 18 + half, -58, -70);
+        addWallX('maze_E_spur_connect_top', -58 - half, 10, 18);
+        addWallX('maze_E_spur_connect_bot', -58 + half, 10, 18);
+        addCapAt('maze_E_spur_cap', 18, -70, 'x');
+
+        // Turn west at (10, -76) to x=4
+        addWallX('maze_F_top',   -76 - half, 4, 10);
+        addWallX('maze_F_bot',   -76 + half, 4, 10);
+
+        // Continue south at x=4 to -92
+        addWallZ('maze_G_left',  4 - half, -76, -92);
+        addWallZ('maze_G_right', 4 + half, -76, -92);
+
+        // Branch loop-ish: a "wrong but long" branch off G to the west then dead-end
+        addWallX('maze_G_branch_top', -84 - half, -6, 4);
+        addWallX('maze_G_branch_bot', -84 + half, -6, 4);
+        addWallZ('maze_G_branch_left',  -6 - half, -84, -104);
+        addWallZ('maze_G_branch_right', -6 + half, -84, -104);
+        addCapAt('maze_G_branch_cap', -6, -104, 'x');
+
+        // Final turn east to align with transition corridor (toward x=8, z=-92)
+        addWallX('maze_H_top',   -92 - half, 4, 8);
+        addWallX('maze_H_bot',   -92 + half, 4, 8);
+
+        // Short connector south to meet transition corridor start at x=8
+        addWallZ('maze_I_left',  8 - half, -92, -100);
+        addWallZ('maze_I_right', 8 + half, -92, -100);
+        addCapAt('maze_I_cap_south', 8, -100, 'x'); // stops before corridor entity takes over
+
+        // ── Trail markers on the correct path (subtle) ─────────────────────────
+        addMarker('marker_01',  half-0.05, 1.8, -14, -90);
+        addMarker('marker_02', -12+half-0.05, 1.8, -32, -90);
+        addMarker('marker_03',  10-half+0.05, 1.8, -58, 90);
+        addMarker('marker_04',   4+half-0.05, 1.8, -86, -90);
+        addMarker('marker_05',   8+half-0.05, 1.8, -96, -90);
+      }
+    });
+
+AFRAME.registerComponent('rig-walk', {
       schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
       init: function () {
         this.keys = Object.create(null);
@@ -281,6 +470,14 @@
     <img id="elevMetalNormal" crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_normal.webp">
     <img id="elevMetalRough"  crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_rough.png">
     <img id="elevMetalMetal"  crossorigin="anonymous" src="./assets/metal_elevator_door/metal_elevator_Metalness.png">
+
+    <!-- ── Maze / Office textures ── -->
+    <img id="concreteBase"   crossorigin="anonymous" src="./assets/concrete_wall/concrete_basecolor.webp">
+    <img id="concreteNormal" crossorigin="anonymous" src="./assets/concrete_wall/concrete_normal.webp">
+    <img id="concreteRough"  crossorigin="anonymous" src="./assets/concrete_wall/concrete_roughness.webp">
+    <img id="liaLogo"        crossorigin="anonymous" src="./assets/lia_logo.png">
+    <a-asset-item id="lia_pc_glb" crossorigin="anonymous"
+      src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/3_Lia_room/objects/LIA%20COMPUTER.glb?v=20251218"></a-asset-item>
   </a-assets>
 
   <!-- ── Sky ──────────────────────────────────────────────────────── -->
@@ -385,14 +582,208 @@
             material="shader: flat; color: #000000; side: front"></a-circle>
 
 
-  <!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
-  <a-box id="test_concrete_wall"
-         position="0 2.5 -30"
-         width="2"
-         height="5"
-         depth="0.3"
-         material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1"
-         shadow="cast:false; receive:true"></a-box>
+  <!-- ── Maze + Corridors + Office ────────────────────────────────── -->
+  <a-entity id="maze" build-maze></a-entity>
+
+  <!-- Transition corridor (roofed) — connects maze to office entrance (aligned right) -->
+  <a-entity id="transition_corridor" position="8 0.07 -106">
+    <a-plane id="transition_corridor_floor" rotation="-90 0 0" width="4.2" height="12"
+      material="shader: standard; color: #101010; roughness: 1; metalness: 0"></a-plane>
+
+    <a-box id="transition_corridor_wall_left"  position="-2.1 2.5 0" width="0.30" height="5" depth="12"
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+    <a-box id="transition_corridor_wall_right" position="2.1 2.5 0" width="0.30" height="5" depth="12"
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+
+    <a-box id="transition_corridor_roof" position="0 5.15 0" width="4.8" height="0.30" depth="12.4"
+      material="shader: standard; color: #0a0a0a; roughness: 1; metalness: 0.0"></a-box>
+
+  </a-entity>
+
+  <!-- Office room -->
+  <a-entity id="office" position="0 0.07 -125">
+    <a-plane id="office_floor" rotation="-90 0 0" width="28" height="26"
+      material="shader: standard; color: #121212; roughness: 1; metalness: 0"></a-plane>
+
+    <a-box id="office_roof" position="0 5.15 0" width="28.6" height="0.30" depth="26.6"
+      material="shader: standard; color: #0a0a0a; roughness: 1; metalness: 0"></a-box>
+
+    <!-- Office walls (with offset entrance/exit openings) -->
+    <!-- North wall (entrance on right) -->
+    <a-box id="office_wall_north_left" position="-4 2.5 13" width="20" height="5" depth="0.30"
+      material="shader: standard; color: #171717; roughness: 1; metalness: 0"></a-box>
+    <a-box id="office_wall_north_right" position="12.5 2.5 13" width="3" height="5" depth="0.30"
+      material="shader: standard; color: #171717; roughness: 1; metalness: 0"></a-box>
+
+    <!-- South wall (exit on left) -->
+    <a-box id="office_wall_south_left" position="-12.5 2.5 -13" width="3" height="5" depth="0.30"
+      material="shader: standard; color: #171717; roughness: 1; metalness: 0"></a-box>
+    <a-box id="office_wall_south_right" position="4 2.5 -13" width="20" height="5" depth="0.30"
+      material="shader: standard; color: #171717; roughness: 1; metalness: 0"></a-box>
+
+    <!-- East / West walls -->
+    <a-box id="office_wall_east" position="14 2.5 0" width="0.30" height="5" depth="26"
+      material="shader: standard; color: #171717; roughness: 1; metalness: 0"></a-box>
+    <a-box id="office_wall_west" position="-14 2.5 0" width="0.30" height="5" depth="26"
+      material="shader: standard; color: #171717; roughness: 1; metalness: 0"></a-box>
+
+    <!-- 3 station clusters (not directly in front of entrance) -->
+
+    <!-- Stations cluster (copied from working_cubicles.html) -->
+    <a-entity id="stations_cluster_01" position="-8 0 5" rotation="0 0 0">
+      <a-box id="wall_z0_east_01" position="0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_z0_west_01" position="-0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_x0_north_01" position="0 0.75 0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_x0_south_01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+
+      <a-entity id="station_NE_01" position="0.755 0 0.455" rotation="0 0 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_NW_01" position="-0.455 0 0.755" rotation="0 270 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_SE_01" position="0.455 0 -0.755" rotation="0 90 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_SW_01" position="-0.755 0 -0.455" rotation="0 180 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+    </a-entity>
+
+    <!-- Stations cluster (copied from working_cubicles.html) -->
+    <a-entity id="stations_cluster_02" position="8 0 -6" rotation="0 0 0">
+      <a-box id="wall_z0_east_02" position="0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_z0_west_02" position="-0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_x0_north_02" position="0 0.75 0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_x0_south_02" position="0 0.75 -0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+
+      <a-entity id="station_NE_02" position="0.755 0 0.455" rotation="0 0 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_NW_02" position="-0.455 0 0.755" rotation="0 270 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_SE_02" position="0.455 0 -0.755" rotation="0 90 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_SW_02" position="-0.755 0 -0.455" rotation="0 180 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+    </a-entity>
+
+    <!-- Stations cluster (copied from working_cubicles.html) -->
+    <a-entity id="stations_cluster_03" position="-10 0 -6" rotation="0 0 0">
+      <a-box id="wall_z0_east_03" position="0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_z0_west_03" position="-0.755 0.75 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_x0_north_03" position="0 0.75 0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+      <a-box id="wall_x0_south_03" position="0 0.75 -0.755" rotation="0 90 0" width="1.45" height="1.5" depth="0.06"
+        material="shader: standard; color: #303030; roughness: 0.98; metalness: 0.01"></a-box>
+
+      <a-entity id="station_NE_03" position="0.755 0 0.455" rotation="0 0 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_NW_03" position="-0.455 0 0.755" rotation="0 270 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_SE_03" position="0.455 0 -0.755" rotation="0 90 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+
+      <a-entity id="station_SW_03" position="-0.755 0 -0.455" rotation="0 180 0">
+        <a-box class="tabletop" position="0 0.75 0" width="1.45" height="0.06" depth="0.85"
+          material="shader: standard; color: #3a3a3a; roughness: 0.9; metalness: 0.02"></a-box>
+        <a-box class="stool" position="0 0.225 0.85" width="0.45" height="0.45" depth="0.45"
+          material="shader: standard; color: #2d2d2d; roughness: 1; metalness: 0"></a-box>
+        <a-entity class="computer" gltf-model="#lia_pc_glb" strip-contact-shadow
+          position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375"></a-entity>
+      </a-entity>
+    </a-entity>
+
+  </a-entity>
+
+  <!-- Exit corridor (continues) -->
+  <a-entity id="corridor" position="-8 0.07 -144">
+    <a-plane id="corridor_floor" rotation="-90 0 0" width="4.2" height="12"
+      material="shader: standard; color: #101010; roughness: 1; metalness: 0"></a-plane>
+    <a-box id="corridor_wall_left"  position="-2.1 2.5 0" width="0.30" height="5" depth="12"
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+    <a-box id="corridor_wall_right" position="2.1 2.5 0" width="0.30" height="5" depth="12"
+      material="shader: standard; color: #151515; roughness: 1; metalness: 0.0"></a-box>
+  </a-entity>
 
   <!-- ── Player rig ────────────────────────────────────────────────── -->
   <!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
