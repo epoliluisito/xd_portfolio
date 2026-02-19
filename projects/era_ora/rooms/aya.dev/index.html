@@ -16159,13 +16159,13 @@ AFRAME.registerComponent('seam-grain-fringe', {
 --------------------------------------------------------------------------- */
 AFRAME.registerComponent('ion-wind-field', {
   schema: {
-    columns:    {type: 'int',    default: 48},
+    columns:    {type: 'int',    default: 33},
     radius:     {type: 'number', default: 6.4},
     height:     {type: 'number', default: 9.6},
     columnWidth:{type:'number',  default: 1.25},
     layers:     {type: 'int',    default: 6},   // planes per column
     opacity:    {type: 'number', default: 0.56},
-    dustCount:  {type: 'int',    default: 4800},
+    dustCount:  {type: 'int',    default: 2400},
     dustRadius: {type: 'number', default: 8.8},
     dustHeight: {type: 'number', default: 7.6},
     seed:       {type: 'int',    default: 9102}
@@ -20798,142 +20798,128 @@ AFRAME.registerComponent('capsule-03-experience', {
       this._startFabricTransition();
     }
   },
+  _restoreCapsuleFocus: function () {
+    try {
+      const sceneEl = (this.el && this.el.sceneEl) || document.querySelector('a-scene');
+      const canvas = sceneEl && sceneEl.canvas;
+      if (canvas) {
+        canvas.setAttribute('tabindex', '-1');
+        canvas.focus({ preventScroll: true });
+        return;
+      }
+    } catch (e) {}
+    try {
+      document.body.setAttribute('tabindex', '-1');
+      document.body.focus({ preventScroll: true });
+    } catch (e) {}
+  },
 
   _startFabricTransition: function () {
-  // Guard against rapid re-entry / close-open races.
-  const now = performance.now();
-  if (this._fabricBusy) return;
-  if (this._fabricClosingUntil && now < this._fabricClosingUntil) return;
-  this._fabricBusy = true;
-
-  // Fade to black, then open the_fabric.html in fullscreen iframe
-  let overlay = document.getElementById('_fabricTransOverlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = '_fabricTransOverlay';
-    Object.assign(overlay.style, {
-      position: 'fixed', inset: '0', background: '#000',
-      opacity: '0', transition: 'opacity 600ms ease',
-      zIndex: '99999', pointerEvents: 'none'
-    });
-    document.body.appendChild(overlay);
-  }
-  overlay.offsetHeight; // reflow
-  overlay.style.opacity = '1';
-
-  setTimeout(() => {
-    this._openFabricIframe();
-  }, 650);
-},
-
-_openFabricIframe: function () {
-  // Defensive: if something is still around, remove it immediately.
-  try {
-    const existing = document.getElementById('_fabricIframeContainer');
-    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-  } catch (e) {}
-
-  // Defensive: remove any prior listeners (prevents stacking if re-entered quickly).
-  if (this._onFabricEsc) {
-    window.removeEventListener('keydown', this._onFabricEsc, { capture: true });
-    this._onFabricEsc = null;
-  }
-  if (this._onFabricMessage) {
-    window.removeEventListener('message', this._onFabricMessage);
-    this._onFabricMessage = null;
-  }
-
-  // Freeze capsule input while Fabric is open.
-  try { this._setWalkEnabled(false); } catch (e) {}
-  try { if (this.cam) this.cam.setAttribute('look-controls', 'enabled: false'); } catch (e) {}
-
-  // Create fullscreen iframe container
-  this._fabricContainer = document.createElement('div');
-  this._fabricContainer.id = '_fabricIframeContainer';
-  Object.assign(this._fabricContainer.style, {
-    position: 'fixed', inset: '0',
-    background: '#000',
-    zIndex: '100000',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center'
-  });
-
-  const iframe = document.createElement('iframe');
-  iframe.id = '_fabricIframe';
-  iframe.src = 'the_fabric.html';
-  Object.assign(iframe.style, {
-    width: '100%', height: '100%',
-    border: 'none',
-    background: '#000'
-  });
-  iframe.setAttribute('allow', 'autoplay; fullscreen');
-
-  this._fabricContainer.appendChild(iframe);
-  document.body.appendChild(this._fabricContainer);
-
-  // Listen for ESC to close iframe
-  this._onFabricEsc = (e) => {
-    if (e.code === 'Escape' || e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      this._closeFabricIframe();
+    // Fade to black, then open the_fabric.html in fullscreen iframe
+    let overlay = document.getElementById('_fabricTransOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = '_fabricTransOverlay';
+      Object.assign(overlay.style, {
+        position: 'fixed', inset: '0', background: '#000',
+        opacity: '0', transition: 'opacity 600ms ease',
+        zIndex: '99999', pointerEvents: 'none'
+      });
+      document.body.appendChild(overlay);
     }
-  };
-  window.addEventListener('keydown', this._onFabricEsc, { capture: true });
+    overlay.offsetHeight; // reflow
+    overlay.style.opacity = '1';
 
-  // Listen for postMessage from iframe (in case it wants to close itself)
-  this._onFabricMessage = (e) => {
-    // Handle both simple string format and object format from the_fabric.html
-    if (e.data === 'close_fabric' || e.data === 'close' || 
-        (e.data && e.data.type === 'EXIT_FABRIC')) {
-      this._closeFabricIframe();
-    }
-  };
-  window.addEventListener('message', this._onFabricMessage);
-},
-
-_closeFabricIframe: function () {
-  // Block immediate re-entry during fade-out (prevents stacking).
-  this._fabricClosingUntil = performance.now() + 600;
-  this._fabricBusy = false;
-
-  if (this._fabricContainer && this._fabricContainer.parentNode) {
-    // Fade out
-    this._fabricContainer.style.transition = 'opacity 400ms ease';
-    this._fabricContainer.style.opacity = '0';
     setTimeout(() => {
-      if (this._fabricContainer && this._fabricContainer.parentNode) {
-        this._fabricContainer.parentNode.removeChild(this._fabricContainer);
+      this._openFabricIframe();
+    }, 650);
+  },
+
+  _openFabricIframe: function () {
+    // Create fullscreen iframe container
+    this._fabricContainer = document.createElement('div');
+    this._fabricContainer.id = '_fabricIframeContainer';
+    Object.assign(this._fabricContainer.style, {
+      position: 'fixed', inset: '0',
+      background: '#000',
+      zIndex: '100000',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    });
+
+    const iframe = document.createElement('iframe');
+    iframe.id = '_fabricIframe';
+    iframe.src = 'the_fabric.html';
+    Object.assign(iframe.style, {
+      width: '100%', height: '100%',
+      border: 'none',
+      background: '#000'
+    });
+    iframe.setAttribute('allow', 'autoplay; fullscreen');
+
+    this._fabricContainer.appendChild(iframe);
+    document.body.appendChild(this._fabricContainer);
+
+    // Listen for ESC to close iframe
+    this._onFabricEsc = (e) => {
+      if (e.code === 'Escape' || e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        this._closeFabricIframe();
       }
-      this._fabricContainer = null;
-    }, 450);
-  }
+    };
+    window.addEventListener('keydown', this._onFabricEsc, { capture: true });
 
-  // Remove listeners
-  if (this._onFabricEsc) {
-    window.removeEventListener('keydown', this._onFabricEsc, { capture: true });
-    this._onFabricEsc = null;
-  }
-  if (this._onFabricMessage) {
-    window.removeEventListener('message', this._onFabricMessage);
-    this._onFabricMessage = null;
-  }
+    // Listen for postMessage from iframe (in case it wants to close itself)
+    this._onFabricMessage = (e) => {
+      // Handle both simple string format and object format from the_fabric.html
+      if (e.data === 'close_fabric' || e.data === 'close' || 
+          (e.data && e.data.type === 'EXIT_FABRIC')) {
+        this._closeFabricIframe();
+      }
+    };
+    window.addEventListener('message', this._onFabricMessage);
+  },
 
-  // Remove transition overlay if still present
-  const transOverlay = document.getElementById('_fabricTransOverlay');
-  if (transOverlay && transOverlay.parentNode) {
-    transOverlay.parentNode.removeChild(transOverlay);
-  }
+  _closeFabricIframe: function () {
+    if (this._fabricContainer && this._fabricContainer.parentNode) {
+      // Fade out
+      this._fabricContainer.style.transition = 'opacity 400ms ease';
+      this._fabricContainer.style.opacity = '0';
+      setTimeout(() => {
+        if (this._fabricContainer && this._fabricContainer.parentNode) {
+          this._fabricContainer.parentNode.removeChild(this._fabricContainer);
+        }
+        this._fabricContainer = null;
+  // Restore focus to the parent canvas/body so controls behave correctly without requiring a click.
+  try { this._restoreCapsuleFocus(); } catch (e) {}
+  setTimeout(() => { try { this._restoreCapsuleFocus(); } catch (e) {} }, 500);
 
-  // Restore capsule input after Fabric closes.
-  try { this._setWalkEnabled(true); } catch (e) {}
-  try {
-    // If we're still laid (capsule pose), keep look-controls locked; otherwise re-enable.
-    const enableLook = (this._phase !== 'laid');
-    if (this.cam) this.cam.setAttribute('look-controls', 'enabled', enableLook);
-  } catch (e) {}
-},
+  }, 450);
+    }
+
+    // Remove listeners
+    if (this._onFabricEsc) {
+      window.removeEventListener('keydown', this._onFabricEsc, { capture: true });
+      this._onFabricEsc = null;
+    }
+    if (this._onFabricMessage) {
+      window.removeEventListener('message', this._onFabricMessage);
+      this._onFabricMessage = null;
+    }
+
+    // Remove transition overlay if still present
+    const transOverlay = document.getElementById('_fabricTransOverlay');
+    if (transOverlay && transOverlay.parentNode) {
+      transOverlay.parentNode.removeChild(transOverlay);
+    }
+
+    // User is back in capsule — guide should refresh
+    if (this._phase === 'laid') {
+      this._tickLaidGuide();
+    }
+  },
 
   _onPLC: function () {
     if (performance.now() < this._suppressPLCUntil) {
