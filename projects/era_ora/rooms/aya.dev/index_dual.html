@@ -1826,15 +1826,15 @@ AFRAME.registerComponent('play-gltf-clip', {
 <button class="qbtn" id="quitCancel" type="button">Cancel</button>
 <button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
 </div>
+</div>
+</div>
 
 <!-- ============================================================
      CHANGE VIEW — system control UI (bottom-center)
      ============================================================ -->
 <div id="viewControlShell" aria-hidden="true">
   <div class="sys-shell">
-    <button id="viewChevron" type="button" aria-label="System controls">
-      ˅
-    </button>
+    <button id="viewChevron" type="button" aria-label="System controls">˅</button>
     <button id="viewAction" type="button">CHANGE VIEW</button>
   </div>
 </div>
@@ -1850,9 +1850,6 @@ AFRAME.registerComponent('play-gltf-clip', {
       <button class="btn primary" id="viewModalConfirm" type="button">Confirm</button>
     </div>
   </div>
-</div>
-
-</div>
 </div>
 
 <script>
@@ -4498,7 +4495,21 @@ document.addEventListener('pointerlockchange', this._onPointerLockChange);
   },
 
   _getYaw: function () {
-    const cam = document.getElementById('playerCam') || document.querySelector('[camera]');
+    // Use the currently active camera for movement yaw (FP or TP).
+    const fp = document.getElementById('playerCam');
+    const tp = document.getElementById('thirdPersonCam');
+    let cam = null;
+
+    const isActive = (c) => {
+      if (!c) return false;
+      const ca = c.getAttribute('camera');
+      return ca && (ca.active === true || ca.active === 'true');
+    };
+
+    if (isActive(tp)) cam = tp;
+    else if (isActive(fp)) cam = fp;
+    else cam = fp || tp || document.querySelector('[camera]');
+
     if (!cam) return 0;
     cam.object3D.getWorldQuaternion(this._tmpQuat);
     this._tmpEuler.setFromQuaternion(this._tmpQuat, 'YXZ');
@@ -16750,6 +16761,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <!-- Capsule NPC laying assets (from aya_capsule.html) -->
     <a-asset-item id="oliviaLayingGLB" src="../../characters/olivia_laying.glb"></a-asset-item>
     <a-asset-item id="peteLayingGLB" src="../../characters/pete_laying.glb"></a-asset-item>
+
     <a-asset-item id="racer_glb" src="../../characters/racer.glb"></a-asset-item>
 </a-assets>
 
@@ -18865,7 +18877,6 @@ AFRAME.registerComponent('ion-wind-field', {
                 position="0 1.6 0"
                 rotation="0 0 0">
         <a-entity cursor="rayOrigin: mouse"></a-entity>
-      </a-entity>
 
       <!-- Third-person camera (inactive by default; activated via Change View UI) -->
       <a-entity id="thirdPersonCam"
@@ -18879,6 +18890,7 @@ AFRAME.registerComponent('ion-wind-field', {
         <a-entity cursor="rayOrigin: mouse"></a-entity>
       </a-entity>
 
+      </a-entity>
     </a-entity>
 
   
@@ -21238,370 +21250,7 @@ AFRAME.registerComponent('capsule-03-experience', {
     const lr = (a, b, p) => a + (b - a) * p;
 
     if (A.dir === 'down') {
-      const pM
-
-<script>
-/* ============================================================
-   CHANGE VIEW system
-   - Hard toggle between FPS (playerCam) and third-person (thirdPersonCam)
-   - Bottom-center shell UI + confirmation modal
-   - UI stays hidden until scene is fully interactive
-   ============================================================ */
-(function () {
-  if (!window.AFRAME) return;
-
-  // --- Third-person follow component ---
-  if (!AFRAME.components['third-person-follow']) {
-    AFRAME.registerComponent('third-person-follow', {
-      schema: {
-        target: { type: 'selector' },
-        distance: { type: 'number', default: 3.6 },
-        height: { type: 'number', default: 1.15 },
-        lookAtHeight: { type: 'number', default: 1.45 },
-        smooth: { type: 'number', default: 0.0 } // 0 = hard lock (deterministic)
-      },
-      init: function () {
-        this._vTarget = new THREE.Vector3();
-        this._vCam = new THREE.Vector3();
-        this._vDesired = new THREE.Vector3();
-        this._tmpQuat = new THREE.Quaternion();
-        this._tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ');
-      },
-      tick: function (t, dt) {
-        const camData = this.el.getAttribute('camera');
-        if (camData && camData.active === false) return; // inactive camera: no work
-
-        const trg = this.data.target;
-        if (!trg || !trg.object3D) return;
-
-        // Use this camera's own look-controls orientation (yaw + pitch) as orbit controls.
-        const lc = this.el.components && this.el.components['look-controls'];
-        let yaw = 0, pitch = 0;
-        if (lc) {
-          try {
-            yaw = lc.yawObject ? lc.yawObject.rotation.y : 0;
-            pitch = lc.pitchObject ? lc.pitchObject.rotation.x : 0;
-          } catch (e) {}
-        }
-
-        // Convert pitch to an orbit elevation (look-controls pitch: negative = look up).
-        const orbitPitch = THREE.MathUtils.clamp(-pitch, THREE.MathUtils.degToRad(-60), THREE.MathUtils.degToRad(60));
-        const dist = Math.max(0.5, this.data.distance);
-        const cosP = Math.cos(orbitPitch);
-        const sinP = Math.sin(orbitPitch);
-
-        // Player world position.
-        trg.object3D.getWorldPosition(this._vTarget);
-
-        // Desired offset (behind the view direction).
-        const dx = -Math.sin(yaw) * cosP * dist;
-        const dz =  Math.cos(yaw) * cosP * dist;
-        const dy = this.data.height + (sinP * dist * 0.55);
-
-        this._vDesired.set(this._vTarget.x + dx, this._vTarget.y + dy, this._vTarget.z + dz);
-
-        if (this.data.smooth > 0 && dt) {
-          const a = THREE.MathUtils.clamp((dt / 1000) * this.data.smooth, 0, 1);
-          this.el.object3D.position.lerp(this._vDesired, a);
-        } else {
-          // Hard snap for determinism.
-          this.el.object3D.position.copy(this._vDesired);
-        }
-
-        // Look at player (slightly above).
-        this._vCam.set(this._vTarget.x, this._vTarget.y + this.data.lookAtHeight, this._vTarget.z);
-        this.el.object3D.lookAt(this._vCam);
-      }
-    });
-  }
-
-  
-  // --- Player avatar locomotion animation (idle <-> walk) ---
-  if (!AFRAME.components['locomotion-anim']) {
-    AFRAME.registerComponent('locomotion-anim', {
-      schema: {
-        target: { type: 'selector' },     // entity whose movement drives animation (rig)
-        idle:   { type: 'string', default: '' },  // preferred clip name (optional)
-        walk:   { type: 'string', default: '' },  // preferred clip name (optional)
-        threshold: { type: 'number', default: 0.08 }, // m/s
-        fade:   { type: 'number', default: 0.15 }
-      },
-      init: function () {
-        this._mixer = null;
-        this._clips = [];
-        this._idleAction = null;
-        this._walkAction = null;
-        this._active = null;
-        this._lastPos = new THREE.Vector3();
-        this._tmpPos = new THREE.Vector3();
-        this._ready = false;
-
-        this.el.addEventListener('model-loaded', () => {
-          const obj = this.el.getObject3D('mesh');
-          if (!obj) return;
-
-          const gltf = this.el.getObject3D('mesh')?.userData?.gltf;
-          // A-Frame stores clips on object3D.animations in most loaders
-          this._clips = (obj.animations && obj.animations.length) ? obj.animations : (gltf && gltf.animations) ? gltf.animations : [];
-          if (!this._clips || !this._clips.length) return;
-
-          this._mixer = new THREE.AnimationMixer(obj);
-
-          const byName = (rx) => this._clips.find(c => c && c.name && rx.test(c.name));
-          const pickIdle = () => {
-            if (this.data.idle) {
-              const exact = this._clips.find(c => c.name === this.data.idle);
-              if (exact) return exact;
-            }
-            return byName(/idle/i) || this._clips[0];
-          };
-          const pickWalk = () => {
-            if (this.data.walk) {
-              const exact = this._clips.find(c => c.name === this.data.walk);
-              if (exact) return exact;
-            }
-            return byName(/walk|run|locomot/i) || this._clips[Math.min(1, this._clips.length - 1)];
-          };
-
-          const idleClip = pickIdle();
-          const walkClip = pickWalk();
-
-          this._idleAction = this._mixer.clipAction(idleClip);
-          this._walkAction = this._mixer.clipAction(walkClip);
-
-          this._idleAction.enabled = true;
-          this._walkAction.enabled = true;
-
-          // Start in idle.
-          this._idleAction.reset().play();
-          this._walkAction.stop();
-
-          this._active = 'idle';
-
-          // Seed last position from target (preferred) or from rig.
-          const trg = this.data.target || this.el;
-          trg.object3D.getWorldPosition(this._lastPos);
-
-          this._ready = true;
-        });
-      },
-      _toIdle: function () {
-        if (!this._idleAction || !this._walkAction) return;
-        if (this._active === 'idle') return;
-
-        const f = Math.max(0, this.data.fade);
-        this._walkAction.fadeOut(f);
-        this._idleAction.reset().fadeIn(f).play();
-        this._active = 'idle';
-      },
-      _toWalk: function () {
-        if (!this._idleAction || !this._walkAction) return;
-        if (this._active === 'walk') return;
-
-        const f = Math.max(0, this.data.fade);
-        this._idleAction.fadeOut(f);
-        this._walkAction.reset().fadeIn(f).play();
-        this._active = 'walk';
-      },
-      tick: function (t, dt) {
-        if (!this._ready || !this._mixer) return;
-
-        // Advance mixer
-        this._mixer.update((dt || 0) / 1000);
-
-        const trg = this.data.target;
-        if (!trg || !trg.object3D) return;
-
-        // Compute target speed in m/s from world position delta
-        trg.object3D.getWorldPosition(this._tmpPos);
-        const d = this._tmpPos.distanceTo(this._lastPos);
-        const s = dt ? (d / (dt / 1000)) : 0;
-        this._lastPos.copy(this._tmpPos);
-
-        if (s > this.data.threshold) this._toWalk();
-        else this._toIdle();
-      }
-    });
-  }
-
-// --- Helpers ---
-  const $ = (id) => document.getElementById(id);
-  const shellWrap = $('viewControlShell');
-  const chevronBtn = $('viewChevron');
-  const actionBtn = $('viewAction');
-
-  const modal = $('viewModal');
-  const modalTitle = $('viewModalTitle');
-  const modalDesc = $('viewModalDesc');
-  const modalCancel = $('viewModalCancel');
-  const modalConfirm = $('viewModalConfirm');
-  const scrim = modal ? modal.querySelector('.scrim') : null;
-
-  const fpCam = $('playerCam');
-  const tpCam = $('thirdPersonCam');
-  const rig = $('rig');
-  const avatarEl = $('playerAvatar');
-
-  let expanded = false;
-  let mode = 'first'; // 'first' | 'third'
-  let modalOpen = false;
-
-  function setExpanded(on) {
-    expanded = !!on;
-    if (!shellWrap) return;
-    shellWrap.classList.toggle('expanded', expanded);
-  }
-
-  function setModalOpen(on) {
-    modalOpen = !!on;
-    if (!modal) return;
-    modal.classList.toggle('open', modalOpen);
-    modal.setAttribute('aria-hidden', modalOpen ? 'false' : 'true');
-
-    // While modal is open, avoid accidental movement keys continuing.
-    try {
-      const rw = rig && rig.components && rig.components['rig-walk'];
-      if (rw && typeof rw._clearKeys === 'function') rw._clearKeys();
-    } catch (e) {}
-  }
-
-  function updateModalCopy() {
-    if (!modalTitle) return;
-    const to = (mode === 'first') ? '3rd Person' : '1st Person';
-    modalTitle.textContent = `Switch to ${to} View`;
-    if (modalDesc) {
-      modalDesc.style.display = 'none';
-      modalDesc.textContent = '';
-    }
-  }
-
-  function hardActivateCamera(camEl, active) {
-    if (!camEl) return;
-    // camera active flag
-    try { camEl.setAttribute('camera', 'active', !!active); } catch (e) {}
-    // look-controls enabled flag
-    try { camEl.setAttribute('look-controls', 'enabled', !!active); } catch (e) {}
-  }
-
-  function ensureActiveYawSource() {
-    // Patch rig-walk to use the scene's ACTIVE camera, not a hard-coded #playerCam.
-const rw = rig && rig.components && rig.components['rig-walk'];
-    if (!rw || rw.__usesActiveCamYaw) return;
-
-    rw.__usesActiveCamYaw = true;
-    rw._getYaw = function () {
-      const scene = this.el && this.el.sceneEl;
-      const camEl = scene && scene.camera && scene.camera.el ? scene.camera.el : null;
-      const el = camEl || document.querySelector('[camera][camera]');
-      if (!el || !el.object3D) return 0;
-      el.object3D.getWorldQuaternion(this._tmpQuat);
-      this._tmpEuler.setFromQuaternion(this._tmpQuat, 'YXZ');
-      return this._tmpEuler.y;
-    };
-  }
-
-  function toggleMode() {
-    if (!fpCam || !tpCam) return;
-
-    ensureActiveYawSource();
-
-    if (mode === 'first') {
-      // -> third
-      hardActivateCamera(fpCam, false);
-      hardActivateCamera(tpCam, true);
-      mode = 'third';
-      if (avatarEl) avatarEl.setAttribute('visible', true);
-    } else {
-      // -> first
-      hardActivateCamera(tpCam, false);
-      if (avatarEl) avatarEl.setAttribute('visible', false);
-      hardActivateCamera(fpCam, true);
-      mode = 'first';
-    }
-  }
-
-  // --- UI wiring ---
-  if (chevronBtn) {
-    chevronBtn.addEventListener('click', () => setExpanded(!expanded));
-  }
-  if (actionBtn) {
-    actionBtn.addEventListener('click', () => {
-      updateModalCopy();
-      setModalOpen(true);
-    });
-  }
-  if (modalCancel) modalCancel.addEventListener('click', () => setModalOpen(false));
-  if (scrim) scrim.addEventListener('click', () => setModalOpen(false));
-  if (modalConfirm) modalConfirm.addEventListener('click', () => { toggleMode(); setModalOpen(false); setExpanded(false); });
-
-  // ESC closes modal (same as Cancel). Capture phase so pointer-lock doesn't swallow it.
-  window.addEventListener('keydown', (e) => {
-    if (!modalOpen) return;
-    if (e.key === 'Escape' || e.code === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      setModalOpen(false);
-    }
-  }, true);
-
-  // --- Show UI only once scene is interactive (assets loaded + controls enabled) ---
-  function isLoadingOverlayGone() {
-    const lo = $('loadingOverlay');
-    if (!lo) return true;
-    const cs = window.getComputedStyle(lo);
-    if (cs.display === 'none' || cs.visibility === 'hidden') return true;
-    const op = parseFloat(cs.opacity || '1');
-    if (op <= 0.05) return true;
-    // Many loaders keep it in DOM but offscreen.
-    const r = lo.getBoundingClientRect();
-    if ((r.width === 0 && r.height === 0) || r.bottom < 0 || r.top > window.innerHeight) return true;
-    return false;
-  }
-
-  function readyCheck() {
-    const scene = document.querySelector('a-scene');
-    if (!scene || !scene.hasLoaded) return false;
-
-    // We consider it interactive when playerCam exists and look-controls are enabled (pointer-lock prompt is shown elsewhere).
-    if (!fpCam || !fpCam.components) return false;
-    const lc = fpCam.components['look-controls'];
-    if (!lc) return false;
-
-    // rig-walk exists (movement enabled by the app).
-const rw = rig && rig.components && rig.components['rig-walk'];
-    if (!rw) return false;
-
-    // Hide until the loader is gone.
-    if (!isLoadingOverlayGone()) return false;
-
-    return true;
-  }
-
-  function showWhenReady() {
-    if (!shellWrap) return;
-    if (readyCheck()) {
-      shellWrap.classList.add('ready');
-      shellWrap.setAttribute('aria-hidden', 'false');
-      ensureActiveYawSource();
-      // Ensure initial mode is FPS (as authored).
-      hardActivateCamera(fpCam, true);
-      hardActivateCamera(tpCam, false);
-      if (avatarEl) avatarEl.setAttribute('visible', false);
-      return;
-    }
-    requestAnimationFrame(showWhenReady);
-  }
-
-  // Start readiness polling once DOM is up.
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    requestAnimationFrame(showWhenReady);
-  } else {
-    window.addEventListener('DOMContentLoaded', () => requestAnimationFrame(showWhenReady), { once: true });
-  }
-})();
-</script>
-
-ove   = this._pp(t,    0, 2200);
+      const pMove   = this._pp(t,    0, 2200);
       const pTurn   = this._pp(t, 1200, 3100);
       const pLevel  = this._pp(t, 1500, 2800);
       const pPitch  = this._pp(t, 2800, 5000);
@@ -21746,5 +21395,316 @@ ove   = this._pp(t,    0, 2200);
 })();
 </script>
 
+
+<script>
+/* ============================================================
+   CHANGE VIEW — camera toggle (1st <-> 3rd) + UI flow
+   ============================================================ */
+
+// Third-person follow camera (lightweight).
+AFRAME.registerComponent('third-person-follow', {
+  schema: {
+    target: { type: 'selector' },
+    distance: { type: 'number', default: 3.6 },
+    height: { type: 'number', default: 1.15 },
+    lookAtHeight: { type: 'number', default: 1.45 },
+    smoothing: { type: 'number', default: 0.18 }
+  },
+  init: function () {
+    this._vTarget = new THREE.Vector3();
+    this._qTarget = new THREE.Quaternion();
+    this._vDesired = new THREE.Vector3();
+    this._vCurrent = new THREE.Vector3();
+    this._tmpOff = new THREE.Vector3();
+    this._enabledLast = false;
+  },
+  tick: function () {
+    const el = this.el;
+    const data = this.data;
+    if (!data.target) return;
+
+    // Only work when this camera is active/visible.
+    const cam = el.getAttribute('camera');
+    const active = cam && (cam.active === true || cam.active === 'true');
+    if (!active) { this._enabledLast = false; return; }
+
+    data.target.object3D.getWorldPosition(this._vTarget);
+    data.target.object3D.getWorldQuaternion(this._qTarget);
+
+    // Offset behind the rig, rotated by yaw.
+    this._tmpOff.set(0, data.height, data.distance);
+    // Note: distance is positive here because rig-walk forward is -Z; behind is +Z in local.
+    this._tmpOff.applyQuaternion(this._qTarget);
+
+    this._vDesired.copy(this._vTarget).add(this._tmpOff);
+
+    const smoothing = Math.max(0, Math.min(1, data.smoothing));
+    if (!this._enabledLast || smoothing === 0) {
+      el.object3D.position.copy(this._vDesired);
+    } else {
+      el.object3D.position.lerp(this._vDesired, smoothing);
+    }
+    this._enabledLast = true;
+
+    // Look at rig (slightly above ground).
+    const look = this._vTarget.clone();
+    look.y += data.lookAtHeight;
+    el.object3D.lookAt(look);
+  }
+});
+
+// Locomotion animation driver (Idle <-> Walk) for racer.glb.
+// Runs ONLY while avatar is visible (3rd-person).
+AFRAME.registerComponent('locomotion-anim', {
+  schema: {
+    target: { type: 'selector' },              // rig entity
+    idle:   { type: 'string', default: '' },   // optional exact clip name
+    walk:   { type: 'string', default: '' },   // optional exact clip name
+    threshold: { type: 'number', default: 0.08 }, // m/s
+    fade:   { type: 'number', default: 0.15 }
+  },
+  init: function () {
+    this._mixer = null;
+    this._clips = [];
+    this._idleAction = null;
+    this._walkAction = null;
+    this._active = null;
+    this._lastPos = new THREE.Vector3();
+    this._tmpPos = new THREE.Vector3();
+    this._ready = false;
+
+    this.el.addEventListener('model-loaded', () => {
+      const obj = this.el.getObject3D('mesh');
+      if (!obj) return;
+
+      const gltf = obj.userData && obj.userData.gltf;
+      this._clips = (obj.animations && obj.animations.length) ? obj.animations
+                   : (gltf && gltf.animations) ? gltf.animations : [];
+      if (!this._clips.length) return;
+
+      this._mixer = new THREE.AnimationMixer(obj);
+
+      const byName = (rx) => this._clips.find(c => c && c.name && rx.test(c.name));
+      const pickIdle = () => {
+        if (this.data.idle) {
+          const exact = this._clips.find(c => c.name === this.data.idle);
+          if (exact) return exact;
+        }
+        return byName(/idle/i) || this._clips[0];
+      };
+      const pickWalk = () => {
+        if (this.data.walk) {
+          const exact = this._clips.find(c => c.name === this.data.walk);
+          if (exact) return exact;
+        }
+        return byName(/walk|run|locomot/i) || this._clips[Math.min(1, this._clips.length - 1)];
+      };
+
+      this._idleAction = this._mixer.clipAction(pickIdle());
+      this._walkAction = this._mixer.clipAction(pickWalk());
+      this._idleAction.enabled = true;
+      this._walkAction.enabled = true;
+
+      this._idleAction.reset().play();
+      this._walkAction.stop();
+      this._active = 'idle';
+
+      const trg = this.data.target || this.el;
+      trg.object3D.getWorldPosition(this._lastPos);
+
+      this._ready = true;
+    });
+  },
+  _toIdle: function () {
+    if (!this._idleAction || !this._walkAction) return;
+    if (this._active === 'idle') return;
+    const f = Math.max(0, this.data.fade);
+    this._walkAction.fadeOut(f);
+    this._idleAction.reset().fadeIn(f).play();
+    this._active = 'idle';
+  },
+  _toWalk: function () {
+    if (!this._idleAction || !this._walkAction) return;
+    if (this._active === 'walk') return;
+    const f = Math.max(0, this.data.fade);
+    this._idleAction.fadeOut(f);
+    this._walkAction.reset().fadeIn(f).play();
+    this._active = 'walk';
+  },
+  tick: function (t, dt) {
+    if (!this._ready || !this._mixer) return;
+
+    const trg = this.data.target;
+    if (!trg || !trg.object3D) return;
+
+    // If avatar not visible (1st-person), keep idle and do nothing else.
+    if (this.el.getAttribute('visible') === false) {
+      trg.object3D.getWorldPosition(this._lastPos);
+      this._toIdle();
+      return;
+    }
+
+    this._mixer.update((dt || 0) / 1000);
+
+    trg.object3D.getWorldPosition(this._tmpPos);
+    const d = this._tmpPos.distanceTo(this._lastPos);
+    const s = dt ? (d / (dt / 1000)) : 0;
+    this._lastPos.copy(this._tmpPos);
+
+    if (s > this.data.threshold) this._toWalk();
+    else this._toIdle();
+  }
+});
+
+(function () {
+  const $ = (id) => document.getElementById(id);
+
+  const shellWrap = $('viewControlShell');
+  const chevronBtn = $('viewChevron');
+  const actionBtn = $('viewAction');
+
+  const modal = $('viewModal');
+  const modalTitle = $('viewModalTitle');
+  const modalCancel = $('viewModalCancel');
+  const modalConfirm = $('viewModalConfirm');
+  const scrim = modal ? modal.querySelector('.scrim') : null;
+
+  const fpCam = $('playerCam');
+  const tpCam = $('thirdPersonCam');
+  const rig = $('rig');
+  const avatarEl = $('playerAvatar');
+
+  if (!shellWrap || !chevronBtn || !actionBtn || !modal || !fpCam || !tpCam || !rig) return;
+
+  let expanded = false;
+  let mode = 'first'; // 'first' | 'third'
+  let modalOpen = false;
+
+  function setExpanded(on) {
+    expanded = !!on;
+    shellWrap.classList.toggle('expanded', expanded);
+  }
+
+  function setModalOpen(on) {
+    modalOpen = !!on;
+    modal.classList.toggle('open', modalOpen);
+    modal.setAttribute('aria-hidden', modalOpen ? 'false' : 'true');
+  }
+
+  function hardActivateCamera(camEl, active) {
+    if (!camEl) return;
+    camEl.setAttribute('camera', 'active', !!active);
+
+    // Only FP cam captures look-controls input.
+    if (camEl === fpCam) {
+      camEl.setAttribute('look-controls', 'enabled', !!active);
+    } else {
+      camEl.setAttribute('look-controls', 'enabled', false);
+    }
+  }
+
+  function updateModalTitle() {
+    const toThird = (mode === 'first');
+    modalTitle.textContent = toThird ? 'Switch to 3rd Person View' : 'Switch to 1st Person View';
+  }
+
+  function applyMode(next) {
+    if (next === mode) return;
+
+    if (next === 'third') {
+      hardActivateCamera(fpCam, false);
+      hardActivateCamera(tpCam, true);
+      if (avatarEl) avatarEl.setAttribute('visible', true);
+      mode = 'third';
+    } else {
+      hardActivateCamera(tpCam, false);
+      hardActivateCamera(fpCam, true);
+      if (avatarEl) avatarEl.setAttribute('visible', false);
+      mode = 'first';
+    }
+  }
+
+  // Step 2: collapsed chevron
+  setExpanded(false);
+
+  chevronBtn.addEventListener('click', () => setExpanded(!expanded));
+
+  // Step 4: confirmation gate
+  actionBtn.addEventListener('click', () => {
+    updateModalTitle();
+    setModalOpen(true);
+  });
+
+  const closeModal = () => setModalOpen(false);
+
+  if (scrim) scrim.addEventListener('click', closeModal);
+  modalCancel.addEventListener('click', closeModal);
+
+  modalConfirm.addEventListener('click', () => {
+    const next = (mode === 'first') ? 'third' : 'first';
+    applyMode(next);
+    closeModal();
+    setExpanded(false);
+  });
+
+  // ESC closes modal (same as Cancel). Capture phase so pointer-lock doesn't swallow it.
+  window.addEventListener('keydown', (e) => {
+    if (!modalOpen) return;
+    if (e.key === 'Escape' || e.code === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeModal();
+    }
+  }, true);
+
+  // Step 1: hidden until interactive (scene loaded + assets loaded + rig controls enabled + loader gone)
+  function isLoadingOverlayGone() {
+    const lo = $('loadingOverlay');
+    if (!lo) return true;
+    const cs = window.getComputedStyle(lo);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return true;
+    const op = parseFloat(cs.opacity || '1');
+    if (op <= 0.05) return true;
+    const r = lo.getBoundingClientRect();
+    if ((r.width === 0 && r.height === 0) || r.bottom < 0 || r.top > window.innerHeight) return true;
+    return false;
+  }
+
+  function readyCheck() {
+    const scene = document.querySelector('a-scene');
+    if (!scene || !scene.hasLoaded) return false;
+
+    // look-controls component exists
+    const lc = fpCam.components && fpCam.components['look-controls'];
+    if (!lc) return false;
+
+    // rig-walk exists
+    const rw = rig.components && rig.components['rig-walk'];
+    if (!rw) return false;
+
+    if (!isLoadingOverlayGone()) return false;
+    return true;
+  }
+
+  function showWhenReady() {
+    if (readyCheck()) {
+      shellWrap.classList.add('ready');
+      shellWrap.setAttribute('aria-hidden', 'false');
+      // Ensure initial mode is FPS as authored.
+      hardActivateCamera(fpCam, true);
+      hardActivateCamera(tpCam, false);
+      if (avatarEl) avatarEl.setAttribute('visible', false);
+      return;
+    }
+    requestAnimationFrame(showWhenReady);
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    requestAnimationFrame(showWhenReady);
+  } else {
+    window.addEventListener('DOMContentLoaded', () => requestAnimationFrame(showWhenReady), { once: true });
+  }
+})();
+</script>
 </body>
 </html>
