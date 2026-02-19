@@ -4,885 +4,134 @@
 <meta charset="UTF-8">
 <title>The Fabric</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#00010a; overflow:hidden; }
+  * { margin:0; padding:0; }
+  body { background:#000206; overflow:hidden; }
+
   #cursor {
     position:fixed; top:50%; left:50%;
     transform:translate(-50%,-50%);
-    width:2px; height:2px; border-radius:50%;
-    background:rgba(180,220,255,0.22);
-    pointer-events:none; z-index:10;
-    transition: all 0.8s;
+    width:3px; height:3px;
+    border-radius:50%;
+    background:rgba(0,200,255,0.35);
+    pointer-events:none;
+    transition:all 0.25s cubic-bezier(0.2,0,0,1);
+    z-index:10;
+    opacity:0;
   }
-  #cursor.near {
-    width:5px; height:5px;
-    background:rgba(200,235,255,0.4);
-    box-shadow: 0 0 14px rgba(120,200,255,0.28);
+  body.started #cursor{ opacity:1; }
+
+  #cursor.observing {
+    width:10px; height:10px;
+    background:rgba(255,255,255,0.7);
+    box-shadow:0 0 16px rgba(0,210,255,0.5);
   }
+
+  #enter {
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background:#000206;
+    font-family:monospace; font-size:10px;
+    letter-spacing:6px; color:rgba(0,180,220,0.4);
+    cursor:pointer;
+    transition:opacity 1.4s;
+  }
+
   #veil {
-    position:fixed; inset:0; background:#00010a;
+    position:fixed; inset:0; background:#000206;
     pointer-events:none; z-index:5;
+    opacity: 1;
     transition: opacity 3.5s ease;
   }
-  #enter {
-    position:fixed; inset:0; display:flex;
-    align-items:center; justify-content:center;
-    z-index:20; cursor:pointer;
-    font-family:monospace; font-size:9px;
-    letter-spacing:8px; color:rgba(100,180,220,0.3);
+
+  /* ── USER GUIDE (return) ─────────────────────────────────────────────── */
+  #userGuide {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 30;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(10, 18, 28, 0.38);
+    border: 1px solid rgba(160, 210, 255, 0.10);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    font-family: monospace;
+    font-size: 10px;
+    letter-spacing: 1.6px;
+    color: rgba(200, 235, 255, 0.72);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 350ms ease;
+    text-transform: uppercase;
+    white-space: nowrap;
   }
-/* ── USER GUIDE (return) ─────────────────────────────────────────────── */
-#userGuide {
-  position: fixed;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  z-index: 30;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: rgba(10, 18, 28, 0.38);
-  border: 1px solid rgba(160, 210, 255, 0.10);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  font-family: monospace;
-  font-size: 10px;
-  letter-spacing: 1.6px;
-  color: rgba(200, 235, 255, 0.72);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 350ms ease;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-#userGuide.visible { opacity: 1; }
-#userGuide .kbd {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(200, 235, 255, 0.22);
-  background: rgba(0, 0, 0, 0.22);
-  color: rgba(220, 245, 255, 0.90);
-  margin-right: 6px;
-}
+  #userGuide.visible { opacity: 1; }
+  #userGuide .kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(200, 235, 255, 0.22);
+    background: rgba(0, 0, 0, 0.22);
+    color: rgba(220, 245, 255, 0.90);
+    margin-right: 6px;
+  }
+
 </style>
 </head>
 <body>
 <div id="veil"></div>
 <div id="cursor"></div>
-
 <div id="userGuide"><span class="kbd">ESC</span> Return</div>
 <div id="enter">ENTER</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-/*
-  THE FABRIC — v3
-  ────────────────
-  The lattice is what exists before observation.
-  You look somewhere: the fabric there begins to remember something.
-  Lines draw themselves out of the grid — slowly, organically.
-  A room. The sea. A cathedral. A ship's hull at rest.
-  Never fully. Never permanent.
-  Some lines keep growing even as others dissolve.
-  Creation and dissolution are the same motion.
-  You are not visiting these places.
-  You are the reason they exist at all.
-*/
+/* ═══════════════════════════════════════════════════════════════
+   THE FABRIC
+   The grid is spacetime. You warp it by existing in it.
+   Quantum objects are points in superposition — probability clouds.
+   Look at one: it collapses. A shockwave propagates through the lattice.
+   If it had an entangled twin, that twin collapses too — instantly,
+   regardless of distance. The lattice carries that news as a ripple.
+   No words. Just the physics, felt.
+═══════════════════════════════════════════════════════════════ */
+
+const STEP = 90;
+const HALF = 12;  // render grid extends ±HALF*STEP (floating origin makes it feel endless)
+const RANGE = HALF * STEP;
+
+// Massive world boundary (tesseract galaxy)
+const WORLD_HALF = STEP * 2200; // ~198,000 units: reaching the edge should take a long time
+const SHIFT_THRESHOLD = STEP * (HALF-2);
 
 let scene, camera, renderer;
-let audioCtx, masterGain, droneNodes = [], glimpseOsc, glimpseGainNode;
+let world, galaxyGroup;
+let playerWorld = new THREE.Vector3(0,0,0);
+let originOffset = new THREE.Vector3(0,0,0);
+let lastT = performance.now();
+let audioCtx, masterFilter, masterGain;
+let droneOscs = [];
 let started = false;
+let enterTime = 0;
 const keys = {};
 const pitchYaw = { x:0, y:0 };
+
+// Grid state
+const gridLines = [];  // { line, axis, ov: original Float32Array }
+
+// Ripple system — events that deform the grid
+const ripples = [];    // { pos, t, maxT, strength, color }
+
+// Quantum objects
+const quanta = [];     // each has cloud, dot, halo, pos, state, partner...
+
 let clock = 0;
 
-const STEP = 88;
-const HALF = 18;
-const RANGE = HALF * STEP;
-const MOVE_SPEED = 1.4;   // much slower
+const raycaster = new THREE.Raycaster();
+const screenMid = new THREE.Vector2(0, 0);
 
-const gridLines = [];
-const ripples   = [];
-
-// ─── GLIMPSE SYSTEM ───────────────────────────────────────────────────────────
-const glimpses = [];
-const GLIMPSE_SLOTS = 28;
-const LOOK_DOT      = 0.87;
-const MIN_DIST      = 90;
-const MAX_DIST      = 650;
-const MAX_VISIBLE   = 2;
-
-// Each glimpse holds segments with individual progress values
-// so they can grow/dissolve independently — the organic feeling
-function makeSegment(ax, ay, az, bx, by, bz) {
-  return {
-    // world-space endpoints
-    ax, ay, az, bx, by, bz,
-    // current progress: 0 = collapsed at A, 1 = fully extended to B
-    // during dissolution we can overshoot slightly for that alive feeling
-    prog: 0,
-    // growth speed varies per segment → staggered, not uniform
-    growSpeed:  0.0015 + Math.random() * 0.004,
-    dissolveSpeed: 0.0008 + Math.random() * 0.002,
-    // creation delay: later segments start growing after earlier ones
-    delay: Math.random(),   // 0-1, mapped to actual delay on appear
-    // oscillation phase during visible state
-    phase: Math.random() * Math.PI * 2,
-    // small random overshoot during dissolve — the continuous-creating feel
-    overshootTimer: 0,
-  };
-}
-
-// ─── PLACE BUILDERS ───────────────────────────────────────────────────────────
-// All return flat segment arrays. No meshes — pure geometry blueprint.
-
-function buildRoom() {
-  const W=160,H=110,D=200, hw=W/2,hh=H/2,hd=D/2;
-  const s = [];
-  // Outer box
-  const box = [
-    [-hw,-hh,-hd, hw,-hh,-hd],[hw,-hh,-hd,hw,-hh,hd],[hw,-hh,hd,-hw,-hh,hd],[-hw,-hh,hd,-hw,-hh,-hd],
-    [-hw,hh,-hd,hw,hh,-hd],[hw,hh,-hd,hw,hh,hd],[hw,hh,hd,-hw,hh,hd],[-hw,hh,hd,-hw,hh,-hd],
-    [-hw,-hh,-hd,-hw,hh,-hd],[hw,-hh,-hd,hw,hh,-hd],[hw,-hh,hd,hw,hh,hd],[-hw,-hh,hd,-hw,hh,hd],
-  ];
-  // Floor cross
-  box.push( [0,-hh,-hd,0,-hh,hd], [-hw,-hh,0,hw,-hh,0] );
-  // Window
-  const wx1=hw*0.15, wx2=hw*0.7, wy1=0, wy2=hh*0.72;
-  box.push([wx1,wy1,-hd,wx2,wy1,-hd],[wx2,wy1,-hd,wx2,wy2,-hd],[wx2,wy2,-hd,wx1,wy2,-hd],[wx1,wy2,-hd,wx1,wy1,-hd]);
-  // Window cross
-  box.push([(wx1+wx2)/2,wy1,-hd,(wx1+wx2)/2,wy2,-hd],[wx1,(wy1+wy2)/2,-hd,wx2,(wy1+wy2)/2,-hd]);
-  // Doorway
-  const dx1=-hw*0.5, dx2=-hw*0.12, dh=hh*0.65;
-  box.push([dx1,-hh,hd,dx1,dh,hd],[dx2,-hh,hd,dx2,dh,hd],[dx1,dh,hd,dx2,dh,hd]);
-  return box.map(([ax,ay,az,bx,by,bz]) => makeSegment(ax,ay,az,bx,by,bz));
-}
-
-function buildSea() {
-  const segs = [];
-  const res=14, sz=340;
-  const h=(x,z)=>Math.sin(x*0.05)*18+Math.sin(z*0.038+x*0.018)*13+Math.sin((x+z)*0.028)*8;
-  for (let i=0;i<=res;i++) {
-    for (let j=0;j<res;j++) {
-      const x0=(i/res)*sz-sz/2, z0=(j/res)*sz-sz/2, z1=z0+sz/res;
-      const x1=x0;
-      segs.push(makeSegment(x0,h(x0,z0),z0, x1,h(x1,z1),z1));
-    }
-    for (let j=0;j<res;j++) {
-      const z0=(i/res)*sz-sz/2, x0=(j/res)*sz-sz/2, x1=x0+sz/res;
-      segs.push(makeSegment(x0,h(x0,z0),z0, x1,h(x1,z0),z0));
-    }
-  }
-  // Horizon rays
-  for (let a=0;a<8;a++) {
-    const t = a/8*Math.PI;
-    segs.push(makeSegment(Math.cos(t)*sz/2,h(Math.cos(t)*sz/2,-sz/2),-sz/2,
-                           Math.cos(t)*sz/2,h(Math.cos(t)*sz/2,sz/2),sz/2));
-  }
-  return segs;
-}
-
-function buildCorridor() {
-  const W=90,H=100,D=620, hw=W/2,hh=H/2;
-  const segs=[];
-  segs.push(...[
-    makeSegment(-hw,-hh,0,-hw,-hh,D),makeSegment(hw,-hh,0,hw,-hh,D),
-    makeSegment(-hw,hh,0,-hw,hh,D),makeSegment(hw,hh,0,hw,hh,D),
-    makeSegment(0,0,0,0,0,D),
-  ]);
-  for (let z=0;z<=D;z+=70)
-    segs.push(makeSegment(-hw,-hh,z,hw,-hh,z),makeSegment(hw,-hh,z,hw,hh,z),
-              makeSegment(hw,hh,z,-hw,hh,z),makeSegment(-hw,hh,z,-hw,-hh,z));
-  return segs;
-}
-
-function buildStaircase() {
-  const segs=[], steps=12, sw=130, sd=48, sh=28;
-  for (let i=0;i<steps;i++) {
-    const y=i*sh, z=-i*sd;
-    segs.push(
-      makeSegment(-sw/2,y,z, sw/2,y,z), makeSegment(sw/2,y,z,sw/2,y,z+sd),
-      makeSegment(sw/2,y,z+sd,-sw/2,y,z+sd), makeSegment(-sw/2,y,z+sd,-sw/2,y,z),
-      makeSegment(-sw/2,y,z,-sw/2,y-sh,z), makeSegment(sw/2,y,z,sw/2,y-sh,z),
-    );
-    if (i<steps-1) {
-      segs.push(makeSegment(-sw/2,y,z,-sw/2,y+sh,z-sd),makeSegment(sw/2,y,z,sw/2,y+sh,z-sd));
-    }
-  }
-  return segs;
-}
-
-function buildCathedral() {
-  const segs=[], W=260,H=340,D=300, nA=5;
-  for (let a=0;a<nA;a++) {
-    const z = a*(D/(nA-1)) - D/2;
-    const pts=16;
-    for (let i=0;i<pts;i++) {
-      const t0=i/pts,t1=(i+1)/pts;
-      const ang0=Math.PI*t0, ang1=Math.PI*t1;
-      segs.push(makeSegment(
-        -W/2+W*t0, Math.sin(ang0)*H, z,
-        -W/2+W*t1, Math.sin(ang1)*H, z
-      ));
-    }
-    segs.push(makeSegment(-W/2,0,z,-W/2,-50,z),makeSegment(W/2,0,z,W/2,-50,z));
-    if (a<nA-1) {
-      const z2=z+D/(nA-1);
-      segs.push(makeSegment(-W/2,H*0.38,z,-W/2,H*0.38,z2),
-                makeSegment(W/2,H*0.38,z,W/2,H*0.38,z2),
-                makeSegment(0,H,z,0,H,z2));
-    }
-  }
-  segs.push(makeSegment(-W/2,-50,-D/2,W/2,-50,-D/2),makeSegment(-W/2,-50,D/2,W/2,-50,D/2),
-            makeSegment(-W/2,-50,-D/2,-W/2,-50,D/2),makeSegment(W/2,-50,-D/2,W/2,-50,D/2));
-  return segs;
-}
-
-function buildForest() {
-  const segs=[], count=24;
-  for (let i=0;i<count;i++) {
-    const ang=(i/count)*Math.PI*2+i*0.27;
-    const r=35+Math.sin(i*1.3)*28+i*3.2;
-    const x=Math.cos(ang)*r, z=Math.sin(ang)*r;
-    const h=75+Math.sin(i*0.7)*55+Math.cos(i*1.1)*25;
-    segs.push(makeSegment(x,-20,z, x,-20+h,z));
-    segs.push(makeSegment(x,-20+h*0.6,z, x+16,-20+h*0.48,z+7));
-    segs.push(makeSegment(x,-20+h*0.78,z, x-12,-20+h*0.62,z-4));
-    segs.push(makeSegment(x,-20+h*0.9,z, x+8,-20+h*0.8,z-9));
-  }
-  for (let i=0;i<8;i++) {
-    const t=(i/8)*Math.PI*2;
-    segs.push(makeSegment(Math.cos(t)*85,-20,Math.sin(t)*85,Math.cos(t+0.4)*60,-20,Math.sin(t+0.4)*60));
-  }
-  return segs;
-}
-
-function buildDoorway() {
-  const W=80,H=160, segs=[];
-  segs.push(
-    makeSegment(-W/2,-H/2,0,-W/2,H/2,0),makeSegment(W/2,-H/2,0,W/2,H/2,0),
-    makeSegment(-W/2,H/2,0,W/2,H/2,0),
-    makeSegment(-W/2,-H/2,0,-W/2,-H/2,10),makeSegment(W/2,-H/2,0,W/2,-H/2,10),
-    makeSegment(-W/2,H/2,0,-W/2,H/2,10),makeSegment(W/2,H/2,0,W/2,H/2,10),
-    makeSegment(-W/2,H/2,10,W/2,H/2,10),makeSegment(-W/2,-H/2,10,W/2,-H/2,10),
-    makeSegment(0,0,10,0,0,350),
-    makeSegment(-W/4,0,10,-W/2,0,280),makeSegment(W/4,0,10,W/2,0,280),
-    makeSegment(0,H/4,10,0,H/2,260),makeSegment(0,-H/4,10,0,-H/2,260),
-  );
-  return segs;
-}
-
-function buildBridge() {
-  const segs=[], W=80,H=80,D=500;
-  // Deck
-  for (let z=0;z<=D;z+=50)
-    segs.push(makeSegment(-W/2,0,z,W/2,0,z));
-  segs.push(makeSegment(-W/2,0,0,-W/2,0,D),makeSegment(W/2,0,0,W/2,0,D));
-  // Cables from top chord
-  const nTowers=3;
-  for (let t=0;t<=nTowers;t++) {
-    const z=t*(D/nTowers);
-    segs.push(makeSegment(-W/2,0,z,-W/2,H,z),makeSegment(W/2,0,z,W/2,H,z),
-              makeSegment(-W/2,H,z,W/2,H,z));
-    if (t>0) {
-      segs.push(makeSegment(-W/2,H,z-D/nTowers,-W/2,H,z),makeSegment(W/2,H,z-D/nTowers,W/2,H,z));
-    }
-    // Hangers
-    for (let i=1;i<5;i++) {
-      const hz=z-i*(D/nTowers/5);
-      if (hz>=0) segs.push(makeSegment(-W/2,H,z,-W/2,0,hz),makeSegment(W/2,H,z,W/2,0,hz));
-    }
-  }
-  return segs;
-}
-
-function buildLibrary() {
-  const segs=[], shelfH=40, shelfD=28, levels=5, bays=4, W=240;
-  const bayW=W/bays;
-  for (let b=0;b<bays;b++) {
-    const x=b*bayW-W/2;
-    for (let l=0;l<levels;l++) {
-      const y=l*shelfH-80;
-      segs.push(makeSegment(x,y,0,x+bayW,y,0),
-                makeSegment(x,y,0,x,y,shelfD),
-                makeSegment(x+bayW,y,0,x+bayW,y,shelfD),
-                makeSegment(x,y,shelfD,x+bayW,y,shelfD));
-      // Book spines suggestion
-      for (let book=0;book<5;book++) {
-        const bx=x+book*(bayW/5)+3;
-        segs.push(makeSegment(bx,y,3,bx,y+shelfH*0.82,3));
-      }
-    }
-    // Verticals
-    segs.push(makeSegment(x,-80,0,x,-80+levels*shelfH,0),
-              makeSegment(x+bayW,-80,0,x+bayW,-80+levels*shelfH,0));
-  }
-  // Reading light suggestion from above
-  segs.push(makeSegment(0,levels*shelfH-80+20,shelfD/2, 0,-80,shelfD/2));
-  return segs;
-}
-
-function buildObservatory() {
-  const segs=[], R=140, H=60;
-  const ringsY=[-20,0,H*0.5,H];
-  const nRing=20;
-  ringsY.forEach((y,ri) => {
-    const r2=ri<2?R:R*(1-(ri-1)/(ringsY.length)*0.7);
-    for (let i=0;i<nRing;i++) {
-      const a0=(i/nRing)*Math.PI*2, a1=((i+1)/nRing)*Math.PI*2;
-      segs.push(makeSegment(Math.cos(a0)*r2,y,Math.sin(a0)*r2, Math.cos(a1)*r2,y,Math.sin(a1)*r2));
-    }
-  });
-  // Meridians
-  const nMer=12;
-  for (let i=0;i<nMer;i++) {
-    const a=(i/nMer)*Math.PI*2;
-    const nH=10;
-    for (let j=0;j<nH;j++) {
-      const t0=j/nH, t1=(j+1)/nH;
-      const phi0=t0*Math.PI, phi1=t1*Math.PI;
-      // Full sphere up top
-      segs.push(makeSegment(
-        Math.cos(a)*Math.sin(phi0)*R, Math.cos(phi0)*R+H, Math.sin(a)*Math.sin(phi0)*R,
-        Math.cos(a)*Math.sin(phi1)*R, Math.cos(phi1)*R+H, Math.sin(a)*Math.sin(phi1)*R
-      ));
-    }
-  }
-  // Floor ring
-  for (let i=0;i<nRing;i++) {
-    const a0=(i/nRing)*Math.PI*2, a1=((i+1)/nRing)*Math.PI*2;
-    segs.push(makeSegment(Math.cos(a0)*R,-20,Math.sin(a0)*R, Math.cos(a1)*R,-20,Math.sin(a1)*R));
-  }
-  return segs;
-}
-
-function buildRuins() {
-  const segs=[], W=200, H=120, D=140;
-  // Broken walls
-  const walls=[
-    [-W/2,-50,D/2, -W/2,H*0.4,D/2], [-W/2,H*0.4,D/2, -W/2+50,H*0.4,D/2],
-    [-W/2,-50,-D/2, -W/2,H*0.7,-D/2], [-W/2,H*0.7,-D/2, W/2*0.3,H*0.7,-D/2],
-    [W/2,-50,-D/2, W/2,H,-D/2], [W/2,H,-D/2, W/2,H,D/2*0.4],
-    [W/2,-50,D/2*0.4, W/2,H*0.5,D/2*0.4],
-    // Fallen column
-    [0,-50,0, 0,-50+H,D/3], [0,-50,0, 0,-50,D/3],
-    // Arch remnant
-    [-W/6,H*0.4,D/2, -W/6,H,D/2], [W/6,H*0.4,D/2, W/6,H,D/2],
-    [-W/6,H,D/2, 0,H+30,D/2], [0,H+30,D/2, W/6,H,D/2],
-    // Ground cracks
-    [-W/2,-50,-D/2, W/2*0.5,-50,D/2], [-W/3,-50,D/2, W/4,-50,-D/3],
-  ];
-  return walls.map(([ax,ay,az,bx,by,bz]) => makeSegment(ax,ay,az,bx,by,bz));
-}
-
-function buildShipDeck() {
-  const segs=[], L=360, W=90, H=60;
-  const hl=L/2, hw=W/2;
-  // Hull curves (approximated)
-  const hull=14;
-  for (let i=0;i<hull;i++) {
-    const t=i/hull, t2=(i+1)/hull;
-    const y0=-H*(1-Math.pow(Math.abs(2*t-1),0.7));
-    const y1=-H*(1-Math.pow(Math.abs(2*t2-1),0.7));
-    const z0=(t*2-1)*hl, z1=(t2*2-1)*hl;
-    segs.push(makeSegment(-hw,y0,z0,-hw,y1,z1),makeSegment(hw,y0,z0,hw,y1,z1));
-    segs.push(makeSegment(-hw,y0,z0,hw,y0,z0));
-  }
-  // Deck
-  segs.push(makeSegment(-hw,0,-hl,hw,0,-hl),makeSegment(-hw,0,hl,hw,0,hl),
-            makeSegment(-hw,0,-hl,-hw,0,hl),makeSegment(hw,0,-hl,hw,0,hl));
-  for (let z=-hl;z<=hl;z+=50)
-    segs.push(makeSegment(-hw,0,z,hw,0,z));
-  // Mast
-  segs.push(makeSegment(0,0,0,0,H*2.2,0));
-  segs.push(makeSegment(-hw*0.8,0,0,0,H*2.2,0),makeSegment(hw*0.8,0,0,0,H*2.2,0));
-  segs.push(makeSegment(-hw*1.1,0,-hl*0.8, 0,H*2.2,0));
-  return segs;
-}
-
-function buildSpiralStair() {
-  const segs=[], turns=3, stepsPerTurn=14, R=50, risePerStep=16;
-  const total=turns*stepsPerTurn;
-  for (let i=0;i<total;i++) {
-    const a0=(i/stepsPerTurn)*Math.PI*2, a1=((i+1)/stepsPerTurn)*Math.PI*2;
-    const y0=i*risePerStep, y1=(i+1)*risePerStep;
-    const x0=Math.cos(a0)*R, z0=Math.sin(a0)*R;
-    const x1=Math.cos(a1)*R, z1=Math.sin(a1)*R;
-    // Tread
-    segs.push(makeSegment(0,y0,0,x0,y0,z0),makeSegment(x0,y0,z0,x1,y0,z1),makeSegment(x1,y0,z1,0,y1,0));
-    // Railing above
-    segs.push(makeSegment(x0,y0+risePerStep*0.7,z0, x1,y1+risePerStep*0.7,z1));
-    // Newel
-    segs.push(makeSegment(0,y0,0,0,y1,0));
-  }
-  return segs;
-}
-
-function buildCave() {
-  const segs=[], R=180, depth=300;
-  // Entrance arch
-  const archPts=16;
-  for (let i=0;i<archPts;i++) {
-    const a0=Math.PI+i*(Math.PI/archPts), a1=Math.PI+(i+1)*(Math.PI/archPts);
-    segs.push(makeSegment(Math.cos(a0)*R,Math.sin(a0)*R*0.8,-depth/2,
-                          Math.cos(a1)*R,Math.sin(a1)*R*0.8,-depth/2));
-  }
-  // Ceiling ribs receding inward
-  const nRibs=6;
-  for (let r=0;r<nRibs;r++) {
-    const t=(r+1)/(nRibs+1), z=-depth/2+t*depth;
-    const rScale=1-t*0.55;
-    for (let i=0;i<12;i++) {
-      const a0=Math.PI+i*(Math.PI/12), a1=Math.PI+(i+1)*(Math.PI/12);
-      segs.push(makeSegment(Math.cos(a0)*R*rScale,Math.sin(a0)*R*0.8*rScale,z,
-                            Math.cos(a1)*R*rScale,Math.sin(a1)*R*0.8*rScale,z));
-    }
-  }
-  // Floor
-  for (let i=-3;i<=3;i++)
-    segs.push(makeSegment(i*40,-R*0.8,-depth/2, i*40*0.3,-R*0.8*0.5,depth/2));
-  // Stalactites suggestion
-  for (let i=0;i<8;i++) {
-    const x=(Math.random()-.5)*R*1.2, z=(Math.random()-.5)*depth;
-    const h=20+Math.random()*60;
-    segs.push(makeSegment(x,0,z, x,-h,z));
-  }
-  return segs;
-}
-
-function buildGarden() {
-  const segs=[];
-  // Central path
-  segs.push(makeSegment(-15,-30,-200,-15,-30,200),makeSegment(15,-30,-200,15,-30,200));
-  // Hedges
-  for (let side of [-1,1]) {
-    const x=side*80;
-    for (let z=-180;z<=180;z+=30)
-      segs.push(makeSegment(x,-30,z, x,20,z),makeSegment(x,20,z,x+side*(-5),20,z+15));
-    segs.push(makeSegment(x,-30,-180,x,-30,180),makeSegment(x,20,-180,x,20,180));
-  }
-  // Central fountain
-  const fR=35, fY=-25, nFount=12;
-  for (let i=0;i<nFount;i++) {
-    const a0=(i/nFount)*Math.PI*2, a1=((i+1)/nFount)*Math.PI*2;
-    segs.push(makeSegment(Math.cos(a0)*fR,fY,Math.sin(a0)*fR, Math.cos(a1)*fR,fY,Math.sin(a1)*fR));
-    segs.push(makeSegment(Math.cos(a0)*fR,fY,Math.sin(a0)*fR, Math.cos(a0)*fR*0.6,fY+25,Math.sin(a0)*fR*0.6));
-  }
-  segs.push(makeSegment(0,fY,0, 0,fY+45,0));
-  return segs;
-}
-
-const BUILDERS = [
-  buildRoom, buildSea, buildCorridor, buildStaircase, buildCathedral,
-  buildForest, buildDoorway, buildBridge, buildLibrary, buildObservatory,
-  buildRuins, buildShipDeck, buildSpiralStair, buildCave, buildGarden
-];
-
-// ─── INIT ─────────────────────────────────────────────────────────────────────
-function init() {
-  scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x00010a, 0.0011);
-  scene.background = new THREE.Color(0x00010a);
-  camera = new THREE.PerspectiveCamera(68, innerWidth/innerHeight, 0.5, 2600);
-  camera.position.set(0, 0, 0);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setSize(innerWidth, innerHeight);
-  document.body.appendChild(renderer.domElement);
-
-  buildGrid();
-  buildStars();
-  placeGlimpses();
-
-  window.addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Escape') { e.preventDefault(); if (started) exitToCapsule(); } });
-  window.addEventListener('keyup',   e => { keys[e.code] = false; });
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('resize', onResize);
-  document.getElementById('enter').addEventListener('click', enter);
-  animate();
-}
-
-// ─── GRID ─────────────────────────────────────────────────────────────────────
-function buildGrid() {
-  for (let a=-HALF; a<=HALF; a++) {
-    for (let b=-HALF; b<=HALF; b++) {
-      [[a*STEP,b*STEP,-RANGE,a*STEP,b*STEP,RANGE],
-       [-RANGE,a*STEP,b*STEP,RANGE,a*STEP,b*STEP],
-       [a*STEP,-RANGE,b*STEP,a*STEP,RANGE,b*STEP]
-      ].forEach(([ax,ay,az,bx,by,bz]) => {
-        const ov = new Float32Array([ax,ay,az,bx,by,bz]);
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(ov.slice(), 3));
-        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
-          color: 0x00b8e8, transparent:true, opacity:0.09,
-          blending:THREE.AdditiveBlending, depthWrite:false
-        }));
-        scene.add(line);
-        gridLines.push({ line, ov });
-      });
-    }
-  }
-  const nv=[];
-  for (let x=-HALF;x<=HALF;x+=2) for (let y=-HALF;y<=HALF;y+=2) for (let z=-HALF;z<=HALF;z+=2)
-    nv.push(x*STEP,y*STEP,z*STEP);
-  const ng=new THREE.BufferGeometry();
-  ng.setAttribute('position',new THREE.Float32BufferAttribute(nv,3));
-  scene.add(new THREE.Points(ng,new THREE.PointsMaterial({
-    color:0x00d0ff,size:1.1,transparent:true,opacity:0.12,
-    blending:THREE.AdditiveBlending,depthWrite:false
-  })));
-}
-
-function buildStars() {
-  const v=[];
-  for (let i=0;i<10000;i++) v.push((Math.random()-.5)*5000,(Math.random()-.5)*5000,(Math.random()-.5)*5000);
-  const g=new THREE.BufferGeometry();
-  g.setAttribute('position',new THREE.Float32BufferAttribute(v,3));
-  scene.add(new THREE.Points(g,new THREE.PointsMaterial({
-    color:0x0c1828,size:0.65,transparent:true,opacity:0.6,blending:THREE.AdditiveBlending
-  })));
-}
-
-// ─── GLIMPSE PLACEMENT ────────────────────────────────────────────────────────
-function placeGlimpses() {
-  // More even, wider distribution:
-  // - quasi-uniform directions (golden-angle spiral)
-  // - radii biased to fill volume without clustering
-  // - hard min-distance to avoid "too many in one place"
-  const positions = [];
-  const outer = RANGE * 1.65;   // tie to grid scale
-  const inner = Math.max(260, STEP * 3.2);
-  const minSep = STEP * 5.1;    // separation between glimpses
-  const golden = Math.PI * (3 - Math.sqrt(5));
-
-  for (let i = 0; i < GLIMPSE_SLOTS; i++) {
-    let pos, tries = 0, ok = false;
-
-    while (!ok && tries < 160) {
-      // golden-angle direction on a sphere
-      const t = (i + 0.5) / GLIMPSE_SLOTS;
-      const y = 1 - 2 * t;
-      const r = Math.sqrt(Math.max(0, 1 - y * y));
-      const theta = (i + tries*0.37) * golden;
-      const dx = Math.cos(theta) * r;
-      const dz = Math.sin(theta) * r;
-
-      // radius: spread through volume; slight randomization per retry
-      const u = Math.random();
-      const rad = inner + (outer - inner) * Math.pow(u, 0.62);
-
-      // jitter helps avoid overly-regular feel
-      const j = STEP * 0.65;
-      pos = new THREE.Vector3(
-        dx * rad + (Math.random() - 0.5) * j,
-        y  * rad * 0.42 + (Math.random() - 0.5) * j * 0.7, // keep vertical tighter than XZ
-        dz * rad + (Math.random() - 0.5) * j
-      );
-
-      ok =
-        pos.length() > inner &&
-        positions.every(p => p.distanceTo(pos) > minSep);
-
-      tries++;
-    }
-
-    // fallback: if we somehow couldn't place, just push the last candidate
-    positions.push(pos || new THREE.Vector3((Math.random() - 0.5) * outer, (Math.random() - 0.5) * outer * 0.4, (Math.random() - 0.5) * outer));
-
-    const builderFn = BUILDERS[i % BUILDERS.length];
-    glimpses.push(createGlimpse(positions[positions.length - 1], builderFn));
-  }
-}
-
-function createGlimpse(pos, builderFn) {
-  const segments = builderFn();
-
-  // Create one LineSegments object where each pair of verts is a segment
-  // We'll animate each segment's second endpoint toward its target
-  const totalVerts = segments.length * 2;
-  const posArr = new Float32Array(totalVerts * 3);
-  // Initially both endpoints = A (zero length)
-  segments.forEach((seg, i) => {
-    posArr[i*6+0]=seg.ax; posArr[i*6+1]=seg.ay; posArr[i*6+2]=seg.az;
-    posArr[i*6+3]=seg.ax; posArr[i*6+4]=seg.ay; posArr[i*6+5]=seg.az;
-  });
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-  const mat = new THREE.LineBasicMaterial({
-    color: 0xc4e8ff, transparent:true, opacity:0,
-    blending:THREE.AdditiveBlending, depthWrite:false
-  });
-  const lines = new THREE.LineSegments(geo, mat);
-
-  const group = new THREE.Group();
-  group.add(lines);
-  group.position.copy(pos);
-  // Orient randomly but consistently
-  group.rotation.y = Math.random() * Math.PI * 2;
-
-  scene.add(group);
-
-  return {
-    group, lines, segments,
-    pos: pos.clone(),
-    builderFn,
-    alpha: 0,
-    state: 'dormant',   // dormant | forming | visible | dissolving
-    cooldown: Math.floor(Math.random()*300),
-    // wave front for formation — which segment is currently "growing"
-    formWave: 0,        // 0..segments.length
-    dissolveWave: 0,
-  };
-}
-
-function resetGlimpse(g, newPos, newBuilder) {
-  scene.remove(g.group);
-  g.group.remove(g.lines);
-  g.lines.geometry.dispose();
-  g.lines.material.dispose();
-
-  const segments = newBuilder();
-  const totalVerts = segments.length * 2;
-  const posArr = new Float32Array(totalVerts * 3);
-  segments.forEach((seg, i) => {
-    posArr[i*6+0]=seg.ax; posArr[i*6+1]=seg.ay; posArr[i*6+2]=seg.az;
-    posArr[i*6+3]=seg.ax; posArr[i*6+4]=seg.ay; posArr[i*6+5]=seg.az;
-  });
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-  const mat = new THREE.LineBasicMaterial({
-    color:0xc4e8ff, transparent:true, opacity:0,
-    blending:THREE.AdditiveBlending, depthWrite:false
-  });
-  const lines = new THREE.LineSegments(geo, mat);
-  const group = new THREE.Group();
-  group.add(lines);
-  group.position.copy(newPos);
-  group.rotation.y = Math.random()*Math.PI*2;
-  scene.add(group);
-
-  g.group   = group;
-  g.lines   = lines;
-  g.segments= segments;
-  g.pos     = newPos.clone();
-  g.builderFn= newBuilder;
-  g.alpha   = 0;
-  g.state   = 'dormant';
-  g.cooldown= 280 + Math.floor(Math.random()*200);
-  g.formWave= 0;
-  g.dissolveWave= 0;
-}
-
-// ─── GLIMPSE UPDATE ───────────────────────────────────────────────────────────
-const camDir = new THREE.Vector3();
-const toG    = new THREE.Vector3();
-
-function updateGlimpses() {
-  camera.getWorldDirection(camDir);
-  const visible = glimpses.filter(g=>g.state==='forming'||g.state==='visible').length;
-
-  glimpses.forEach(g => {
-    if (g.cooldown>0) { g.cooldown--; return; }
-
-    toG.subVectors(g.pos, camera.position);
-    const dist = toG.length();
-    const dot  = camDir.dot(toG.normalize());
-    const looking = dot>LOOK_DOT && dist>MIN_DIST && dist<MAX_DIST;
-
-    const n = g.segments.length;
-
-    if (g.state==='dormant') {
-      if (looking && visible<MAX_VISIBLE) {
-        g.state = 'forming';
-        g.formWave = 0;
-      }
-    }
-    else if (g.state==='forming') {
-      // Wave front advances through segments
-      // Each segment grows only when wave passes it (staggered in sequence,
-      // but segments within ±10 of wave all grow simultaneously for width)
-      g.formWave = Math.min(n, g.formWave + 0.28);
-
-      g.segments.forEach((seg, i) => {
-        const wavePos = i / n * n;           // just i
-        const behind  = g.formWave - i;
-        if (behind > 0) {
-          // Sigmoid-shaped growth — slow start, fast middle, slow end
-          const raw = Math.min(1, behind * seg.growSpeed * 120);
-          seg.prog = raw < 0.5 ? 2*raw*raw : 1-Math.pow(-2*raw+2,2)/2;
-        }
-      });
-
-      // Opacity: fades in with the wave
-      g.alpha = Math.min(0.52, g.alpha + 0.006);
-      if (!looking) g.state = 'dissolving';
-      if (g.formWave >= n && g.alpha >= 0.52) g.state = 'visible';
-    }
-    else if (g.state==='visible') {
-      // Subtle breathing — segments oscillate slightly
-      g.segments.forEach((seg, i) => {
-        const oscillation = 0.015 * Math.sin(clock * 0.8 + seg.phase);
-        seg.prog = Math.max(0, Math.min(1, seg.prog + oscillation));
-      });
-      if (!looking) g.state = 'dissolving';
-    }
-    else if (g.state==='dissolving') {
-      // Key behavior: dissolution isn't uniform.
-      // Some segments retract, others momentarily grow MORE before retracting.
-      // This gives the "continuously creating even while dissolving" feeling.
-      g.segments.forEach((seg, i) => {
-        const isFarBack = i < g.segments.length * 0.4;
-
-        // Random small bursts forward even during dissolve
-        if (Math.random() < 0.001) {
-          seg.prog = Math.min(1.08, seg.prog + 0.12 + Math.random()*0.2);
-        }
-
-        // Gently pull back — but not uniformly
-        const pullRate = seg.dissolveSpeed * (0.7 + 0.6*Math.sin(clock*1.2+seg.phase));
-        seg.prog -= pullRate;
-
-        if (isFarBack) seg.prog -= seg.dissolveSpeed * 0.5; // back dissolves faster
-
-        seg.prog = Math.max(-0.01, seg.prog);
-      });
-
-      // Check if still being looked at — can re-form
-      if (looking && visible < MAX_VISIBLE) {
-        g.state = 'forming';
-      }
-
-      // Fade overall opacity more slowly than segment progress
-      g.alpha = Math.max(0, g.alpha - 0.0012);
-
-      // Done when segments are mostly gone
-      const avgProg = g.segments.reduce((s,seg)=>s+seg.prog,0)/n;
-      if (avgProg <= 0.01 && g.alpha <= 0) {
-        // Relocate
-        let newPos, ok, tries=0;
-        do {
-          newPos = new THREE.Vector3(
-            camera.position.x + (Math.random()-.5)*1400,
-            camera.position.y + (Math.random()-.5)*650,
-            camera.position.z + (Math.random()-.5)*1400
-          );
-          ok = newPos.distanceTo(camera.position)>200
-            && glimpses.every(o=>o.pos.distanceTo(newPos)>260);
-          tries++;
-        } while(!ok && tries<40);
-
-        const usedBuilders = new Set(glimpses.filter(o=>o!==g).map(o=>o.builderFn));
-        const fresh = BUILDERS.filter(b=>!usedBuilders.has(b));
-        const newBuilder = (fresh.length>0?fresh:BUILDERS)[Math.floor(Math.random()*(fresh.length||BUILDERS.length))];
-        resetGlimpse(g, newPos, newBuilder);
-        return;
-      }
-    }
-
-    // ── Render: push segment endpoints into geometry ─────────────────────────
-    const posArr = g.lines.geometry.attributes.position.array;
-    g.segments.forEach((seg, i) => {
-      const p = Math.max(0, Math.min(1, seg.prog));
-      posArr[i*6+0] = seg.ax;
-      posArr[i*6+1] = seg.ay;
-      posArr[i*6+2] = seg.az;
-      posArr[i*6+3] = seg.ax + (seg.bx - seg.ax) * p;
-      posArr[i*6+4] = seg.ay + (seg.by - seg.ay) * p;
-      posArr[i*6+5] = seg.az + (seg.bz - seg.az) * p;
-    });
-    g.lines.geometry.attributes.position.needsUpdate = true;
-    g.lines.material.opacity = g.alpha;
-  });
-
-  // Cursor hint
-  const anyForming = glimpses.some(g => g.state==='forming'||g.state==='visible');
-  document.getElementById('cursor').classList.toggle('near', anyForming);
-}
-
-// ─── GRID ─────────────────────────────────────────────────────────────────────
-function addRipple(pos) { ripples.push({ pos:pos.clone(), t:0 }); }
-
-function updateGrid() {
-  for (let i=ripples.length-1;i>=0;i--) {
-    ripples[i].t += 0.015;
-    if (ripples[i].t>4.5) ripples.splice(i,1);
-  }
-  const cp = camera.position;
-  gridLines.forEach(({line,ov}) => {
-    const attr = line.geometry.attributes.position;
-    for (let i=0;i<2;i++) {
-      const ox=ov[i*3],oy=ov[i*3+1],oz=ov[i*3+2];
-      let dx=0,dy=0,dz=0;
-      const cx=ox-cp.x,cy=oy-cp.y,cz=oz-cp.z;
-      const cd=Math.sqrt(cx*cx+cy*cy+cz*cz);
-      if (cd<310&&cd>0.5) {
-        const t=1-cd/310, pull=t*t*50;
-        dx-=(cx/cd)*pull; dy-=(cy/cd)*pull; dz-=(cz/cd)*pull;
-      }
-      ripples.forEach(r => {
-        const rx=ox-r.pos.x,ry=oy-r.pos.y,rz=oz-r.pos.z;
-        const d=Math.sqrt(rx*rx+ry*ry+rz*rz);
-        if (d<1) return;
-        const front=r.t*260;
-        const env=Math.exp(-((d-front)**2)/(58*58));
-        const w=Math.sin((d-front)*0.065)*env*Math.exp(-r.t*0.42);
-        const amp=65*w;
-        dx+=(rx/d)*amp; dy+=(ry/d)*amp; dz+=(rz/d)*amp;
-      });
-      attr.setXYZ(i,ox+dx,oy+dy,oz+dz);
-    }
-    attr.needsUpdate=true;
-    const mx=(attr.getX(0)+attr.getX(1))*0.5;
-    const my=(attr.getY(0)+attr.getY(1))*0.5;
-    const mz=(attr.getZ(0)+attr.getZ(1))*0.5;
-    const d=cp.distanceTo(new THREE.Vector3(mx,my,mz));
-    const prox=Math.max(0,1-d/370);
-    line.material.opacity=0.05+prox*0.3;
-    line.material.color.setRGB(prox*0.45, 0.72+prox*0.28, 1.0);
-  });
-}
-
-// ─── AUDIO ────────────────────────────────────────────────────────────────────
-function startAudio() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-  masterGain = audioCtx.createGain();
-  masterGain.gain.value = 0.14;
-  masterGain.connect(audioCtx.destination);
-
-  const filt = audioCtx.createBiquadFilter();
-  filt.type='lowpass'; filt.frequency.value=850;
-  filt.connect(masterGain);
-
-  [40,80.2,120.5,161,241].forEach((f,i)=>{
-    const o=audioCtx.createOscillator();
-    o.type=i<2?'sine':'triangle';
-    o.frequency.value=f;
-    const g=audioCtx.createGain();
-    g.gain.value=[0.3,0.14,0.065,0.03,0.018][i];
-    o.connect(g); g.connect(filt); o.start();
-    droneNodes.push({osc:o,baseFreq:f});
-  });
-
-  glimpseGainNode = audioCtx.createGain();
-  glimpseGainNode.gain.value=0;
-  const gf = audioCtx.createBiquadFilter();
-  gf.type='bandpass'; gf.frequency.value=528; gf.Q.value=8;
-  glimpseGainNode.connect(gf); gf.connect(masterGain);
-  glimpseOsc = audioCtx.createOscillator();
-  glimpseOsc.type='sine'; glimpseOsc.frequency.value=528;
-  glimpseOsc.connect(glimpseGainNode); glimpseOsc.start();
-
-  const lfo=audioCtx.createOscillator();
-  lfo.frequency.value=0.052;
-  const lg=audioCtx.createGain(); lg.gain.value=0.018;
-  lfo.connect(lg); lg.connect(masterGain.gain); lfo.start();
-
-  setTimeout(()=>addRipple(new THREE.Vector3(0,0,-220)),2000);
-}
-
-// ─── INPUT ────────────────────────────────────────────────────────────────────
+// ─── EXIT / RETURN (keep contract with parent) ───────────────────────────────
 let returnArmed = false;
 function showReturnGuide(on) {
   const g = document.getElementById('userGuide');
@@ -903,51 +152,1078 @@ function exitToCapsule() {
   }, 350);
 }
 
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+
+function snapToLattice(v, step=STEP){
+  v.x = Math.round(v.x/step)*step;
+  v.y = Math.round(v.y/step)*step;
+  v.z = Math.round(v.z/step)*step;
+  return v;
+}
+
+function updateFloatingOrigin(){
+  // Keep render-space values near origin while world-space position grows.
+  const camRender = new THREE.Vector3(
+    playerWorld.x - originOffset.x,
+    playerWorld.y - originOffset.y,
+    playerWorld.z - originOffset.z
+  );
+
+  // Shift origin when the render-space camera drifts too far from (0,0,0).
+  if (camRender.length() > SHIFT_THRESHOLD) {
+    // Shift origin to the nearest lattice node to avoid jitter.
+    const newOff = snapToLattice(playerWorld.clone(), STEP);
+    originOffset.copy(newOff);
+    world.position.set(-originOffset.x, -originOffset.y, -originOffset.z);
+
+    // Recompute render-space camera after shifting origin.
+    camRender.set(
+      playerWorld.x - originOffset.x,
+      playerWorld.y - originOffset.y,
+      playerWorld.z - originOffset.z
+    );
+  }
+
+  // IMPORTANT: apply render-space position to the actual camera.
+  camera.position.copy(camRender);
+}
+
+
+function buildGalaxyGrids(){
+  // Simple wire tesseracts in the distance. Render-space positions; we reposition when outside.
+  const edge = new THREE.EdgesGeometry(new THREE.BoxGeometry(STEP*HALF*1.2, STEP*HALF*1.2, STEP*HALF*1.2));
+  const mat = new THREE.LineBasicMaterial({ color: 0x1aa6c9, transparent:true, opacity:0.18 });
+  const placements = [
+    new THREE.Vector3( 4200,  900, -5200),
+    new THREE.Vector3(-5600, -700, -6100),
+    new THREE.Vector3( 6400, -900,  4800),
+    new THREE.Vector3(-4800, 1200,  5600),
+  ];
+  placements.forEach((p,i)=>{
+    const g = new THREE.LineSegments(edge, mat.clone());
+    g.position.copy(p);
+    g.rotation.set(0.15*i, 0.28*i, 0.07*i);
+    g.scale.setScalar(1.0 + i*0.18);
+    galaxyGroup.add(g);
+  });
+}
+
+function updateGalaxy(){
+  const outside =
+    Math.abs(playerWorld.x) > WORLD_HALF ||
+    Math.abs(playerWorld.y) > WORLD_HALF ||
+    Math.abs(playerWorld.z) > WORLD_HALF;
+
+  galaxyGroup.visible = outside;
+
+  if (world.userData._outside === outside) return;
+  world.userData._outside = outside;
+
+  const fade = outside ? 0.35 : 1.0;
+
+  world.traverse(obj=>{
+    const mat = obj.material;
+    if (!mat) return;
+    const apply = (m)=>{
+      if (!m) return;
+      if (m.opacityBase == null) m.opacityBase = m.opacity;
+      if (m.transparent) m.opacity = m.opacityBase * fade;
+    };
+    if (Array.isArray(mat)) mat.forEach(apply);
+    else apply(mat);
+  });
+}
+function init() {
+  scene = new THREE.Scene();
+  world = new THREE.Group();
+  scene.add(world);
+
+  // Distant 'other grids' (galaxies) — only shown once you exit the main tesseract
+  galaxyGroup = new THREE.Group();
+  galaxyGroup.visible = false;
+  scene.add(galaxyGroup);
+  buildGalaxyGrids();
+  world.add(poiGroup);
+  scene.fog = new THREE.FogExp2(0x000206, 0.0013);
+  scene.background = new THREE.Color(0x000206);
+
+  camera = new THREE.PerspectiveCamera(68, innerWidth/innerHeight, 0.5, 2800);
+  camera.position.set(0, 0, 0);
+
+  // Start inside the main tesseract (render-space camera is offset forward)
+  playerWorld.set(0, 0, 240);
+  camera.position.set(0, 0, 240);
+
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  buildGrid();
+  buildStars();
+  buildQuanta();
+
+  // Keyboard: do NOT blanket-prevent defaults (it breaks DevTools shortcuts).
+  // Only prevent defaults for movement keys while pointer-locked & started.
+  const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','ShiftLeft','ShiftRight']);
+
+  window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+
+    // ESC should always return once started (do not require pointer lock).
+    if (e.code === 'Escape') {
+      if (started) {
+        e.preventDefault();
+        exitToCapsule();
+      }
+      return;
+    }
+
+    // Never interfere with browser / devtools shortcuts
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!started) return;
+    if (document.pointerLockElement !== renderer?.domElement) return;
+
+    if (MOVE_KEYS.has(e.code)) e.preventDefault();
+  }, { passive:false });
+
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+  });
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('resize',    onResize);
+
+  document.addEventListener('pointerlockchange', ()=>{
+    if (document.pointerLockElement !== renderer?.domElement) {
+      // clear movement state when unlocking
+      for (const k in keys) keys[k] = false;
+    }
+  });
+
+  document.getElementById('enter').addEventListener('click', enter);
+
+  animate();
+}
+
+// ─── THE GRID ────────────────────────────────────────────────────────────────
+function buildGrid() {
+  // Two layers: a crisp thin layer + a very dim broad glow layer
+  // creates the depth of field illusion
+  function addLine(ax, ay, az, bx, by, bz) {
+    const ov = new Float32Array([ax,ay,az, bx,by,bz]);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(ov.slice(), 3));
+
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x00c8ff,
+      transparent: true,
+      opacity: 0.11,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const line = new THREE.Line(geo, mat);
+    world.add(line);
+    gridLines.push({ line, ov });
+  }
+
+  // Axis-aligned lines in all three directions
+  for (let a = -HALF; a <= HALF; a++) {
+    for (let b = -HALF; b <= HALF; b++) {
+      // Z-running (most dramatic when flying forward)
+      addLine( a*STEP, b*STEP, -RANGE,   a*STEP, b*STEP,  RANGE);
+      // X-running
+      addLine(-RANGE,  a*STEP, b*STEP,   RANGE,  a*STEP, b*STEP);
+      // Y-running
+      addLine( a*STEP,-RANGE,  b*STEP,   a*STEP, RANGE,  b*STEP);
+    }
+  }
+
+  // Node glows at intersections — a sparse subset
+  const nodeGeo = new THREE.BufferGeometry();
+  const nodeVerts = [];
+  const step2 = STEP * 2;
+  for (let x = -HALF; x <= HALF; x+=2)
+    for (let y = -HALF; y <= HALF; y+=2)
+      for (let z = -HALF; z <= HALF; z+=2)
+        nodeVerts.push(x*STEP, y*STEP, z*STEP);
+  nodeGeo.setAttribute('position', new THREE.Float32BufferAttribute(nodeVerts, 3));
+  scene.add(new THREE.Points(nodeGeo, new THREE.PointsMaterial({
+    color: 0x00d4ff, size: 1.4, transparent: true, opacity: 0.18,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  })));
+}
+
+// ─── STARS ───────────────────────────────────────────────────────────────────
+function buildStars() {
+  const v = [];
+  for (let i=0;i<12000;i++)
+    v.push((Math.random()-.5)*5000, (Math.random()-.5)*5000, (Math.random()-.5)*5000);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    color: 0x1a2a3a, size: 0.7, transparent: true, opacity: 0.55,
+    blending: THREE.AdditiveBlending
+  })));
+}
+
+// ─── QUANTUM OBJECTS ─────────────────────────────────────────────────────────
+function buildQuanta() {
+  const positions = [];
+  // Generate well-spaced positions
+  for (let i = 0; i < 28; i++) {
+    let pos, ok;
+    let attempts = 0;
+    do {
+      pos = new THREE.Vector3(
+        (Math.random()-.5)*1100,
+        (Math.random()-.5)*1100,
+        (Math.random()-.5)*1100
+      );
+      ok = positions.every(p => p.distanceTo(pos) > 180);
+      attempts++;
+    } while (!ok && attempts < 50);
+    positions.push(pos);
+  }
+
+  // 7 entangled pairs (14 quanta) + 14 solo
+  for (let i = 0; i < 7; i++) {
+    const a = makeQuantum(positions[i*2],     false); // cyan
+    const b = makeQuantum(positions[i*2+1],   true);  // violet
+
+    a.partner = b;
+    b.partner = a;
+
+    // Entanglement thread — barely visible until collapsed
+    const tGeo = new THREE.BufferGeometry().setFromPoints([positions[i*2], positions[i*2+1]]);
+    const tMat = new THREE.LineBasicMaterial({
+      color: 0x8822cc, transparent: true, opacity: 0.028,
+      blending: THREE.AdditiveBlending
+    });
+    const thread = new THREE.Line(tGeo, tMat);
+    world.add(thread);
+    a.thread = b.thread = thread;
+    a.threadMat = b.threadMat = tMat;
+
+    quanta.push(a, b);
+  }
+  for (let i = 14; i < 28; i++) {
+    quanta.push(makeQuantum(positions[i], false));
+  }
+}
+
+function makeQuantum(pos, isB) {
+  const hue   = isB ? 0.77 : 0.52; // violet vs cyan
+  const color = new THREE.Color().setHSL(hue, 1.0, 0.55);
+  const cHex  = color.getHex();
+
+  // Superposition cloud — many ghost points orbiting the probability centre
+  const ghostVerts = new Float32Array(90 * 3);
+  for (let i = 0; i < 90; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi   = Math.acos(2*Math.random()-1);
+    const r     = 5 + Math.random() * 22;
+    ghostVerts[i*3  ] = pos.x + r*Math.sin(phi)*Math.cos(theta);
+    ghostVerts[i*3+1] = pos.y + r*Math.sin(phi)*Math.sin(theta);
+    ghostVerts[i*3+2] = pos.z + r*Math.cos(phi);
+  }
+  const cloudGeo = new THREE.BufferGeometry();
+  cloudGeo.setAttribute('position', new THREE.BufferAttribute(ghostVerts.slice(), 3));
+  const cloud = new THREE.Points(cloudGeo, new THREE.PointsMaterial({
+    color: cHex, size:1.9, transparent:true, opacity:0.52,
+    blending: THREE.AdditiveBlending, depthWrite:false
+  }));
+  world.add(cloud);
+
+  // Collapsed core — single bright point
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(2.2, 8, 8),
+    new THREE.MeshBasicMaterial({ color: isB ? 0xddaaff : 0xffffff, transparent:true, opacity:0, blending:THREE.AdditiveBlending })
+  );
+  dot.position.copy(pos);
+  world.add(dot);
+
+  // Collapsed halo — wire sphere that expands and pulses
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(9, 10, 10),
+    new THREE.MeshBasicMaterial({ color: cHex, wireframe:true, transparent:true, opacity:0, blending:THREE.AdditiveBlending })
+  );
+  halo.position.copy(pos);
+  world.add(halo);
+
+  return {
+    cloud, dot, halo,
+    pos: pos.clone(),
+    state: 0,        // 0=superposition  1=collapsing  2=done
+    p: 0,            // collapse progress 0→1
+    partner: null,
+    thread: null,
+    threadMat: null,
+    isB,
+    cHex,
+    ghostOrig: ghostVerts.slice()
+  };
+}
+
+// ─── RIPPLE SYSTEM ───────────────────────────────────────────────────────────
+function addRipple(pos, strength) {
+  ripples.push({ pos: pos.clone(), t:0, strength });
+}
+
+// ─── GRID UPDATE ─────────────────────────────────────────────────────────────
+function updateGrid() {
+  // Advance ripple times
+  for (let i = ripples.length-1; i >= 0; i--) {
+    ripples[i].t += 0.018;
+    if (ripples[i].t > 3.5) ripples.splice(i,1);
+  }
+
+  const camPos = camera.position;
+
+  gridLines.forEach(({ line, ov }) => {
+    const attr = line.geometry.attributes.position;
+    let anyChange = false;
+
+    for (let i = 0; i < 2; i++) {
+      const ox = ov[i*3], oy = ov[i*3+1], oz = ov[i*3+2];
+      let dx=0, dy=0, dz=0;
+
+      // ── Observer gravity: the camera warps the fabric around itself
+      const cx = ox - camPos.x, cy = oy - camPos.y, cz = oz - camPos.z;
+      const camDist = Math.sqrt(cx*cx + cy*cy + cz*cz);
+      if (camDist < 320 && camDist > 0.5) {
+        const t = 1 - camDist/320;
+        const pull = t*t * 55;
+        dx -= (cx/camDist)*pull;
+        dy -= (cy/camDist)*pull;
+        dz -= (cz/camDist)*pull;
+      }
+
+      // ── Collapse ripples: expanding spherical waves in the lattice
+      ripples.forEach(r => {
+        const rx = ox - r.pos.x, ry = oy - r.pos.y, rz = oz - r.pos.z;
+        const dist = Math.sqrt(rx*rx + ry*ry + rz*rz);
+        if (dist < 1) return;
+
+        const waveFront = r.t * 280;       // wave speed
+        const σ = 55;                       // wave width
+        const envelope = Math.exp(-((dist-waveFront)**2) / (σ*σ));
+        const wave = Math.sin((dist - waveFront) * 0.07) * envelope;
+        const amp = r.strength * wave * Math.exp(-r.t * 0.4);
+
+        // Push outward (compression wave)
+        dx += (rx/dist) * amp;
+        dy += (ry/dist) * amp;
+        dz += (rz/dist) * amp;
+      });
+
+      attr.setXYZ(i, ox+dx, oy+dy, oz+dz);
+      if (Math.abs(dx)+Math.abs(dy)+Math.abs(dz) > 0.01) anyChange = true;
+    }
+    attr.needsUpdate = true;
+
+    // Dynamic brightness: lines nearer to camera glow more
+    const mx = (attr.getX(0)+attr.getX(1))*0.5;
+    const my = (attr.getY(0)+attr.getY(1))*0.5;
+    const mz = (attr.getZ(0)+attr.getZ(1))*0.5;
+    const d = camPos.distanceTo(new THREE.Vector3(mx,my,mz));
+    // Proximity boost — closest lines almost white-bright
+    const prox = Math.max(0, 1 - d/380);
+    line.material.opacity = 0.07 + prox * 0.38;
+    // Color temperature: cool far, warm-white near
+    if (prox > 0.5) {
+      line.material.color.setRGB(0.6 + prox*0.4, 0.85 + prox*0.15, 1.0);
+    } else {
+      line.material.color.set(0x00c8ff);
+    }
+  });
+}
+
+// ─── QUANTUM UPDATE ───────────────────────────────────────────────────────────
+function updateQuanta() {
+  // Observation: look at superposition cloud → collapse it
+  if (started) {
+    raycaster.setFromCamera(screenMid, camera);
+    const clouds = quanta.map(q => q.cloud);
+    const hits = raycaster.intersectObjects(clouds);
+    const cursor = document.getElementById('cursor');
+
+    if (hits.length && hits[0].distance < 600) {
+      const q = quanta.find(o => o.cloud === hits[0].object);
+      if (q && q.state === 0) {
+        cursor.classList.add('observing');
+        collapse(q);
+      } else {
+        cursor.classList.remove('observing');
+      }
+    } else {
+      cursor.classList.remove('observing');
+    }
+  }
+
+  quanta.forEach(q => {
+    if (q.state === 1) {
+      q.p = Math.min(1, q.p + 0.045);
+      if (q.p >= 1) q.state = 2;
+    }
+
+    const p = q.p;
+    const cloudAttr = q.cloud.geometry.attributes.position;
+
+    if (q.state === 0) {
+      // Breathe: superposition cloud oscillates — probability is alive
+      for (let i = 0; i < 90; i++) {
+        const og = q.ghostOrig;
+        const ox = og[i*3], oy = og[i*3+1], oz = og[i*3+2];
+        // Different frequency per particle: they don't all move together — this IS the uncertainty
+        const phase = clock * 1.6 + i * 0.53;
+        const spread = 1 + 0.18*Math.sin(phase) + 0.06*Math.sin(phase*1.7 + i);
+        cloudAttr.setXYZ(i,
+          q.pos.x + (ox - q.pos.x)*spread,
+          q.pos.y + (oy - q.pos.y)*spread,
+          q.pos.z + (oz - q.pos.z)*spread
+        );
+      }
+      q.cloud.material.opacity = 0.38 + 0.14*Math.sin(clock*1.4);
+    } else {
+      // Collapsing: all ghosts rush to the single point
+      for (let i = 0; i < 90; i++) {
+        const og = q.ghostOrig;
+        cloudAttr.setXYZ(i,
+          THREE.MathUtils.lerp(og[i*3],   q.pos.x, p * (1 + 0.3*Math.sin(i))),
+          THREE.MathUtils.lerp(og[i*3+1], q.pos.y, p * (1 + 0.3*Math.sin(i+1))),
+          THREE.MathUtils.lerp(og[i*3+2], q.pos.z, p * (1 + 0.3*Math.sin(i+2)))
+        );
+      }
+      q.cloud.material.opacity = Math.max(0, (1-p)*0.52);
+    }
+    cloudAttr.needsUpdate = true;
+
+    // Collapsed states — dot and halo emerge
+    q.dot.material.opacity = p * (0.75 + 0.25*Math.sin(clock*3));
+    q.halo.material.opacity = p * (0.12 + 0.08*Math.sin(clock*2.2));
+    q.halo.scale.setScalar(1 + p*0.5 + 0.04*Math.sin(clock*3.5));
+
+    // Entanglement thread: glows when either is collapsed
+    if (q.threadMat) {
+      const active = q.state > 0 || (q.partner && q.partner.state > 0);
+      q.threadMat.opacity = active
+        ? 0.028 + 0.04 * Math.sin(clock * 6)
+        : 0.028;
+    }
+  });
+}
+
+function collapse(q) {
+  if (q.state > 0) return;
+  q.state = 1;
+
+  // Shockwave through the lattice from collapse point
+  addRipple(q.pos, 85);
+  playCollapse(q.isB, false);
+
+  // Entangled partner collapses nonlocally — a second ripple appears
+  // at the partner's location after a tiny delay (lightspeed irrelevant here)
+  if (q.partner && q.partner.state === 0) {
+    const partner = q.partner;
+    setTimeout(() => {
+      if (partner.state > 0) return;
+      partner.state = 1;
+      addRipple(partner.pos, 55);
+      playCollapse(partner.isB, true);
+    }, 350 + Math.random()*200);
+  }
+}
+
+// ─── AUDIO ───────────────────────────────────────────────────────────────────
+function startAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+
+  const master = audioCtx.createGain();
+  master.gain.value = 0.16;
+  master.connect(audioCtx.destination);
+
+  masterFilter = audioCtx.createBiquadFilter();
+  masterFilter.type = 'lowpass';
+  masterFilter.frequency.value = 900;
+  masterFilter.connect(master);
+
+  masterGain = masterFilter;
+
+  // Drone: layered harmonics — the hum of spacetime
+  [40, 80, 120, 161, 240].forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    osc.type = i < 2 ? 'sine' : 'triangle';
+    osc.frequency.value = f;
+    const g = audioCtx.createGain();
+    g.gain.value = [0.35, 0.18, 0.07, 0.04, 0.025][i];
+    osc.connect(g);
+    g.connect(masterFilter);
+    osc.start();
+    droneOscs.push(osc);
+  });
+
+  // Very slow LFO: the universe breathes
+  const lfo = audioCtx.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 0.06;
+  const lfoG = audioCtx.createGain();
+  lfoG.gain.value = 0.025;
+  lfo.connect(lfoG);
+  lfoG.connect(master.gain);
+  lfo.start();
+  setupPoiAudioBeds();
+}
+
+function playCollapse(isB, isRemote) {
+  if (!audioCtx) return;
+  const freq = isB ? 528 : 1047; // F5 vs C6 interval — a perfect fourth
+  const dur  = isRemote ? 0.7 : 0.25;
+  const vol  = isRemote ? 0.25 : 0.45;
+
+  const env = audioCtx.createGain();
+  env.gain.setValueAtTime(0, audioCtx.currentTime);
+  env.gain.linearRampToValueAtTime(vol, audioCtx.currentTime + 0.008);
+  env.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  // Slight pitch glide downward — the wave function settling
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.92, audioCtx.currentTime + dur);
+
+  const reverb = audioCtx.createConvolver ? createSimpleReverb() : null;
+  osc.connect(env);
+  env.connect(reverb || audioCtx.destination);
+  if (reverb) reverb.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + dur + 0.05);
+
+  // Snap transient
+  const buf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate*0.04), audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++)
+    d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 3);
+  const snap = audioCtx.createBufferSource();
+  snap.buffer = buf;
+  const sg = audioCtx.createGain();
+  sg.gain.value = isRemote ? 0.04 : 0.08;
+  snap.connect(sg);
+  sg.connect(audioCtx.destination);
+  snap.start();
+}
+
+function createSimpleReverb() {
+  const convolver = audioCtx.createConvolver();
+  const len = audioCtx.sampleRate * 2;
+  const buf = audioCtx.createBuffer(2, len, audioCtx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++)
+      d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 1.8);
+  }
+  convolver.buffer = buf;
+  const g = audioCtx.createGain();
+  g.gain.value = 0.22;
+  convolver.connect(g);
+  return g;
+}
+
+// ─── INPUT ───────────────────────────────────────────────────────────────────
 function onMouseMove(e) {
   if (!started) return;
-  pitchYaw.y -= e.movementX * 0.0014;
-  pitchYaw.x -= e.movementY * 0.0014;
+  pitchYaw.y -= e.movementX * 0.0016;
+  pitchYaw.x -= e.movementY * 0.0016;
   pitchYaw.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitchYaw.x));
 }
 
 function enter() {
   if (started) return;
   started = true;
-  showReturnGuide(true);
-  const el = document.getElementById('enter');
-  el.style.opacity='0'; setTimeout(()=>el.remove(),2000);
-  document.getElementById('veil').style.opacity='0';
+  
+document.body.classList.add("started");
+
+enterTime = clock;
+const el = document.getElementById('enter');
+  el.style.opacity = '0';
+  setTimeout(() => el.remove(), 1500);
   startAudio();
+  // fade in scene after ENTER
+  veil.style.opacity = "0";
+  const ug = document.getElementById("userGuide");
+  if (ug) ug.style.opacity = "1";
   renderer.domElement.requestPointerLock?.();
 }
 
+
+// ─── OPEN WORLD POIs (discoverable life chunks) ─────────────────────────
+const poiGroup = new THREE.Group();
+
+const GRID_STEP = 22;                    // lattice snap size for POI geometry
+const POI_STREAM_RADIUS = 1100;          // keep POIs within this radius
+const POI_SPAWN_RADIUS_MIN = 420;        // don't spawn right on top of player
+const POI_TARGET_MAX = 12;               // max active POIs
+const POI_WARMUP_SECONDS = 3.5;          // ramp up after ENTER
+const POI_SPAWN_COOLDOWN = 0.55;         // seconds between spawns (avoid bursts)
+
+let poiActive = [];
+let poiSpawnTimer = 0;
+let poiSeed = 1337;
+
+// audio layers per POI type (subtle "horizon")
+let cityBed = null, seaBed = null, catBed = null;
+
+function seededRand() {
+  // simple LCG
+  poiSeed = (poiSeed * 1664525 + 1013904223) >>> 0;
+  return poiSeed / 4294967296;
+}
+function snap(n, step=GRID_STEP){ return Math.round(n/step)*step; }
+function snapV(v, step=GRID_STEP){ return new THREE.Vector3(snap(v.x,step), snap(v.y,step), snap(v.z,step)); }
+
+function easeInOut(t){ return t<0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
+function smoothstep(a,b,x){
+  const t = Math.max(0, Math.min(1, (x-a)/(b-a)));
+  return t*t*(3-2*t);
+}
+
+function makeBeacon(anchor, matOpacity=0.08){
+  const g = new THREE.BufferGeometry();
+  const y0 = anchor.y - 240, y1 = anchor.y + 520;
+  const arr = new Float32Array([anchor.x, y0, anchor.z, anchor.x, y1, anchor.z]);
+  g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  const m = new THREE.LineBasicMaterial({ color: 0x00c8ff, transparent:true, opacity:matOpacity });
+  const line = new THREE.Line(g,m);
+  line.frustumCulled = false;
+  return line;
+}
+
+function buildCity(anchor){
+  const segs = [];
+  const base = snapV(anchor);
+  const blocks = 18 + Math.floor(seededRand()*14);
+  for(let i=0;i<blocks;i++){
+    const ox = snap((seededRand()*2-1)*260);
+    const oz = snap((seededRand()*2-1)*260);
+    const w  = snap(22 + seededRand()*66);
+    const d  = snap(22 + seededRand()*66);
+    const h  = snap(88 + seededRand()*420);
+    const x0 = base.x + ox - w/2, x1 = base.x + ox + w/2;
+    const z0 = base.z + oz - d/2, z1 = base.z + oz + d/2;
+    const y0 = base.y - snap(44), y1 = base.y - snap(44) + h;
+
+    // 4 verticals
+    segs.push(x0,y0,z0, x0,y1,z0);
+    segs.push(x1,y0,z0, x1,y1,z0);
+    segs.push(x0,y0,z1, x0,y1,z1);
+    segs.push(x1,y0,z1, x1,y1,z1);
+
+    // top rectangle
+    segs.push(x0,y1,z0, x1,y1,z0);
+    segs.push(x1,y1,z0, x1,y1,z1);
+    segs.push(x1,y1,z1, x0,y1,z1);
+    segs.push(x0,y1,z1, x0,y1,z0);
+
+    // a few window strokes
+    if(seededRand()<0.7){
+      const wx = snap(x0 + (seededRand()*0.8+0.1)*(x1-x0));
+      const wz = snap(z0 + (seededRand()*0.8+0.1)*(z1-z0));
+      const wy0 = snap(y0 + (seededRand()*0.3+0.1)*(y1-y0));
+      const wy1 = snap(wy0 + (seededRand()*0.2+0.08)*(y1-y0));
+      segs.push(wx,wy0,wz, wx,wy1,wz);
+    }
+  }
+  return new Float32Array(segs);
+}
+
+function buildCathedral(anchor){
+  // nave with repeating arches + rose window glyph
+  const segs = [];
+  const base = snapV(anchor);
+  const length = 520;
+  const step = 52;
+  const arches = Math.floor(length/step);
+  const span = 210;
+  const height = 260;
+
+  const zStart = base.z - length/2;
+
+  for(let i=0;i<=arches;i++){
+    const z = snap(zStart + i*step);
+    const xL = snap(base.x - span/2);
+    const xR = snap(base.x + span/2);
+    const y0 = snap(base.y - 44);
+    const yT = snap(y0 + height);
+
+    // pillars
+    segs.push(xL,y0,z, xL,yT,z);
+    segs.push(xR,y0,z, xR,yT,z);
+
+    // arch (polyline approximated with segments)
+    const parts = 10;
+    for(let k=0;k<parts;k++){
+      const t0 = k/parts, t1 = (k+1)/parts;
+      const a0 = Math.PI * t0;
+      const a1 = Math.PI * t1;
+      const px0 = snap(base.x + Math.cos(a0)*span/2);
+      const py0 = snap(y0 + Math.sin(a0)*height);
+      const px1 = snap(base.x + Math.cos(a1)*span/2);
+      const py1 = snap(y0 + Math.sin(a1)*height);
+      segs.push(px0,py0,z, px1,py1,z);
+    }
+  }
+
+  // roof ridge line
+  segs.push(base.x, snap(base.y+240), snap(zStart), base.x, snap(base.y+240), snap(zStart+arches*step));
+
+  // rose window at "front"
+  const zF = snap(zStart);
+  const r = 88;
+  const cy = snap(base.y + 150);
+  const parts = 14;
+  for(let k=0;k<parts;k++){
+    const a0 = (k/parts)*Math.PI*2;
+    const a1 = ((k+1)/parts)*Math.PI*2;
+    segs.push(
+      snap(base.x + Math.cos(a0)*r), snap(cy + Math.sin(a0)*r), zF,
+      snap(base.x + Math.cos(a1)*r), snap(cy + Math.sin(a1)*r), zF
+    );
+  }
+  // cross spokes
+  segs.push(base.x-r, cy, zF, base.x+r, cy, zF);
+  segs.push(base.x, cy-r, zF, base.x, cy+r, zF);
+
+  return new Float32Array(segs);
+}
+
+function buildSea(anchor){
+  // wave field: stacked polylines
+  const segs = [];
+  const base = snapV(anchor);
+  const w = 620, d = 540;
+  const lines = 10;
+  const parts = 24;
+  for(let i=0;i<lines;i++){
+    const z = snap(base.z - d/2 + (i/(lines-1))*d);
+    for(let k=0;k<parts;k++){
+      const x0 = snap(base.x - w/2 + (k/parts)*w);
+      const x1 = snap(base.x - w/2 + ((k+1)/parts)*w);
+      const y = snap(base.y - 88);
+      segs.push(x0,y,z, x1,y,z);
+    }
+  }
+  return new Float32Array(segs);
+}
+
+function createPOI(type, anchor){
+  const group = new THREE.Group();
+  group.position.set(0,0,0);
+  group.frustumCulled = false;
+
+  let arr;
+  if(type==='city') arr = buildCity(anchor);
+  else if(type==='cathedral') arr = buildCathedral(anchor);
+  else arr = buildSea(anchor);
+
+  // geometry with dynamic positions for assemble/dissolve
+  const geom = new THREE.BufferGeometry();
+  const dyn = new Float32Array(arr.length);
+  dyn.set(arr);
+  geom.setAttribute('position', new THREE.BufferAttribute(dyn,3));
+  geom.computeBoundingSphere();
+
+  const mat = new THREE.LineBasicMaterial({
+    color: 0x00c8ff,
+    transparent:true,
+    opacity:0.0,
+    linewidth:1
+  });
+  const lines = new THREE.LineSegments(geom, mat);
+  lines.frustumCulled = false;
+  group.add(lines);
+
+  const beacon = makeBeacon(snapV(anchor), 0.06);
+  group.add(beacon);
+
+  const now = clock;
+  const assemble = 2.4 + seededRand()*0.9;
+  const live = 7.0 + seededRand()*5.0;
+  const dissolve = 2.4 + seededRand()*0.9;
+
+  const poi = {
+    type, anchor: snapV(anchor),
+    group, lines, beacon,
+    baseArr: arr, dynArr: dyn,
+    born: now,
+    assemble, live, dissolve,
+    dead:false,
+    lastDist: 99999
+  };
+
+  poiGroup.add(group);
+  return poi;
+}
+
+function pickPOIType(){
+  const r = seededRand();
+  if(r < 0.42) return 'city';
+  if(r < 0.72) return 'cathedral';
+  return 'sea';
+}
+
+function trySpawnPOI(){
+  if(!started) return;
+  if(poiActive.length >= POI_TARGET_MAX) return;
+  if(poiSpawnTimer > 0) return;
+
+  // warm-up: start small to avoid "everything at once"
+  const sinceEnter = clock - enterTime;
+  const maxNow = Math.max(1, Math.floor(1 + smoothstep(0, POI_WARMUP_SECONDS, sinceEnter) * (POI_TARGET_MAX-1)));
+  if(poiActive.length >= maxNow) return;
+
+  // choose a point in a ring around player, biased forward
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+  const fwd = dir.clone().multiplyScalar(1.0);
+
+  const r = POI_SPAWN_RADIUS_MIN + seededRand()*(POI_STREAM_RADIUS-POI_SPAWN_RADIUS_MIN);
+  const a = (seededRand()*2-1) * 0.9; // forward bias
+  const b = (seededRand()*2-1) * 0.9;
+
+  const candidate = playerWorld.clone()
+    .addScaledVector(fwd, r*(0.9 + 0.35*a))
+    .addScaledVector(right, r*(0.35*b))
+    .add(new THREE.Vector3(0, (seededRand()*2-1)*140, 0));
+
+  const anchor = snapV(candidate);
+
+  // avoid clustering
+  for(const p of poiActive){
+    if(p.anchor.distanceTo(anchor) < 360) return;
+  }
+
+  const type = pickPOIType();
+  const poi = createPOI(type, anchor);
+  poiActive.push(poi);
+
+  // soft one-shot sound cue on assemble (if audio is active)
+  if(audioCtx) playPoiSpawn(type);
+
+  poiSpawnTimer = POI_SPAWN_COOLDOWN;
+}
+
+function updatePOIs(){
+  if(!started) return;
+
+  // decrement spawn timer
+  poiSpawnTimer = Math.max(0, poiSpawnTimer - 0.013);
+
+  // keep spawning gradually as you move/explore
+  trySpawnPOI();
+
+  // update active POIs
+  for(const p of poiActive){
+    const age = clock - p.born;
+    const total = p.assemble + p.live + p.dissolve;
+
+    // distance + beacon visibility
+    const dist = p.anchor.distanceTo(camera.position);
+    p.lastDist = dist;
+
+    // lifecycle
+    let opacity = 0;
+    let morph = 0; // 0 = collapsed to anchor, 1 = fully formed
+
+    if(age < p.assemble){
+      const t = easeInOut(age / p.assemble);
+      opacity = 0.02 + 0.22*t;
+      morph = t;
+    } else if(age < p.assemble + p.live){
+      opacity = 0.24;
+      morph = 1;
+    } else if(age < total){
+      const t = (age - p.assemble - p.live) / p.dissolve;
+      const u = 1 - easeInOut(t);
+      opacity = 0.02 + 0.22*u;
+      morph = u;
+    } else {
+      p.dead = true;
+      opacity = 0;
+      morph = 0;
+    }
+
+    // extra fade with distance (keeps world calm)
+    const df = 1 - smoothstep(780, POI_STREAM_RADIUS, dist);
+    const finalOpacity = opacity * Math.max(0.15, df);
+
+    p.lines.material.opacity = finalOpacity;
+    p.beacon.material.opacity = 0.02 + 0.06*df;
+
+    // animate geometry: embed into grid anchor then expand
+    const ax = p.anchor.x, ay = p.anchor.y, az = p.anchor.z;
+    const jitter = (1-morph) * 12;
+
+    const base = p.baseArr, dyn = p.dynArr;
+    for(let i=0;i<base.length;i+=3){
+      const bx = base[i], by = base[i+1], bz = base[i+2];
+      const jx = (seededRand()*2-1)*jitter;
+      const jy = (seededRand()*2-1)*jitter;
+      const jz = (seededRand()*2-1)*jitter;
+      dyn[i]   = ax + (bx-ax)*morph + jx;
+      dyn[i+1] = ay + (by-ay)*morph + jy;
+      dyn[i+2] = az + (bz-az)*morph + jz;
+    }
+    p.lines.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // cull dead / far
+  poiActive = poiActive.filter(p => {
+    const far = p.lastDist > (POI_STREAM_RADIUS + 260);
+    if(p.dead || far){
+      poiGroup.remove(p.group);
+      // dispose
+      p.lines.geometry.dispose();
+      p.lines.material.dispose();
+      p.beacon.geometry.dispose();
+      p.beacon.material.dispose();
+      return false;
+    }
+    return true;
+  });
+
+  updatePoiAudioBeds();
+}
+
+// ─── POI AUDIO ─────────────────────────────────────────
+function makeNoiseNode(){
+  const bufferSize = 2 * audioCtx.sampleRate;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i=0;i<bufferSize;i++) data[i] = (Math.random()*2-1) * 0.35;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = true;
+  return src;
+}
+
+function setupPoiAudioBeds(){
+  if(!audioCtx) return;
+
+  // City: filtered noise hum
+  const cityNoise = makeNoiseNode();
+  const cityFilt = audioCtx.createBiquadFilter();
+  cityFilt.type = 'lowpass';
+  cityFilt.frequency.value = 420;
+  const cityGain = audioCtx.createGain();
+  cityGain.gain.value = 0.0;
+  cityNoise.connect(cityFilt); cityFilt.connect(cityGain); cityGain.connect(masterGain);
+  cityNoise.start();
+  cityBed = { noise: cityNoise, filt: cityFilt, gain: cityGain };
+
+  // Sea: bandpassed noise "wind/waves"
+  const seaNoise = makeNoiseNode();
+  const seaFilt = audioCtx.createBiquadFilter();
+  seaFilt.type = 'bandpass';
+  seaFilt.frequency.value = 280;
+  seaFilt.Q.value = 0.9;
+  const seaGain = audioCtx.createGain();
+  seaGain.gain.value = 0.0;
+  seaNoise.connect(seaFilt); seaFilt.connect(seaGain); seaGain.connect(masterGain);
+  seaNoise.start();
+  seaBed = { noise: seaNoise, filt: seaFilt, gain: seaGain };
+
+  // Cathedral: quiet triad-ish tone
+  const o1 = audioCtx.createOscillator(); o1.type = 'sine'; o1.frequency.value = 98;
+  const o2 = audioCtx.createOscillator(); o2.type = 'sine'; o2.frequency.value = 147;
+  const o3 = audioCtx.createOscillator(); o3.type = 'sine'; o3.frequency.value = 196;
+  const catGain = audioCtx.createGain(); catGain.gain.value = 0.0;
+  o1.connect(catGain); o2.connect(catGain); o3.connect(catGain);
+  catGain.connect(masterGain);
+  o1.start(); o2.start(); o3.start();
+  catBed = { o1,o2,o3,gain: catGain };
+}
+
+function updatePoiAudioBeds(){
+  if(!audioCtx || !cityBed || !seaBed || !catBed) return;
+
+  let dCity=99999, dSea=99999, dCat=99999;
+  for(const p of poiActive){
+    if(p.type==='city') dCity = Math.min(dCity, p.lastDist);
+    else if(p.type==='sea') dSea = Math.min(dSea, p.lastDist);
+    else if(p.type==='cathedral') dCat = Math.min(dCat, p.lastDist);
+  }
+
+  const cityAmt = 1 - smoothstep(380, 980, dCity);
+  const seaAmt  = 1 - smoothstep(380, 980, dSea);
+  const catAmt  = 1 - smoothstep(380, 980, dCat);
+
+  cityBed.gain.gain.setTargetAtTime(0.014*cityAmt, audioCtx.currentTime, 0.6);
+  seaBed.gain.gain.setTargetAtTime(0.012*seaAmt, audioCtx.currentTime, 0.6);
+  catBed.gain.gain.setTargetAtTime(0.010*catAmt, audioCtx.currentTime, 0.8);
+
+  // subtle motion modulation
+  cityBed.filt.frequency.setTargetAtTime(320 + 520*cityAmt, audioCtx.currentTime, 0.8);
+  seaBed.filt.frequency.setTargetAtTime(210 + 180*seaAmt, audioCtx.currentTime, 0.8);
+}
+
+function playPoiSpawn(type){
+  // short, quiet "discovery ping"
+  const t0 = audioCtx.currentTime + 0.01;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'triangle';
+  const f = type==='city' ? 220 : (type==='cathedral' ? 330 : 196);
+  o.frequency.setValueAtTime(f, t0);
+  o.frequency.exponentialRampToValueAtTime(f*1.25, t0+0.12);
+  g.gain.setValueAtTime(0.0, t0);
+  g.gain.linearRampToValueAtTime(0.015, t0+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+0.28);
+  o.connect(g); g.connect(masterGain);
+  o.start(t0); o.stop(t0+0.3);
+}
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+let moving = false;
 function update() {
-  clock += 0.011;
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+
+  clock += dt;
 
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
   const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
-  let moving = false;
+  moving = false;
 
-  // WASD + Arrow keys
-  if (keys['KeyW']||keys['ArrowUp'])    { camera.position.addScaledVector(dir, MOVE_SPEED);    moving=true; }
-  if (keys['KeyS']||keys['ArrowDown'])  { camera.position.addScaledVector(dir,-MOVE_SPEED);    moving=true; }
-  if (keys['KeyA']||keys['ArrowLeft'])  { camera.position.addScaledVector(right,-MOVE_SPEED);  moving=true; }
-  if (keys['KeyD']||keys['ArrowRight']) { camera.position.addScaledVector(right, MOVE_SPEED);  moving=true; }
-  if (keys['Space'])                    { camera.position.y += MOVE_SPEED; moving=true; }
-  if (keys['ShiftLeft']||keys['ShiftRight']) { camera.position.y -= MOVE_SPEED; moving=true; }
+  // Slower movement, and arrows mirror WASD.
+  const spd = 52 * dt;
+
+  if (keys['KeyW'] || keys['ArrowUp'])    { playerWorld.addScaledVector(dir, spd);    moving=true; }
+  if (keys['KeyS'] || keys['ArrowDown'])  { playerWorld.addScaledVector(dir, -spd);   moving=true; }
+  if (keys['KeyA'] || keys['ArrowLeft'])  { playerWorld.addScaledVector(right, -spd); moving=true; }
+  if (keys['KeyD'] || keys['ArrowRight']) { playerWorld.addScaledVector(right, spd);  moving=true; }
+  if (keys['Space'])                      { playerWorld.y += spd; moving=true; }
+  if (keys['ShiftLeft']||keys['ShiftRight']) { playerWorld.y -= spd; moving=true; }
 
   if (started) camera.rotation.set(pitchYaw.x, pitchYaw.y, 0, 'YXZ');
 
-  updateGrid();
-  updateGlimpses();
+  updateFloatingOrigin();
 
-  if (audioCtx) {
-    const maxAlpha = Math.max(0,...glimpses.map(g=>g.alpha));
-    glimpseGainNode?.gain.setTargetAtTime(maxAlpha*0.1, audioCtx.currentTime, 1.2);
-    const f = moving ? 1.016:1.0;
-    droneNodes.forEach(({osc,baseFreq})=>osc.frequency.setTargetAtTime(baseFreq*f,audioCtx.currentTime,0.8));
+  updateGrid();
+  updateQuanta();
+  updatePOIs();
+  updateGalaxy();
+
+  // Audio responds to movement — slight pitch shift = doppler feeling
+  if (audioCtx && droneOscs.length) {
+    const factor = moving ? 1.025 : 1.0;
+    droneOscs.forEach((o, i) => {
+      o.frequency.setTargetAtTime([40,80,120,161,240][i]*factor, audioCtx.currentTime, 0.6);
+    });
+    masterFilter.frequency.setTargetAtTime(moving ? 1300 : 750, audioCtx.currentTime, 0.4);
   }
 }
 
@@ -958,9 +1234,9 @@ function animate() {
 }
 
 function onResize() {
-  camera.aspect=innerWidth/innerHeight;
+  camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);
+  renderer.setSize(innerWidth, innerHeight);
 }
 
 init();
