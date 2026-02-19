@@ -1452,6 +1452,9 @@ AFRAME.registerComponent('tp-camera-springarm', {
     return Math.min(this.data.maxCeilingDrop, (needClear - dist));
   },
   tick: function (t) {
+    var camComp = this.el.components && this.el.components.camera;
+    if (camComp && camComp.data && camComp.data.active === false) return;
+    if (this.el.getAttribute('visible') === false) return;
     if (!this.data.pivot) return;
     if (t - this._lastRefresh > 1200) { this._lastRefresh = t; this.refreshColliderMeshes(); }
     var pivotObj = this.data.pivot.object3D;
@@ -1585,6 +1588,10 @@ AFRAME.registerComponent('racer-controller', {
     else { a.reset().play(); }
   },
   tick: function (t, dt) {
+    if (this.el.getAttribute('visible') === false) return;
+    var tpCamEl = document.getElementById('tpCam');
+    var tpCamComp = tpCamEl && tpCamEl.components && tpCamEl.components.camera;
+    if (tpCamComp && tpCamComp.data && tpCamComp.data.active === false) return;
     if (this.mixer) this.mixer.update((dt || 0) / 1000);
     var cam = this.data.cam;
     if (cam && this.data.turnWithCamera) { this.el.object3D.rotation.y = cam.object3D.rotation.y + Math.PI; }
@@ -1657,6 +1664,8 @@ AFRAME.registerComponent('racer-controller', {
   var _tp = false, _origGetYaw = null;
   var _savedTP = false, _expLock = false;
   var _syncRAF = null;
+  var _fpCursorData = null;
+  var _tpCursorData = null;
 
   window.isThirdPersonMode = function () { return _tp; };
 
@@ -1681,6 +1690,9 @@ AFRAME.registerComponent('racer-controller', {
     var rig = document.getElementById('rig'), fp = document.getElementById('playerCam'),
         tw = document.getElementById('racerYaw'), tc = document.getElementById('tpCam'),
         ra = document.getElementById('racerAvatar'), cp = document.getElementById('camPitch');
+    var fpCursor = fp && fp.querySelector ? fp.querySelector('[cursor]') : null;
+    var tpCursor = tc && tc.querySelector ? tc.querySelector('[cursor]') : null;
+
     if (!rig || !fp || !tw || !tc) return;
     var rw = rig.components && rig.components['rig-walk'];
     if (toTP) {
@@ -1696,6 +1708,9 @@ AFRAME.registerComponent('racer-controller', {
       }
       fp.setAttribute('camera', 'active', false);
       fp.setAttribute('look-controls', 'enabled', false);
+      // Ensure only one cursor/raycaster is active.
+      if (fpCursor) { if (_fpCursorData === null) _fpCursorData = fpCursor.getAttribute('cursor') || {}; fpCursor.removeAttribute('cursor'); }
+      if (tpCursor) { if (_tpCursorData === null) _tpCursorData = tpCursor.getAttribute('cursor') || {}; tpCursor.setAttribute('cursor', _tpCursorData); }
       tc.setAttribute('camera', 'active', true);
       tw.setAttribute('tp-mouselook', 'enabled', true);
       if (ra) ra.setAttribute('visible', true);
@@ -1721,6 +1736,9 @@ AFRAME.registerComponent('racer-controller', {
       tw.setAttribute('tp-mouselook', 'enabled', false);
       if (ra) ra.setAttribute('visible', false);
       tw.setAttribute('visible', false);
+      // Ensure only one cursor/raycaster is active.
+      if (tpCursor) { if (_tpCursorData === null) _tpCursorData = tpCursor.getAttribute('cursor') || {}; tpCursor.removeAttribute('cursor'); }
+      if (fpCursor) { if (_fpCursorData === null) _fpCursorData = fpCursor.getAttribute('cursor') || {}; fpCursor.setAttribute('cursor', _fpCursorData); }
       fp.setAttribute('camera', 'active', true);
       fp.setAttribute('look-controls', 'enabled', true);
       if (rw && _origGetYaw) rw._getYaw = _origGetYaw;
