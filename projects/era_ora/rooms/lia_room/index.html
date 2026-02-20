@@ -534,6 +534,16 @@ AFRAME.registerComponent('rig-walk', {
         this._spawned = new Uint8Array(N); // 0 = not yet spawned
       },
 
+      _isIndoor: function (x, z) {
+        // Office (world): center 0,-75, size 14x13
+        if (x > -7.5 && x < 7.5 && z > -82 && z < -68) return true;
+        // Transition corridor: center 4.5,-62.5, size 4.2x12
+        if (x > 2.0 && x < 7.0 && z > -69 && z < -56) return true;
+        // Exit corridor: center -4.5,-90.5, size 4.2x12
+        if (x > -7.0 && x < -2.0 && z > -97 && z < -84) return true;
+        return false;
+      },
+
       _respawn: function (i) {
         const d = this.data;
         const cam = this.el.sceneEl.camera;
@@ -541,9 +551,22 @@ AFRAME.registerComponent('rig-walk', {
         const cz = cam ? cam.parent.position.z || 0 : 0;
 
         const arr = this._posAttr.array;
-        arr[i * 3]     = cx + (Math.random() - 0.5) * d.areaWidth;
+        var x, z, tries = 0;
+        do {
+          x = cx + (Math.random() - 0.5) * d.areaWidth;
+          z = cz + (Math.random() - 0.5) * d.areaDepth;
+          tries++;
+        } while (this._isIndoor(x, z) && tries < 5);
+
+        if (this._isIndoor(x, z)) {
+          // Park off-screen
+          arr[i * 3] = 9999; arr[i * 3 + 1] = 9999; arr[i * 3 + 2] = 9999;
+          return;
+        }
+
+        arr[i * 3]     = x;
         arr[i * 3 + 1] = d.ceiling + Math.random() * 5;
-        arr[i * 3 + 2] = cz + (Math.random() - 0.5) * d.areaDepth;
+        arr[i * 3 + 2] = z;
       },
 
       tick: function (t, dt) {
@@ -578,8 +601,8 @@ AFRAME.registerComponent('rig-walk', {
           arr[i * 3 + 1] -= this._fallSpeeds[i] * dtS;
           arr[i * 3 + 2] += (wz + this._driftZ[i]) * dtS;
 
-          // Respawn if below floor or too far from camera
-          if (arr[i * 3 + 1] < d.floor) {
+          // Respawn if below floor, too far, or drifted indoors
+          if (arr[i * 3 + 1] < d.floor || this._isIndoor(arr[i * 3], arr[i * 3 + 2])) {
             this._respawn(i);
           }
         }
@@ -592,6 +615,186 @@ AFRAME.registerComponent('rig-walk', {
           this.el.sceneEl.object3D.remove(this._points);
           this._points.geometry.dispose();
           this._points.material.dispose();
+        }
+      }
+    });
+
+
+    // ── Compact 2D Simplex noise ──────────────────────────────────────────────
+    (function(G){
+      var F2=0.5*(Math.sqrt(3)-1),G2=(3-Math.sqrt(3))/6;
+      var p=[151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,
+        30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,
+        252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,
+        168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,
+        211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,
+        80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,
+        109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,
+        85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,
+        152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,
+        110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,
+        144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,
+        106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,
+        67,29,24,72,243,141,128,195,78,66,215,61,156,180];
+      var perm=new Array(512),permMod12=new Array(512);
+      for(var i=0;i<512;i++){perm[i]=p[i&255];permMod12[i]=perm[i]%12;}
+      var grad3=[[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],
+        [1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+      G.simplex2=function(x,y){
+        var s=(x+y)*F2,i=Math.floor(x+s),j=Math.floor(y+s);
+        var t=(i+j)*G2,X0=i-t,Y0=j-t,x0=x-X0,y0=y-Y0;
+        var i1,j1;if(x0>y0){i1=1;j1=0;}else{i1=0;j1=1;}
+        var x1=x0-i1+G2,y1=y0-j1+G2,x2=x0-1+2*G2,y2=y0-1+2*G2;
+        var ii=i&255,jj=j&255;
+        var gi0=permMod12[ii+perm[jj]],gi1=permMod12[ii+i1+perm[jj+j1]],gi2=permMod12[ii+1+perm[jj+1]];
+        var n0=0,n1=0,n2=0;
+        var t0=0.5-x0*x0-y0*y0;if(t0>=0){t0*=t0;n0=t0*t0*(grad3[gi0][0]*x0+grad3[gi0][1]*y0);}
+        var t1=0.5-x1*x1-y1*y1;if(t1>=0){t1*=t1;n1=t1*t1*(grad3[gi1][0]*x1+grad3[gi1][1]*y1);}
+        var t2=0.5-x2*x2-y2*y2;if(t2>=0){t2*=t2;n2=t2*t2*(grad3[gi2][0]*x2+grad3[gi2][1]*y2);}
+        return 70*(n0+n1+n2);
+      };
+    })(window._snoise={});
+
+    // ── Snow ground: procedural displaced mesh + procedural normal map ─────────
+    AFRAME.registerComponent('snow-ground', {
+      init: function () {
+        const sn = window._snoise.simplex2;
+
+        // ── Config ──
+        const RADIUS = 120;
+        const SEG = 200;
+        const MAX_HEIGHT = 0.22;
+
+        // ── Exclusion zones (world space) ──
+        const platformR = 2.0;
+        const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68 };
+        const transCorridor = { x1: 2.0, x2: 7.0, z1: -69, z2: -56 };
+        const exitCorridor = { x1: -7.0, x2: -2.0, z1: -97, z2: -84 };
+
+        // ── Cleared zone: cone in front of spawn (player faces -Z) ──
+        // Wedge: from origin toward -Z, ~50 deg half-angle, extending ~25m
+        const clearDist = 25;
+        const clearHalfAngle = 50 * Math.PI / 180;
+
+        function isExcluded(wx, wz) {
+          // Platform
+          if (wx * wx + wz * wz < platformR * platformR) return true;
+          // Office
+          if (wx > office.x1 && wx < office.x2 && wz > office.z1 && wz < office.z2) return true;
+          // Corridors
+          if (wx > transCorridor.x1 && wx < transCorridor.x2 && wz > transCorridor.z1 && wz < transCorridor.z2) return true;
+          if (wx > exitCorridor.x1 && wx < exitCorridor.x2 && wz > exitCorridor.z1 && wz < exitCorridor.z2) return true;
+          return false;
+        }
+
+        function clearFactor(wx, wz) {
+          // Direction from origin toward -Z
+          var dist = Math.sqrt(wx * wx + wz * wz);
+          if (dist < 0.1) return 0;
+          if (dist > clearDist) return 1;
+          // Angle from -Z axis
+          var angle = Math.abs(Math.atan2(wx, -wz)); // 0 = straight toward -Z
+          if (angle > clearHalfAngle) return 1;
+          // Feathered: less snow near center of view, fades in at edges
+          var distFade = Math.pow(dist / clearDist, 1.5);
+          var angleFade = Math.pow(angle / clearHalfAngle, 2.0);
+          return Math.max(distFade, angleFade);
+        }
+
+        // ── Build geometry ──
+        const geom = new THREE.PlaneGeometry(RADIUS * 2, RADIUS * 2, SEG, SEG);
+        geom.rotateX(-Math.PI / 2);
+
+        const pos = geom.getAttribute('position');
+
+        for (var i = 0; i < pos.count; i++) {
+          var x = pos.getX(i);
+          var z = pos.getZ(i);
+
+          if (isExcluded(x, z)) {
+            pos.setY(i, -0.5); // sink below ground to hide
+            continue;
+          }
+
+          // Layered noise for natural drifts
+          var n = 0;
+          n += sn(x * 0.04, z * 0.04) * 1.0;
+          n += sn(x * 0.12, z * 0.12) * 0.4;
+          n += sn(x * 0.3, z * 0.3) * 0.15;
+          n = (n + 1) * 0.5; // normalize 0-1 roughly
+          n = Math.max(0, n);
+
+          // Apply cleared zone feathering
+          var cf = clearFactor(x, z);
+          var h = n * MAX_HEIGHT * cf;
+
+          // Distance fade at edges of radius
+          var edgeDist = Math.sqrt(x * x + z * z);
+          if (edgeDist > RADIUS * 0.85) {
+            var edgeFade = 1 - (edgeDist - RADIUS * 0.85) / (RADIUS * 0.15);
+            edgeFade = Math.max(0, edgeFade);
+            h *= edgeFade;
+          }
+
+          pos.setY(i, 0.08 + h); // slightly above lunar ground
+        }
+
+        pos.needsUpdate = true;
+        geom.computeVertexNormals();
+
+        // ── Procedural normal map (fine granular snow detail) ──
+        var nmSize = 512;
+        var nmCv = document.createElement('canvas');
+        nmCv.width = nmSize; nmCv.height = nmSize;
+        var nmCtx = nmCv.getContext('2d');
+        var imgData = nmCtx.createImageData(nmSize, nmSize);
+        var d = imgData.data;
+
+        for (var py = 0; py < nmSize; py++) {
+          for (var px = 0; px < nmSize; px++) {
+            var idx = (py * nmSize + px) * 4;
+            var nx = px / nmSize * 20;
+            var ny = py / nmSize * 20;
+            // Multi-octave noise for normals
+            var dx = sn(nx * 3 + 100, ny * 3) * 0.5 + sn(nx * 8 + 50, ny * 8) * 0.25 + sn(nx * 16, ny * 16 + 30) * 0.12;
+            var dy = sn(nx * 3, ny * 3 + 200) * 0.5 + sn(nx * 8, ny * 8 + 80) * 0.25 + sn(nx * 16 + 70, ny * 16) * 0.12;
+            // Encode as normal map: (dx,dy) → (R,G,B) = (dx*0.5+0.5, dy*0.5+0.5, 1.0)
+            d[idx]     = Math.floor((dx * 0.5 + 0.5) * 255);
+            d[idx + 1] = Math.floor((dy * 0.5 + 0.5) * 255);
+            d[idx + 2] = 200; // Z component — slightly less than 255 to increase bump visibility
+            d[idx + 3] = 255;
+          }
+        }
+        nmCtx.putImageData(imgData, 0, 0);
+        var normalTex = new THREE.CanvasTexture(nmCv);
+        normalTex.wrapS = THREE.RepeatWrapping;
+        normalTex.wrapT = THREE.RepeatWrapping;
+        normalTex.repeat.set(40, 40);
+
+        // ── Material ──
+        var mat = new THREE.MeshStandardMaterial({
+          color: 0xeaeef2,
+          roughness: 1.0,
+          metalness: 0.0,
+          normalMap: normalTex,
+          normalScale: new THREE.Vector2(0.35, 0.35),
+          envMapIntensity: 0.05,
+          side: THREE.FrontSide,
+          depthWrite: true
+        });
+
+        var mesh = new THREE.Mesh(geom, mat);
+        mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+
+        this.el.sceneEl.object3D.add(mesh);
+        this._mesh = mesh;
+      },
+      remove: function () {
+        if (this._mesh) {
+          this.el.sceneEl.object3D.remove(this._mesh);
+          this._mesh.geometry.dispose();
+          this._mesh.material.dispose();
         }
       }
     });
@@ -614,7 +817,7 @@ AFRAME.registerComponent('rig-walk', {
 </div>
 </div>
 </div>
-<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow="count: 18000; areaWidth: 100; areaDepth: 100; ceiling: 28; fallSpeed: 1.6; fallVar: 0.8; windX: 1.0; windZ: 0.4; gustStr: 0.6; size: 0.055; rampTime: 5">
+<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow-ground="" snow="count: 18000; areaWidth: 100; areaDepth: 100; ceiling: 28; fallSpeed: 1.6; fallVar: 0.8; windX: 1.0; windZ: 0.4; gustStr: 0.6; size: 0.055; rampTime: 5">
 <a-assets timeout="30000">
 <img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
 <img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
