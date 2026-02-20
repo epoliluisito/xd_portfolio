@@ -453,6 +453,148 @@ AFRAME.registerComponent('rig-walk', {
         this.el.addEventListener('object3dset', apply);
       }
     });
+
+
+    // ── Snow: wind-driven particles, sparse→intense over 30s ──────────────────
+    AFRAME.registerComponent('snow', {
+      schema: {
+        count:       { type: 'number', default: 4000 },
+        areaWidth:   { type: 'number', default: 80 },
+        areaDepth:   { type: 'number', default: 80 },
+        ceiling:     { type: 'number', default: 25 },
+        floor:       { type: 'number', default: 0.1 },
+        fallSpeed:   { type: 'number', default: 1.2 },
+        fallVar:     { type: 'number', default: 0.6 },
+        windX:       { type: 'number', default: 0.8 },
+        windZ:       { type: 'number', default: 0.3 },
+        gustStr:     { type: 'number', default: 0.4 },
+        gustFreq:    { type: 'number', default: 0.15 },
+        rampTime:    { type: 'number', default: 30 },
+        size:        { type: 'number', default: 0.06 }
+      },
+      init: function () {
+        const d = this.data;
+        const N = d.count;
+
+        // Per-particle state
+        this._fallSpeeds = new Float32Array(N);
+        this._driftX = new Float32Array(N);
+        this._driftZ = new Float32Array(N);
+        this._spawnDelay = new Float32Array(N);  // seconds before particle appears
+
+        const positions = new Float32Array(N * 3);
+
+        for (let i = 0; i < N; i++) {
+          // Stagger spawn: particles activate gradually over rampTime
+          // Early particles spawn immediately, later ones wait
+          this._spawnDelay[i] = Math.pow(Math.random(), 0.5) * d.rampTime;
+
+          // Park off-screen until spawn delay passes
+          positions[i * 3]     = 9999;
+          positions[i * 3 + 1] = 9999;
+          positions[i * 3 + 2] = 9999;
+
+          this._fallSpeeds[i] = d.fallSpeed + (Math.random() - 0.5) * d.fallVar;
+          this._driftX[i] = (Math.random() - 0.5) * 0.3;
+          this._driftZ[i] = (Math.random() - 0.5) * 0.3;
+        }
+
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+        // Soft round sprite via canvas
+        const cv = document.createElement('canvas');
+        cv.width = 32; cv.height = 32;
+        const ctx = cv.getContext('2d');
+        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+        grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 32, 32);
+        const spriteTex = new THREE.CanvasTexture(cv);
+
+        const mat = new THREE.PointsMaterial({
+          map: spriteTex,
+          size: d.size,
+          transparent: true,
+          opacity: 0.85,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
+          sizeAttenuation: true,
+          color: 0xffffff
+        });
+
+        this._points = new THREE.Points(geom, mat);
+        this._points.frustumCulled = false;
+        this.el.sceneEl.object3D.add(this._points);
+
+        this._elapsed = 0;
+        this._posAttr = geom.getAttribute('position');
+        this._spawned = new Uint8Array(N); // 0 = not yet spawned
+      },
+
+      _respawn: function (i) {
+        const d = this.data;
+        const cam = this.el.sceneEl.camera;
+        const cx = cam ? cam.parent.position.x || 0 : 0;
+        const cz = cam ? cam.parent.position.z || 0 : 0;
+
+        const arr = this._posAttr.array;
+        arr[i * 3]     = cx + (Math.random() - 0.5) * d.areaWidth;
+        arr[i * 3 + 1] = d.ceiling + Math.random() * 5;
+        arr[i * 3 + 2] = cz + (Math.random() - 0.5) * d.areaDepth;
+      },
+
+      tick: function (t, dt) {
+        if (!dt) return;
+        const dtS = Math.min(dt / 1000, 0.05);
+        this._elapsed += dtS;
+
+        const d = this.data;
+        const N = d.count;
+        const arr = this._posAttr.array;
+        const elapsed = this._elapsed;
+
+        // Wind gusts
+        const gustPhase = elapsed * d.gustFreq * Math.PI * 2;
+        const gustX = Math.sin(gustPhase) * d.gustStr;
+        const gustZ = Math.cos(gustPhase * 0.7) * d.gustStr * 0.6;
+        const wx = d.windX + gustX;
+        const wz = d.windZ + gustZ;
+
+        for (let i = 0; i < N; i++) {
+          // Check if this particle should be active yet
+          if (!this._spawned[i]) {
+            if (elapsed >= this._spawnDelay[i]) {
+              this._spawned[i] = 1;
+              this._respawn(i);
+            }
+            continue;
+          }
+
+          // Fall + wind + drift
+          arr[i * 3]     += (wx + this._driftX[i]) * dtS;
+          arr[i * 3 + 1] -= this._fallSpeeds[i] * dtS;
+          arr[i * 3 + 2] += (wz + this._driftZ[i]) * dtS;
+
+          // Respawn if below floor or too far from camera
+          if (arr[i * 3 + 1] < d.floor) {
+            this._respawn(i);
+          }
+        }
+
+        this._posAttr.needsUpdate = true;
+      },
+
+      remove: function () {
+        if (this._points) {
+          this.el.sceneEl.object3D.remove(this._points);
+          this._points.geometry.dispose();
+          this._points.material.dispose();
+        }
+      }
+    });
   </script>
 </head>
 <body>
@@ -472,7 +614,7 @@ AFRAME.registerComponent('rig-walk', {
 </div>
 </div>
 </div>
-<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false">
+<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow="">
 <a-assets timeout="30000">
 <img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
 <img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
