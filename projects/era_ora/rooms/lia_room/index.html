@@ -195,7 +195,60 @@
         this.el.sceneEl.addEventListener('object3dset', applyIntensity);
       }
     });
-    AFRAME.registerComponent('rig-walk', {
+    
+    // Fix Mixamo/GLB NPC materials: opaque, matte, stable depth sorting
+    AFRAME.registerComponent('mixamo-mat-fix', {
+      init: function () {
+        this._apply = this._apply.bind(this);
+        this.el.addEventListener('model-loaded', this._apply);
+        this.el.addEventListener('object3dset', this._apply);
+        this._apply();
+      },
+      _apply: function () {
+        const root = this.el.getObject3D('mesh') || this.el.object3D;
+        if (!root || !root.traverse) return;
+        root.traverse((n) => {
+          if (!n || !n.isMesh || !n.material) return;
+          n.castShadow = false;
+          n.receiveShadow = false;
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          mats.forEach((m) => {
+            if (!m) return;
+            const wasTransparent = !!m.transparent || (typeof m.opacity === 'number' && m.opacity < 0.999);
+            m.transparent = false;
+            m.opacity = 1.0;
+            m.depthWrite = true;
+            m.depthTest = true;
+            m.side = THREE.FrontSide;
+            const likelyCutout = wasTransparent || !!m.alphaMap || /hair|lash|brow|card|alpha/i.test((m.name || ''));
+            m.alphaTest = likelyCutout ? Math.max(m.alphaTest || 0, 0.35) : 0;
+            if ('premultipliedAlpha' in m) m.premultipliedAlpha = false;
+            if (m.isMeshStandardMaterial || m.isMeshPhysicalMaterial) {
+              m.metalness = 0.0;
+              m.roughness = Math.max(0.88, (typeof m.roughness === 'number' ? m.roughness : 0.95));
+              if ('envMapIntensity' in m) m.envMapIntensity = 0.0;
+              if ('clearcoat' in m) m.clearcoat = 0.0;
+              if ('clearcoatRoughness' in m) m.clearcoatRoughness = 1.0;
+              if ('sheen' in m) m.sheen = 0.0;
+              if ('transmission' in m) m.transmission = 0.0;
+              if ('ior' in m) m.ior = 1.0;
+            }
+            if (m.isMeshPhongMaterial) {
+              m.shininess = 0;
+              if (m.specular) m.specular.setRGB(0, 0, 0);
+              if ('reflectivity' in m) m.reflectivity = 0;
+            }
+            m.needsUpdate = true;
+          });
+        });
+      },
+      remove: function () {
+        this.el.removeEventListener('model-loaded', this._apply);
+        this.el.removeEventListener('object3dset', this._apply);
+      }
+    });
+
+AFRAME.registerComponent('rig-walk', {
       schema: {
         speed: { type: 'number', default: 2.6 },
         radius: { type: 'number', default: 0.28 },
@@ -461,16 +514,16 @@
 <a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
 <a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
 <a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
-<a-entity id="station_NE_01" position="0.755 0 0.455" rotation="0 0 0">
+<a-entity id="station_NE_01" typing-keyboard-guard position="0.755 0 0.455" rotation="0 0 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_chad_typing" class="npc" gltf-model="#chad_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_chad_typing" class="npc" mixamo-mat-fix gltf-model="#chad_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
 <a-entity id="station_NW_01" position="-0.455 0 0.755" rotation="0 270 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_shannon_sitting" class="npc" gltf-model="#shannon_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_shannon_sitting" class="npc" mixamo-mat-fix gltf-model="#shannon_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
 <a-entity id="station_SE_01" position="0.455 0 -0.755" rotation="0 90 0">
@@ -490,10 +543,10 @@
 <a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
 <a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
 <a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
-<a-entity id="station_NE_02" position="0.755 0 0.455" rotation="0 0 0">
+<a-entity id="station_NE_02" typing-keyboard-guard position="0.755 0 0.455" rotation="0 0 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_martha_typing" class="npc" gltf-model="#martha_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_martha_typing" class="npc" mixamo-mat-fix gltf-model="#martha_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
 <a-entity id="station_NW_02" position="-0.455 0 0.755" rotation="0 270 0">
@@ -504,13 +557,13 @@
 <a-entity id="station_SE_02" position="0.455 0 -0.755" rotation="0 90 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_david_sitting" class="npc" gltf-model="#david_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_david_sitting" class="npc" mixamo-mat-fix gltf-model="#david_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
-<a-entity id="station_SW_02" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-entity id="station_SW_02" typing-keyboard-guard position="-0.755 0 -0.455" rotation="0 180 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_marker_typing" class="npc" gltf-model="#marker_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_marker_typing" class="npc" mixamo-mat-fix gltf-model="#marker_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
 </a-entity>
@@ -525,16 +578,16 @@
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
-<a-entity id="station_NW_03" position="-0.455 0 0.755" rotation="0 270 0">
+<a-entity id="station_NW_03" typing-keyboard-guard position="-0.455 0 0.755" rotation="0 270 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_jenny_typing" class="npc" gltf-model="#jenny_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_jenny_typing" class="npc" mixamo-mat-fix gltf-model="#jenny_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
-<a-entity id="station_SE_03" position="0.455 0 -0.755" rotation="0 90 0">
+<a-entity id="station_SE_03" typing-keyboard-guard position="0.455 0 -0.755" rotation="0 90 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
-<a-entity id="npc_astra_typing" class="npc" gltf-model="#astra_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity id="npc_astra_typing" class="npc" mixamo-mat-fix gltf-model="#astra_typing_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
 </a-entity>
 <a-entity id="station_SW_03" position="-0.755 0 -0.455" rotation="0 180 0">
@@ -554,6 +607,21 @@
 </a-entity>
 </a-scene>
 <script>
+
+
+AFRAME.registerComponent('typing-keyboard-guard', {
+  init: function () {
+    const slab = document.createElement('a-box');
+    slab.setAttribute('class', 'keyboard_guard');
+    slab.setAttribute('width', '0.52');
+    slab.setAttribute('depth', '0.20');
+    slab.setAttribute('height', '0.05');
+    slab.setAttribute('position', '0 0.815 0.24');
+    slab.setAttribute('material', 'shader: standard; color: #d8d8d8; roughness: 1; metalness: 0');
+    this.el.appendChild(slab);
+  }
+});
+
 
 AFRAME.registerComponent('play-gltf-anim', {
   init: function () {
