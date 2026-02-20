@@ -223,38 +223,25 @@
             const likelyCutout = wasTransparent || !!m.alphaMap || /hair|lash|brow|card|alpha/i.test((m.name || ''));
             m.alphaTest = likelyCutout ? Math.max(m.alphaTest || 0, 0.35) : 0;
             if ('premultipliedAlpha' in m) m.premultipliedAlpha = false;
-            if (m.isMeshStandardMaterial || m.isMeshPhysicalMaterial) {
-              m.metalness = 0.0;
-              m.roughness = 1.0;
-              if ('envMapIntensity' in m) m.envMapIntensity = 0.0;
-              if (!AFRAME.components['mixamo-mat-fix']._blackEnv) {
-                var bc = document.createElement('canvas'); bc.width = bc.height = 1;
-                var bctx = bc.getContext('2d'); bctx.fillStyle = '#000'; bctx.fillRect(0,0,1,1);
-                AFRAME.components['mixamo-mat-fix']._blackEnv = new THREE.CubeTexture([bc,bc,bc,bc,bc,bc]);
-                AFRAME.components['mixamo-mat-fix']._blackEnv.needsUpdate = true;
-              }
-              m.envMap = AFRAME.components['mixamo-mat-fix']._blackEnv;
-              if (!AFRAME.components['mixamo-mat-fix']._blackEnv) {
-                var bc = document.createElement('canvas'); bc.width = bc.height = 1;
-                var bctx = bc.getContext('2d'); bctx.fillStyle = '#000'; bctx.fillRect(0,0,1,1);
-                AFRAME.components['mixamo-mat-fix']._blackEnv = new THREE.CubeTexture([bc,bc,bc,bc,bc,bc]);
-                AFRAME.components['mixamo-mat-fix']._blackEnv.needsUpdate = true;
-              }
-              m.envMap = AFRAME.components['mixamo-mat-fix']._blackEnv;
-              if ('clearcoat' in m) m.clearcoat = 0.0;
-              if ('clearcoatRoughness' in m) m.clearcoatRoughness = 1.0;
-              if ('sheen' in m) m.sheen = 0.0;
-              if ('transmission' in m) m.transmission = 0.0;
-              if ('ior' in m) m.ior = 1.0;
+            // Swap to Lambert — zero specular, purely diffuse
+            var lam = new THREE.MeshLambertMaterial();
+            if (m.map) lam.map = m.map;
+            if (m.color) lam.color = m.color.clone();
+            if (m.alphaMap) lam.alphaMap = m.alphaMap;
+            lam.alphaTest = m.alphaTest || 0;
+            lam.transparent = false;
+            lam.opacity = 1.0;
+            lam.depthWrite = true;
+            lam.depthTest = true;
+            lam.side = THREE.FrontSide;
+            lam.userData = lam.userData || {};
+            lam.userData.isNPC = true;
+            if (Array.isArray(n.material)) {
+              var idx = n.material.indexOf(m);
+              if (idx >= 0) n.material[idx] = lam;
+            } else {
+              n.material = lam;
             }
-            if (m.isMeshPhongMaterial) {
-              m.shininess = 0;
-              if (m.specular) m.specular.setRGB(0, 0, 0);
-              if ('reflectivity' in m) m.reflectivity = 0;
-            }
-            m.userData = m.userData || {};
-            m.userData.isNPC = true;
-            m.needsUpdate = true;
           });
         });
       },
@@ -385,14 +372,20 @@ AFRAME.registerComponent('rig-walk', {
         const cv = document.createElement('canvas');
         cv.width = size; cv.height = size;
         const ctx = cv.getContext('2d');
+
+        // Pure black base
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, size, size);
+
+        // Generate star positions
+        const stars = [];
         const layers = [
-          { count: 2200, minR: 0.2, maxR: 0.45, minA: 0.15, maxA: 0.4  },
-          { count: 500,  minR: 0.3, maxR: 0.6,  minA: 0.3,  maxA: 0.6  },
-          { count: 80,   minR: 0.5, maxR: 0.8,  minA: 0.5,  maxA: 0.8  },
+          { count: 2000, minR: 0.2, maxR: 0.45, minA: 0.15, maxA: 0.4  },
+          { count: 450,  minR: 0.3, maxR: 0.6,  minA: 0.3,  maxA: 0.6  },
+          { count: 70,   minR: 0.5, maxR: 0.8,  minA: 0.5,  maxA: 0.8  },
           { count: 12,   minR: 0.7, maxR: 1.0,  minA: 0.7,  maxA: 0.95 }
         ];
+
         for (const layer of layers) {
           for (let i = 0; i < layer.count; i++) {
             const x = Math.random() * size;
@@ -403,10 +396,44 @@ AFRAME.registerComponent('rig-walk', {
             let cr = 255, cg = 255, cb = 255;
             if (hue > 0.85 && hue < 0.92) { cr = 210; cg = 220; cb = 255; }
             else if (hue > 0.92) { cr = 255; cg = 245; cb = 220; }
-            ctx.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + a + ')';
-            ctx.fillRect(Math.floor(x), Math.floor(y), Math.ceil(r), Math.ceil(r));
+            stars.push({ x: x, y: y, r: r, a: a, cr: cr, cg: cg, cb: cb });
           }
         }
+
+        // Draw constellation lines FIRST (behind stars)
+        // Only connect brighter stars, very thin, very faint
+        const brightStars = stars.filter(function(s) { return s.a > 0.35; });
+        const maxDist = 90;
+        ctx.lineWidth = 0.3;
+        for (let i = 0; i < brightStars.length; i++) {
+          let connections = 0;
+          for (let j = i + 1; j < brightStars.length; j++) {
+            if (connections >= 2) break;
+            const dx = brightStars[i].x - brightStars[j].x;
+            const dy = brightStars[i].y - brightStars[j].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < maxDist) {
+              const t = 1 - dist / maxDist;
+              const lineAlpha = t * 0.06 * (brightStars[i].a + brightStars[j].a) * 0.5;
+              if (lineAlpha > 0.005) {
+                ctx.beginPath();
+                ctx.moveTo(brightStars[i].x, brightStars[i].y);
+                ctx.lineTo(brightStars[j].x, brightStars[j].y);
+                ctx.strokeStyle = 'rgba(180,210,255,' + lineAlpha + ')';
+                ctx.stroke();
+                connections++;
+              }
+            }
+          }
+        }
+
+        // Draw stars on top
+        for (let i = 0; i < stars.length; i++) {
+          const s = stars[i];
+          ctx.fillStyle = 'rgba(' + s.cr + ',' + s.cg + ',' + s.cb + ',' + s.a + ')';
+          ctx.fillRect(Math.floor(s.x), Math.floor(s.y), Math.ceil(s.r), Math.ceil(s.r));
+        }
+
         const tex = new THREE.CanvasTexture(cv);
         tex.magFilter = THREE.NearestFilter;
         tex.minFilter = THREE.NearestFilter;
