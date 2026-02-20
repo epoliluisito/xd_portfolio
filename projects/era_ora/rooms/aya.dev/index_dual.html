@@ -1208,6 +1208,172 @@ AFRAME.registerComponent('sphere-dome-audio', {
 });
 </script>
 
+<script>
+/* === Junction Dome spatial ambience (progressive fade to 0 at 40m) === */
+AFRAME.registerComponent('junction-dome-audio', {
+  schema: { maxDistance: { type: 'number', default: 40 } },
+  init: function () {
+    this._camEl = null;
+    this._vCam = new THREE.Vector3();
+    this._vSrc = new THREE.Vector3();
+    this._muted = false;
+
+    const scene = this.el.sceneEl;
+
+    const grabCam = () => {
+      try { this._camEl = scene && scene.camera && scene.camera.el; } catch (e) {}
+    };
+
+    const resumeAudio = async () => {
+      try {
+        const ctx = (scene && scene.audioListener && scene.audioListener.context) ||
+                    (AFRAME.audioContext ? AFRAME.audioContext : null);
+        if (ctx && ctx.state === 'suspended') await ctx.resume();
+      } catch (e) {}
+    };
+
+    this._tryPlay = async () => {
+      if (window.__AYA_PRELOAD_MODE) return;
+      await resumeAudio();
+      const s = this.el.components && this.el.components.sound;
+      if (!s) return;
+      try {
+        if (!s.isPlaying) s.playSound();
+      } catch (e) {}
+    };
+
+    if (scene && scene.hasLoaded) grabCam();
+    else if (scene) scene.addEventListener('loaded', grabCam, { once: true });
+
+    this.el.addEventListener('sound-loaded', this._tryPlay);
+    window.addEventListener('click', this._tryPlay, { passive: true });
+    window.addEventListener('touchstart', this._tryPlay, { passive: true });
+    window.addEventListener('keydown', this._tryPlay, { passive: true });
+
+    // Fabric iframe mute/unmute
+    this._onMute = () => { this._muted = true; };
+    this._onUnmute = () => { this._muted = false; };
+    window.addEventListener('junction-audio-mute', this._onMute);
+    window.addEventListener('junction-audio-unmute', this._onUnmute);
+  },
+
+  tick: function () {
+    const s = this.el.components && this.el.components.sound;
+    if (!s) return;
+
+    if (this._muted) {
+      try { s.setVolume(0); } catch (e) {
+        try { this.el.setAttribute('sound', 'volume', 0); } catch (err) {}
+      }
+      return;
+    }
+
+    const camEl = this._camEl || (this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el);
+    if (!camEl || !camEl.object3D) return;
+
+    camEl.object3D.getWorldPosition(this._vCam);
+    this.el.object3D.getWorldPosition(this._vSrc);
+
+    const d = this._vCam.distanceTo(this._vSrc);
+    const md = Math.max(0.001, this.data.maxDistance);
+
+    let v = 1.0 - (d / md);
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
+
+    try { s.setVolume(v); } catch (e) {
+      try { this.el.setAttribute('sound', 'volume', v); } catch (err) {}
+    }
+  },
+
+  remove: function () {
+    if (this._tryPlay) {
+      this.el.removeEventListener('sound-loaded', this._tryPlay);
+      window.removeEventListener('click', this._tryPlay);
+      window.removeEventListener('touchstart', this._tryPlay);
+      window.removeEventListener('keydown', this._tryPlay);
+    }
+    window.removeEventListener('junction-audio-mute', this._onMute);
+    window.removeEventListener('junction-audio-unmute', this._onUnmute);
+  }
+});
+</script>
+
+<script>
+/* === End Chamber spatial ambience (progressive fade to 0 at 40m) === */
+AFRAME.registerComponent('end-chamber-audio', {
+  schema: { maxDistance: { type: 'number', default: 40 } },
+  init: function () {
+    this._camEl = null;
+    this._vCam = new THREE.Vector3();
+    this._vSrc = new THREE.Vector3();
+
+    const scene = this.el.sceneEl;
+
+    const grabCam = () => {
+      try { this._camEl = scene && scene.camera && scene.camera.el; } catch (e) {}
+    };
+
+    const resumeAudio = async () => {
+      try {
+        const ctx = (scene && scene.audioListener && scene.audioListener.context) ||
+                    (AFRAME.audioContext ? AFRAME.audioContext : null);
+        if (ctx && ctx.state === 'suspended') await ctx.resume();
+      } catch (e) {}
+    };
+
+    this._tryPlay = async () => {
+      if (window.__AYA_PRELOAD_MODE) return;
+      await resumeAudio();
+      const s = this.el.components && this.el.components.sound;
+      if (!s) return;
+      try {
+        if (!s.isPlaying) s.playSound();
+      } catch (e) {}
+    };
+
+    if (scene && scene.hasLoaded) grabCam();
+    else if (scene) scene.addEventListener('loaded', grabCam, { once: true });
+
+    this.el.addEventListener('sound-loaded', this._tryPlay);
+    window.addEventListener('click', this._tryPlay, { passive: true });
+    window.addEventListener('touchstart', this._tryPlay, { passive: true });
+    window.addEventListener('keydown', this._tryPlay, { passive: true });
+  },
+
+  tick: function () {
+    const s = this.el.components && this.el.components.sound;
+    if (!s) return;
+
+    const camEl = this._camEl || (this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el);
+    if (!camEl || !camEl.object3D) return;
+
+    camEl.object3D.getWorldPosition(this._vCam);
+    this.el.object3D.getWorldPosition(this._vSrc);
+
+    const d = this._vCam.distanceTo(this._vSrc);
+    const md = Math.max(0.001, this.data.maxDistance);
+
+    let v = 1.0 - (d / md);
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
+
+    try { s.setVolume(v); } catch (e) {
+      try { this.el.setAttribute('sound', 'volume', v); } catch (err) {}
+    }
+  },
+
+  remove: function () {
+    if (this._tryPlay) {
+      this.el.removeEventListener('sound-loaded', this._tryPlay);
+      window.removeEventListener('click', this._tryPlay);
+      window.removeEventListener('touchstart', this._tryPlay);
+      window.removeEventListener('keydown', this._tryPlay);
+    }
+  }
+});
+</script>
+
 <style id="quitUiStyles">
   /* Quit UI */
   #quitShell{
@@ -11779,6 +11945,12 @@ _applyPlatformReflectionFade: function (factor) {
     } catch (e) {}
     this._showGuide('Ascending…');
 
+    // Play platform mechanical sound
+    try {
+      const ps = p.components && p.components.sound;
+      if (ps) ps.playSound();
+    } catch (e) {}
+
     // Panel indicator: blink only once ascent is activated.
     try {
       const _panelLight = document.querySelector('#endchamber_panel_light');
@@ -16672,6 +16844,9 @@ AFRAME.registerComponent('ion-wind-field', {
     <audio id="nde_sound" crossorigin="anonymous" src="./music/aya_sounds.mp3"></audio>
 
     <audio id="sphere_sound" crossorigin="anonymous" src="./music/sphere_sounds.mp3"></audio>
+    <audio id="junction_sound" crossorigin="anonymous" src="./music/saarabaa.mp3"></audio>
+    <audio id="end_chamber_sound" crossorigin="anonymous" src="./music/end_chamber.mp3"></audio>
+    <audio id="platform_sound" crossorigin="anonymous" src="./music/platform_sound.mp3"></audio>
 
 
     <!-- Capsule NPC laying assets (from aya_capsule.html) -->
@@ -19797,6 +19972,7 @@ AFRAME.registerComponent('ion-wind-field', {
                 position="0 -1.03 0"
                 three-layer="layer: 0"
                 material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true"
+                sound="src: #platform_sound; autoplay: false; loop: false; positional: true; volume: 1; distanceModel: linear; refDistance: 1; maxDistance: 40; rolloffFactor: 1"
                 shadow="cast:false; receive:true">
 
       <a-ring id="endchamber_handrail_top"
@@ -19903,6 +20079,12 @@ AFRAME.registerComponent('ion-wind-field', {
               fol-beam="height: 6.60; radiusTop: 1.55; radiusBottom: 1.55; color: #d9f1ff; opacity: 0.22; solidFactor: 0.34; particles: 0"
               position="0 2.25 0"
               shadow="cast:false; receive:false"></a-entity>
+
+    <!-- End Chamber ambience (spatial, fades out by 40m) -->
+    <a-entity id="end_chamber_ambience"
+              position="0 1.60 0"
+              sound="src: #end_chamber_sound; autoplay: true; loop: true; positional: true; volume: 1; distanceModel: linear; refDistance: 1; maxDistance: 40; rolloffFactor: 1"
+              end-chamber-audio="maxDistance: 40"></a-entity>
 
   </a-entity>
 
@@ -20187,6 +20369,12 @@ AFRAME.registerComponent('ion-wind-field', {
         enabled:    true"></a-entity>
         </a-entity>
     <!-- === /Capsules === -->
+
+    <!-- Junction Dome ambience (spatial, fades out by 40m) -->
+    <a-entity id="junction_dome_ambience"
+              position="0 0 0"
+              sound="src: #junction_sound; autoplay: true; loop: true; positional: true; volume: 1; distanceModel: linear; refDistance: 1; maxDistance: 40; rolloffFactor: 1"
+              junction-dome-audio="maxDistance: 40"></a-entity>
 
 </a-entity>
 
@@ -20961,6 +21149,9 @@ AFRAME.registerComponent('capsule-03-experience', {
   },
 
   _openFabricIframe: function () {
+    // Mute junction dome sound while fabric is active
+    try { window.dispatchEvent(new Event('junction-audio-mute')); } catch (e) {}
+
     // Create fullscreen iframe container
     this._fabricContainer = document.createElement('div');
     this._fabricContainer.id = '_fabricIframeContainer';
@@ -21008,6 +21199,9 @@ AFRAME.registerComponent('capsule-03-experience', {
   },
 
   _closeFabricIframe: function () {
+    // Restore junction dome sound
+    try { window.dispatchEvent(new Event('junction-audio-unmute')); } catch (e) {}
+
     if (this._fabricContainer && this._fabricContainer.parentNode) {
       // Fade out
       this._fabricContainer.style.transition = 'opacity 400ms ease';
@@ -21583,7 +21777,6 @@ AFRAME.registerComponent('racer-controller', {
     _tc.setAttribute('camera-enable-layer', 'layer: 2');
     _tc.setAttribute('tp-camera-springarm', 'pivot: #camPitch; ignore: #racerYaw; colliders: .collider, [data-tube="1"]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65');
     _ra.setAttribute('npc-ground', '');
-    _ra.setAttribute('mixamo-mat-fix', '');
     _ra.setAttribute('racer-controller', 'cam: #racerYaw; turnWithCamera: false');
 
     _ra.addEventListener('model-loaded', function onLoad() {
