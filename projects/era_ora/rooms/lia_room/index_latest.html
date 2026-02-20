@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Lia Room</title>
+<script src="../../vendor/aframe/aframe-1.5.0.min.js"></script>
+<style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+
+    /* Flash fix: cover the canvas immediately at the CSS level before JS runs */
+    a-scene { background: #000; }
+
+    /* Fade-in overlay: starts opaque black, fades out once scene is ready */
+    #fadeIn {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      opacity: 1;
+      pointer-events: none;
+      transition: opacity 900ms ease;
+      z-index: 9999;
+    }
+    #fadeIn.done { opacity: 0; }
+
+    /* ── Quit button — matches aya.dev exactly ── */
+    #quitShell {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 220;
+    }
+    #quitBtn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(0,0,0,0.35);
+      color: rgba(255,255,255,0.85);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+    #quitBtn:hover { border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+
+    #quitConfirm {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.62);
+      z-index: 230;
+    }
+    #quitConfirm.show { display: flex; }
+    #quitCard {
+      width: min(420px, calc(100vw - 48px));
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      padding: 18px;
+      color: rgba(255,255,255,0.92);
+      box-shadow: 0 22px 70px rgba(0,0,0,0.62);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    #quitCard h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    #quitCard p {
+      margin: 0 0 14px 0;
+      font-size: 13px;
+      opacity: 0.85;
+      line-height: 1.35;
+    }
+    #quitActions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .qbtn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.92);
+      padding: 9px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .qbtn.primary {
+      background: rgba(255,255,255,0.18);
+      border-color: rgba(255,255,255,0.32);
+      color: rgba(255,255,255,0.96);
+    }
+  </style>
+<script>
+    // ── Components ────────────────────────────────────────────────────────────
+
+    // Disable fog on specific meshes (earth sphere)
+    AFRAME.registerComponent('no-fog', {
+      init: function () {
+        const apply = (obj) => {
+          if (!obj || !obj.traverse) return;
+          obj.traverse((n) => {
+            if (!n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((m) => {
+              if (m && Object.prototype.hasOwnProperty.call(m, 'fog')) {
+                m.fog = false;
+                m.needsUpdate = true;
+              }
+            });
+          });
+        };
+        apply(this.el.object3D);
+        this.el.addEventListener('object3dset', () => apply(this.el.object3D));
+      }
+    });
+
+    // Improved earth texture sampling
+    AFRAME.registerComponent('earth-texture-quality', {
+      init: function () {
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          mesh.traverse((n) => {
+            if (!n.isMesh || !n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((m) => {
+              if (m.map) {
+                m.map.anisotropy = 4;
+                m.map.minFilter = THREE.LinearMipmapLinearFilter;
+                m.map.magFilter = THREE.LinearFilter;
+                m.map.needsUpdate = true;
+              }
+              m.needsUpdate = true;
+            });
+          });
+        };
+        apply();
+        this.el.addEventListener('object3dset', apply);
+      }
+    });
+
+    // Pitch clamp
+    AFRAME.registerComponent('pitch-clamp', {
+      schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
+      tick: function () {
+        const lc = this.el.components && this.el.components['look-controls'];
+        if (!lc || !lc.pitchObject) return;
+        const minR = this.data.min * Math.PI / 180;
+        const maxR = this.data.max * Math.PI / 180;
+        const p = lc.pitchObject.rotation.x;
+        if (p < minR) lc.pitchObject.rotation.x = minR;
+        if (p > maxR) lc.pitchObject.rotation.x = maxR;
+      }
+    });
+
+    // IBL: scene-level env map driving all PBR metalness/roughness — must match aya.dev
+    // aya.dev uses simple-ibl="intensity: 0.35; color: #e4ebf4" on the a-scene
+    AFRAME.registerComponent('simple-ibl', {
+      schema: { intensity: { type: 'number', default: 1.25 }, color: { type: 'color', default: '#dfe6ef' } },
+      init: function () {
+        const sceneObj = this.el.sceneEl.object3D;
+        const mkCanvas = () => {
+          const cv = document.createElement('canvas'); cv.width = cv.height = 2;
+          const ctx = cv.getContext('2d');
+          const g = ctx.createLinearGradient(0,0,2,2);
+          g.addColorStop(0, this.data.color);
+          g.addColorStop(1, '#aeb7c3');
+          ctx.fillStyle = g; ctx.fillRect(0,0,2,2);
+          return cv;
+        };
+        const cube = new THREE.CubeTexture([mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas()]);
+        cube.needsUpdate = true;
+        sceneObj.environment = cube;
+        const applyIntensity = () => {
+          sceneObj.traverse(o => {
+            if (!o || !o.isMesh) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => {
+              if (m && m.isMeshStandardMaterial) { m.envMapIntensity = this.data.intensity; m.needsUpdate = true; }
+            });
+          });
+        };
+        applyIntensity();
+        this.el.sceneEl.addEventListener('object3dset', applyIntensity);
+      }
+    });
+    
+    // Fix Mixamo/GLB NPC materials: opaque, matte, stable depth sorting
+    AFRAME.registerComponent('mixamo-mat-fix', {
+      init: function () {
+        this._apply = this._apply.bind(this);
+        this.el.addEventListener('model-loaded', this._apply);
+        this.el.addEventListener('object3dset', this._apply);
+        this._apply();
+      },
+      _apply: function () {
+        const root = this.el.getObject3D('mesh') || this.el.object3D;
+        if (!root || !root.traverse) return;
+        root.traverse((n) => {
+          if (!n || !n.isMesh || !n.material) return;
+          n.castShadow = false;
+          n.receiveShadow = false;
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          mats.forEach((m) => {
+            if (!m) return;
+            const wasTransparent = !!m.transparent || (typeof m.opacity === 'number' && m.opacity < 0.999);
+            m.transparent = false;
+            m.opacity = 1.0;
+            m.depthWrite = true;
+            m.depthTest = true;
+            m.side = THREE.FrontSide;
+            const likelyCutout = wasTransparent || !!m.alphaMap || /hair|lash|brow|card|alpha/i.test((m.name || ''));
+            m.alphaTest = likelyCutout ? Math.max(m.alphaTest || 0, 0.35) : 0;
+            if ('premultipliedAlpha' in m) m.premultipliedAlpha = false;
+            if (m.isMeshStandardMaterial || m.isMeshPhysicalMaterial) {
+              m.metalness = 0.0;
+              m.roughness = Math.max(0.88, (typeof m.roughness === 'number' ? m.roughness : 0.95));
+              if ('envMapIntensity' in m) m.envMapIntensity = 0.0;
+              if ('clearcoat' in m) m.clearcoat = 0.0;
+              if ('clearcoatRoughness' in m) m.clearcoatRoughness = 1.0;
+              if ('sheen' in m) m.sheen = 0.0;
+              if ('transmission' in m) m.transmission = 0.0;
+              if ('ior' in m) m.ior = 1.0;
+            }
+            if (m.isMeshPhongMaterial) {
+              m.shininess = 0;
+              if (m.specular) m.specular.setRGB(0, 0, 0);
+              if ('reflectivity' in m) m.reflectivity = 0;
+            }
+            m.needsUpdate = true;
+          });
+        });
+      },
+      remove: function () {
+        this.el.removeEventListener('model-loaded', this._apply);
+        this.el.removeEventListener('object3dset', this._apply);
+      }
+    });
+
+AFRAME.registerComponent('rig-walk', {
+      schema: {
+        speed: { type: 'number', default: 2.6 },
+        radius: { type: 'number', default: 0.28 },
+        height: { type: 'number', default: 1.6 },
+        collidableSelector: { type: 'string', default: '.solid' },
+        refreshMs: { type: 'number', default: 250 }
+      },
+      init: function () {
+        this.keys = Object.create(null);
+
+        const MOVE = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
+        this._onKeyDown = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
+        this._onKeyUp   = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
+        this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
+
+        window.addEventListener('keydown', this._onKeyDown, { passive: false });
+        window.addEventListener('keyup',   this._onKeyUp,   { passive: false });
+        window.addEventListener('blur', this._clearKeys);
+        document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
+
+        this._colliderEls = [];
+        this._lastRefresh = -Infinity;
+
+        // Scratch objects to avoid GC
+        this._playerBox = new THREE.Box3();
+        this._tmpBox = new THREE.Box3();
+        this._tmpV3 = new THREE.Vector3();
+
+        this._refreshColliders = () => {
+          const scene = this.el.sceneEl;
+          if (!scene) return;
+          this._colliderEls = Array.from(scene.querySelectorAll(this.data.collidableSelector));
+          this._lastRefresh = performance.now();
+        };
+
+        // Refresh once scene loads, then whenever models finish loading
+        this.el.sceneEl.addEventListener('loaded', this._refreshColliders);
+        this.el.sceneEl.addEventListener('model-loaded', this._refreshColliders);
+      },
+
+      _intersectsAt: function (x, z) {
+        const r = this.data.radius;
+        const y = this.el.object3D.position.y;
+        const h = this.data.height;
+
+        this._playerBox.min.set(x - r, y, z - r);
+        this._playerBox.max.set(x + r, y + h, z + r);
+
+        for (let i = 0; i < this._colliderEls.length; i++) {
+          const el = this._colliderEls[i];
+          if (!el || !el.object3D) continue;
+
+          // If collider has no visible mesh yet, skip
+          // (Box3.setFromObject handles empty groups, but guard anyway)
+          this._tmpBox.setFromObject(el.object3D);
+          if (!isFinite(this._tmpBox.min.x) || !isFinite(this._tmpBox.max.x)) continue;
+
+          if (this._tmpBox.intersectsBox(this._playerBox)) return true;
+        }
+        return false;
+      },
+
+      tick: function (t, dt) {
+        // Periodically refresh collider list in case DOM changes
+        if ((t - this._lastRefresh) > this.data.refreshMs) this._refreshColliders();
+
+        const w = !!this.keys['KeyW'] || !!this.keys['ArrowUp'];
+        const s = !!this.keys['KeyS'] || !!this.keys['ArrowDown'];
+        const a = !!this.keys['KeyA'] || !!this.keys['ArrowLeft'];
+        const d = !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
+        if (!w && !s && !a && !d) return;
+
+        const dtS = Math.min(0.05, dt / 1000);
+        const cam = this.el.querySelector('[camera]');
+        if (!cam) return;
+
+        const lc = cam.components && cam.components['look-controls'];
+        const yaw = lc && lc.yawObject ? lc.yawObject.rotation.y : 0;
+        const totalYaw = yaw + (this.el.object3D.rotation.y || 0);
+
+        let mx = 0, mz = 0;
+        if (w) { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
+        if (s) { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
+        if (a) { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
+        if (d) { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
+
+        const len = Math.sqrt(mx*mx + mz*mz);
+        if (len <= 0) return;
+
+        const step = this.data.speed * dtS;
+        const dx = (mx / len) * step;
+        const dz = (mz / len) * step;
+
+        const pos = this.el.object3D.position;
+        const x0 = pos.x;
+        const z0 = pos.z;
+
+        // Try X movement (slide)
+        const x1 = x0 + dx;
+        if (!this._intersectsAt(x1, z0)) pos.x = x1;
+
+        // Try Z movement (slide)
+        const z1 = pos.z + dz;
+        if (!this._intersectsAt(pos.x, z1)) pos.z = z1;
+      },
+
+      remove: function () {
+        window.removeEventListener('keydown', this._onKeyDown);
+        window.removeEventListener('keyup',   this._onKeyUp);
+        window.removeEventListener('blur', this._clearKeys);
+      }
+    });
+
+
+    AFRAME.registerComponent('starry-sky', {
+      init: function () {
+        const size = 2048;
+        const cv = document.createElement('canvas');
+        cv.width = size; cv.height = size;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, size, size);
+        const layers = [
+          { count: 2200, minR: 0.2, maxR: 0.45, minA: 0.15, maxA: 0.4  },
+          { count: 500,  minR: 0.3, maxR: 0.6,  minA: 0.3,  maxA: 0.6  },
+          { count: 80,   minR: 0.5, maxR: 0.8,  minA: 0.5,  maxA: 0.8  },
+          { count: 12,   minR: 0.7, maxR: 1.0,  minA: 0.7,  maxA: 0.95 }
+        ];
+        for (const layer of layers) {
+          for (let i = 0; i < layer.count; i++) {
+            const x = Math.random() * size;
+            const y = Math.random() * size;
+            const r = layer.minR + Math.random() * (layer.maxR - layer.minR);
+            const a = layer.minA + Math.random() * (layer.maxA - layer.minA);
+            const hue = Math.random();
+            let cr = 255, cg = 255, cb = 255;
+            if (hue > 0.85 && hue < 0.92) { cr = 210; cg = 220; cb = 255; }
+            else if (hue > 0.92) { cr = 255; cg = 245; cb = 220; }
+            ctx.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + a + ')';
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.ceil(r), Math.ceil(r));
+          }
+        }
+        const tex = new THREE.CanvasTexture(cv);
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.needsUpdate = true;
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          mesh.traverse((n) => {
+            if (n.material) {
+              n.material.map = tex;
+              n.material.color = new THREE.Color(0xffffff);
+              n.material.needsUpdate = true;
+            }
+          });
+        };
+        apply();
+        this.el.addEventListener('object3dset', apply);
+      }
+    });
+  </script>
+</head>
+<body>
+<!-- Flash fix: black overlay present before any paint -->
+<div id="fadeIn"></div>
+<!-- Quit button — matches aya.dev position (bottom-left) and style -->
+<div id="quitShell">
+<button id="quitBtn" type="button">QUIT</button>
+</div>
+<div aria-hidden="true" id="quitConfirm">
+<div aria-label="Quit experience" aria-modal="true" id="quitCard" role="dialog">
+<h3>Quit experience</h3>
+<p>You're about to leave the 3D experience.</p>
+<div id="quitActions">
+<button class="qbtn" id="quitCancel" type="button">Cancel</button>
+<button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
+</div>
+</div>
+</div>
+<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false">
+<a-assets timeout="30000">
+<img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
+<img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
+<img crossorigin="anonymous" id="moonNormal" src="./assets/cave_wall/moon_normal.webp"/>
+<img crossorigin="anonymous" id="moonRough" src="./assets/cave_wall/moon_rough.png"/>
+<img crossorigin="anonymous" id="moonAO" src="./assets/cave_wall/moon_ao.png"/>
+<img crossorigin="anonymous" id="groundDiffuse" src="./assets/moon_ground/moon_ground_diffuse%20.webp"/>
+<img crossorigin="anonymous" id="groundNormal" src="./assets/moon_ground/moon_ground_normal.webp"/>
+<img crossorigin="anonymous" id="groundRough" src="./assets/moon_ground/moon_ground_rough.png"/>
+<img crossorigin="anonymous" id="groundAO" src="./assets/moon_ground/moon_ground_ao.png"/>
+<img crossorigin="anonymous" id="elevMetalColor" src="./assets/metal_elevator_door/metal_elevator_color.webp"/>
+<img crossorigin="anonymous" id="elevMetalNormal" src="./assets/metal_elevator_door/metal_elevator_normal.webp"/>
+<img crossorigin="anonymous" id="elevMetalRough" src="./assets/metal_elevator_door/metal_elevator_rough.png"/>
+<img crossorigin="anonymous" id="elevMetalMetal" src="./assets/metal_elevator_door/metal_elevator_Metalness.png"/>
+
+    <a-asset-item crossorigin="anonymous" id="lia_pc_glb" src="./assets/computer/LIA%20COMPUTER.glb"></a-asset-item>
+  
+    <a-asset-item id="chad_typing_glb" src="../../characters/chad_typing.glb"></a-asset-item>
+    <a-asset-item id="shannon_sitting_glb" src="../../characters/shannon_sitting.glb"></a-asset-item>
+    <a-asset-item id="martha_typing_glb" src="../../characters/martha_typing.glb"></a-asset-item>
+    <a-asset-item id="marker_typing_glb" src="../../characters/marker_typing.glb"></a-asset-item>
+    <a-asset-item id="david_sitting_glb" src="../../characters/david_sitting.glb"></a-asset-item>
+    <a-asset-item id="jenny_typing_glb" src="../../characters/jenny_typing.glb"></a-asset-item>
+    <a-asset-item id="astra_typing_glb" src="../../characters/astra_typing.glb"></a-asset-item>
+
+  </a-assets>
+<!-- ── Sky ──────────────────────────────────────────────────────── -->
+<a-sky id="starSky" starry-sky=""></a-sky>
+<!-- ── Lighting — exact match to aya.dev above-ground state ─────── -->
+<!-- Ambient: matches aya.dev global ambient (very subtle, just breaks pure black) -->
+<a-entity light="type: ambient; color: #0b1220; intensity: 0.035"></a-entity>
+<!-- Directional moonlight from earth direction — same values as lia_lunar_light in aya.dev -->
+<a-entity id="lia_earthshine_target" position="0 0 0"></a-entity>
+<a-entity id="lia_lunar_light" light="type: directional; color: #d9f1ff; intensity: 0.22; castShadow: false; target: #lia_earthshine_target" position="0 35 -220">
+</a-entity>
+<!-- Hemisphere sky fill — same values as lia_lunar_skyfill in aya.dev -->
+<a-entity id="lia_lunar_skyfill" light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.14" position="0 18 0">
+</a-entity>
+<!-- ── Earth — same position/material as aya.dev lia_earth ─────── -->
+<a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.9" no-fog="" position="0 35 -220" radius="9" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
+<!-- Earth atmospheric halo -->
+<a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
+<a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
+<!-- ── Lunar ground ─────────────────────────────────────────────── -->
+<a-ring id="lia_lunar_ground" material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 140 140; normalScale: 1 1; side: front" position="0 0.07 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
+<!-- ── Platform ─────────────────────────────────────────────────── -->
+<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
+<a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
+<a-entity id="endchamber_handrail_colliders">
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 -0.866" rotation="0 -36.1 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.774 0.580 -1.250" rotation="0 -58.2 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.246 0.580 -1.449" rotation="0 -80.4 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.318 0.580 -1.435" rotation="0 -102.5 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.836 0.580 -1.209" rotation="0 -124.6 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.230 0.580 -0.805" rotation="0 -146.8 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.443 0.580 -0.282" rotation="0 -168.9 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.443 0.580 0.282" rotation="0 -191.1 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.230 0.580 0.805" rotation="0 -213.2 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.836 0.580 1.209" rotation="0 -235.4 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.318 0.580 1.435" rotation="0 -257.5 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.246 0.580 1.449" rotation="0 -279.6 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.774 0.580 1.250" rotation="0 -301.8 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 0.866" rotation="0 -323.9 0" visible="false"></a-box>
+</a-entity>
+
+<a-entity id="endchamber_panel" position="0 0.44 1.41" rotation="0 180 0">
+<a-box depth="0.03" height="0.38" id="endchamber_panel_plate" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.7 0.7; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" width="0.20"></a-box>
+<a-cylinder height="0.02" id="endchamber_panel_button" material="shader: standard; color: #cfcfcf; roughness: 0.4; metalness: 0.6; emissive: #ffffff; emissiveIntensity: 0.0" position="0 0.02 0.013" radius="0.032" rotation="90 0 0"></a-cylinder>
+<a-sphere id="endchamber_panel_light" material="shader: standard; color: #0a0a0a; emissive: #d9f1ff; emissiveIntensity: 0.0; roughness: 0.9; metalness: 0.0" position="0 0.092 0.013" radius="0.012"></a-sphere>
+</a-entity>
+</a-cylinder>
+<!-- Seam trim ring -->
+<a-entity id="lia_seam_trim" position="0 0.0715 0">
+<a-ring id="lia_seam_flange" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" radius-inner="1.555" radius-outer="1.62" rotation="-90 0 0" segments-theta="128" shadow="cast:false; receive:true"></a-ring>
+</a-entity>
+<!-- Shaft collar (visible when looking down into hole) -->
+<a-cylinder height="1.50" id="lia_shaft_collar" material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double" open-ended="true" position="0 -0.68 0" radius="1.60" segments-radial="64" shadow="cast:false; receive:true"></a-cylinder>
+<!-- Black cap so shaft doesn't show void -->
+<a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.43 0" radius="1.60" rotation="-90 0 0"></a-circle>
+<!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
+<a-box depth="0.3" height="5" id="test_concrete_wall" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
+<!-- ── Player rig ────────────────────────────────────────────────── -->
+<!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
+<!-- ── Imported office + corridors from index.html ─────────────────────── --><a-entity id="transition_corridor" position="4.5 0.07 -62.5">
+<a-plane height="12" id="transition_corridor_floor" material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="4.2"></a-plane>
+<a-box class="solid" depth="12" height="5" id="transition_corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="12" height="5" id="transition_corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="12.4" height="0.30" id="transition_corridor_roof" material="shader: standard; color: #0a0a0a; roughness: 1; metalness: 0.0" position="0 5.15 0" width="4.8"></a-box>
+</a-entity><a-entity id="office" position="0 0.07 -75">
+<a-plane height="13" id="office_floor" material="shader: standard; color: #4f6f5a; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="14"></a-plane>
+<a-box depth="13.6" height="0.30" id="office_roof" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 5.15 0" width="14.6"></a-box>
+<!-- Office baseboards (thin dark trim) -->
+<a-box depth="0.06" height="0.30" id="office_baseboard_north_left" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="-1.875 0.15 6.5" width="10.25"></a-box>
+<a-box depth="0.06" height="0.30" id="office_baseboard_north_right" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="6.375 0.15 6.5" width="1.25"></a-box>
+<a-box depth="0.06" height="0.30" id="office_baseboard_south_left" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="-6.375 0.15 -6.5" width="1.25"></a-box>
+<a-box depth="0.06" height="0.30" id="office_baseboard_south_right" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="1.875 0.15 -6.5" width="10.25"></a-box>
+<a-box depth="13" height="0.30" id="office_baseboard_east" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="7 0.15 0" width="0.06"></a-box>
+<a-box depth="13" height="0.30" id="office_baseboard_west" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="-7 0.15 0" width="0.06"></a-box>
+<!-- Ceiling grid + light panels (flat first pass) -->
+<a-entity id="office_ceiling_grid" position="0 4.95 0">
+<!-- grid beams -->
+<a-box class="ceiling_beam" depth="0.10" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 0" width="14.2"></a-box>
+<a-box class="ceiling_beam" depth="0.10" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 -4.33" width="14.2"></a-box>
+<a-box class="ceiling_beam" depth="0.10" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 4.33" width="14.2"></a-box>
+<a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="-4.66 0 0" width="0.10"></a-box>
+<a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 0" width="0.10"></a-box>
+<a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="4.66 0 0" width="0.10"></a-box>
+<!-- recessed light panels (emissive) -->
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="-2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="-2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
+    <!-- soft interior illumination (ceiling fixtures) -->
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="-2.33 -0.35 -2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="2.33 -0.35 -2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="-2.33 -0.35 2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="2.33 -0.35 2.16"></a-entity>
+
+</a-entity>
+<!-- Office walls (with offset entrance/exit openings) -->
+<!-- North wall (entrance on right) -->
+<a-box class="solid" depth="0.30" height="5" id="office_wall_north_left" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="-1.875 2.5 6.5" width="10.25"></a-box>
+<a-box class="solid" depth="0.30" height="5" id="office_wall_north_right" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="6.375 2.5 6.5" width="1.25"></a-box>
+<!-- South wall (exit on left) -->
+<a-box class="solid" depth="0.30" height="5" id="office_wall_south_left" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="-6.375 2.5 -6.5" width="1.25"></a-box>
+<a-box class="solid" depth="0.30" height="5" id="office_wall_south_right" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="1.875 2.5 -6.5" width="10.25"></a-box>
+<!-- East / West walls -->
+<a-box class="solid" depth="13" height="5" id="office_wall_east" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="7 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="13" height="5" id="office_wall_west" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="-7 2.5 0" width="0.30"></a-box>
+<!-- 3 station clusters (not directly in front of entrance) -->
+<!-- Stations cluster (copied from working_cubicles.html) -->
+<a-entity id="cluster_01" position="-4.1 0 2.6" rotation="0 0 0">
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_east_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-entity id="station_NE_01" position="0.755 0 0.455" rotation="0 0 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_chad_typing" class="npc" mixamo-mat-fix gltf-model="#chad_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.92; fingers: true" position="0 0.055 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_NW_01" position="-0.455 0 0.755" rotation="0 270 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_shannon_sitting" class="npc" mixamo-mat-fix gltf-model="#shannon_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SE_01" position="0.455 0 -0.755" rotation="0 90 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SW_01" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+</a-entity>
+<!-- Stations cluster (copied from working_cubicles.html) -->
+<a-entity id="cluster_02" position="3.8 0 1.2" rotation="0 0 0">
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_east_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-entity id="station_NE_02" position="0.755 0 0.455" rotation="0 0 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_martha_typing" class="npc" mixamo-mat-fix gltf-model="#martha_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.95; fingers: true" position="0 0.09 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_NW_02" position="-0.455 0 0.755" rotation="0 270 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SE_02" position="0.455 0 -0.755" rotation="0 90 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_david_sitting" class="npc" mixamo-mat-fix gltf-model="#david_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SW_02" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_marker_typing" class="npc" mixamo-mat-fix gltf-model="#marker_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.92; fingers: true" position="0 0.055 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+</a-entity>
+<!-- Stations cluster (copied from working_cubicles.html) -->
+<a-entity id="cluster_03" position="0 0 -3.6" rotation="0 0 0">
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_east_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-entity id="station_NE_03" position="0.755 0 0.455" rotation="0 0 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_NW_03" position="-0.455 0 0.755" rotation="0 270 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_jenny_typing" class="npc" mixamo-mat-fix gltf-model="#jenny_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.92; fingers: true" position="0 0.05 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SE_03" position="0.455 0 -0.755" rotation="0 90 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_astra_typing" class="npc" mixamo-mat-fix gltf-model="#astra_typing_glb" play-gltf-anim hand-clamp="minY: 0.83; smooth: 0.7; fingers: true" position="0 0.025 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SW_03" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.791 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+</a-entity>
+</a-entity><a-entity id="corridor" position="-4.5 0.07 -90.5">
+<a-plane height="12" id="corridor_floor" material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="4.2"></a-plane>
+<a-box class="solid" depth="12" height="5" id="corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
+</a-entity><a-entity id="rig" position="0 0.07 0" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0">
+<a-entity camera="fov: 60; near: 0.1; far: 500; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
+<a-entity cursor="rayOrigin: mouse"></a-entity>
+</a-entity>
+</a-entity>
+</a-scene>
+<script>
+
+
+
+
+AFRAME.registerComponent('play-gltf-anim', {
+  init: function () {
+    this.mixer = null;
+    this.actions = [];
+    this.el.addEventListener('model-loaded', (e) => {
+      const model = this.el.getObject3D('mesh');
+      if (!model) return;
+      const clips = (model.animations && model.animations.length) ? model.animations : ((e.detail && e.detail.model && e.detail.model.animations) || []);
+      if (!clips || !clips.length) return;
+      this.mixer = new THREE.AnimationMixer(model);
+      this.actions = clips.map((clip) => {
+        const a = this.mixer.clipAction(clip);
+        a.reset();
+        a.setLoop(THREE.LoopRepeat, Infinity);
+        a.play();
+        return a;
+      });
+    });
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+  }
+});
+
+AFRAME.registerComponent('hand-clamp', {
+  schema: {
+    minY:    { type: 'number',  default: 0.84  },
+    smooth:  { type: 'number',  default: 0.92  },
+    fingers: { type: 'boolean', default: true   }
+  },
+  init: function () {
+    this._handBones   = [];
+    this._fingerBones = [];
+    this._wP = new THREE.Vector3();
+    const find = () => {
+      this._handBones   = [];
+      this._fingerBones = [];
+      const mesh = this.el.getObject3D('mesh');
+      if (!mesh) return;
+      mesh.traverse((n) => {
+        if (!n.isBone || !n.name) return;
+        const nm = n.name;
+        if (/^(mixamorig:?)?(Left|Right)Hand$/i.test(nm)) {
+          this._handBones.push(n);
+          return;
+        }
+        if (this.data.fingers && /(Thumb|Index|Middle|Ring|Little|Pinky)\d/i.test(nm) &&
+            /(Left|Right)/i.test(nm)) {
+          this._fingerBones.push(n);
+        }
+      });
+    };
+    this.el.addEventListener('model-loaded', find);
+  },
+  tick: function () {
+    const minY = this.data.minY;
+    const sm   = this.data.smooth;
+    const wp   = this._wP;
+    for (let i = 0; i < this._handBones.length; i++) {
+      const b = this._handBones[i];
+      b.getWorldPosition(wp);
+      if (wp.y < minY) b.position.y += (minY - wp.y) * sm;
+    }
+    if (this.data.fingers) {
+      for (let i = 0; i < this._fingerBones.length; i++) {
+        const b = this._fingerBones[i];
+        b.getWorldPosition(wp);
+        if (wp.y < minY) b.position.y += (minY - wp.y) * sm;
+      }
+    }
+  }
+});
+
+
+// ── Fade in from black ────────────────────────────────────────────────────────
+// Flash fix: overlay is already covering everything via CSS (opacity:1 in <style>).
+// We wait for the scene `loaded` event so the first rendered frame is the real scene.
+(function () {
+  const overlay = document.getElementById('fadeIn');
+  if (!overlay) return;
+
+  const fade = () => {
+    // Two rAF passes ensure at least one real frame has been drawn before fading
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      overlay.classList.add('done');
+      setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 1100);
+    }));
+  };
+
+  const scene = document.querySelector('a-scene');
+  if (scene) {
+    if (scene.hasLoaded) fade();
+    else scene.addEventListener('loaded', fade, { once: true });
+  } else {
+    window.addEventListener('load', fade, { once: true });
+  }
+})();
+
+// ── Quit UI — matches aya.dev ─────────────────────────────────────────────────
+(function () {
+  const QUIT    = document.getElementById('quitBtn');
+  const QC      = document.getElementById('quitConfirm');
+  const Q_CANCEL= document.getElementById('quitCancel');
+  const Q_OK    = document.getElementById('quitConfirmBtn');
+
+  function openQuitConfirm()  { if (!QC) return; QC.classList.add('show');    QC.setAttribute('aria-hidden','false'); }
+  function closeQuitConfirm() { if (!QC) return; QC.classList.remove('show'); QC.setAttribute('aria-hidden','true');  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && QC && QC.classList.contains('show')) closeQuitConfirm();
+  }, { passive: true });
+
+  if (QUIT)     QUIT.addEventListener('click', openQuitConfirm);
+  if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
+  if (QC)       QC.addEventListener('click', (e) => { if (e.target === QC) closeQuitConfirm(); });
+  if (Q_OK)     Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
+})();
+</script>
+</body>
+</html>
