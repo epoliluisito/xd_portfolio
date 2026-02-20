@@ -363,7 +363,7 @@ AFRAME.registerComponent('rig-walk', {
     });
 
 
-    // ── Starry sky: procedural canvas texture with varied star sizes/brightness ──
+    // ── Starry sky: cinematic — tiny pinpoints on pure black ──────────────────
     AFRAME.registerComponent('starry-sky', {
       init: function () {
         const size = 2048;
@@ -371,16 +371,16 @@ AFRAME.registerComponent('rig-walk', {
         cv.width = size; cv.height = size;
         const ctx = cv.getContext('2d');
 
-        // Dark background
-        ctx.fillStyle = '#020204';
+        // Pure black
+        ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, size, size);
 
-        // Stars — multiple passes for depth
+        // Tiny distant stars — small radius, subtle alpha
         const layers = [
-          { count: 1800, minR: 0.3, maxR: 0.8, minA: 0.3, maxA: 0.6 },   // distant faint
-          { count: 600,  minR: 0.6, maxR: 1.2, minA: 0.5, maxA: 0.85 },   // medium
-          { count: 120,  minR: 1.0, maxR: 2.0, minA: 0.7, maxA: 1.0 },    // bright
-          { count: 20,   minR: 1.8, maxR: 3.0, minA: 0.85, maxA: 1.0 }    // very bright
+          { count: 2200, minR: 0.2, maxR: 0.45, minA: 0.15, maxA: 0.4  },  // dust
+          { count: 500,  minR: 0.3, maxR: 0.6,  minA: 0.3,  maxA: 0.6  },  // faint
+          { count: 80,   minR: 0.5, maxR: 0.8,  minA: 0.5,  maxA: 0.8  },  // visible
+          { count: 12,   minR: 0.7, maxR: 1.0,  minA: 0.7,  maxA: 0.95 }   // bright
         ];
 
         for (const layer of layers) {
@@ -390,30 +390,20 @@ AFRAME.registerComponent('rig-walk', {
             const r = layer.minR + Math.random() * (layer.maxR - layer.minR);
             const a = layer.minA + Math.random() * (layer.maxA - layer.minA);
 
-            // Slight color variation: white, blue-white, warm-white
+            // Subtle color: mostly pure white, rare blue/warm tints
             const hue = Math.random();
-            let cr, cg, cb;
-            if (hue < 0.6) { cr = 255; cg = 255; cb = 255; }
-            else if (hue < 0.8) { cr = 200; cg = 215; cb = 255; }  // blue tint
-            else if (hue < 0.92) { cr = 255; cg = 240; cb = 210; } // warm tint
-            else { cr = 180; cg = 200; cb = 255; }                  // deeper blue
+            let cr = 255, cg = 255, cb = 255;
+            if (hue > 0.85 && hue < 0.92) { cr = 210; cg = 220; cb = 255; }
+            else if (hue > 0.92) { cr = 255; cg = 245; cb = 220; }
 
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + a + ')';
-            ctx.fill();
-
-            // Add glow to brighter stars
-            if (r > 1.2) {
-              ctx.beginPath();
-              ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
-              ctx.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (a * 0.08) + ')';
-              ctx.fill();
-            }
+            ctx.fillRect(Math.floor(x), Math.floor(y), Math.ceil(r), Math.ceil(r));
           }
         }
 
         const tex = new THREE.CanvasTexture(cv);
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
         tex.needsUpdate = true;
 
         const apply = () => {
@@ -490,7 +480,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-entity id="lia_lunar_skyfill" light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.14" position="0 18 0">
 </a-entity>
 <!-- ── Earth — same position/material as aya.dev lia_earth ─────── -->
-<a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.9" no-fog="" position="0 35 -220" radius="5.5" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
+<a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.9" no-fog="" position="0 35 -220" radius="9" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
 <!-- ── Lunar ground ─────────────────────────────────────────────── -->
 <a-ring id="lia_lunar_ground" material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 140 140; normalScale: 1 1; side: front" position="0 0.07 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
@@ -556,15 +546,15 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 0" width="0.10"></a-box>
 <a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="4.66 0 0" width="0.10"></a-box>
 <!-- recessed light panels (emissive) -->
-<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.09375; roughness: 0.8; metalness: 0" position="-2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
-<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.09375; roughness: 0.8; metalness: 0" position="2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
-<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.09375; roughness: 0.8; metalness: 0" position="-2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
-<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.09375; roughness: 0.8; metalness: 0" position="2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="-2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="-2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.122; roughness: 0.8; metalness: 0" position="2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
     <!-- soft interior illumination (ceiling fixtures) -->
-    <a-entity light="type: point; color: #ffffff; intensity: 0.065625; distance: 18; decay: 2" position="-2.33 -0.35 -2.16"></a-entity>
-    <a-entity light="type: point; color: #ffffff; intensity: 0.065625; distance: 18; decay: 2" position="2.33 -0.35 -2.16"></a-entity>
-    <a-entity light="type: point; color: #ffffff; intensity: 0.065625; distance: 18; decay: 2" position="-2.33 -0.35 2.16"></a-entity>
-    <a-entity light="type: point; color: #ffffff; intensity: 0.065625; distance: 18; decay: 2" position="2.33 -0.35 2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="-2.33 -0.35 -2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="2.33 -0.35 -2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="-2.33 -0.35 2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.0853; distance: 18; decay: 2" position="2.33 -0.35 2.16"></a-entity>
 
 </a-entity>
 <!-- Office walls (with offset entrance/exit openings) -->
@@ -589,26 +579,26 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_chad_typing" class="npc" mixamo-mat-fix gltf-model="#chad_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.92; fingers: true" position="0 0.055 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_NW_01" position="-0.455 0 0.755" rotation="0 270 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_shannon_sitting" class="npc" mixamo-mat-fix gltf-model="#shannon_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_SE_01" position="0.455 0 -0.755" rotation="0 90 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_SW_01" position="-0.755 0 -0.455" rotation="0 180 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 </a-entity>
 <!-- Stations cluster (copied from working_cubicles.html) -->
@@ -622,27 +612,27 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_martha_typing" class="npc" mixamo-mat-fix gltf-model="#martha_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.95; fingers: true" position="0 0.09 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_NW_02" position="-0.455 0 0.755" rotation="0 270 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_SE_02" position="0.455 0 -0.755" rotation="0 90 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_david_sitting" class="npc" mixamo-mat-fix gltf-model="#david_sitting_glb" play-gltf-anim position="0 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_SW_02" position="-0.755 0 -0.455" rotation="0 180 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_marker_typing" class="npc" mixamo-mat-fix gltf-model="#marker_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.92; fingers: true" position="0 0.055 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 </a-entity>
 <!-- Stations cluster (copied from working_cubicles.html) -->
@@ -655,27 +645,27 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_NW_03" position="-0.455 0 0.755" rotation="0 270 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_jenny_typing" class="npc" mixamo-mat-fix gltf-model="#jenny_typing_glb" play-gltf-anim hand-clamp="minY: 0.84; smooth: 0.92; fingers: true" position="0 0.05 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_SE_03" position="0.455 0 -0.755" rotation="0 90 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity id="npc_astra_typing" class="npc" mixamo-mat-fix gltf-model="#astra_typing_glb" play-gltf-anim hand-clamp="minY: 0.83; smooth: 0.7; fingers: true" position="0 0.025 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 <a-entity id="station_SW_03" position="-0.755 0 -0.455" rotation="0 180 0">
 <a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.75 0" width="1.45"></a-box>
 <a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 0.225 0.85" width="0.45"></a-box>
 <a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.79 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
-<a-entity class="touchpad" position="0.16 0.791 0.28"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+<a-entity class="touchpad" position="0.34 0.791 0.12"><a-box width="0.12" height="0.005" depth="0.085" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.108" height="0.072" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 </a-entity>
 </a-entity><a-entity id="corridor" position="-4.5 0.07 -90.5">
@@ -727,7 +717,6 @@ AFRAME.registerComponent('hand-clamp', {
     this._handBones   = [];
     this._fingerBones = [];
     this._wP = new THREE.Vector3();
-
     const find = () => {
       this._handBones   = [];
       this._fingerBones = [];
@@ -752,22 +741,16 @@ AFRAME.registerComponent('hand-clamp', {
     const minY = this.data.minY;
     const sm   = this.data.smooth;
     const wp   = this._wP;
-
     for (let i = 0; i < this._handBones.length; i++) {
       const b = this._handBones[i];
       b.getWorldPosition(wp);
-      if (wp.y < minY) {
-        b.position.y += (minY - wp.y) * sm;
-      }
+      if (wp.y < minY) b.position.y += (minY - wp.y) * sm;
     }
-
     if (this.data.fingers) {
       for (let i = 0; i < this._fingerBones.length; i++) {
         const b = this._fingerBones[i];
         b.getWorldPosition(wp);
-        if (wp.y < minY) {
-          b.position.y += (minY - wp.y) * sm;
-        }
+        if (wp.y < minY) b.position.y += (minY - wp.y) * sm;
       }
     }
   }
