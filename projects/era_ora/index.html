@@ -7541,7 +7541,12 @@ AFRAME.registerComponent('tp-camera-springarm', {
     sphereRadius: { type: 'number', default: 0.22 },
     ceilingPadding: { type: 'number', default: 0.08 },
     ceilingProbe: { type: 'number', default: 0.42 },
-    maxCeilingDrop: { type: 'number', default: 0.65 }
+    maxCeilingDrop: { type: 'number', default: 0.65 },
+    // Vertical escape: when walls compress the arm below minDist,
+    // lift the camera upward to see over the obstruction.
+    liftScale: { type: 'number', default: 1.4 },    // lift = compression * liftScale
+    maxLift: { type: 'number', default: 1.8 },       // absolute ceiling on upward escape
+    liftProbe: { type: 'number', default: 2.2 }      // how far to probe upward for clearance
   },
 
   init: function () {
@@ -7569,6 +7574,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     this._curDist = this._baseDist;
     this._ceilingDrop = 0;
+    this._curLift = 0;          // current vertical escape offset
+    this._downVec = new THREE.Vector3(0, -1, 0);
 
     this._colliderMeshes = [];
     this._lastRefresh = 0;
@@ -7635,7 +7642,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
       }
     }
 
-    const clamped = Math.max(this.data.minDist, Math.min(this._baseDist, best));
+    const clamped = Math.min(this._baseDist, best);
+    this._rawSweepDist = clamped;  // raw distance before minDist floor (for lift calculation)
     return clamped;
   },
 
@@ -7655,6 +7663,34 @@ AFRAME.registerComponent('tp-camera-springarm', {
     return Math.min(this.data.maxCeilingDrop, (needClear - dist));
   },
 
+  // Vertical escape: when arm is compressed below minDist by walls,
+  // lift the camera upward to look over the obstruction.
+  _computeLift: function (camPos, rawDist) {
+    const minD = this.data.minDist;
+    if (rawDist >= minD) return 0;
+
+    // How compressed are we? 0 = at minDist, 1 = at pivot
+    const compression = Math.min(1, (minD - rawDist) / Math.max(0.01, minD));
+
+    // Desired lift proportional to compression
+    let desiredLift = compression * this.data.liftScale * minD;
+    desiredLift = Math.min(desiredLift, this.data.maxLift);
+
+    // Probe upward from the (un-lifted) camera position to find ceiling clearance
+    const probeH = Math.max(0.3, this.data.liftProbe);
+    this.raycaster.set(camPos, this._up);
+    this.raycaster.near = 0;
+    this.raycaster.far = probeH;
+
+    const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
+    if (hits && hits.length) {
+      const clearance = Math.max(0, hits[0].distance - this.data.sphereRadius - this.data.ceilingPadding);
+      desiredLift = Math.min(desiredLift, clearance);
+    }
+
+    return Math.max(0, desiredLift);
+  },
+
   tick: function (t, dt) {
     if (!this.data.pivot) return;
 
@@ -7670,7 +7706,12 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._desiredW.copy(this._baseLocal);
     pivotObj.localToWorld(this._desiredW);
 
-    const targetDist = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
+    // _sphereSweepClampDist now returns raw distance (may be < minDist)
+    const rawTarget = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
+
+    // For arm distance, still respect minDist as a soft preference:
+    // the arm won't extend beyond minDist unless lift can't compensate.
+    const targetDist = Math.max(0.05, rawTarget);
 
     const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
     const prevDist = this._curDist;
@@ -7690,6 +7731,23 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
 
+    // Vertical escape lift (when compressed below minDist)
+    const desiredLift = this._computeLift(this._finalW, this._rawSweepDist);
+    const aLift = Math.min(1, Math.max(0, this.data.smoothPos));
+    if (desiredLift > this._curLift) {
+      // Lifting up to escape — snap quickly to avoid wall flash
+      this._curLift = this._curLift + (desiredLift - this._curLift) * 0.5;
+    } else {
+      // Settling back down — smooth
+      this._curLift = this._curLift + (desiredLift - this._curLift) * aLift;
+    }
+    if (Math.abs(this._curLift) < 0.001) this._curLift = 0;
+
+    if (this._curLift > 0) {
+      this._finalW.y += this._curLift;
+    }
+
+    // Ceiling drop (existing logic — only for cases where ceiling is hit normally)
     const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
 
     const aPos = Math.min(1, Math.max(0, this.data.smoothPos));
@@ -7709,7 +7767,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     const local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
     local.x = this._baseLocal.x;
     local.z = this._sign * this._curDist;
-    local.y = Math.min(this._baseLocal.y, local.y);
+    local.y = Math.min(this._baseLocal.y + this._curLift, local.y);
 
     this.el.object3D.position.copy(local);
   }
