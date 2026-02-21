@@ -16936,6 +16936,8 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-entity id="rimblock_t03_far"  rim-side-blockers="target: #tunnel_03_rim_far;  inner: 1.25; outer: 3.25; depth: 0.80; height: 3.2; yOffset: 0.40"></a-entity>
     <a-entity id="rimblock_t01_near" rim-side-blockers="target: #tunnel_01_rim_near; inner: 1.25; outer: 3.25; depth: 0.55; height: 3.2; yOffset: 0.40"></a-entity>
     <a-entity id="rimblock_t01_far"  rim-side-blockers="target: #tunnel_01_rim_far;  inner: 1.25; outer: 3.25; depth: 0.55; height: 3.2; yOffset: 0.40"></a-entity>
+    <!-- Tunnel_01: tube constraint (imported dome_tunnel; merge-aligned at runtime) -->
+    <a-entity id="tube_tunnel_01" tube-wall="module: #dome_tunnel_import; a: 3.95 2.00; b: 23.95 2.00; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
     <!-- Portal fillet blockers (architectural: user must not walk through) -->
     <a-entity id="filletblock_t01_dome"     rim-side-blockers="target: #merge_portal_anchor #dome_portal_fillet;     inner: 1.15; outer: 1.62; depth: 0.50; height: 3.2; yOffset: 0.40"></a-entity>
     <a-entity id="filletblock_t01_entrance" rim-side-blockers="target: #entrance_portal_anchor #entrance_portal_fillet; inner: 1.15; outer: 1.62; depth: 0.50; height: 3.2; yOffset: 0.40"></a-entity>
@@ -21778,9 +21780,10 @@ AFRAME.registerComponent('tp-camera-springarm', {
   },
   // Clamp a world position inside any active tube constraint in full 3D.
   // This prevents the camera from going through tunnel walls/ceilings
-  // where no mesh colliders exist.
+  // where no mesh colliders exist. Returns true if clamping was applied.
   _clampToTubes: function (pos) {
     const pad = this.data.sphereRadius;
+    let clamped = false;
 
     for (let i = 0; i < this._tubes.length; i++) {
       const t = this._tubes[i];
@@ -21816,8 +21819,28 @@ AFRAME.registerComponent('tp-camera-springarm', {
         pos.x = cx + dx * scale;
         pos.y = cy + dy * scale;
         pos.z = cz + dz * scale;
+        clamped = true;
       }
     }
+    return clamped;
+  },
+  // Check if a world position (XZ) falls inside any tube's active segment.
+  // Used to suppress lift inside tunnels where no ceiling meshes exist.
+  _isInTube: function (pos) {
+    for (let i = 0; i < this._tubes.length; i++) {
+      const t = this._tubes[i];
+      const apx = pos.x - t.ax, apz = pos.z - t.az;
+      let tt = (apx * t.dx + apz * t.dz) / t.len2;
+      const tMargin = Math.min(0.45, t.endMargin / t.len);
+      if (tt < tMargin || tt > (1 - tMargin)) continue;
+
+      const cx = t.ax + t.dx * tt;
+      const cz = t.az + t.dz * tt;
+      const dx = pos.x - cx, dz = pos.z - cz;
+      const distXZ = Math.sqrt(dx * dx + dz * dz);
+      if (distXZ < t.r + 0.5) return true;  // slightly generous check
+    }
+    return false;
   },
   // Vertical escape: when arm is compressed below minDist by walls,
   // lift the camera upward to look over the obstruction.
@@ -21880,20 +21903,29 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
 
-    // Vertical escape lift (when compressed below minDist)
-    const desiredLift = this._computeLift(this._finalW, this._rawSweepDist);
-    const aLift = THREE.MathUtils.clamp(this.data.smoothPos, 0, 1);
-    if (desiredLift > this._curLift) {
-      // Lifting up to escape — snap quickly to avoid wall flash
-      this._curLift = this._curLift + (desiredLift - this._curLift) * 0.5;
-    } else {
-      // Settling back down — smooth
-      this._curLift = this._curLift + (desiredLift - this._curLift) * aLift;
-    }
-    if (Math.abs(this._curLift) < 0.001) this._curLift = 0;
+    // Check if we're inside a tunnel (pivot position)
+    const inTube = this._tubes.length > 0 && this._isInTube(this._pivotW);
 
-    if (this._curLift > 0) {
-      this._finalW.y += this._curLift;
+    // Vertical escape lift (when compressed below minDist)
+    // Suppressed inside tunnels — no ceiling meshes to limit the lift,
+    // so it would push the camera through the tunnel shell.
+    if (!inTube) {
+      const desiredLift = this._computeLift(this._finalW, this._rawSweepDist);
+      const aLift = THREE.MathUtils.clamp(this.data.smoothPos, 0, 1);
+      if (desiredLift > this._curLift) {
+        this._curLift = this._curLift + (desiredLift - this._curLift) * 0.5;
+      } else {
+        this._curLift = this._curLift + (desiredLift - this._curLift) * aLift;
+      }
+      if (Math.abs(this._curLift) < 0.001) this._curLift = 0;
+
+      if (this._curLift > 0) {
+        this._finalW.y += this._curLift;
+      }
+    } else {
+      // Quickly decay lift when entering a tube
+      this._curLift *= 0.5;
+      if (Math.abs(this._curLift) < 0.001) this._curLift = 0;
     }
 
     // Ceiling limiter
@@ -21910,20 +21942,27 @@ AFRAME.registerComponent('tp-camera-springarm', {
       }
     }
 
-    // Tube constraint: clamp camera inside tunnel cylinders in 3D
-    // (final authority — catches lift/ceiling gaps where no mesh exists)
+    // Tube constraint on lerp target (so smoothing heads toward correct position)
+    let tubeClamped = false;
     if (this._tubes.length) {
-      this._clampToTubes(this._finalW);
+      tubeClamped = this._clampToTubes(this._finalW);
     }
 
     // Smooth world->local placement
     const aPos = THREE.MathUtils.clamp(this.data.smoothPos, 0, 1);
     const curW = this.el.object3D.getWorldPosition(this._tmp);
 
-    if (didSnapIn) {
+    if (didSnapIn || tubeClamped) {
+      // Snap immediately when wall collision or tube constraint is active
       curW.copy(this._finalW);
     } else {
       curW.lerp(this._finalW, aPos);
+    }
+
+    // HARD tube constraint — absolute final authority on the actual camera position.
+    // Catches any residual drift from smoothing or edge cases.
+    if (this._tubes.length) {
+      this._clampToTubes(curW);
     }
 
     this.el.object3D.parent.worldToLocal(curW);
