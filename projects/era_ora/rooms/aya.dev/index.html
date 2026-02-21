@@ -21699,6 +21699,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._curLift = 0;          // current vertical escape offset
     this._rawSweepDist = this._curDist;
     this._meshes = [];
+    this._tubes = [];           // tube constraints for 3D camera clamping inside tunnels
     this._lastRefresh = 0;
     this._aabb = new THREE.Box3();
   },
@@ -21721,6 +21722,41 @@ AFRAME.registerComponent('tp-camera-springarm', {
         this._meshes.push(obj);
       });
     });
+
+    // Collect tube constraints for 3D camera clamping inside tunnels.
+    // Tube-wall entities have data attributes but no meshes — the springarm
+    // needs to understand their cylindrical geometry mathematically.
+    this._tubes.length = 0;
+    const tubeEls = Array.from(this.el.sceneEl.querySelectorAll('[data-tube="1"]'));
+    for (let i = 0; i < tubeEls.length; i++) {
+      const tel = tubeEls[i];
+      const ax = parseFloat(tel.dataset.ax), az = parseFloat(tel.dataset.az);
+      const bx = parseFloat(tel.dataset.bx), bz = parseFloat(tel.dataset.bz);
+      const r  = parseFloat(tel.dataset.r);
+      if (![ax, az, bx, bz, r].every(Number.isFinite)) continue;
+
+      // Get centerline world Y from the tube-wall component's module reference.
+      let cy = 0;
+      const twComp = tel.components && tel.components['tube-wall'];
+      if (twComp && twComp.data && twComp.data.module && twComp.data.module.object3D) {
+        const modWP = new THREE.Vector3();
+        twComp.data.module.object3D.getWorldPosition(modWP);
+        cy = modWP.y;
+      }
+
+      const dx = bx - ax, dz = bz - az;
+      const len2 = dx * dx + dz * dz;
+      this._tubes.push({
+        ax: ax, az: az, bx: bx, bz: bz,
+        dx: dx, dz: dz,
+        len2: Math.max(1e-6, len2),
+        len: Math.sqrt(Math.max(1e-6, len2)),
+        r: r,
+        cy: cy,
+        endMargin: parseFloat(tel.dataset.endmargin) || 0.6,
+        influence: parseFloat(tel.dataset.influence) || (r + 1.8)
+      });
+    }
   },
   _sweepDist: function (fromW, toW) {
     this._dir.copy(toW).sub(fromW);
@@ -21739,6 +21775,49 @@ AFRAME.registerComponent('tp-camera-springarm', {
     const clamped = Math.min(full, d);
     this._rawSweepDist = clamped;  // raw distance before minDist floor (for lift calculation)
     return clamped;
+  },
+  // Clamp a world position inside any active tube constraint in full 3D.
+  // This prevents the camera from going through tunnel walls/ceilings
+  // where no mesh colliders exist.
+  _clampToTubes: function (pos) {
+    const pad = this.data.sphereRadius;
+
+    for (let i = 0; i < this._tubes.length; i++) {
+      const t = this._tubes[i];
+
+      // Project pos onto centerline segment in XZ
+      const apx = pos.x - t.ax, apz = pos.z - t.az;
+      let tt = (apx * t.dx + apz * t.dz) / t.len2;
+
+      // Skip if outside the tube segment (keep portals open)
+      const tMargin = Math.min(0.45, t.endMargin / t.len);
+      if (tt < tMargin || tt > (1 - tMargin)) continue;
+
+      // Closest point on centerline in XZ
+      const cx = t.ax + t.dx * tt;
+      const cz = t.az + t.dz * tt;
+      const cy = t.cy;
+
+      // 3D offset from centerline
+      const dx = pos.x - cx;
+      const dy = pos.y - cy;
+      const dz = pos.z - cz;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      // Only act if camera is near the corridor (XZ proximity check)
+      const distXZ = Math.sqrt(dx * dx + dz * dz);
+      if (distXZ > t.influence) continue;
+
+      const maxR = Math.max(0.05, t.r - pad);
+
+      if (dist > maxR && dist > 1e-6) {
+        // Push back inside the cylinder in 3D
+        const scale = maxR / dist;
+        pos.x = cx + dx * scale;
+        pos.y = cy + dy * scale;
+        pos.z = cz + dz * scale;
+      }
+    }
   },
   // Vertical escape: when arm is compressed below minDist by walls,
   // lift the camera upward to look over the obstruction.
@@ -21829,6 +21908,12 @@ AFRAME.registerComponent('tp-camera-springarm', {
       if (desiredY < 0) {
         this._finalW.y += Math.max(-maxDrop, desiredY);
       }
+    }
+
+    // Tube constraint: clamp camera inside tunnel cylinders in 3D
+    // (final authority — catches lift/ceiling gaps where no mesh exists)
+    if (this._tubes.length) {
+      this._clampToTubes(this._finalW);
     }
 
     // Smooth world->local placement
