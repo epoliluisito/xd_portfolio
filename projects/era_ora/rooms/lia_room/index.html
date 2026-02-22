@@ -523,7 +523,6 @@ AFRAME.registerComponent('rig-walk', {
         if (x > -7.5 && x < 7.5 && z > -82 && z < -68) return true;
         if (x > 2.0 && x < 7.0 && z > -69 && z < -56) return true;
         if (x > -7.0 && x < -2.0 && z > -97 && z < -84) return true;
-        if ((x*x + z*z) < (2.7*2.7)) return true;
         return false;
       },
 
@@ -536,8 +535,8 @@ AFRAME.registerComponent('rig-walk', {
         // Keep snow concentrated near office, with noisy/organic outer contour.
         const nA = sn(x * 0.05, z * 0.05) * 6.5;
         const nB = sn(x * 0.11 + 22, z * 0.11 - 9) * 2.5;
-        const outerR = 31 + nA*0.7 + nB;   // irregular boundary
-        const innerFull = 19 + sn(x * 0.08 - 30, z * 0.08 + 17) * 1.2;
+        const outerR = 28 + nA + nB;   // irregular boundary
+        const innerFull = 15 + sn(x * 0.08 - 30, z * 0.08 + 17) * 1.5;
 
         // Soft ramp between no-snow and full-snow
         let m = (outerR - r) / Math.max(0.001, (outerR - innerFull));
@@ -546,16 +545,16 @@ AFRAME.registerComponent('rig-walk', {
 
         // Hard clear near spawn-facing side (camera starts looking opposite office, around z ~0 / - side path)
         // Fade out all snow when approaching origin region.
-        const spawnClearR = 30;
+        const spawnClearR = 34;
         const rSpawn = Math.sqrt(x*x + z*z);
-        let spawnFade = (rSpawn - 18) / (spawnClearR - 18);
+        let spawnFade = (rSpawn - 20) / (spawnClearR - 20);
         spawnFade = Math.max(0, Math.min(1, spawnFade));
         spawnFade = spawnFade * spawnFade * (3 - 2 * spawnFade);
         m *= spawnFade;
 
         // Directional suppression toward the front-facing side to avoid visible edge line there.
         const towardSpawn = Math.max(0, (z + 75) / 75); // 1 near z=0, 0 at office
-        m *= (1 - 0.82 * towardSpawn);
+        m *= (1 - 0.7 * towardSpawn);
 
         return Math.max(0, Math.min(1, m));
       },
@@ -658,193 +657,171 @@ AFRAME.registerComponent('rig-walk', {
     })(window._snoise={});
 
     // ── Snow ground: procedural displaced mesh + procedural normal map ─────────
-    
-AFRAME.registerComponent('snow-ground', {
-  init: function () {
-    const sn = window._snoise.simplex2;
+    AFRAME.registerComponent('snow-ground', {
+      init: function () {
+        const sn = window._snoise.simplex2;
 
-    const RADIUS = 120;
-    const SEG = 520;
-    const BASE_Y = 0.035;
+        const RADIUS = 120;
+        const SEG = 360;
+        const BASE_Y = 0.08;
 
-    const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68, cx: 0, cz: -75 };
-    const transCorridor = { x1: 2.0, x2: 7.0, z1: -69, z2: -56 };
-    const exitCorridor  = { x1: -7.0, x2: -2.0, z1: -97, z2: -84 };
-    const platformR = 2.1;
+        const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68, cx: 0, cz: -75 };
+        const transCorridor = { x1: 2.0, x2: 7.0, z1: -69, z2: -56 };
+        const exitCorridor = { x1: -7.0, x2: -2.0, z1: -97, z2: -84 };
+        const platformR = 2.1;
 
-    function smoothstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
-    function sat(x){ return Math.max(0,Math.min(1,x)); }
-    function isInsideRectPad(x,z,r,pad){ return x>r.x1-pad && x<r.x2+pad && z>r.z1-pad && z<r.z2+pad; }
-    function sdRoundRect(x,z,r,rad){
-      const cx=(r.x1+r.x2)*0.5, cz=(r.z1+r.z2)*0.5;
-      const hx=(r.x2-r.x1)*0.5, hz=(r.z2-r.z1)*0.5;
-      const qx=Math.abs(x-cx)-Math.max(0,hx-rad);
-      const qz=Math.abs(z-cz)-Math.max(0,hz-rad);
-      const ox=Math.max(qx,0), oz=Math.max(qz,0);
-      return Math.sqrt(ox*ox+oz*oz)+Math.min(Math.max(qx,qz),0)-rad;
-    }
+        function isInsideRectPad(x,z,r,pad){ return x>r.x1-pad && x<r.x2+pad && z>r.z1-pad && z<r.z2+pad; }
+        function distToRectEdge(x,z,r){
+          const dx = Math.max(r.x1 - x, 0, x - r.x2);
+          const dz = Math.max(r.z1 - z, 0, z - r.z2);
+          const outside = Math.sqrt(dx*dx + dz*dz);
+          if (outside > 0) return outside;
+          const toSides = Math.min(x-r.x1, r.x2-x, z-r.z1, r.z2-z);
+          return -toSides;
+        }
+        function smoothstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
 
-    function zoneMask(x,z){
-      // Organic but smooth snow area around the office only (not around platform/spawn)
-      const warpX = x + sn(x*0.030+11, z*0.030-7) * 4.2;
-      const warpZ = z + sn(x*0.030-21, z*0.030+13) * 4.2;
+        function zoneMask(x, z) {
+          // Domain-warped radial field for a softer, less polygonal snow boundary.
+          const wx = x + sn(x*0.035 + 41, z*0.035 - 17) * 7.0 + sn(x*0.09, z*0.09) * 2.0;
+          const wz = z + sn(x*0.035 - 13, z*0.035 + 23) * 7.0 + sn(x*0.09 + 7, z*0.09 - 9) * 2.0;
+          const dx = wx - office.cx, dz = wz - office.cz;
+          const r = Math.sqrt(dx*dx + dz*dz);
 
-      const dx = warpX - office.cx, dz = warpZ - office.cz;
-      const r = Math.sqrt(dx*dx + dz*dz);
+          const n1 = sn(wx*0.045, wz*0.045) * 6.0;
+          const n2 = sn(wx*0.10 + 13.4, wz*0.10 - 8.2) * 2.8;
+          const n3 = sn(wx*0.18 - 3.1, wz*0.18 + 6.4) * 1.0;
 
-      // Main rounded zone with wide soft transition (prevents geometric edge)
-      const outer = 31 + sn(warpX*0.045, warpZ*0.045)*3.8 + sn(warpX*0.09+5, warpZ*0.09-9)*1.4;
-      const inner = outer - 11.5; // wide boundary band
-      let m = 1.0 - smoothstep(inner, outer, r);
+          const outer = 31 + n1 + n2 + n3;
+          const inner = 17 + sn(wx*0.07 - 5, wz*0.07 + 14) * 1.8;
+          let m = 1 - smoothstep(inner, outer, r);
 
-      // directional suppression toward spawn-facing/front side
-      const front = sat((z + 70) / 26); // 1 in front of office
-      m *= (1.0 - 0.72*front);
+          // Spawn-facing clear side, but avoid a hard geometric line.
+          const spawnR = Math.sqrt(x*x + z*z);
+          let spawnFade = smoothstep(16, 40, spawnR);
+          const frontBias = Math.max(0, Math.min(1, (z + 75) / 75));
+          const frontNoise = 0.88 + 0.12 * (sn(x*0.06 + 60, z*0.06 - 10) * 0.5 + 0.5);
+          m *= spawnFade * (1 - 0.58 * frontBias * frontNoise);
 
-      // hard no-snow around central platform region (user requested)
-      const rp = Math.sqrt(x*x + z*z);
-      m *= smoothstep(20, 31, rp);
+          // Boundary breakup without creating isolated holes/islands.
+          const edgeNoise = sn(x*0.14 + 100, z*0.14 - 100) * 0.5 + 0.5;
+          const edgeBoost = smoothstep(0.0, 0.35, m) * (1 - smoothstep(0.35, 0.9, m));
+          m += (edgeNoise - 0.5) * 0.16 * edgeBoost;
 
-      // ensure snow follows office/corridor context via smooth local boosts (no hard rectangles)
-      const dOffice = sdRoundRect(x,z,office,2.8);
-      const dTrans  = sdRoundRect(x,z,transCorridor,1.8);
-      const dExit   = sdRoundRect(x,z,exitCorridor,1.8);
+          return Math.max(0, Math.min(1, m));
+        }
 
-      const nearOffice = 1.0 - smoothstep(0.0, 6.5, dOffice);
-      const nearTrans  = 1.0 - smoothstep(0.0, 4.0, dTrans);
-      const nearExit   = 1.0 - smoothstep(0.0, 4.0, dExit);
+        const geom = new THREE.PlaneGeometry(RADIUS * 2, RADIUS * 2, SEG, SEG);
+        geom.rotateX(-Math.PI / 2);
+        const pos = geom.getAttribute('position');
 
-      // blend, but never around platform
-      m = Math.max(m, nearOffice*0.95, nearTrans*0.85, nearExit*0.85);
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i), z = pos.getZ(i);
+          const edgeR = Math.sqrt(x*x + z*z);
+          if (edgeR > RADIUS * 0.985) { pos.setY(i, -1.0); continue; }
 
-      // remove tiny detached islands far from office by distance gate
-      const distOffice = Math.sqrt((x-office.cx)*(x-office.cx)+(z-office.cz)*(z-office.cz));
-      m *= (1.0 - smoothstep(38, 48, distOffice)) + m*smoothstep(38,48,distOffice);
+          const platformDist = Math.sqrt(x*x + z*z) - platformR;
+          const inPlatform = platformDist < -0.05;
+          const inOffice = isInsideRectPad(x,z,office,-0.10);
+          const inTrans = isInsideRectPad(x,z,transCorridor,-0.10);
+          const inExit = isInsideRectPad(x,z,exitCorridor,-0.10);
+          if (inPlatform || inOffice || inTrans || inExit) { pos.setY(i, -0.55); continue; }
 
-      return sat(m);
-    }
+          let m = zoneMask(x, z);
 
-    const geom = new THREE.PlaneGeometry(RADIUS * 2, RADIUS * 2, SEG, SEG);
-    geom.rotateX(-Math.PI / 2);
-    const pos = geom.getAttribute('position');
+          // Structure proximity can force local snow so we don't get visible floor gaps near walls.
+          const dOffice = distToRectEdge(x,z,office);
+          const dTrans = distToRectEdge(x,z,transCorridor);
+          const dExit = distToRectEdge(x,z,exitCorridor);
+          const dPlat = platformDist;
 
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), z = pos.getZ(i);
-      const edgeR = Math.sqrt(x*x + z*z);
+          const nearOffice = Math.max(0, 1 - smoothstep(0.0, 4.4, dOffice));
+          const nearTrans  = Math.max(0, 1 - smoothstep(0.0, 3.0, dTrans));
+          const nearExit   = Math.max(0, 1 - smoothstep(0.0, 3.0, dExit));
+          const nearPlat   = Math.max(0, 1 - smoothstep(0.0, 2.8, dPlat));
+          const structureMask = Math.max(nearOffice, nearTrans*0.9, nearExit*0.9, nearPlat*0.85);
 
-      // Keep border buried
-      if (edgeR > RADIUS * 0.992) { pos.setY(i, -1.2); continue; }
+          // Fill small/noisy voids near the snow boundary and around architecture.
+          const mEff = Math.max(m, structureMask * 0.82);
 
-      // Carve out architecture interiors (snow shouldn't intrude)
-      const inPlatform = (Math.sqrt(x*x + z*z) < platformR + 0.15);
-      const inOffice   = isInsideRectPad(x,z,office,-0.10);
-      const inTrans    = isInsideRectPad(x,z,transCorridor,-0.10);
-      const inExit     = isInsideRectPad(x,z,exitCorridor,-0.10);
-      if (inPlatform || inOffice || inTrans || inExit) { pos.setY(i, -0.55); continue; }
+          if (mEff <= 0.01) { pos.setY(i, -0.35); continue; }
 
-      const dOffice = sdRoundRect(x,z,office,2.6);
-      const dTrans  = sdRoundRect(x,z,transCorridor,1.6);
-      const dExit   = sdRoundRect(x,z,exitCorridor,1.6);
-      const dPlat   = Math.sqrt(x*x+z*z) - (platformR+0.5);
+          // Base drifts (multi-scale)
+          let h = 0;
+          h += (sn(x*0.028, z*0.028) * 0.5 + 0.5) * 0.25;
+          h += (sn(x*0.07 + 20, z*0.07 - 8) * 0.5 + 0.5) * 0.16;
+          h += (sn(x*0.16 - 9, z*0.16 + 11) * 0.5 + 0.5) * 0.08;
+          h += (sn(x*0.33 + 3, z*0.33 - 2) * 0.5 + 0.5) * 0.03;
+          h *= mEff;
 
-      let m = zoneMask(x,z);
+          // Soft boundary berm to hide the start of the snow zone.
+          const boundaryBand = smoothstep(0.03, 0.26, mEff) * (1 - smoothstep(0.26, 0.62, mEff));
+          h += boundaryBand * 0.18 * (0.6 + 0.4*(sn(x*0.10 + 8, z*0.10 - 12)*0.5+0.5));
 
-      // Absolutely no snow influence from platform
-      const platKill = 1.0 - smoothstep(0.8, 2.2, dPlat);
-      m *= (1.0 - platKill);
+          // Accumulation around office + corridors + platform edges (volumetric integration)
+          const edgeAccum =
+            nearOffice * 0.42 +
+            nearTrans  * 0.28 +
+            nearExit   * 0.24 +
+            nearPlat   * 0.22;
+          h += edgeAccum * (0.70 + 0.30*(sn(x*0.22+4, z*0.22-6)*0.5+0.5));
 
-      if (m < 0.002) { pos.setY(i, -0.35); continue; }
+          // Extra seal strip right against edges to avoid visible dark cracks
+          const seal =
+            Math.max(0, 1 - smoothstep(0.0, 0.55, dOffice)) * 0.10 +
+            Math.max(0, 1 - smoothstep(0.0, 0.40, dTrans)) * 0.08 +
+            Math.max(0, 1 - smoothstep(0.0, 0.40, dExit)) * 0.08 +
+            Math.max(0, 1 - smoothstep(0.0, 0.35, dPlat)) * 0.06;
+          h += seal;
 
-      // Wind-swept base snow, smooth and non-uniform
-      let h = 0;
-      h += (sn(x*0.020, z*0.020)*0.5+0.5) * 0.20;
-      h += (sn(x*0.055+18, z*0.055-4)*0.5+0.5) * 0.14;
-      h += (sn(x*0.13-9, z*0.13+6)*0.5+0.5) * 0.06;
+          // Large-scale fade at mesh edge
+          h *= (1 - smoothstep(RADIUS * 0.83, RADIUS * 0.98, edgeR));
 
-      // Scale by zone mask, with soft edge ramp (no cliffs)
-      const mSoft = Math.pow(m, 1.35);
-      h *= mSoft;
+          pos.setY(i, BASE_Y + h);
+        }
 
-      // Berm at outer boundary to hide transition line, but rounded/soft
-      const edgeBand = smoothstep(0.08, 0.28, m) * (1.0 - smoothstep(0.28, 0.62, m));
-      h += edgeBand * (0.10 + 0.07*(sn(x*0.09+2, z*0.09-1)*0.5+0.5));
+        pos.needsUpdate = true;
+        geom.computeVertexNormals();
 
-      // Architectural accumulation (office/corridors only), rounded by signed distance
-      const accumOffice = (1.0 - smoothstep(0.0, 3.0, dOffice)) * 0.30;
-      const accumTrans  = (1.0 - smoothstep(0.0, 2.0, dTrans)) * 0.18;
-      const accumExit   = (1.0 - smoothstep(0.0, 2.0, dExit)) * 0.18;
-      h += (accumOffice + accumTrans + accumExit) * (0.85 + 0.25*(sn(x*0.18+9, z*0.18-2)*0.5+0.5));
+        const nmSize = 512;
+        const nmCv = document.createElement('canvas'); nmCv.width = nmSize; nmCv.height = nmSize;
+        const nmCtx = nmCv.getContext('2d');
+        const imgData = nmCtx.createImageData(nmSize, nmSize); const dd = imgData.data;
+        for (let py = 0; py < nmSize; py++) {
+          for (let px = 0; px < nmSize; px++) {
+            const idx = (py * nmSize + px) * 4;
+            const nx = px / nmSize * 22, ny = py / nmSize * 22;
+            const dx = sn(nx*3+100, ny*3)*0.45 + sn(nx*9+50, ny*9)*0.22 + sn(nx*18, ny*18+30)*0.10;
+            const dy = sn(nx*3, ny*3+200)*0.45 + sn(nx*9, ny*9+80)*0.22 + sn(nx*18+70, ny*18)*0.10;
+            dd[idx] = Math.floor((dx * 0.5 + 0.5) * 255);
+            dd[idx+1] = Math.floor((dy * 0.5 + 0.5) * 255);
+            dd[idx+2] = 205; dd[idx+3] = 255;
+          }
+        }
+        nmCtx.putImageData(imgData, 0, 0);
+        const normalTex = new THREE.CanvasTexture(nmCv);
+        normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
+        normalTex.repeat.set(44, 44);
 
-      // Extra seam sealing exactly at walls/corridor edges, but soft and narrow.
-      const seal = 
-        (1.0 - smoothstep(0.00, 0.55, dOffice)) * 0.11 +
-        (1.0 - smoothstep(0.00, 0.35, dTrans)) * 0.09 +
-        (1.0 - smoothstep(0.00, 0.35, dExit)) * 0.09;
-      h += seal;
-
-      // Taper out toward mesh limits
-      h *= (1.0 - smoothstep(RADIUS*0.86, RADIUS*0.985, edgeR));
-
-      // Lower heights near spawn-side/front to keep that side cleaner
-      const frontSuppress = sat((z + 66)/24);
-      h *= (1.0 - 0.65*frontSuppress);
-
-      // Final height
-      pos.setY(i, BASE_Y + h);
-    }
-
-    pos.needsUpdate = true;
-    geom.computeVertexNormals();
-
-    // Softer snow surface normal
-    const nmSize = 512;
-    const nmCv = document.createElement('canvas'); nmCv.width = nmSize; nmCv.height = nmSize;
-    const nmCtx = nmCv.getContext('2d');
-    const imgData = nmCtx.createImageData(nmSize, nmSize); const dd = imgData.data;
-    for (let py = 0; py < nmSize; py++) {
-      for (let px = 0; px < nmSize; px++) {
-        const idx = (py * nmSize + px) * 4;
-        const nx = px / nmSize * 16, ny = py / nmSize * 16;
-        const dx = sn(nx*2.2+100, ny*2.2)*0.35 + sn(nx*6.5+50, ny*6.5)*0.14;
-        const dy = sn(nx*2.2, ny*2.2+200)*0.35 + sn(nx*6.5, ny*6.5+80)*0.14;
-        dd[idx]   = Math.floor((dx * 0.5 + 0.5) * 255);
-        dd[idx+1] = Math.floor((dy * 0.5 + 0.5) * 255);
-        dd[idx+2] = 220;
-        dd[idx+3] = 255;
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xeef2f5, roughness: 0.98, metalness: 0.0,
+          normalMap: normalTex, normalScale: new THREE.Vector2(0.35, 0.35),
+          envMapIntensity: 0.05, side: THREE.FrontSide, depthWrite: true
+        });
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.receiveShadow = true; mesh.frustumCulled = false;
+        this.el.sceneEl.object3D.add(mesh);
+        this._mesh = mesh;
+      },
+      remove: function () {
+        if (this._mesh) {
+          this.el.sceneEl.object3D.remove(this._mesh);
+          this._mesh.geometry.dispose();
+          this._mesh.material.dispose();
+        }
       }
-    }
-    nmCtx.putImageData(imgData, 0, 0);
-    const normalTex = new THREE.CanvasTexture(nmCv);
-    normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
-    normalTex.repeat.set(42, 42);
-
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xf0f4f7,
-      roughness: 0.97,
-      metalness: 0.0,
-      normalMap: normalTex,
-      normalScale: new THREE.Vector2(0.23, 0.23),
-      envMapIntensity: 0.04,
-      side: THREE.FrontSide,
-      depthWrite: true
     });
-
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.receiveShadow = true;
-    mesh.frustumCulled = false;
-    this.el.sceneEl.object3D.add(mesh);
-    this._mesh = mesh;
-  },
-  remove: function () {
-    if (this._mesh) {
-      this.el.sceneEl.object3D.remove(this._mesh);
-      this._mesh.geometry.dispose();
-      this._mesh.material.dispose();
-    }
-  }
-});
 </script>
-
 </head>
 <body>
 <!-- Flash fix: black overlay present before any paint -->
@@ -863,7 +840,22 @@ AFRAME.registerComponent('snow-ground', {
 </div>
 </div>
 </div>
-<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow-ground="" snow="count: 62000; areaWidth: 100; areaDepth: 100; ceiling: 34; fallSpeed: 2.4; fallVar: 1.1; windX: 1.8; windZ: 0.8; gustStr: 1.4; size: 0.075; rampTime: 3">
+
+<!-- Terminal interaction guide + Lia overlay -->
+<style>
+  #terminalGuide{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:260;display:none;pointer-events:none;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:rgba(255,255,255,.94)}
+  #terminalGuide.show{display:block}
+  #terminalGuide .tg-card{background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px 14px;backdrop-filter:blur(6px);box-shadow:0 10px 36px rgba(0,0,0,.4);min-width:240px;text-align:center}
+  #terminalGuide .tg-main{font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+  #terminalGuide .tg-sub{margin-top:4px;font-size:11px;opacity:.8;letter-spacing:.04em}
+  #terminalGuide kbd{display:inline-block;min-width:18px;padding:1px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#fff;vertical-align:1px}
+  #liaOverlay{position:fixed;inset:0;z-index:400;display:none;background:#000}
+  #liaOverlay.show{display:block}
+  #liaOverlayFrame{width:100%;height:100%;border:0;background:#000;display:block}
+</style>
+<div id="terminalGuide" aria-hidden="true"><div class="tg-card"><div id="terminalGuideMain" class="tg-main"></div><div id="terminalGuideSub" class="tg-sub"></div></div></div>
+<div id="liaOverlay" aria-hidden="true"><iframe id="liaOverlayFrame" allow="fullscreen" src="about:blank"></iframe></div>
+<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow-ground="" snow="count: 26000; areaWidth: 100; areaDepth: 100; ceiling: 30; fallSpeed: 1.75; fallVar: 0.9; windX: 1.05; windZ: 0.45; gustStr: 0.75; size: 0.06; rampTime: 5">
 <a-assets timeout="30000">
 <img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
 <img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
@@ -1228,5 +1220,230 @@ AFRAME.registerComponent('hand-clamp', {
   if (Q_OK)     Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
 })();
 </script>
+
+<script>
+(function(){
+  const EMPTY_STATIONS = ['station_SE_01','station_SW_01','station_NW_02','station_NE_03','station_SW_03'];
+  const LIA_IFRAME_SRC = './lia_1_0_experience.html';
+  const state = { mode:'idle', active:null, overlayOpen:false, saved:null, anim:0 };
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+  const qA = new THREE.Quaternion();
+  let scene, rig, cam, guide, guideMain, guideSub, overlay, frame;
+  let terminals = [];
+
+  function $(id){ return document.getElementById(id); }
+  function init(){
+    scene = document.querySelector('a-scene');
+    rig = $('rig');
+    cam = $('playerCam');
+    guide = $('terminalGuide'); guideMain = $('terminalGuideMain'); guideSub = $('terminalGuideSub');
+    overlay = $('liaOverlay'); frame = $('liaOverlayFrame');
+    if (!scene || !rig || !cam) return;
+    collectTerminals();
+    window.addEventListener('keydown', onKeyDown, {passive:false});
+    window.addEventListener('message', onMessage);
+    requestAnimationFrame(tick);
+  }
+
+  function collectTerminals(){
+    terminals = [];
+    EMPTY_STATIONS.forEach(id=>{
+      const station = $(id);
+      if (!station) return;
+      const computer = station.querySelector('.computer');
+      if (!computer) return;
+      terminals.push({ id, station, computer });
+    });
+  }
+
+  function showGuide(main, sub=''){
+    if (!guide) return;
+    guideMain.textContent = main || '';
+    guideSub.textContent = sub || '';
+    guide.classList.add('show');
+  }
+  function hideGuide(){ if (guide) guide.classList.remove('show'); }
+
+  function getYawPitchObjects(){
+    const lc = cam.components && cam.components['look-controls'];
+    return lc ? { lc, yaw: lc.yawObject, pitch: lc.pitchObject } : null;
+  }
+  function getCamWorldPos(){ return cam.object3D.getWorldPosition(vA.clone()); }
+  function getTerminalWorldPoint(t){
+    return t.computer.object3D.getWorldPosition(vA.clone());
+  }
+  function getSeatWorldPoint(t){
+    return t.station.object3D.localToWorld(new THREE.Vector3(0,0,0.95));
+  }
+  function yawToFace(from, to){
+    const dx = to.x - from.x, dz = to.z - from.z;
+    return Math.atan2(-dx, -dz);
+  }
+  function pitchToFace(camY, fromXZ, to, eyeHeight){
+    const dx = to.x - fromXZ.x, dz = to.z - fromXZ.z;
+    const dy = (to.y) - (camY + eyeHeight);
+    const horiz = Math.max(0.001, Math.hypot(dx,dz));
+    return Math.max(-1.1, Math.min(0.45, Math.atan2(dy, horiz)));
+  }
+  function nearestTerminal(){
+    const rp = rig.object3D.position;
+    let best=null, bestD=1e9;
+    for (const t of terminals){
+      const seat = getSeatWorldPoint(t);
+      const d = Math.hypot(seat.x-rp.x, seat.z-rp.z);
+      if (d < bestD){ bestD = d; best = t; }
+    }
+    if (!best || bestD > 2.1) return null;
+    return { term: best, dist: bestD };
+  }
+
+  function isFacingActive(){
+    if (!state.active) return false;
+    const camPos = getCamWorldPos();
+    const target = getTerminalWorldPoint(state.active);
+    const dir = target.sub(camPos).setY(0).normalize();
+    cam.object3D.getWorldDirection(vB); vB.setY(0).normalize();
+    return dir.dot(vB) > 0.84;
+  }
+
+  function onKeyDown(e){
+    if (state.overlayOpen){
+      if (e.code === 'Escape'){ e.preventDefault(); closeOverlay(); }
+      return;
+    }
+    if (state.mode === 'near' && e.code === 'KeyE'){
+      e.preventDefault(); startSit(); return;
+    }
+    if (state.mode === 'seated'){
+      if (e.code === 'Escape'){ e.preventDefault(); standUp(); return; }
+      if (e.code === 'KeyF' && isFacingActive()){ e.preventDefault(); openOverlay(); return; }
+    }
+    if (state.mode === 'autopilot' && e.code === 'Escape'){ e.preventDefault(); standUp(true); }
+  }
+
+  function pauseWalk(pause){
+    const rw = rig.components && rig.components['rig-walk'];
+    if (!rw) return;
+    if (pause && rw.pause) rw.pause();
+    if (!pause && rw.play) rw.play();
+  }
+
+  function startSit(){
+    if (!state.active || state.mode === 'autopilot') return;
+    const yp = getYawPitchObjects(); if (!yp) return;
+    const rp = rig.object3D.position;
+    state.saved = {
+      rigX: rp.x, rigY: rp.y, rigZ: rp.z,
+      yaw: yp.yaw ? yp.yaw.rotation.y : 0,
+      pitch: yp.pitch ? yp.pitch.rotation.x : 0,
+      camY: cam.object3D.position.y
+    };
+    const seat = getSeatWorldPoint(state.active);
+    const target = getTerminalWorldPoint(state.active);
+    const start = { x: rp.x, z: rp.z, y: cam.object3D.position.y, yaw: state.saved.yaw, pitch: state.saved.pitch };
+    const end = {
+      x: seat.x, z: seat.z, y: 1.18,
+      yaw: yawToFace({x:seat.x,z:seat.z}, target),
+      pitch: pitchToFace(rig.object3D.position.y, {x:seat.x,z:seat.z}, target, 1.18)
+    };
+    state.mode = 'autopilot';
+    pauseWalk(true);
+    animate(900, (k)=>{
+      const s = k*k*(3-2*k);
+      rig.object3D.position.x = start.x + (end.x-start.x)*s;
+      rig.object3D.position.z = start.z + (end.z-start.z)*s;
+      cam.object3D.position.y = start.y + (end.y-start.y)*s;
+      if (yp.yaw) yp.yaw.rotation.y = lerpAngle(start.yaw,end.yaw,s);
+      if (yp.pitch) yp.pitch.rotation.x = start.pitch + (end.pitch-start.pitch)*s;
+    }, ()=>{
+      state.mode = 'seated';
+    });
+  }
+
+  function standUp(fromAuto){
+    if (!state.saved) { state.mode = 'idle'; state.active = null; pauseWalk(false); hideGuide(); return; }
+    const yp = getYawPitchObjects(); if (!yp) return;
+    const rp = rig.object3D.position;
+    const start = { x: rp.x, z: rp.z, y: cam.object3D.position.y, yaw: yp.yaw?yp.yaw.rotation.y:0, pitch: yp.pitch?yp.pitch.rotation.x:0 };
+    const end = { x: state.saved.rigX, z: state.saved.rigZ, y: state.saved.camY, yaw: state.saved.yaw, pitch: state.saved.pitch };
+    state.mode = 'autopilot';
+    animate(fromAuto ? 300 : 500, (k)=>{
+      const s = k*k*(3-2*k);
+      rig.object3D.position.x = start.x + (end.x-start.x)*s;
+      rig.object3D.position.z = start.z + (end.z-start.z)*s;
+      cam.object3D.position.y = start.y + (end.y-start.y)*s;
+      if (yp.yaw) yp.yaw.rotation.y = lerpAngle(start.yaw,end.yaw,s);
+      if (yp.pitch) yp.pitch.rotation.x = start.pitch + (end.pitch-start.pitch)*s;
+    }, ()=>{
+      pauseWalk(false);
+      state.mode = 'idle';
+      state.active = null;
+      hideGuide();
+    });
+  }
+
+  function animate(ms, step, done){
+    cancelAnimationFrame(state.anim);
+    const t0 = performance.now();
+    function loop(now){
+      const k = Math.min(1, (now-t0)/ms);
+      step(k);
+      if (k < 1) state.anim = requestAnimationFrame(loop); else { state.anim = 0; if (done) done(); }
+    }
+    state.anim = requestAnimationFrame(loop);
+  }
+  function lerpAngle(a,b,t){
+    let d = b-a; while (d > Math.PI) d -= Math.PI*2; while (d < -Math.PI) d += Math.PI*2; return a + d*t;
+  }
+
+  function openOverlay(){
+    if (!overlay || !frame) return;
+    state.overlayOpen = true;
+    if (document.pointerLockElement) document.exitPointerLock?.();
+    if (!frame.dataset.loaded){ frame.src = LIA_IFRAME_SRC; frame.dataset.loaded='1'; }
+    overlay.classList.add('show');
+    hideGuide();
+  }
+  function closeOverlay(){
+    if (!overlay) return;
+    state.overlayOpen = false;
+    overlay.classList.remove('show');
+    state.mode = 'seated';
+  }
+  function onMessage(ev){
+    if (!ev || !ev.data) return;
+    const t = ev.data.type;
+    if (t === 'LIA_EXIT') closeOverlay();
+    if (t === 'LIA_RESTART' && frame){
+      try { frame.contentWindow.location.reload(); } catch(_) { frame.src = LIA_IFRAME_SRC; }
+    }
+  }
+
+  function tick(){
+    if (!scene || !rig || !cam) { requestAnimationFrame(tick); return; }
+    if (!state.overlayOpen && state.mode !== 'autopilot') {
+      if (state.mode === 'seated') {
+        if (isFacingActive()) showGuide('Press F to initiate experience', 'Press ESC to stand up');
+        else showGuide('Face the computer', 'Press ESC to stand up');
+      } else {
+        const near = nearestTerminal();
+        if (near) {
+          state.mode = 'near';
+          state.active = near.term;
+          showGuide('Press E to sit down', 'Available terminal');
+        } else {
+          state.mode = 'idle';
+          state.active = null;
+          hideGuide();
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
 </body>
 </html>
