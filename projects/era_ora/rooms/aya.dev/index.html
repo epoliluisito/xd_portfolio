@@ -4187,6 +4187,7 @@ AFRAME.registerComponent('tube-wall', {
       this.el.setAttribute('data-tube', '1');
       this.el.setAttribute('data-ax', a3.x.toFixed(6));
       this.el.setAttribute('data-az', a3.z.toFixed(6));
+      this.el.setAttribute('data-cy', a3.y.toFixed(6));
       this.el.setAttribute('data-bx', b3.x.toFixed(6));
       this.el.setAttribute('data-bz', b3.z.toFixed(6));
       this.el.setAttribute('data-r', String(this.data.r));
@@ -16926,6 +16927,7 @@ AFRAME.registerComponent('ion-wind-field', {
   <!-- ===== Invisible obstacles (kept alive by prune-colliders keepRoots) ===== -->
   <a-entity id="collision_root" delayed-collider-refresh="delays: 200, 800, 1800, 3200">
     <!-- Tube constraints: keep player inside tunnel_02 / tunnel_03 (blocks walls + rims on tunnel side) -->
+    <a-entity id="tube_tunnel_01" tube-wall="module: #tunnel_01_cutref; a: 0 0; b: 20 0; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
     <a-entity id="tube_tunnel_02" tube-wall="module: #tunnel_02_module; a: 0 0; b: -14 0; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
     <a-entity id="tube_tunnel_03" tube-wall="module: #tunnel_03_module; a: 0 0; b: -14 0; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
 
@@ -21715,36 +21717,38 @@ AFRAME.registerComponent('tp-camera-springarm', {
       });
     });
 
-    // Also collect tube-wall corridor descriptors (these have no meshes but
+    // Collect tube-wall corridor descriptors (these have no meshes but
     // define cylindrical constraints the camera must stay inside).
     this._tubes.length = 0;
-    const tubeEls = Array.from(this.el.sceneEl.querySelectorAll('[data-tube="1"]'));
-    for (let i = 0; i < tubeEls.length; i++) {
-      const el = tubeEls[i];
-      const ds = el.dataset;
-      const ax = parseFloat(ds.ax), az = parseFloat(ds.az);
-      const bx = parseFloat(ds.bx), bz = parseFloat(ds.bz);
-      const rr = parseFloat(ds.r);
-      const endMargin = parseFloat(ds.endmargin);
-      const influence = parseFloat(ds.influence);
+    var tubeEls = this.el.sceneEl.querySelectorAll('[data-tube="1"]');
+    for (var i = 0; i < tubeEls.length; i++) {
+      var ds = tubeEls[i].dataset;
+      var ax = parseFloat(ds.ax), az = parseFloat(ds.az);
+      var bx = parseFloat(ds.bx), bz = parseFloat(ds.bz);
+      var rr = parseFloat(ds.r);
+      var cy = parseFloat(ds.cy);
+      var endMargin = parseFloat(ds.endmargin);
+      var influence = parseFloat(ds.influence);
       if ([ax,az,bx,bz,rr].every(Number.isFinite)) {
-        const dx = bx - ax, dz = bz - az;
-        const len2 = dx*dx + dz*dz;
+        var dx = bx - ax, dz = bz - az;
+        var len2 = dx*dx + dz*dz;
         this._tubes.push({
           ax: ax, az: az, bx: bx, bz: bz,
           dx: dx, dz: dz,
           len2: Math.max(1e-6, len2),
           len: Math.sqrt(Math.max(1e-6, len2)),
           r: rr,
+          cy: Number.isFinite(cy) ? cy : NaN,
           endMargin: Number.isFinite(endMargin) ? endMargin : 0.6,
           influence: Number.isFinite(influence) ? influence : (rr + 1.8)
         });
       }
     }
   },
-  // Constrain a world-space position inside any active tube corridor (XZ only).
+  // Constrain a world-space position inside any active tube corridor.
+  // XZ: keep inside cylinder cross-section. Y: keep below ceiling arc.
   _clampToTubes: function (pos) {
-    const camPad = this.data.sphereRadius + this.data.padding;
+    var camPad = this.data.sphereRadius + this.data.padding;
     for (var i = 0; i < this._tubes.length; i++) {
       var c = this._tubes[i];
       var tMargin = Math.min(0.45, (c.endMargin || 0) / (c.len || 1));
@@ -21762,11 +21766,20 @@ AFRAME.registerComponent('tp-camera-springarm', {
       var influence = Number.isFinite(c.influence) ? c.influence : (c.r + 1.8);
       if (dist > influence) continue;
 
+      // XZ constraint: keep inside cylinder radius
       var maxD = Math.max(0.05, c.r - camPad);
       if (dist > maxD) {
         var nx = dx / dist, nz = dz / dist;
         pos.x = cx + nx * maxD;
         pos.z = cz + nz * maxD;
+        dist = maxD;
+      }
+
+      // Y ceiling constraint: keep under the tube arc
+      if (Number.isFinite(c.cy)) {
+        var headroom = Math.sqrt(Math.max(0, maxD * maxD - dist * dist));
+        var maxY = c.cy + headroom - (camPad * 0.5);
+        if (pos.y > maxY) pos.y = maxY;
       }
     }
   },
@@ -21783,8 +21796,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     if (!hits || !hits.length) return Math.max(this.data.minDist, full);
 
     const r = Math.max(0.001, this.data.sphereRadius + this.data.padding);
-    // Use a small absolute floor (0.15) so the camera can pull very close
-    // to the pivot when jammed against a wall, rather than clipping through.
+    // Small absolute floor so camera can pull very close to pivot near walls
     const d = Math.max(0.15, (hits[0].distance || full) - r);
     return Math.min(full, d);
   },
@@ -21803,7 +21815,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     pivotObj.localToWorld(this._desiredW);
 
     const targetDist = this._sweepDist(this._pivotW, this._desiredW);
-    // Asymmetric smoothing: snap toward pivot quickly (collision), ease back out slowly.
+    // Snap toward pivot quickly on collision; ease back out slowly
     const pulling = targetDist < this._curDist;
     const aDist = pulling ? 0.55 : THREE.MathUtils.clamp(this.data.smoothDist, 0, 1);
     this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
@@ -21830,12 +21842,12 @@ AFRAME.registerComponent('tp-camera-springarm', {
       }
     }
 
-    // Tube corridor constraint: keep camera inside tunnel cylinders (XZ).
+    // Tube corridor constraint: keep camera inside tunnel cylinders
     if (this._tubes.length) {
       this._clampToTubes(this._finalW);
     }
 
-    // Smooth world->local placement (faster when correcting toward collision-safe pos)
+    // Smooth world→local (faster when large correction needed)
     const aPos = THREE.MathUtils.clamp(this.data.smoothPos, 0, 1);
     const curW = this.el.object3D.getWorldPosition(this._tmp);
     const corrDist = curW.distanceTo(this._finalW);
