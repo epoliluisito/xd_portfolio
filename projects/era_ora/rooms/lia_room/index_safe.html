@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Lia Room</title>
+<script src="../../vendor/aframe/aframe-1.5.0.min.js"></script>
+<style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+
+    /* Flash fix: cover the canvas immediately at the CSS level before JS runs */
+    a-scene { background: #000; }
+
+    /* Fade-in overlay: starts opaque black, fades out once scene is ready */
+    #fadeIn {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      opacity: 1;
+      pointer-events: none;
+      transition: opacity 900ms ease;
+      z-index: 9999;
+    }
+    #fadeIn.done { opacity: 0; }
+
+    /* ── Quit button — matches aya.dev exactly ── */
+    #quitShell {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 220;
+    }
+    #quitBtn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(0,0,0,0.35);
+      color: rgba(255,255,255,0.85);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+    }
+    #quitBtn:hover { border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+
+    #quitConfirm {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.62);
+      z-index: 230;
+    }
+    #quitConfirm.show { display: flex; }
+    #quitCard {
+      width: min(420px, calc(100vw - 48px));
+      background: rgba(0,0,0,0.78);
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      padding: 18px;
+      color: rgba(255,255,255,0.92);
+      box-shadow: 0 22px 70px rgba(0,0,0,0.62);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    #quitCard h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    #quitCard p {
+      margin: 0 0 14px 0;
+      font-size: 13px;
+      opacity: 0.85;
+      line-height: 1.35;
+    }
+    #quitActions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .qbtn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.92);
+      padding: 9px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .qbtn.primary {
+      background: rgba(255,255,255,0.18);
+      border-color: rgba(255,255,255,0.32);
+      color: rgba(255,255,255,0.96);
+    }
+  </style>
+<script>
+    // ── Components ────────────────────────────────────────────────────────────
+
+    // Disable fog on specific meshes (earth sphere)
+    AFRAME.registerComponent('no-fog', {
+      init: function () {
+        const apply = (obj) => {
+          if (!obj || !obj.traverse) return;
+          obj.traverse((n) => {
+            if (!n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((m) => {
+              if (m && Object.prototype.hasOwnProperty.call(m, 'fog')) {
+                m.fog = false;
+                m.needsUpdate = true;
+              }
+            });
+          });
+        };
+        apply(this.el.object3D);
+        this.el.addEventListener('object3dset', () => apply(this.el.object3D));
+      }
+    });
+
+    // Improved earth texture sampling
+    AFRAME.registerComponent('earth-texture-quality', {
+      init: function () {
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          mesh.traverse((n) => {
+            if (!n.isMesh || !n.material) return;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach((m) => {
+              if (m.map) {
+                m.map.anisotropy = 4;
+                m.map.minFilter = THREE.LinearMipmapLinearFilter;
+                m.map.magFilter = THREE.LinearFilter;
+                m.map.needsUpdate = true;
+              }
+              m.needsUpdate = true;
+            });
+          });
+        };
+        apply();
+        this.el.addEventListener('object3dset', apply);
+      }
+    });
+
+    // Pitch clamp
+    AFRAME.registerComponent('pitch-clamp', {
+      schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
+      tick: function () {
+        const lc = this.el.components && this.el.components['look-controls'];
+        if (!lc || !lc.pitchObject) return;
+        const minR = this.data.min * Math.PI / 180;
+        const maxR = this.data.max * Math.PI / 180;
+        const p = lc.pitchObject.rotation.x;
+        if (p < minR) lc.pitchObject.rotation.x = minR;
+        if (p > maxR) lc.pitchObject.rotation.x = maxR;
+      }
+    });
+
+    // IBL: scene-level env map driving all PBR metalness/roughness — must match aya.dev
+    // aya.dev uses simple-ibl="intensity: 0.35; color: #e4ebf4" on the a-scene
+    AFRAME.registerComponent('simple-ibl', {
+      schema: { intensity: { type: 'number', default: 1.25 }, color: { type: 'color', default: '#dfe6ef' } },
+      init: function () {
+        const sceneObj = this.el.sceneEl.object3D;
+        const mkCanvas = () => {
+          const cv = document.createElement('canvas'); cv.width = cv.height = 2;
+          const ctx = cv.getContext('2d');
+          const g = ctx.createLinearGradient(0,0,2,2);
+          g.addColorStop(0, this.data.color);
+          g.addColorStop(1, '#aeb7c3');
+          ctx.fillStyle = g; ctx.fillRect(0,0,2,2);
+          return cv;
+        };
+        const cube = new THREE.CubeTexture([mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas(),mkCanvas()]);
+        cube.needsUpdate = true;
+        sceneObj.environment = cube;
+        const applyIntensity = () => {
+          sceneObj.traverse(o => {
+            if (!o || !o.isMesh) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => {
+              if (m && m.isMeshStandardMaterial && !(m.userData && m.userData.isNPC)) { m.envMapIntensity = this.data.intensity; m.needsUpdate = true; }
+            });
+          });
+        };
+        applyIntensity();
+        this.el.sceneEl.addEventListener('object3dset', applyIntensity);
+      }
+    });
+    
+    // Fix Mixamo/GLB NPC materials: opaque, matte, stable depth sorting
+    AFRAME.registerComponent('mixamo-mat-fix', {
+      init: function () {
+        this._apply = this._apply.bind(this);
+        this.el.addEventListener('model-loaded', this._apply);
+        this.el.addEventListener('object3dset', this._apply);
+        this._apply();
+      },
+      _apply: function () {
+        const root = this.el.getObject3D('mesh') || this.el.object3D;
+        if (!root || !root.traverse) return;
+        root.traverse((n) => {
+          if (!n || !n.isMesh || !n.material) return;
+          n.castShadow = false;
+          n.receiveShadow = false;
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          mats.forEach((m) => {
+            if (!m) return;
+            const wasTransparent = !!m.transparent || (typeof m.opacity === 'number' && m.opacity < 0.999);
+            m.transparent = false;
+            m.opacity = 1.0;
+            m.depthWrite = true;
+            m.depthTest = true;
+            m.side = THREE.FrontSide;
+            const likelyCutout = wasTransparent || !!m.alphaMap || /hair|lash|brow|card|alpha/i.test((m.name || ''));
+            m.alphaTest = likelyCutout ? Math.max(m.alphaTest || 0, 0.35) : 0;
+            if ('premultipliedAlpha' in m) m.premultipliedAlpha = false;
+            // Swap to Lambert — zero specular, purely diffuse
+            var lam = new THREE.MeshLambertMaterial();
+            if (m.map) lam.map = m.map;
+            if (m.color) lam.color = m.color.clone();
+            if (m.alphaMap) lam.alphaMap = m.alphaMap;
+            lam.alphaTest = m.alphaTest || 0;
+            lam.transparent = false;
+            lam.opacity = 1.0;
+            lam.depthWrite = true;
+            lam.depthTest = true;
+            lam.side = THREE.FrontSide;
+            lam.userData = lam.userData || {};
+            lam.userData.isNPC = true;
+            if (Array.isArray(n.material)) {
+              var idx = n.material.indexOf(m);
+              if (idx >= 0) n.material[idx] = lam;
+            } else {
+              n.material = lam;
+            }
+          });
+        });
+      },
+      remove: function () {
+        this.el.removeEventListener('model-loaded', this._apply);
+        this.el.removeEventListener('object3dset', this._apply);
+      }
+    });
+
+AFRAME.registerComponent('rig-walk', {
+      schema: {
+        speed: { type: 'number', default: 2.6 },
+        radius: { type: 'number', default: 0.28 },
+        height: { type: 'number', default: 1.6 },
+        collidableSelector: { type: 'string', default: '.solid' },
+        refreshMs: { type: 'number', default: 250 }
+      },
+      init: function () {
+        this.keys = Object.create(null);
+
+        const MOVE = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
+        this._onKeyDown = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
+        this._onKeyUp   = (e) => { if (MOVE.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
+        this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
+
+        window.addEventListener('keydown', this._onKeyDown, { passive: false });
+        window.addEventListener('keyup',   this._onKeyUp,   { passive: false });
+        window.addEventListener('blur', this._clearKeys);
+        document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
+
+        this._colliderEls = [];
+        this._lastRefresh = -Infinity;
+
+        // Scratch objects to avoid GC
+        this._playerBox = new THREE.Box3();
+        this._tmpBox = new THREE.Box3();
+        this._tmpV3 = new THREE.Vector3();
+
+        this._refreshColliders = () => {
+          const scene = this.el.sceneEl;
+          if (!scene) return;
+          this._colliderEls = Array.from(scene.querySelectorAll(this.data.collidableSelector));
+          this._lastRefresh = performance.now();
+        };
+
+        // Refresh once scene loads, then whenever models finish loading
+        this.el.sceneEl.addEventListener('loaded', this._refreshColliders);
+        this.el.sceneEl.addEventListener('model-loaded', this._refreshColliders);
+      },
+
+      _intersectsAt: function (x, z) {
+        const r = this.data.radius;
+        const y = this.el.object3D.position.y;
+        const h = this.data.height;
+
+        this._playerBox.min.set(x - r, y, z - r);
+        this._playerBox.max.set(x + r, y + h, z + r);
+
+        for (let i = 0; i < this._colliderEls.length; i++) {
+          const el = this._colliderEls[i];
+          if (!el || !el.object3D) continue;
+
+          // If collider has no visible mesh yet, skip
+          // (Box3.setFromObject handles empty groups, but guard anyway)
+          this._tmpBox.setFromObject(el.object3D);
+          if (!isFinite(this._tmpBox.min.x) || !isFinite(this._tmpBox.max.x)) continue;
+
+          if (this._tmpBox.intersectsBox(this._playerBox)) return true;
+        }
+        return false;
+      },
+
+      tick: function (t, dt) {
+        // Periodically refresh collider list in case DOM changes
+        if ((t - this._lastRefresh) > this.data.refreshMs) this._refreshColliders();
+
+        const w = !!this.keys['KeyW'] || !!this.keys['ArrowUp'];
+        const s = !!this.keys['KeyS'] || !!this.keys['ArrowDown'];
+        const a = !!this.keys['KeyA'] || !!this.keys['ArrowLeft'];
+        const d = !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
+        if (!w && !s && !a && !d) return;
+
+        const dtS = Math.min(0.05, dt / 1000);
+        const cam = this.el.querySelector('[camera]');
+        if (!cam) return;
+
+        const lc = cam.components && cam.components['look-controls'];
+        const yaw = lc && lc.yawObject ? lc.yawObject.rotation.y : 0;
+        const totalYaw = yaw + (this.el.object3D.rotation.y || 0);
+
+        let mx = 0, mz = 0;
+        if (w) { mx -= Math.sin(totalYaw); mz -= Math.cos(totalYaw); }
+        if (s) { mx += Math.sin(totalYaw); mz += Math.cos(totalYaw); }
+        if (a) { mx -= Math.cos(totalYaw); mz += Math.sin(totalYaw); }
+        if (d) { mx += Math.cos(totalYaw); mz -= Math.sin(totalYaw); }
+
+        const len = Math.sqrt(mx*mx + mz*mz);
+        if (len <= 0) return;
+
+        const step = this.data.speed * dtS;
+        const dx = (mx / len) * step;
+        const dz = (mz / len) * step;
+
+        const pos = this.el.object3D.position;
+        const x0 = pos.x;
+        const z0 = pos.z;
+
+        // Try X movement (slide)
+        const x1 = x0 + dx;
+        if (!this._intersectsAt(x1, z0)) pos.x = x1;
+
+        // Try Z movement (slide)
+        const z1 = pos.z + dz;
+        if (!this._intersectsAt(pos.x, z1)) pos.z = z1;
+      },
+
+      remove: function () {
+        window.removeEventListener('keydown', this._onKeyDown);
+        window.removeEventListener('keyup',   this._onKeyUp);
+        window.removeEventListener('blur', this._clearKeys);
+      }
+    });
+
+
+    AFRAME.registerComponent('starry-sky', {
+      init: function () {
+        const size = 2048;
+        const cv = document.createElement('canvas');
+        cv.width = size; cv.height = size;
+        const ctx = cv.getContext('2d');
+
+        // Pure black base
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, size, size);
+
+        // Generate star positions
+        const stars = [];
+        const layers = [
+          { count: 2000, minR: 0.2, maxR: 0.45, minA: 0.15, maxA: 0.4  },
+          { count: 450,  minR: 0.3, maxR: 0.6,  minA: 0.3,  maxA: 0.6  },
+          { count: 70,   minR: 0.5, maxR: 0.8,  minA: 0.5,  maxA: 0.8  },
+          { count: 12,   minR: 0.7, maxR: 1.0,  minA: 0.7,  maxA: 0.95 }
+        ];
+
+        for (const layer of layers) {
+          for (let i = 0; i < layer.count; i++) {
+            const x = Math.random() * size;
+            const y = Math.random() * size;
+            const r = layer.minR + Math.random() * (layer.maxR - layer.minR);
+            const a = layer.minA + Math.random() * (layer.maxA - layer.minA);
+            const hue = Math.random();
+            let cr = 255, cg = 255, cb = 255;
+            if (hue > 0.85 && hue < 0.92) { cr = 210; cg = 220; cb = 255; }
+            else if (hue > 0.92) { cr = 255; cg = 245; cb = 220; }
+            stars.push({ x: x, y: y, r: r, a: a, cr: cr, cg: cg, cb: cb });
+          }
+        }
+
+        // Draw constellation lines FIRST (behind stars)
+        // Only connect brighter stars, very thin, very faint
+        const brightStars = stars.filter(function(s) { return s.a > 0.35; });
+        const maxDist = 90;
+        ctx.lineWidth = 0.3;
+        for (let i = 0; i < brightStars.length; i++) {
+          let connections = 0;
+          for (let j = i + 1; j < brightStars.length; j++) {
+            if (connections >= 2) break;
+            const dx = brightStars[i].x - brightStars[j].x;
+            const dy = brightStars[i].y - brightStars[j].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < maxDist) {
+              const t = 1 - dist / maxDist;
+              const lineAlpha = t * 0.06 * (brightStars[i].a + brightStars[j].a) * 0.5;
+              if (lineAlpha > 0.005) {
+                ctx.beginPath();
+                ctx.moveTo(brightStars[i].x, brightStars[i].y);
+                ctx.lineTo(brightStars[j].x, brightStars[j].y);
+                ctx.strokeStyle = 'rgba(180,210,255,' + lineAlpha + ')';
+                ctx.stroke();
+                connections++;
+              }
+            }
+          }
+        }
+
+        // Draw stars on top
+        for (let i = 0; i < stars.length; i++) {
+          const s = stars[i];
+          ctx.fillStyle = 'rgba(' + s.cr + ',' + s.cg + ',' + s.cb + ',' + s.a + ')';
+          ctx.fillRect(Math.floor(s.x), Math.floor(s.y), Math.ceil(s.r), Math.ceil(s.r));
+        }
+
+        const tex = new THREE.CanvasTexture(cv);
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.needsUpdate = true;
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          mesh.traverse((n) => {
+            if (n.material) {
+              n.material.map = tex;
+              n.material.color = new THREE.Color(0xffffff);
+              n.material.needsUpdate = true;
+            }
+          });
+        };
+        apply();
+        this.el.addEventListener('object3dset', apply);
+      }
+    });
+
+
+    // ── Snow: wind-driven particles, sparse→intense over 30s ──────────────────
+    AFRAME.registerComponent('snow', {
+      schema: {
+        count:       { type: 'number', default: 4000 },
+        areaWidth:   { type: 'number', default: 80 },
+        areaDepth:   { type: 'number', default: 80 },
+        ceiling:     { type: 'number', default: 25 },
+        floor:       { type: 'number', default: 0.1 },
+        fallSpeed:   { type: 'number', default: 1.2 },
+        fallVar:     { type: 'number', default: 0.6 },
+        windX:       { type: 'number', default: 0.8 },
+        windZ:       { type: 'number', default: 0.3 },
+        gustStr:     { type: 'number', default: 0.4 },
+        gustFreq:    { type: 'number', default: 0.15 },
+        rampTime:    { type: 'number', default: 30 },
+        size:        { type: 'number', default: 0.06 }
+      },
+      init: function () {
+        const d = this.data;
+        const N = d.count;
+        this._officeCenter = { x: 0, z: -75 };
+        this._sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : function(){ return 0; };
+
+        this._fallSpeeds = new Float32Array(N);
+        this._driftX = new Float32Array(N);
+        this._driftZ = new Float32Array(N);
+        this._spawnDelay = new Float32Array(N);
+        const positions = new Float32Array(N * 3);
+
+        for (let i = 0; i < N; i++) {
+          this._spawnDelay[i] = Math.pow(Math.random(), 1.6) * d.rampTime;
+          positions[i * 3] = positions[i * 3 + 1] = positions[i * 3 + 2] = 9999;
+          this._fallSpeeds[i] = d.fallSpeed + (Math.random() - 0.5) * d.fallVar;
+          this._driftX[i] = (Math.random() - 0.5) * 0.45;
+          this._driftZ[i] = (Math.random() - 0.5) * 0.45;
+        }
+
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+        const cv = document.createElement('canvas');
+        cv.width = 32; cv.height = 32;
+        const ctx = cv.getContext('2d');
+        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+        grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, 32, 32);
+        const spriteTex = new THREE.CanvasTexture(cv);
+
+        const mat = new THREE.PointsMaterial({
+          map: spriteTex, size: d.size, transparent: true, opacity: 0.92,
+          depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true, color: 0xffffff
+        });
+
+        this._points = new THREE.Points(geom, mat);
+        this._points.frustumCulled = false;
+        this.el.sceneEl.object3D.add(this._points);
+
+        this._elapsed = 0;
+        this._posAttr = geom.getAttribute('position');
+        this._spawned = new Uint8Array(N);
+      },
+
+      _isIndoor: function (x, z) {
+        if (x > -7.5 && x < 7.5 && z > -82 && z < -68) return true;
+        if (x > 2.0 && x < 7.0 && z > -69 && z < -56) return true;
+        if (x > -7.0 && x < -2.0 && z > -97 && z < -84) return true;
+        return false;
+      },
+
+      _zoneMask: function (x, z) {
+        const sn = this._sn;
+        const cx = this._officeCenter.x, cz = this._officeCenter.z;
+        const dx = x - cx, dz = z - cz;
+        const r = Math.sqrt(dx*dx + dz*dz);
+
+        // Keep snow concentrated near office, with noisy/organic outer contour.
+        const nA = sn(x * 0.05, z * 0.05) * 6.5;
+        const nB = sn(x * 0.11 + 22, z * 0.11 - 9) * 2.5;
+        const outerR = 28 + nA + nB;   // irregular boundary
+        const innerFull = 15 + sn(x * 0.08 - 30, z * 0.08 + 17) * 1.5;
+
+        // Soft ramp between no-snow and full-snow
+        let m = (outerR - r) / Math.max(0.001, (outerR - innerFull));
+        m = Math.max(0, Math.min(1, m));
+        m = m * m * (3 - 2 * m);
+
+        // Hard clear near spawn-facing side (camera starts looking opposite office, around z ~0 / - side path)
+        // Fade out all snow when approaching origin region.
+        const spawnClearR = 34;
+        const rSpawn = Math.sqrt(x*x + z*z);
+        let spawnFade = (rSpawn - 20) / (spawnClearR - 20);
+        spawnFade = Math.max(0, Math.min(1, spawnFade));
+        spawnFade = spawnFade * spawnFade * (3 - 2 * spawnFade);
+        m *= spawnFade;
+
+        // Directional suppression toward the front-facing side to avoid visible edge line there.
+        const towardSpawn = Math.max(0, (z + 75) / 75); // 1 near z=0, 0 at office
+        m *= (1 - 0.7 * towardSpawn);
+
+        return Math.max(0, Math.min(1, m));
+      },
+
+      _respawn: function (i) {
+        const d = this.data;
+        const arr = this._posAttr.array;
+        let x, z, tries = 0;
+        do {
+          // sample around office, not around camera
+          x = this._officeCenter.x + (Math.random() - 0.5) * 70;
+          z = this._officeCenter.z + (Math.random() - 0.5) * 70;
+          tries++;
+          var mask = this._zoneMask(x, z);
+          if (mask > 0.02 && !this._isIndoor(x, z) && Math.random() < mask) break;
+        } while (tries < 20);
+
+        if (tries >= 20 || this._isIndoor(x, z) || this._zoneMask(x, z) <= 0.02) {
+          arr[i * 3] = arr[i * 3 + 1] = arr[i * 3 + 2] = 9999;
+          return;
+        }
+
+        arr[i * 3] = x;
+        arr[i * 3 + 1] = d.ceiling + Math.random() * 8;
+        arr[i * 3 + 2] = z;
+      },
+
+      tick: function (t, dt) {
+        if (!dt) return;
+        const dtS = Math.min(dt / 1000, 0.05);
+        this._elapsed += dtS;
+        const d = this.data, N = d.count, arr = this._posAttr.array, elapsed = this._elapsed;
+
+        const gustPhase = elapsed * d.gustFreq * Math.PI * 2;
+        const gustX = Math.sin(gustPhase) * d.gustStr;
+        const gustZ = Math.cos(gustPhase * 0.7) * d.gustStr * 0.6;
+        const wx = d.windX + gustX;
+        const wz = d.windZ + gustZ;
+
+        for (let i = 0; i < N; i++) {
+          if (!this._spawned[i]) {
+            if (elapsed >= this._spawnDelay[i]) { this._spawned[i] = 1; this._respawn(i); }
+            continue;
+          }
+          arr[i * 3]     += (wx + this._driftX[i]) * dtS;
+          arr[i * 3 + 1] -= this._fallSpeeds[i] * dtS;
+          arr[i * 3 + 2] += (wz + this._driftZ[i]) * dtS;
+
+          const m = this._zoneMask(arr[i * 3], arr[i * 3 + 2]);
+          if (arr[i * 3 + 1] < d.floor || this._isIndoor(arr[i * 3], arr[i * 3 + 2]) || m < 0.02) {
+            this._respawn(i);
+          }
+        }
+        this._posAttr.needsUpdate = true;
+      },
+
+      remove: function () {
+        if (this._points) {
+          this.el.sceneEl.object3D.remove(this._points);
+          this._points.geometry.dispose();
+          this._points.material.dispose();
+        }
+      }
+    });
+
+
+// ── Compact 2D Simplex noise ──────────────────────────────────────────────
+    (function(G){
+      var F2=0.5*(Math.sqrt(3)-1),G2=(3-Math.sqrt(3))/6;
+      var p=[151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,
+        30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,
+        252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,
+        168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,
+        211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,
+        80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,
+        109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,
+        85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,
+        152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,
+        110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,
+        144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,
+        106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,
+        67,29,24,72,243,141,128,195,78,66,215,61,156,180];
+      var perm=new Array(512),permMod12=new Array(512);
+      for(var i=0;i<512;i++){perm[i]=p[i&255];permMod12[i]=perm[i]%12;}
+      var grad3=[[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],
+        [1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+      G.simplex2=function(x,y){
+        var s=(x+y)*F2,i=Math.floor(x+s),j=Math.floor(y+s);
+        var t=(i+j)*G2,X0=i-t,Y0=j-t,x0=x-X0,y0=y-Y0;
+        var i1,j1;if(x0>y0){i1=1;j1=0;}else{i1=0;j1=1;}
+        var x1=x0-i1+G2,y1=y0-j1+G2,x2=x0-1+2*G2,y2=y0-1+2*G2;
+        var ii=i&255,jj=j&255;
+        var gi0=permMod12[ii+perm[jj]],gi1=permMod12[ii+i1+perm[jj+j1]],gi2=permMod12[ii+1+perm[jj+1]];
+        var n0=0,n1=0,n2=0;
+        var t0=0.5-x0*x0-y0*y0;if(t0>=0){t0*=t0;n0=t0*t0*(grad3[gi0][0]*x0+grad3[gi0][1]*y0);}
+        var t1=0.5-x1*x1-y1*y1;if(t1>=0){t1*=t1;n1=t1*t1*(grad3[gi1][0]*x1+grad3[gi1][1]*y1);}
+        var t2=0.5-x2*x2-y2*y2;if(t2>=0){t2*=t2;n2=t2*t2*(grad3[gi2][0]*x2+grad3[gi2][1]*y2);}
+        return 70*(n0+n1+n2);
+      };
+    })(window._snoise={});
+
+    // ── Snow ground: procedural displaced mesh + procedural normal map ─────────
+    AFRAME.registerComponent('snow-ground', {
+      init: function () {
+        const sn = window._snoise.simplex2;
+
+        const RADIUS = 120;
+        const SEG = 360;
+        const BASE_Y = 0.08;
+
+        const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68, cx: 0, cz: -75 };
+        const transCorridor = { x1: 2.0, x2: 7.0, z1: -69, z2: -56 };
+        const exitCorridor = { x1: -7.0, x2: -2.0, z1: -97, z2: -84 };
+        const platformR = 2.1;
+
+        function isInsideRectPad(x,z,r,pad){ return x>r.x1-pad && x<r.x2+pad && z>r.z1-pad && z<r.z2+pad; }
+        function distToRectEdge(x,z,r){
+          const dx = Math.max(r.x1 - x, 0, x - r.x2);
+          const dz = Math.max(r.z1 - z, 0, z - r.z2);
+          const outside = Math.sqrt(dx*dx + dz*dz);
+          if (outside > 0) return outside;
+          const toSides = Math.min(x-r.x1, r.x2-x, z-r.z1, r.z2-z);
+          return -toSides;
+        }
+        function smoothstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
+
+        function zoneMask(x, z) {
+          // Domain-warped radial field for a softer, less polygonal snow boundary.
+          const wx = x + sn(x*0.035 + 41, z*0.035 - 17) * 7.0 + sn(x*0.09, z*0.09) * 2.0;
+          const wz = z + sn(x*0.035 - 13, z*0.035 + 23) * 7.0 + sn(x*0.09 + 7, z*0.09 - 9) * 2.0;
+          const dx = wx - office.cx, dz = wz - office.cz;
+          const r = Math.sqrt(dx*dx + dz*dz);
+
+          const n1 = sn(wx*0.045, wz*0.045) * 6.0;
+          const n2 = sn(wx*0.10 + 13.4, wz*0.10 - 8.2) * 2.8;
+          const n3 = sn(wx*0.18 - 3.1, wz*0.18 + 6.4) * 1.0;
+
+          const outer = 31 + n1 + n2 + n3;
+          const inner = 17 + sn(wx*0.07 - 5, wz*0.07 + 14) * 1.8;
+          let m = 1 - smoothstep(inner, outer, r);
+
+          // Spawn-facing clear side, but avoid a hard geometric line.
+          const spawnR = Math.sqrt(x*x + z*z);
+          let spawnFade = smoothstep(16, 40, spawnR);
+          const frontBias = Math.max(0, Math.min(1, (z + 75) / 75));
+          const frontNoise = 0.88 + 0.12 * (sn(x*0.06 + 60, z*0.06 - 10) * 0.5 + 0.5);
+          m *= spawnFade * (1 - 0.58 * frontBias * frontNoise);
+
+          // Boundary breakup without creating isolated holes/islands.
+          const edgeNoise = sn(x*0.14 + 100, z*0.14 - 100) * 0.5 + 0.5;
+          const edgeBoost = smoothstep(0.0, 0.35, m) * (1 - smoothstep(0.35, 0.9, m));
+          m += (edgeNoise - 0.5) * 0.16 * edgeBoost;
+
+          return Math.max(0, Math.min(1, m));
+        }
+
+        const geom = new THREE.PlaneGeometry(RADIUS * 2, RADIUS * 2, SEG, SEG);
+        geom.rotateX(-Math.PI / 2);
+        const pos = geom.getAttribute('position');
+
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i), z = pos.getZ(i);
+          const edgeR = Math.sqrt(x*x + z*z);
+          if (edgeR > RADIUS * 0.985) { pos.setY(i, -1.0); continue; }
+
+          const platformDist = Math.sqrt(x*x + z*z) - platformR;
+          const inPlatform = platformDist < -0.05;
+          const inOffice = isInsideRectPad(x,z,office,-0.10);
+          const inTrans = isInsideRectPad(x,z,transCorridor,-0.10);
+          const inExit = isInsideRectPad(x,z,exitCorridor,-0.10);
+          if (inPlatform || inOffice || inTrans || inExit) { pos.setY(i, -0.55); continue; }
+
+          let m = zoneMask(x, z);
+
+          // Structure proximity can force local snow so we don't get visible floor gaps near walls.
+          const dOffice = distToRectEdge(x,z,office);
+          const dTrans = distToRectEdge(x,z,transCorridor);
+          const dExit = distToRectEdge(x,z,exitCorridor);
+          const dPlat = platformDist;
+
+          const nearOffice = Math.max(0, 1 - smoothstep(0.0, 4.4, dOffice));
+          const nearTrans  = Math.max(0, 1 - smoothstep(0.0, 3.0, dTrans));
+          const nearExit   = Math.max(0, 1 - smoothstep(0.0, 3.0, dExit));
+          const nearPlat   = Math.max(0, 1 - smoothstep(0.0, 2.8, dPlat));
+          const structureMask = Math.max(nearOffice, nearTrans*0.9, nearExit*0.9, nearPlat*0.85);
+
+          // Fill small/noisy voids near the snow boundary and around architecture.
+          const mEff = Math.max(m, structureMask * 0.82);
+
+          if (mEff <= 0.01) { pos.setY(i, -0.35); continue; }
+
+          // Base drifts (multi-scale)
+          let h = 0;
+          h += (sn(x*0.028, z*0.028) * 0.5 + 0.5) * 0.25;
+          h += (sn(x*0.07 + 20, z*0.07 - 8) * 0.5 + 0.5) * 0.16;
+          h += (sn(x*0.16 - 9, z*0.16 + 11) * 0.5 + 0.5) * 0.08;
+          h += (sn(x*0.33 + 3, z*0.33 - 2) * 0.5 + 0.5) * 0.03;
+          h *= mEff;
+
+          // Soft boundary berm to hide the start of the snow zone.
+          const boundaryBand = smoothstep(0.03, 0.26, mEff) * (1 - smoothstep(0.26, 0.62, mEff));
+          h += boundaryBand * 0.18 * (0.6 + 0.4*(sn(x*0.10 + 8, z*0.10 - 12)*0.5+0.5));
+
+          // Accumulation around office + corridors + platform edges (volumetric integration)
+          const edgeAccum =
+            nearOffice * 0.42 +
+            nearTrans  * 0.28 +
+            nearExit   * 0.24 +
+            nearPlat   * 0.22;
+          h += edgeAccum * (0.70 + 0.30*(sn(x*0.22+4, z*0.22-6)*0.5+0.5));
+
+          // Extra seal strip right against edges to avoid visible dark cracks
+          const seal =
+            Math.max(0, 1 - smoothstep(0.0, 0.55, dOffice)) * 0.10 +
+            Math.max(0, 1 - smoothstep(0.0, 0.40, dTrans)) * 0.08 +
+            Math.max(0, 1 - smoothstep(0.0, 0.40, dExit)) * 0.08 +
+            Math.max(0, 1 - smoothstep(0.0, 0.35, dPlat)) * 0.06;
+          h += seal;
+
+          // Large-scale fade at mesh edge
+          h *= (1 - smoothstep(RADIUS * 0.83, RADIUS * 0.98, edgeR));
+
+          pos.setY(i, BASE_Y + h);
+        }
+
+        pos.needsUpdate = true;
+        geom.computeVertexNormals();
+
+        const nmSize = 512;
+        const nmCv = document.createElement('canvas'); nmCv.width = nmSize; nmCv.height = nmSize;
+        const nmCtx = nmCv.getContext('2d');
+        const imgData = nmCtx.createImageData(nmSize, nmSize); const dd = imgData.data;
+        for (let py = 0; py < nmSize; py++) {
+          for (let px = 0; px < nmSize; px++) {
+            const idx = (py * nmSize + px) * 4;
+            const nx = px / nmSize * 22, ny = py / nmSize * 22;
+            const dx = sn(nx*3+100, ny*3)*0.45 + sn(nx*9+50, ny*9)*0.22 + sn(nx*18, ny*18+30)*0.10;
+            const dy = sn(nx*3, ny*3+200)*0.45 + sn(nx*9, ny*9+80)*0.22 + sn(nx*18+70, ny*18)*0.10;
+            dd[idx] = Math.floor((dx * 0.5 + 0.5) * 255);
+            dd[idx+1] = Math.floor((dy * 0.5 + 0.5) * 255);
+            dd[idx+2] = 205; dd[idx+3] = 255;
+          }
+        }
+        nmCtx.putImageData(imgData, 0, 0);
+        const normalTex = new THREE.CanvasTexture(nmCv);
+        normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
+        normalTex.repeat.set(44, 44);
+
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xeef2f5, roughness: 0.98, metalness: 0.0,
+          normalMap: normalTex, normalScale: new THREE.Vector2(0.35, 0.35),
+          envMapIntensity: 0.05, side: THREE.FrontSide, depthWrite: true
+        });
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.receiveShadow = true; mesh.frustumCulled = false;
+        this.el.sceneEl.object3D.add(mesh);
+        this._mesh = mesh;
+      },
+      remove: function () {
+        if (this._mesh) {
+          this.el.sceneEl.object3D.remove(this._mesh);
+          this._mesh.geometry.dispose();
+          this._mesh.material.dispose();
+        }
+      }
+    });
+</script>
+</head>
+<body>
+<!-- Flash fix: black overlay present before any paint -->
+<div id="fadeIn"></div>
+<!-- Quit button — matches aya.dev position (bottom-left) and style -->
+<div id="quitShell">
+<button id="quitBtn" type="button">QUIT</button>
+</div>
+<div aria-hidden="true" id="quitConfirm">
+<div aria-label="Quit experience" aria-modal="true" id="quitCard" role="dialog">
+<h3>Quit experience</h3>
+<p>You're about to leave the 3D experience.</p>
+<div id="quitActions">
+<button class="qbtn" id="quitCancel" type="button">Cancel</button>
+<button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
+</div>
+</div>
+</div>
+
+<!-- Terminal interaction guide + Lia overlay -->
+<style>
+  #terminalGuide{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:260;display:none;pointer-events:none;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:rgba(255,255,255,.94)}
+  #terminalGuide.show{display:block}
+  #terminalGuide .tg-card{background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px 14px;backdrop-filter:blur(6px);box-shadow:0 10px 36px rgba(0,0,0,.4);min-width:240px;text-align:center}
+  #terminalGuide .tg-main{font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+  #terminalGuide .tg-sub{margin-top:4px;font-size:11px;opacity:.8;letter-spacing:.04em}
+  #terminalGuide kbd{display:inline-block;min-width:18px;padding:1px 5px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#fff;vertical-align:1px}
+  #liaOverlay{position:fixed;inset:0;z-index:400;display:none;background:#000}
+  #liaOverlay.show{display:block}
+  #liaOverlayFrame{width:100%;height:100%;border:0;background:#000;display:block}
+</style>
+<div id="terminalGuide" aria-hidden="true"><div class="tg-card"><div id="terminalGuideMain" class="tg-main"></div><div id="terminalGuideSub" class="tg-sub"></div></div></div>
+<div id="liaOverlay" aria-hidden="true"><iframe id="liaOverlayFrame" allow="fullscreen" src="about:blank"></iframe></div>
+<a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow-ground="" snow="count: 26000; areaWidth: 100; areaDepth: 100; ceiling: 30; fallSpeed: 1.75; fallVar: 0.9; windX: 1.05; windZ: 0.45; gustStr: 0.75; size: 0.06; rampTime: 5">
+<a-assets timeout="30000">
+<img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
+<img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
+<img crossorigin="anonymous" id="moonNormal" src="./assets/cave_wall/moon_normal.webp"/>
+<img crossorigin="anonymous" id="moonRough" src="./assets/cave_wall/moon_rough.png"/>
+<img crossorigin="anonymous" id="moonAO" src="./assets/cave_wall/moon_ao.png"/>
+<img crossorigin="anonymous" id="groundDiffuse" src="./assets/moon_ground/moon_ground_diffuse%20.webp"/>
+<img crossorigin="anonymous" id="groundNormal" src="./assets/moon_ground/moon_ground_normal.webp"/>
+<img crossorigin="anonymous" id="groundRough" src="./assets/moon_ground/moon_ground_rough.png"/>
+<img crossorigin="anonymous" id="groundAO" src="./assets/moon_ground/moon_ground_ao.png"/>
+<img crossorigin="anonymous" id="elevMetalColor" src="./assets/metal_elevator_door/metal_elevator_color.webp"/>
+<img crossorigin="anonymous" id="elevMetalNormal" src="./assets/metal_elevator_door/metal_elevator_normal.webp"/>
+<img crossorigin="anonymous" id="elevMetalRough" src="./assets/metal_elevator_door/metal_elevator_rough.png"/>
+<img crossorigin="anonymous" id="elevMetalMetal" src="./assets/metal_elevator_door/metal_elevator_Metalness.png"/>
+
+    <a-asset-item crossorigin="anonymous" id="lia_pc_glb" src="./assets/computer/LIA%20COMPUTER.glb"></a-asset-item>
+  
+    <a-asset-item id="chad_typing_glb" src="../../characters/chad_typing.glb"></a-asset-item>
+    <a-asset-item id="shannon_sitting_glb" src="../../characters/shannon_sitting.glb"></a-asset-item>
+    <a-asset-item id="martha_typing_glb" src="../../characters/martha_typing.glb"></a-asset-item>
+    <a-asset-item id="marker_typing_glb" src="../../characters/marker_typing.glb"></a-asset-item>
+    <a-asset-item id="david_sitting_glb" src="../../characters/david_sitting.glb"></a-asset-item>
+    <a-asset-item id="jenny_typing_glb" src="../../characters/jenny_typing.glb"></a-asset-item>
+    <a-asset-item id="astra_typing_glb" src="../../characters/astra_typing.glb"></a-asset-item>
+
+  </a-assets>
+<!-- ── Sky ──────────────────────────────────────────────────────── -->
+<a-sky id="starSky" starry-sky=""></a-sky>
+<!-- ── Lighting — exact match to aya.dev above-ground state ─────── -->
+<!-- Ambient: matches aya.dev global ambient (very subtle, just breaks pure black) -->
+<a-entity light="type: ambient; color: #0b1220; intensity: 0.035"></a-entity>
+<!-- Directional moonlight from earth direction — same values as lia_lunar_light in aya.dev -->
+<a-entity id="lia_earthshine_target" position="0 0 0"></a-entity>
+<a-entity id="lia_lunar_light" light="type: directional; color: #d9f1ff; intensity: 0.22; castShadow: false; target: #lia_earthshine_target" position="0 35 -220">
+</a-entity>
+<!-- Hemisphere sky fill — same values as lia_lunar_skyfill in aya.dev -->
+<a-entity id="lia_lunar_skyfill" light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.14" position="0 18 0">
+</a-entity>
+<!-- ── Earth — same position/material as aya.dev lia_earth ─────── -->
+<a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.9" no-fog="" position="0 35 -220" radius="9" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
+<!-- Earth atmospheric halo -->
+<a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
+<a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
+<!-- ── Lunar ground ─────────────────────────────────────────────── -->
+<a-ring id="lia_lunar_ground" material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 140 140; normalScale: 1 1; side: front" position="0 0.07 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
+<!-- ── Platform ─────────────────────────────────────────────────── -->
+<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
+<a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
+<a-entity id="endchamber_handrail_colliders">
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 -0.866" rotation="0 -36.1 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.774 0.580 -1.250" rotation="0 -58.2 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.246 0.580 -1.449" rotation="0 -80.4 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.318 0.580 -1.435" rotation="0 -102.5 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.836 0.580 -1.209" rotation="0 -124.6 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.230 0.580 -0.805" rotation="0 -146.8 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.443 0.580 -0.282" rotation="0 -168.9 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.443 0.580 0.282" rotation="0 -191.1 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-1.230 0.580 0.805" rotation="0 -213.2 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.836 0.580 1.209" rotation="0 -235.4 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="-0.318 0.580 1.435" rotation="0 -257.5 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.246 0.580 1.449" rotation="0 -279.6 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="0.774 0.580 1.250" rotation="0 -301.8 0" visible="false"></a-box>
+<a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 0.866" rotation="0 -323.9 0" visible="false"></a-box>
+</a-entity>
+
+<a-entity id="endchamber_panel" position="0 0.44 1.41" rotation="0 180 0">
+<a-box depth="0.03" height="0.38" id="endchamber_panel_plate" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.7 0.7; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" width="0.20"></a-box>
+<a-cylinder height="0.02" id="endchamber_panel_button" material="shader: standard; color: #cfcfcf; roughness: 0.4; metalness: 0.6; emissive: #ffffff; emissiveIntensity: 0.0" position="0 0.02 0.013" radius="0.032" rotation="90 0 0"></a-cylinder>
+<a-sphere id="endchamber_panel_light" material="shader: standard; color: #0a0a0a; emissive: #d9f1ff; emissiveIntensity: 0.0; roughness: 0.9; metalness: 0.0" position="0 0.092 0.013" radius="0.012"></a-sphere>
+</a-entity>
+</a-cylinder>
+<!-- Seam trim ring -->
+<a-entity id="lia_seam_trim" position="0 0.0715 0">
+<a-ring id="lia_seam_flange" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" radius-inner="1.555" radius-outer="1.62" rotation="-90 0 0" segments-theta="128" shadow="cast:false; receive:true"></a-ring>
+</a-entity>
+<!-- Shaft collar (visible when looking down into hole) -->
+<a-cylinder height="1.50" id="lia_shaft_collar" material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double" open-ended="true" position="0 -0.68 0" radius="1.60" segments-radial="64" shadow="cast:false; receive:true"></a-cylinder>
+<!-- Black cap so shaft doesn't show void -->
+<a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.43 0" radius="1.60" rotation="-90 0 0"></a-circle>
+<!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
+<a-box depth="0.3" height="5" id="test_concrete_wall" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
+<!-- ── Player rig ────────────────────────────────────────────────── -->
+<!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
+<!-- ── Imported office + corridors from index.html ─────────────────────── --><a-entity id="transition_corridor" position="4.5 0.07 -62.5">
+<a-plane height="12" id="transition_corridor_floor" material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="4.2"></a-plane>
+<a-box class="solid" depth="12" height="5" id="transition_corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="12" height="5" id="transition_corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="12.4" height="0.30" id="transition_corridor_roof" material="shader: standard; color: #0a0a0a; roughness: 1; metalness: 0.0" position="0 5.15 0" width="4.8"></a-box>
+</a-entity><a-entity id="office" position="0 0.07 -75">
+<a-plane height="13" id="office_floor" material="shader: standard; color: #4f6f5a; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="14"></a-plane>
+<a-box depth="13.6" height="0.30" id="office_roof" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0 5.15 0" width="14.6"></a-box>
+<!-- Office baseboards (thin dark trim) -->
+<a-box depth="0.06" height="0.30" id="office_baseboard_north_left" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="-1.875 0.15 6.5" width="10.25"></a-box>
+<a-box depth="0.06" height="0.30" id="office_baseboard_north_right" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="6.375 0.15 6.5" width="1.25"></a-box>
+<a-box depth="0.06" height="0.30" id="office_baseboard_south_left" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="-6.375 0.15 -6.5" width="1.25"></a-box>
+<a-box depth="0.06" height="0.30" id="office_baseboard_south_right" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="1.875 0.15 -6.5" width="10.25"></a-box>
+<a-box depth="13" height="0.30" id="office_baseboard_east" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="7 0.15 0" width="0.06"></a-box>
+<a-box depth="13" height="0.30" id="office_baseboard_west" material="shader: standard; color: #2b2f2b; roughness: 1; metalness: 0" position="-7 0.15 0" width="0.06"></a-box>
+<!-- Ceiling grid + light panels (flat first pass) -->
+<a-entity id="office_ceiling_grid" position="0 4.95 0">
+<!-- grid beams -->
+<a-box class="ceiling_beam" depth="0.10" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 0" width="14.2"></a-box>
+<a-box class="ceiling_beam" depth="0.10" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 -4.33" width="14.2"></a-box>
+<a-box class="ceiling_beam" depth="0.10" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 4.33" width="14.2"></a-box>
+<a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="-4.66 0 0" width="0.10"></a-box>
+<a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="0 0 0" width="0.10"></a-box>
+<a-box class="ceiling_beam" depth="13.2" height="0.08" material="shader: standard; color: #aab1aa; roughness: 1; metalness: 0" position="4.66 0 0" width="0.10"></a-box>
+<!-- recessed light panels (emissive) -->
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.116; roughness: 0.8; metalness: 0" position="-2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.116; roughness: 0.8; metalness: 0" position="2.33 -0.06 -2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.116; roughness: 0.8; metalness: 0" position="-2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
+<a-plane class="ceiling_light" height="3.9" material="shader: standard; color: #ffffff; emissive: #ffffff; emissiveIntensity: 0.116; roughness: 0.8; metalness: 0" position="2.33 -0.06 2.16" rotation="90 0 0" width="4.2"></a-plane>
+    <!-- soft interior illumination (ceiling fixtures) -->
+    <a-entity light="type: point; color: #ffffff; intensity: 0.081; distance: 18; decay: 2" position="-2.33 -0.35 -2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.081; distance: 18; decay: 2" position="2.33 -0.35 -2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.081; distance: 18; decay: 2" position="-2.33 -0.35 2.16"></a-entity>
+    <a-entity light="type: point; color: #ffffff; intensity: 0.081; distance: 18; decay: 2" position="2.33 -0.35 2.16"></a-entity>
+
+</a-entity>
+<!-- Office walls (with offset entrance/exit openings) -->
+<!-- North wall (entrance on right) -->
+<a-box class="solid" depth="0.30" height="5" id="office_wall_north_left" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="-1.875 2.5 6.5" width="10.25"></a-box>
+<a-box class="solid" depth="0.30" height="5" id="office_wall_north_right" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="6.375 2.5 6.5" width="1.25"></a-box>
+<!-- South wall (exit on left) -->
+<a-box class="solid" depth="0.30" height="5" id="office_wall_south_left" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="-6.375 2.5 -6.5" width="1.25"></a-box>
+<a-box class="solid" depth="0.30" height="5" id="office_wall_south_right" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="1.875 2.5 -6.5" width="10.25"></a-box>
+<!-- East / West walls -->
+<a-box class="solid" depth="13" height="5" id="office_wall_east" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="7 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="13" height="5" id="office_wall_west" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="-7 2.5 0" width="0.30"></a-box>
+<!-- 3 station clusters (not directly in front of entrance) -->
+<!-- Stations cluster (copied from working_cubicles.html) -->
+<a-entity id="cluster_01" position="-4.1 0 2.6" rotation="0 0 0">
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_east_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_01" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-entity id="station_NE_01" position="0.755 0 0.455" rotation="0 0 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.08 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_chad_typing" class="npc" mixamo-mat-fix gltf-model="#chad_typing_glb" play-gltf-anim hand-clamp="minY: 0.79; smooth: 0.92; fingers: true" position="0.08 0.055 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_NW_01" position="-0.455 0 0.755" rotation="0 270 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_shannon_sitting" class="npc" mixamo-mat-fix gltf-model="#shannon_sitting_glb" play-gltf-anim position="0.05 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SE_01" position="0.455 0 -0.755" rotation="0 90 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SW_01" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+</a-entity>
+<!-- Stations cluster (copied from working_cubicles.html) -->
+<a-entity id="cluster_02" position="3.8 0 1.2" rotation="0 0 0">
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_east_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_02" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-entity id="station_NE_02" position="0.755 0 0.455" rotation="0 0 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.06 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_martha_typing" class="npc" mixamo-mat-fix gltf-model="#martha_typing_glb" play-gltf-anim hand-clamp="minY: 0.79; smooth: 0.95; fingers: true" position="0.06 0.09 0.90" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_NW_02" position="-0.455 0 0.755" rotation="0 270 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SE_02" position="0.455 0 -0.755" rotation="0 90 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_david_sitting" class="npc" mixamo-mat-fix gltf-model="#david_sitting_glb" play-gltf-anim position="0.05 0.025 0.85" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SW_02" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.90" width="0.45"></a-box>
+<a-entity id="npc_marker_typing" class="npc" mixamo-mat-fix gltf-model="#marker_typing_glb" play-gltf-anim hand-clamp="minY: 0.79; smooth: 0.92; fingers: true" position="0.05 0.055 1.00" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+</a-entity>
+<!-- Stations cluster (copied from working_cubicles.html) -->
+<a-entity id="cluster_03" position="0 0 -3.6" rotation="0 0 0">
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_east_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_z0_west_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="-0.755 0.75 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_north_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-box class="solid" depth="0.06" height="1.5" id="wall_x0_south_03" material="shader: standard; color: #0f231a; roughness: 0.98; metalness: 0.01" position="0 0.75 -0.755" rotation="0 90 0" width="1.45"></a-box>
+<a-entity id="station_NE_03" position="0.755 0 0.455" rotation="0 0 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_NW_03" position="-0.455 0 0.755" rotation="0 270 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_jenny_typing" class="npc" mixamo-mat-fix gltf-model="#jenny_typing_glb" play-gltf-anim hand-clamp="minY: 0.79; smooth: 0.92; fingers: true" position="0.05 0.05 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SE_03" position="0.455 0 -0.755" rotation="0 90 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.08 0.225 0.85" width="0.45"></a-box>
+<a-entity id="npc_astra_typing" class="npc" mixamo-mat-fix gltf-model="#astra_typing_glb" play-gltf-anim hand-clamp="minY: 0.78; smooth: 0.7; fingers: true" position="0.08 0.025 0.95" rotation="0 180 0" scale="1 1 1"></a-entity>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+<a-entity id="station_SW_03" position="-0.755 0 -0.455" rotation="0 180 0">
+<a-box class="tabletop solid" depth="0.85" height="0.06" material="shader: standard; color: #f2f2f2; roughness: 0.9; metalness: 0.02" position="0 0.70 0" width="1.45"></a-box>
+<a-box class="stool solid" depth="0.45" height="0.45" material="shader: standard; color: #f2f2f2; roughness: 1; metalness: 0" position="0.05 0.225 0.85" width="0.45"></a-box>
+<a-entity class="computer solid" gltf-model="#lia_pc_glb" position="0 0.74 0" rotation="0 0 0" scale="0.166375 0.166375 0.166375" strip-contact-shadow=""></a-entity>
+<a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
+</a-entity>
+</a-entity>
+</a-entity><a-entity id="corridor" position="-4.5 0.07 -90.5">
+<a-plane height="12" id="corridor_floor" material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="4.2"></a-plane>
+<a-box class="solid" depth="12" height="5" id="corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
+<a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
+</a-entity><a-entity id="rig" position="0 0.07 0" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0">
+<a-entity camera="fov: 60; near: 0.1; far: 500; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
+<a-entity cursor="rayOrigin: mouse"></a-entity>
+</a-entity>
+</a-entity>
+</a-scene>
+<script>
+
+
+
+
+AFRAME.registerComponent('play-gltf-anim', {
+  init: function () {
+    this.mixer = null;
+    this.actions = [];
+    this.el.addEventListener('model-loaded', (e) => {
+      const model = this.el.getObject3D('mesh');
+      if (!model) return;
+      const clips = (model.animations && model.animations.length) ? model.animations : ((e.detail && e.detail.model && e.detail.model.animations) || []);
+      if (!clips || !clips.length) return;
+      this.mixer = new THREE.AnimationMixer(model);
+      this.actions = clips.map((clip) => {
+        const a = this.mixer.clipAction(clip);
+        a.reset();
+        a.setLoop(THREE.LoopRepeat, Infinity);
+        a.play();
+        a.time = Math.random() * clip.duration;
+        return a;
+      });
+    });
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+  }
+});
+
+AFRAME.registerComponent('hand-clamp', {
+  schema: {
+    minY:    { type: 'number',  default: 0.84  },
+    smooth:  { type: 'number',  default: 0.92  },
+    fingers: { type: 'boolean', default: true   }
+  },
+  init: function () {
+    this._handBones   = [];
+    this._fingerBones = [];
+    this._wP = new THREE.Vector3();
+    const find = () => {
+      this._handBones   = [];
+      this._fingerBones = [];
+      const mesh = this.el.getObject3D('mesh');
+      if (!mesh) return;
+      mesh.traverse((n) => {
+        if (!n.isBone || !n.name) return;
+        const nm = n.name;
+        if (/^(mixamorig:?)?(Left|Right)Hand$/i.test(nm)) {
+          this._handBones.push(n);
+          return;
+        }
+        if (this.data.fingers && /(Thumb|Index|Middle|Ring|Little|Pinky)\d/i.test(nm) &&
+            /(Left|Right)/i.test(nm)) {
+          this._fingerBones.push(n);
+        }
+      });
+    };
+    this.el.addEventListener('model-loaded', find);
+  },
+  tick: function () {
+    const minY = this.data.minY;
+    const sm   = this.data.smooth;
+    const wp   = this._wP;
+    for (let i = 0; i < this._handBones.length; i++) {
+      const b = this._handBones[i];
+      b.getWorldPosition(wp);
+      if (wp.y < minY) b.position.y += (minY - wp.y) * sm;
+    }
+    if (this.data.fingers) {
+      for (let i = 0; i < this._fingerBones.length; i++) {
+        const b = this._fingerBones[i];
+        b.getWorldPosition(wp);
+        if (wp.y < minY) b.position.y += (minY - wp.y) * sm;
+      }
+    }
+  }
+});
+
+
+// ── Fade in from black ────────────────────────────────────────────────────────
+// Flash fix: overlay is already covering everything via CSS (opacity:1 in <style>).
+// We wait for the scene `loaded` event so the first rendered frame is the real scene.
+(function () {
+  const overlay = document.getElementById('fadeIn');
+  if (!overlay) return;
+
+  const fade = () => {
+    // Two rAF passes ensure at least one real frame has been drawn before fading
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      overlay.classList.add('done');
+      setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 1100);
+    }));
+  };
+
+  const scene = document.querySelector('a-scene');
+  if (scene) {
+    if (scene.hasLoaded) fade();
+    else scene.addEventListener('loaded', fade, { once: true });
+  } else {
+    window.addEventListener('load', fade, { once: true });
+  }
+})();
+
+// ── Quit UI — matches aya.dev ─────────────────────────────────────────────────
+(function () {
+  const QUIT    = document.getElementById('quitBtn');
+  const QC      = document.getElementById('quitConfirm');
+  const Q_CANCEL= document.getElementById('quitCancel');
+  const Q_OK    = document.getElementById('quitConfirmBtn');
+
+  function openQuitConfirm()  { if (!QC) return; QC.classList.add('show');    QC.setAttribute('aria-hidden','false'); }
+  function closeQuitConfirm() { if (!QC) return; QC.classList.remove('show'); QC.setAttribute('aria-hidden','true');  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && QC && QC.classList.contains('show')) closeQuitConfirm();
+  }, { passive: true });
+
+  if (QUIT)     QUIT.addEventListener('click', openQuitConfirm);
+  if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
+  if (QC)       QC.addEventListener('click', (e) => { if (e.target === QC) closeQuitConfirm(); });
+  if (Q_OK)     Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
+})();
+</script>
+
+<script>
+(function(){
+  const EMPTY_STATIONS = ['station_SE_01','station_SW_01','station_NW_02','station_NE_03','station_SW_03'];
+  const LIA_IFRAME_SRC = './lia_1_0_experience.html';
+  const state = { mode:'idle', active:null, overlayOpen:false, saved:null, anim:0 };
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+  const qA = new THREE.Quaternion();
+  let scene, rig, cam, guide, guideMain, guideSub, overlay, frame;
+  let terminals = [];
+
+  function $(id){ return document.getElementById(id); }
+  function init(){
+    scene = document.querySelector('a-scene');
+    rig = $('rig');
+    cam = $('playerCam');
+    guide = $('terminalGuide'); guideMain = $('terminalGuideMain'); guideSub = $('terminalGuideSub');
+    overlay = $('liaOverlay'); frame = $('liaOverlayFrame');
+    if (!scene || !rig || !cam) return;
+    collectTerminals();
+    window.addEventListener('keydown', onKeyDown, {passive:false});
+    window.addEventListener('message', onMessage);
+    requestAnimationFrame(tick);
+  }
+
+  function collectTerminals(){
+    terminals = [];
+    EMPTY_STATIONS.forEach(id=>{
+      const station = $(id);
+      if (!station) return;
+      const computer = station.querySelector('.computer');
+      if (!computer) return;
+      terminals.push({ id, station, computer });
+    });
+  }
+
+  function showGuide(main, sub=''){
+    if (!guide) return;
+    guideMain.textContent = main || '';
+    guideSub.textContent = sub || '';
+    guide.classList.add('show');
+  }
+  function hideGuide(){ if (guide) guide.classList.remove('show'); }
+
+  function getYawPitchObjects(){
+    const lc = cam.components && cam.components['look-controls'];
+    return lc ? { lc, yaw: lc.yawObject, pitch: lc.pitchObject } : null;
+  }
+  function getCamWorldPos(){ return cam.object3D.getWorldPosition(vA.clone()); }
+  function getTerminalWorldPoint(t){
+    return t.computer.object3D.getWorldPosition(vA.clone());
+  }
+  function getSeatWorldPoint(t){
+    return t.station.object3D.localToWorld(new THREE.Vector3(0,0,0.95));
+  }
+  function yawToFace(from, to){
+    const dx = to.x - from.x, dz = to.z - from.z;
+    return Math.atan2(-dx, -dz);
+  }
+  function pitchToFace(camY, fromXZ, to, eyeHeight){
+    const dx = to.x - fromXZ.x, dz = to.z - fromXZ.z;
+    const dy = (to.y) - (camY + eyeHeight);
+    const horiz = Math.max(0.001, Math.hypot(dx,dz));
+    return Math.max(-1.1, Math.min(0.45, Math.atan2(dy, horiz)));
+  }
+  function nearestTerminal(){
+    const rp = rig.object3D.position;
+    let best=null, bestD=1e9;
+    for (const t of terminals){
+      const seat = getSeatWorldPoint(t);
+      const d = Math.hypot(seat.x-rp.x, seat.z-rp.z);
+      if (d < bestD){ bestD = d; best = t; }
+    }
+    if (!best || bestD > 2.1) return null;
+    return { term: best, dist: bestD };
+  }
+
+  function isFacingActive(){
+    if (!state.active) return false;
+    const camPos = getCamWorldPos();
+    const target = getTerminalWorldPoint(state.active);
+    const dir = target.sub(camPos).setY(0).normalize();
+    cam.object3D.getWorldDirection(vB); vB.setY(0).normalize();
+    return dir.dot(vB) > 0.84;
+  }
+
+  function onKeyDown(e){
+    if (state.overlayOpen){
+      if (e.code === 'Escape'){ e.preventDefault(); closeOverlay(); }
+      return;
+    }
+    if (state.mode === 'near' && e.code === 'KeyE'){
+      e.preventDefault(); startSit(); return;
+    }
+    if (state.mode === 'seated'){
+      if (e.code === 'Escape'){ e.preventDefault(); standUp(); return; }
+      if (e.code === 'KeyF' && isFacingActive()){ e.preventDefault(); openOverlay(); return; }
+    }
+    if (state.mode === 'autopilot' && e.code === 'Escape'){ e.preventDefault(); standUp(true); }
+  }
+
+  function pauseWalk(pause){
+    const rw = rig.components && rig.components['rig-walk'];
+    if (!rw) return;
+    if (pause && rw.pause) rw.pause();
+    if (!pause && rw.play) rw.play();
+  }
+
+  function startSit(){
+    if (!state.active || state.mode === 'autopilot') return;
+    const yp = getYawPitchObjects(); if (!yp) return;
+    const rp = rig.object3D.position;
+    state.saved = {
+      rigX: rp.x, rigY: rp.y, rigZ: rp.z,
+      yaw: yp.yaw ? yp.yaw.rotation.y : 0,
+      pitch: yp.pitch ? yp.pitch.rotation.x : 0,
+      camY: cam.object3D.position.y
+    };
+    const seat = getSeatWorldPoint(state.active);
+    const target = getTerminalWorldPoint(state.active);
+    const start = { x: rp.x, z: rp.z, y: cam.object3D.position.y, yaw: state.saved.yaw, pitch: state.saved.pitch };
+    const end = {
+      x: seat.x, z: seat.z, y: 1.18,
+      yaw: yawToFace({x:seat.x,z:seat.z}, target),
+      pitch: pitchToFace(rig.object3D.position.y, {x:seat.x,z:seat.z}, target, 1.18)
+    };
+    state.mode = 'autopilot';
+    pauseWalk(true);
+    animate(900, (k)=>{
+      const s = k*k*(3-2*k);
+      rig.object3D.position.x = start.x + (end.x-start.x)*s;
+      rig.object3D.position.z = start.z + (end.z-start.z)*s;
+      cam.object3D.position.y = start.y + (end.y-start.y)*s;
+      if (yp.yaw) yp.yaw.rotation.y = lerpAngle(start.yaw,end.yaw,s);
+      if (yp.pitch) yp.pitch.rotation.x = start.pitch + (end.pitch-start.pitch)*s;
+    }, ()=>{
+      state.mode = 'seated';
+    });
+  }
+
+  function standUp(fromAuto){
+    if (!state.saved) { state.mode = 'idle'; state.active = null; pauseWalk(false); hideGuide(); return; }
+    const yp = getYawPitchObjects(); if (!yp) return;
+    const rp = rig.object3D.position;
+    const start = { x: rp.x, z: rp.z, y: cam.object3D.position.y, yaw: yp.yaw?yp.yaw.rotation.y:0, pitch: yp.pitch?yp.pitch.rotation.x:0 };
+    const end = { x: state.saved.rigX, z: state.saved.rigZ, y: state.saved.camY, yaw: state.saved.yaw, pitch: state.saved.pitch };
+    state.mode = 'autopilot';
+    animate(fromAuto ? 300 : 500, (k)=>{
+      const s = k*k*(3-2*k);
+      rig.object3D.position.x = start.x + (end.x-start.x)*s;
+      rig.object3D.position.z = start.z + (end.z-start.z)*s;
+      cam.object3D.position.y = start.y + (end.y-start.y)*s;
+      if (yp.yaw) yp.yaw.rotation.y = lerpAngle(start.yaw,end.yaw,s);
+      if (yp.pitch) yp.pitch.rotation.x = start.pitch + (end.pitch-start.pitch)*s;
+    }, ()=>{
+      pauseWalk(false);
+      state.mode = 'idle';
+      state.active = null;
+      hideGuide();
+    });
+  }
+
+  function animate(ms, step, done){
+    cancelAnimationFrame(state.anim);
+    const t0 = performance.now();
+    function loop(now){
+      const k = Math.min(1, (now-t0)/ms);
+      step(k);
+      if (k < 1) state.anim = requestAnimationFrame(loop); else { state.anim = 0; if (done) done(); }
+    }
+    state.anim = requestAnimationFrame(loop);
+  }
+  function lerpAngle(a,b,t){
+    let d = b-a; while (d > Math.PI) d -= Math.PI*2; while (d < -Math.PI) d += Math.PI*2; return a + d*t;
+  }
+
+  function openOverlay(){
+    if (!overlay || !frame) return;
+    state.overlayOpen = true;
+    if (document.pointerLockElement) document.exitPointerLock?.();
+    if (!frame.dataset.loaded){ frame.src = LIA_IFRAME_SRC; frame.dataset.loaded='1'; }
+    overlay.classList.add('show');
+    hideGuide();
+  }
+  function closeOverlay(){
+    if (!overlay) return;
+    state.overlayOpen = false;
+    overlay.classList.remove('show');
+    state.mode = 'seated';
+  }
+  function onMessage(ev){
+    if (!ev || !ev.data) return;
+    const t = ev.data.type;
+    if (t === 'LIA_EXIT') closeOverlay();
+    if (t === 'LIA_RESTART' && frame){
+      try { frame.contentWindow.location.reload(); } catch(_) { frame.src = LIA_IFRAME_SRC; }
+    }
+  }
+
+  function tick(){
+    if (!scene || !rig || !cam) { requestAnimationFrame(tick); return; }
+    if (!state.overlayOpen && state.mode !== 'autopilot') {
+      if (state.mode === 'seated') {
+        if (isFacingActive()) showGuide('Press F to initiate experience', 'Press ESC to stand up');
+        else showGuide('Face the computer', 'Press ESC to stand up');
+      } else {
+        const near = nearestTerminal();
+        if (near) {
+          state.mode = 'near';
+          state.active = near.term;
+          showGuide('Press E to sit down', 'Available terminal');
+        } else {
+          state.mode = 'idle';
+          state.active = null;
+          hideGuide();
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
+</body>
+</html>
