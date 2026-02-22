@@ -662,7 +662,7 @@ AFRAME.registerComponent('rig-walk', {
         const sn = window._snoise.simplex2;
 
         const RADIUS = 120;
-        const SEG = 240;
+        const SEG = 360;
         const BASE_Y = 0.08;
 
         const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68, cx: 0, cz: -75 };
@@ -682,23 +682,33 @@ AFRAME.registerComponent('rig-walk', {
         function smoothstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
 
         function zoneMask(x, z) {
-          const dx = x - office.cx, dz = z - office.cz;
+          // Domain-warped radial field for a softer, less polygonal snow boundary.
+          const wx = x + sn(x*0.035 + 41, z*0.035 - 17) * 7.0 + sn(x*0.09, z*0.09) * 2.0;
+          const wz = z + sn(x*0.035 - 13, z*0.035 + 23) * 7.0 + sn(x*0.09 + 7, z*0.09 - 9) * 2.0;
+          const dx = wx - office.cx, dz = wz - office.cz;
           const r = Math.sqrt(dx*dx + dz*dz);
-          const n1 = sn(x*0.05, z*0.05) * 7.5;
-          const n2 = sn(x*0.11 + 13.4, z*0.11 - 8.2) * 3.2;
-          const outer = 30 + n1 + n2;
-          const inner = 16 + sn(x*0.07 - 5, z*0.07 + 14) * 2.0;
+
+          const n1 = sn(wx*0.045, wz*0.045) * 6.0;
+          const n2 = sn(wx*0.10 + 13.4, wz*0.10 - 8.2) * 2.8;
+          const n3 = sn(wx*0.18 - 3.1, wz*0.18 + 6.4) * 1.0;
+
+          const outer = 31 + n1 + n2 + n3;
+          const inner = 17 + sn(wx*0.07 - 5, wz*0.07 + 14) * 1.8;
           let m = 1 - smoothstep(inner, outer, r);
 
-          // clear the spawn-facing side, but make transition gradual/organic
+          // Spawn-facing clear side, but avoid a hard geometric line.
           const spawnR = Math.sqrt(x*x + z*z);
-          m *= smoothstep(18, 36, spawnR);
-          const frontBias = Math.max(0, (z + 75) / 75); // stronger cut toward spawn side
-          m *= (1 - 0.65 * frontBias);
+          let spawnFade = smoothstep(16, 40, spawnR);
+          const frontBias = Math.max(0, Math.min(1, (z + 75) / 75));
+          const frontNoise = 0.88 + 0.12 * (sn(x*0.06 + 60, z*0.06 - 10) * 0.5 + 0.5);
+          m *= spawnFade * (1 - 0.58 * frontBias * frontNoise);
 
-          // add breakup at the boundary so the contour isn't circular/geometric
-          const breakup = 0.8 + 0.2 * (sn(x*0.17 + 100, z*0.17 - 100) * 0.5 + 0.5);
-          return Math.max(0, Math.min(1, m * breakup));
+          // Boundary breakup without creating isolated holes/islands.
+          const edgeNoise = sn(x*0.14 + 100, z*0.14 - 100) * 0.5 + 0.5;
+          const edgeBoost = smoothstep(0.0, 0.35, m) * (1 - smoothstep(0.35, 0.9, m));
+          m += (edgeNoise - 0.5) * 0.16 * edgeBoost;
+
+          return Math.max(0, Math.min(1, m));
         }
 
         const geom = new THREE.PlaneGeometry(RADIUS * 2, RADIUS * 2, SEG, SEG);
@@ -711,39 +721,58 @@ AFRAME.registerComponent('rig-walk', {
           if (edgeR > RADIUS * 0.985) { pos.setY(i, -1.0); continue; }
 
           const platformDist = Math.sqrt(x*x + z*z) - platformR;
-          const inPlatform = platformDist < 0;
-          const inOffice = isInsideRectPad(x,z,office,0);
-          const inTrans = isInsideRectPad(x,z,transCorridor,0);
-          const inExit = isInsideRectPad(x,z,exitCorridor,0);
+          const inPlatform = platformDist < -0.05;
+          const inOffice = isInsideRectPad(x,z,office,-0.10);
+          const inTrans = isInsideRectPad(x,z,transCorridor,-0.10);
+          const inExit = isInsideRectPad(x,z,exitCorridor,-0.10);
           if (inPlatform || inOffice || inTrans || inExit) { pos.setY(i, -0.55); continue; }
 
           let m = zoneMask(x, z);
-          if (m <= 0.01) { pos.setY(i, -0.35); continue; }
 
-          // Base drifts
-          let h = 0;
-          h += (sn(x*0.035, z*0.035) * 0.5 + 0.5) * 0.22;
-          h += (sn(x*0.09 + 20, z*0.09 - 8) * 0.5 + 0.5) * 0.12;
-          h += (sn(x*0.20 - 9, z*0.20 + 11) * 0.5 + 0.5) * 0.05;
-          h *= m;
-
-          // Boundary soft pile-up (creates a "snow fence" where zone starts)
-          if (m > 0.02 && m < 0.45) {
-            const ridge = Math.sin(m * Math.PI);
-            h += ridge * 0.22 * (0.7 + 0.3*(sn(x*0.14, z*0.14)*0.5+0.5));
-          }
-
-          // Accumulation around office + corridors + platform edges (volumetric integration)
+          // Structure proximity can force local snow so we don't get visible floor gaps near walls.
           const dOffice = distToRectEdge(x,z,office);
           const dTrans = distToRectEdge(x,z,transCorridor);
           const dExit = distToRectEdge(x,z,exitCorridor);
           const dPlat = platformDist;
+
+          const nearOffice = Math.max(0, 1 - smoothstep(0.0, 4.4, dOffice));
+          const nearTrans  = Math.max(0, 1 - smoothstep(0.0, 3.0, dTrans));
+          const nearExit   = Math.max(0, 1 - smoothstep(0.0, 3.0, dExit));
+          const nearPlat   = Math.max(0, 1 - smoothstep(0.0, 2.8, dPlat));
+          const structureMask = Math.max(nearOffice, nearTrans*0.9, nearExit*0.9, nearPlat*0.85);
+
+          // Fill small/noisy voids near the snow boundary and around architecture.
+          const mEff = Math.max(m, structureMask * 0.82);
+
+          if (mEff <= 0.01) { pos.setY(i, -0.35); continue; }
+
+          // Base drifts (multi-scale)
+          let h = 0;
+          h += (sn(x*0.028, z*0.028) * 0.5 + 0.5) * 0.25;
+          h += (sn(x*0.07 + 20, z*0.07 - 8) * 0.5 + 0.5) * 0.16;
+          h += (sn(x*0.16 - 9, z*0.16 + 11) * 0.5 + 0.5) * 0.08;
+          h += (sn(x*0.33 + 3, z*0.33 - 2) * 0.5 + 0.5) * 0.03;
+          h *= mEff;
+
+          // Soft boundary berm to hide the start of the snow zone.
+          const boundaryBand = smoothstep(0.03, 0.26, mEff) * (1 - smoothstep(0.26, 0.62, mEff));
+          h += boundaryBand * 0.18 * (0.6 + 0.4*(sn(x*0.10 + 8, z*0.10 - 12)*0.5+0.5));
+
+          // Accumulation around office + corridors + platform edges (volumetric integration)
           const edgeAccum =
-            Math.max(0, 1 - smoothstep(0.0, 3.8, dOffice)) * 0.38 +
-            Math.max(0, 1 - smoothstep(0.0, 2.4, dTrans)) * 0.22 +
-            Math.max(0, 1 - smoothstep(0.0, 2.4, dExit)) * 0.20 +
-            Math.max(0, 1 - smoothstep(0.0, 2.2, dPlat)) * 0.18;
-          h += edgeAccum * (0.75 + 0.25*(sn(x*0.25+4, z*0.25-6)*0.5+0.5)) * m;
+            nearOffice * 0.42 +
+            nearTrans  * 0.28 +
+            nearExit   * 0.24 +
+            nearPlat   * 0.22;
+          h += edgeAccum * (0.70 + 0.30*(sn(x*0.22+4, z*0.22-6)*0.5+0.5));
+
+          // Extra seal strip right against edges to avoid visible dark cracks
+          const seal =
+            Math.max(0, 1 - smoothstep(0.0, 0.55, dOffice)) * 0.10 +
+            Math.max(0, 1 - smoothstep(0.0, 0.40, dTrans)) * 0.08 +
+            Math.max(0, 1 - smoothstep(0.0, 0.40, dExit)) * 0.08 +
+            Math.max(0, 1 - smoothstep(0.0, 0.35, dPlat)) * 0.06;
+          h += seal;
 
           // Large-scale fade at mesh edge
           h *= (1 - smoothstep(RADIUS * 0.83, RADIUS * 0.98, edgeR));
