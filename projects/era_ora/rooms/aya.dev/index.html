@@ -4187,6 +4187,7 @@ AFRAME.registerComponent('tube-wall', {
       this.el.setAttribute('data-tube', '1');
       this.el.setAttribute('data-ax', a3.x.toFixed(6));
       this.el.setAttribute('data-az', a3.z.toFixed(6));
+      this.el.setAttribute('data-cy', ((a3.y + b3.y) * 0.5).toFixed(6));
       this.el.setAttribute('data-bx', b3.x.toFixed(6));
       this.el.setAttribute('data-bz', b3.z.toFixed(6));
       this.el.setAttribute('data-r', String(this.data.r));
@@ -21699,6 +21700,9 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._lastRefresh = 0;
     this._aabb = new THREE.Box3();
     this._collapseBlend = 0;
+    this._racerEl = null;
+    this._racerHidden = false;
+    this._wasActive = false;
   },
   refreshColliderMeshes: function () {
     this._meshes.length = 0;
@@ -21729,6 +21733,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
       var ax = parseFloat(ds.ax), az = parseFloat(ds.az);
       var bx = parseFloat(ds.bx), bz = parseFloat(ds.bz);
       var rr = parseFloat(ds.r);
+      var cy = parseFloat(ds.cy);
       var endMargin = parseFloat(ds.endmargin);
       var influence = parseFloat(ds.influence);
       if ([ax,az,bx,bz,rr].every(Number.isFinite)) {
@@ -21740,13 +21745,14 @@ AFRAME.registerComponent('tp-camera-springarm', {
           len2: Math.max(1e-6, len2),
           len: Math.sqrt(Math.max(1e-6, len2)),
           r: rr,
+          cy: Number.isFinite(cy) ? cy : NaN,
           endMargin: Number.isFinite(endMargin) ? endMargin : 0.6,
           influence: Number.isFinite(influence) ? influence : (rr + 1.8)
         });
       }
     }
   },
-  // Clamp a world position to stay inside any active tube corridor (XZ only).
+  // Clamp a world position to stay inside any active tube corridor (XZ + Y ceiling).
   _clampToTubes: function (pos) {
     var pad = this.data.sphereRadius + this.data.padding;
     for (var i = 0; i < this._tubes.length; i++) {
@@ -21760,10 +21766,20 @@ AFRAME.registerComponent('tp-camera-springarm', {
       var dist = Math.sqrt(dx * dx + dz * dz) || 1e-6;
       var influence = Number.isFinite(c.influence) ? c.influence : (c.r + 1.8);
       if (dist > influence) continue;
+
+      // XZ: keep inside cylinder radius
       var maxD = Math.max(0.05, c.r - pad);
       if (dist > maxD) {
         pos.x = cx + (dx / dist) * maxD;
         pos.z = cz + (dz / dist) * maxD;
+        dist = maxD;
+      }
+
+      // Y ceiling: cap at the tube arc (circular cross-section)
+      if (Number.isFinite(c.cy)) {
+        var headroom = Math.sqrt(Math.max(0, c.r * c.r - dist * dist));
+        var maxY = c.cy + headroom - pad;
+        if (pos.y > maxY) pos.y = maxY;
       }
     }
   },
@@ -21785,7 +21801,14 @@ AFRAME.registerComponent('tp-camera-springarm', {
   tick: function (t) {
     // EARLY OUT unless this camera is active
     const cam = this.el.components && this.el.components.camera;
-    if (cam && cam.data && cam.data.active === false) return;
+    if (cam && cam.data && cam.data.active === false) { this._wasActive = false; return; }
+
+    // Reset collapse state when TP camera just became active (after FP→TP switch)
+    if (!this._wasActive) {
+      this._wasActive = true;
+      this._collapseBlend = 0;
+      this._racerHidden = false;
+    }
 
     if (!this.data.pivot) return;
     if (t - this._lastRefresh > 1200) { this._lastRefresh = t; this.refreshColliderMeshes(); }
@@ -21847,6 +21870,19 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._collapseBlend += (targetBlend - this._collapseBlend) * blendSpeed;
     if (this._collapseBlend > 0.005) {
       this._finalW.lerp(this._pivotW, this._collapseBlend);
+    }
+
+    // Hide racer avatar when collapsed (avoids camera inside character body).
+    // Uses object3D.visible directly so it doesn't conflict with A-Frame attr.
+    if (!this._racerEl) this._racerEl = document.getElementById('racerAvatar');
+    if (this._racerEl && this._racerEl.object3D) {
+      if (this._collapseBlend > 0.55 && !this._racerHidden) {
+        this._racerEl.object3D.visible = false;
+        this._racerHidden = true;
+      } else if (this._collapseBlend < 0.35 && this._racerHidden) {
+        this._racerEl.object3D.visible = true;
+        this._racerHidden = false;
+      }
     }
 
     // Smooth world→local placement (faster when large correction needed)
