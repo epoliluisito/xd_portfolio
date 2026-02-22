@@ -4187,7 +4187,6 @@ AFRAME.registerComponent('tube-wall', {
       this.el.setAttribute('data-tube', '1');
       this.el.setAttribute('data-ax', a3.x.toFixed(6));
       this.el.setAttribute('data-az', a3.z.toFixed(6));
-      this.el.setAttribute('data-cy', a3.y.toFixed(6));
       this.el.setAttribute('data-bx', b3.x.toFixed(6));
       this.el.setAttribute('data-bz', b3.z.toFixed(6));
       this.el.setAttribute('data-r', String(this.data.r));
@@ -4696,7 +4695,10 @@ document.addEventListener('pointerlockchange', this._onPointerLockChange);
           const influence = Number.isFinite(c.influence) ? c.influence : (c.r + 1.8);
           if (dist > influence) continue;
 
-          const maxD = Math.max(0.001, (c.r - r));
+          // Use a wider effective body radius to keep the full character model
+          // visually inside the cylindrical tunnel (not just the collision point).
+          const tubeR = Math.max(r, 0.55);
+          const maxD = Math.max(0.001, (c.r - tubeR));
           if (dist > maxD) {
             const nx = dx / dist, nz = dz / dist;
             pos.x = cx + nx * maxD;
@@ -16926,7 +16928,7 @@ AFRAME.registerComponent('ion-wind-field', {
     <a-sky color="#040404"></a-sky>
   <!-- ===== Invisible obstacles (kept alive by prune-colliders keepRoots) ===== -->
   <a-entity id="collision_root" delayed-collider-refresh="delays: 200, 800, 1800, 3200">
-    <!-- Tube constraints: keep player inside tunnel_02 / tunnel_03 (blocks walls + rims on tunnel side) -->
+    <!-- Tube constraints: keep player inside tunnel corridors -->
     <a-entity id="tube_tunnel_01" tube-wall="module: #tunnel_01_cutref; a: 0 0; b: 20 0; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
     <a-entity id="tube_tunnel_02" tube-wall="module: #tunnel_02_module; a: 0 0; b: -14 0; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
     <a-entity id="tube_tunnel_03" tube-wall="module: #tunnel_03_module; a: 0 0; b: -14 0; r: 1.25; endMargin: 0.12; influence: 3.2"></a-entity>
@@ -21693,7 +21695,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._baseLocal.copy(this.el.object3D.position);
     this._curDist = this._baseLocal.length() || 1.3;
     this._meshes = [];
-    this._tubes = [];
     this._lastRefresh = 0;
     this._aabb = new THREE.Box3();
   },
@@ -21716,72 +21717,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
         this._meshes.push(obj);
       });
     });
-
-    // Collect tube-wall corridor descriptors (these have no meshes but
-    // define cylindrical constraints the camera must stay inside).
-    this._tubes.length = 0;
-    var tubeEls = this.el.sceneEl.querySelectorAll('[data-tube="1"]');
-    for (var i = 0; i < tubeEls.length; i++) {
-      var ds = tubeEls[i].dataset;
-      var ax = parseFloat(ds.ax), az = parseFloat(ds.az);
-      var bx = parseFloat(ds.bx), bz = parseFloat(ds.bz);
-      var rr = parseFloat(ds.r);
-      var cy = parseFloat(ds.cy);
-      var endMargin = parseFloat(ds.endmargin);
-      var influence = parseFloat(ds.influence);
-      if ([ax,az,bx,bz,rr].every(Number.isFinite)) {
-        var dx = bx - ax, dz = bz - az;
-        var len2 = dx*dx + dz*dz;
-        this._tubes.push({
-          ax: ax, az: az, bx: bx, bz: bz,
-          dx: dx, dz: dz,
-          len2: Math.max(1e-6, len2),
-          len: Math.sqrt(Math.max(1e-6, len2)),
-          r: rr,
-          cy: Number.isFinite(cy) ? cy : NaN,
-          endMargin: Number.isFinite(endMargin) ? endMargin : 0.6,
-          influence: Number.isFinite(influence) ? influence : (rr + 1.8)
-        });
-      }
-    }
-  },
-  // Constrain a world-space position inside any active tube corridor.
-  // XZ: keep inside cylinder cross-section. Y: keep below ceiling arc.
-  _clampToTubes: function (pos) {
-    var camPad = this.data.sphereRadius + this.data.padding;
-    for (var i = 0; i < this._tubes.length; i++) {
-      var c = this._tubes[i];
-      var tMargin = Math.min(0.45, (c.endMargin || 0) / (c.len || 1));
-      var apx = pos.x - c.ax;
-      var apz = pos.z - c.az;
-      var tt = (apx * c.dx + apz * c.dz) / c.len2;
-      if (tt < tMargin || tt > (1 - tMargin)) continue;
-
-      var cx = c.ax + c.dx * tt;
-      var cz = c.az + c.dz * tt;
-      var dx = pos.x - cx;
-      var dz = pos.z - cz;
-      var dist = Math.sqrt(dx * dx + dz * dz) || 1e-6;
-
-      var influence = Number.isFinite(c.influence) ? c.influence : (c.r + 1.8);
-      if (dist > influence) continue;
-
-      // XZ constraint: keep inside cylinder radius
-      var maxD = Math.max(0.05, c.r - camPad);
-      if (dist > maxD) {
-        var nx = dx / dist, nz = dz / dist;
-        pos.x = cx + nx * maxD;
-        pos.z = cz + nz * maxD;
-        dist = maxD;
-      }
-
-      // Y ceiling constraint: keep under the tube arc
-      if (Number.isFinite(c.cy)) {
-        var headroom = Math.sqrt(Math.max(0, maxD * maxD - dist * dist));
-        var maxY = c.cy + headroom - (camPad * 0.5);
-        if (pos.y > maxY) pos.y = maxY;
-      }
-    }
   },
   _sweepDist: function (fromW, toW) {
     this._dir.copy(toW).sub(fromW);
@@ -21796,8 +21731,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     if (!hits || !hits.length) return Math.max(this.data.minDist, full);
 
     const r = Math.max(0.001, this.data.sphereRadius + this.data.padding);
-    // Small absolute floor so camera can pull very close to pivot near walls
-    const d = Math.max(0.15, (hits[0].distance || full) - r);
+    const d = Math.max(this.data.minDist, (hits[0].distance || full) - r);
     return Math.min(full, d);
   },
   tick: function (t) {
@@ -21815,9 +21749,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     pivotObj.localToWorld(this._desiredW);
 
     const targetDist = this._sweepDist(this._pivotW, this._desiredW);
-    // Snap toward pivot quickly on collision; ease back out slowly
-    const pulling = targetDist < this._curDist;
-    const aDist = pulling ? 0.55 : THREE.MathUtils.clamp(this.data.smoothDist, 0, 1);
+    const aDist = THREE.MathUtils.clamp(this.data.smoothDist, 0, 1);
     this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
 
     this._dir.copy(this._desiredW).sub(this._pivotW);
@@ -21842,17 +21774,10 @@ AFRAME.registerComponent('tp-camera-springarm', {
       }
     }
 
-    // Tube corridor constraint: keep camera inside tunnel cylinders
-    if (this._tubes.length) {
-      this._clampToTubes(this._finalW);
-    }
-
-    // Smooth world→local (faster when large correction needed)
+    // Smooth world->local placement
     const aPos = THREE.MathUtils.clamp(this.data.smoothPos, 0, 1);
     const curW = this.el.object3D.getWorldPosition(this._tmp);
-    const corrDist = curW.distanceTo(this._finalW);
-    const aPosEff = (corrDist > 0.3) ? Math.min(1, aPos * 3) : aPos;
-    curW.lerp(this._finalW, aPosEff);
+    curW.lerp(this._finalW, aPos);
 
     this.el.object3D.parent.worldToLocal(curW);
     this.el.object3D.position.copy(curW);
