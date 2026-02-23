@@ -1,0 +1,4914 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Lia 1.0 · DOS Simulation</title>
+
+  <style>
+    /* =========================================
+       GLOBAL RESET / BASE
+       ========================================= */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+        html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* prevent underlying Squarespace page from scrolling */
+    }
+
+    body {
+      background: #000000;
+      color: #00ff00;
+      font-family: "Courier New";
+    }
+
+    /* Global fixed header + footer */
+    .lia-global-header,
+    .lia-global-footer {
+      position: fixed;
+      left: 0;
+      right: 0;
+      z-index: 2000; /* above site layout/nav, but below Squarespace editor bar */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none; /* let main UI be clickable */
+    }
+
+    .lia-global-header {
+      top: 0;
+      height: 32px;
+    }
+
+    .lia-global-footer {
+      bottom: 0;
+      height: 44px;
+    }
+
+    .lia-global-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+      pointer-events: auto;
+    }
+
+    .lia-global-footer-inner {
+      pointer-events: auto; /* so the Quit button is clickable */
+    }
+
+    /* Add padding so content doesn't sit under header/footer */
+    #lia-sim-app {
+      position: fixed;
+      inset: 0;                /* full screen overlay */
+      padding-top: 32px;
+      padding-bottom: 44px;
+      background: #000000;     /* ensure underlying site is not visible */
+      z-index: 1999;           /* above site layout/nav, just under Lia header/footer */
+    }
+
+    /* DOS panel container */
+    .lia-dos-panel {
+      border: 1px solid #00aa00;
+      background-color: #000000;
+      color: #00ff00;
+      box-shadow: 0 0 0 1px #003300;
+    }
+
+    /* Shared text styles */
+    .lia-header-title,
+    .lia-header-sub,
+    .lia-nav-title,
+    .lia-nav-item,
+    .lia-main-title,
+    .lia-main-subtitle,
+    .lia-section-title,
+    .lia-landing-title,
+    .lia-landing-subtitle,
+    .lia-landing-section-title,
+    .lia-landing-text,
+    .lia-landing-disclaimer,
+    .lia-note,
+    .lia-small,
+    .lia-btn {
+      font-family: "Courier New";
+    }
+
+    .lia-section-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+
+    .lia-row {
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+    }
+
+    .lia-col {
+      flex: 1 1 0;
+    }
+
+    /* DOS buttons */
+
+    .lia-btn {
+      background-color: #000000;
+      color: #00ff00;
+      border: 1px solid #00aa00;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      transition: background-color 0.1s ease, color 0.1s ease, box-shadow 0.1s ease,
+        border-color 0.1s ease;
+      white-space: nowrap;
+    }
+
+    .lia-btn:hover {
+      background-color: #003300;
+      box-shadow: 0 0 0 1px #00ff00;
+      border-color: #00ff00;
+    }
+
+    .lia-btn-primary {
+      background-color: #00ff00;
+      color: #000000;
+      border-color: #00ff00;
+    }
+
+    .lia-btn-primary:hover {
+      background-color: #bfffbf;
+      color: #000000;
+      box-shadow: 0 0 0 1px #bfffbf;
+    }
+
+    .lia-btn[disabled],
+    .lia-btn[disabled]:hover {
+      opacity: 0.5;
+      cursor: default;
+      background-color: #000000;
+      color: #006600;
+      box-shadow: none;
+      border-color: #004400;
+    }
+
+    .lia-note {
+      font-size: 12px;
+      color: #00aa00;
+    }
+
+    .lia-small {
+      font-size: 12px;
+    }
+
+    .lia-strong {
+      font-weight: bold;
+    }
+
+    /* =========================================
+       LANDING / INTRO / NARRATIVE PANEL
+       ========================================= */
+
+    #lia-landing {
+      position: fixed;
+      inset: 0;
+      background: #000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      transition: opacity 0.6s ease;
+      opacity: 1;
+    }
+
+    #lia-landing.lia-hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .lia-landing-frame {
+      width: 100%;
+      max-width: 880px;
+      padding: 12px;
+    }
+
+    .lia-landing-inner {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lia-landing-title {
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+      text-align: center;
+    }
+
+    .lia-landing-subtitle {
+      font-size: 13px;
+      color: #00ff00;
+      text-align: center;
+      margin-top: 4px;
+    }
+
+    .lia-landing-stage {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lia-landing-stage.active {
+      display: flex;
+      animation: liaFadeIn 0.3s ease;
+    }
+
+    @keyframes liaFadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    #landing-stage-boot {
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      min-height: 260px;
+    }
+
+    .lia-landing-scroll {
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid #003300;
+      max-height: 280px;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+
+    .lia-landing-section-title {
+      font-size: 13px;
+      color: #ffffff;
+      margin-bottom: 2px;
+      margin-top: 8px;
+    }
+
+    .lia-landing-text {
+      font-size: 13px;
+      color: #00ff00;
+    }
+
+    .lia-landing-text,
+    .lia-landing-text ul,
+    .lia-landing-text ol,
+    .lia-landing-text li {
+      font-family: "Courier New";
+    }
+
+    .lia-landing-text ul,
+    .lia-landing-text ol {
+      padding-left: 18px;
+      margin: 4px 0;
+    }
+
+    .lia-landing-disclaimer {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid #003300;
+      font-size: 12px;
+      color: #00aa00;
+    }
+
+    .lia-landing-actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .lia-landing-actions .lia-btn-primary {
+      margin-left: auto;
+    }
+
+    .lia-progress-shell {
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    .lia-progress-bar {
+      width: 140px;
+      height: 4px;
+      background: #000000;
+      border: 1px solid #003300;
+      overflow: hidden;
+    }
+
+    .lia-progress-bar-inner {
+      height: 100%;
+      width: 0%;
+      background: #00ff00;
+    }
+
+    .lia-landing-form-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lia-landing-form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .lia-landing-form-row label {
+      font-size: 13px;
+      color: #ffffff;
+    }
+
+    /* Narrative landing question layout */
+
+    .lia-landing-question-title {
+      font-size: 13px;
+      color: #ffffff;
+    }
+
+    .lia-landing-question-counter {
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    .lia-landing-textarea {
+      width: 100%;
+      padding: 4px 5px;
+      background-color: #000000;
+      color: #00ff00;
+      border: 1px solid #004400;
+      font-size: 12px;
+      font-family: "Courier New";
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .lia-landing-textarea:focus {
+      outline: none;
+      box-shadow: 0 0 0 1px #00ff00;
+    }
+
+    .lia-landing-meta {
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    .lia-landing-roles-grid {
+      /* VERTICAL STACK OF ROLES */
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lia-landing-role-card {
+      border: 1px solid #003300;
+      display: flex;
+      gap: 8px;
+      padding: 6px;
+      cursor: pointer;
+    }
+
+    .lia-landing-role-card.selected {
+      border-color: #00ff00;
+      box-shadow: 0 0 0 1px #00ff00;
+    }
+
+    .lia-landing-role-image {
+      width: 70px;
+      min-width: 70px;
+      height: 70px;
+      border: 1px solid #004400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 10px;
+      white-space: pre-line;
+    }
+
+    .lia-landing-role-body {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 12px;
+      color: #00ff00;
+    }
+
+    /* Role confirm (landing) */
+    .lia-role-confirm-wrapper {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .lia-role-confirm-image {
+      width: 180px;
+      min-width: 180px;
+      height: 180px;
+      border: 1px dashed #004400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 10px;
+      color: #00aa00;
+      padding: 4px;
+    }
+
+    .lia-role-confirm-body {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: #00ff00;
+    }
+
+    .lia-role-confirm-title {
+      color: #ffffff;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .lia-role-confirm-text {
+      font-size: 12px;
+      color: #00ff00;
+    }
+
+    .lia-landing-match-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .lia-landing-match-card {
+      border: 1px solid #003300;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .lia-landing-match-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      align-items: baseline;
+    }
+
+    .lia-landing-match-org {
+      font-size: 13px;
+      color: #ffffff;
+    }
+
+    .lia-landing-match-meta {
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    /* =========================================
+       MAIN LAYOUT – CENTERED APP
+       ========================================= */
+
+    .lia-layout {
+      display: none;
+      width: 100%;
+      max-width: 1120px;
+      height: calc(100% - 16px);
+      margin: 8px auto;
+      padding: 6px;
+      gap: 6px;
+      opacity: 0;
+      transition: opacity 0.6s ease;
+    }
+
+    .lia-layout-visible {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 6px;
+      opacity: 1;
+    }
+
+    .lia-sidebar {
+      border-right: 1px solid #003300;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: #000000;
+    }
+
+    .lia-sidebar-inner {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      gap: 12px;
+    }
+
+    .lia-header-title {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #ffffff;
+    }
+
+    .lia-header-sub {
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    .lia-nav-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+      margin-top: 6px;
+      margin-bottom: 4px;
+    }
+
+    .lia-nav-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      font-size: 12px;
+    }
+
+    .lia-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0;
+      cursor: pointer;
+      color: #00ff00;
+    }
+
+    .lia-nav-item.disabled {
+      color: #005500;
+      cursor: default;
+    }
+
+    .lia-nav-item.active {
+      background: rgba(0, 255, 0, 0.05);
+    }
+
+    .lia-nav-index {
+      display: inline-block;
+      width: 18px;
+      color: #ffffff;
+    }
+
+    .lia-sidebar-avatar {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .lia-avatar-circle {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid #004400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: #00ff00;
+      overflow: hidden;
+    }
+
+    .lia-avatar-circle img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: grayscale(1);
+    }
+
+    .lia-sidebar-user-label {
+      color: #00aa00;
+      font-size: 11px;
+    }
+
+    .lia-sidebar-user-name {
+      color: #ffffff;
+      font-size: 12px;
+    }
+
+    .lia-sidebar-footnote {
+      margin-top: auto;
+      font-size: 11px;
+      color: #006600;
+      border-top: 1px solid #003300;
+      padding-top: 8px;
+    }
+
+    .lia-main {
+      display: flex;
+      flex-direction: column;
+      padding: 8px;
+      gap: 6px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .lia-main-header {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .lia-main-title {
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+    }
+
+    .lia-main-subtitle {
+      font-size: 12px;
+      color: #00aa00;
+    }
+
+    .lia-main-body {
+      margin-top: 6px;
+      border: 1px solid #003300;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .lia-main-scroll {
+      padding: 8px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .lia-step {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lia-step.active {
+      display: flex;
+    }
+
+    .lia-step-footer {
+      border-top: 1px solid #003300;
+      padding: 6px 8px;
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    /* NO MORE CLUTTER OF BUTTONS HERE */
+
+    .lia-field-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .lia-field {
+      flex: 1 1 180px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 12px;
+    }
+
+    .lia-field label {
+      color: #ffffff;
+      font-size: 12px;
+    }
+
+    .lia-input,
+    .lia-select,
+    .lia-textarea {
+      width: 100%;
+      padding: 4px 5px;
+      background-color: #000000;
+      color: #00ff00;
+      border: 1px solid #004400;
+      font-size: 12px;
+      font-family: "Courier New";
+    }
+
+    .lia-input:focus,
+    .lia-select:focus,
+    .lia-textarea:focus {
+      background-color: #000000;
+      color: #00ff00;
+      outline: none;
+      box-shadow: 0 0 0 1px #00ff00;
+    }
+
+    .lia-textarea {
+      min-height: 70px;
+      resize: vertical;
+    }
+
+    .lia-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .lia-tag {
+      border: 1px solid #003300;
+      padding: 2px 6px;
+      font-size: 11px;
+      color: #00aa00;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    /* PHOTO */
+
+    .lia-photo-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .lia-photo-circle-preview {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 1px solid #004400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #00ff00;
+      overflow: hidden;
+    }
+
+    .lia-photo-circle-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: grayscale(1);
+    }
+
+    /* ROLES (inside app) */
+
+    .lia-roles-grid {
+      /* VERTICAL STACK OF ROLES */
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lia-role-card {
+      border: 1px solid #003300;
+      display: flex;
+      gap: 8px;
+      padding: 6px;
+      cursor: pointer;
+    }
+
+    .lia-role-card.selected {
+      border-color: #00ff00;
+      box-shadow: 0 0 0 1px #00ff00;
+    }
+
+    .lia-role-image {
+      width: 70px;
+      min-width: 70px;
+      height: 70px;
+      border: 1px solid #004400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 10px;
+      white-space: pre-line;
+    }
+
+    .lia-role-body {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 12px;
+      color: #00ff00;
+    }
+
+    .lia-role-title {
+      color: #ffffff;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* AREA */
+
+    .lia-area-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* MATCHES (inside app) */
+
+    .lia-match-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .lia-match-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .lia-match-card {
+      border: 1px solid #003300;
+      padding: 6px;
+      font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .lia-match-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      align-items: baseline;
+    }
+
+    .lia-match-org {
+      font-size: 13px;
+      color: #ffffff;
+    }
+
+    .lia-match-meta {
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    .lia-match-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .lia-signal-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid #004400;
+      font-size: 11px;
+      color: #00ff00;
+    }
+
+    .lia-signals-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .lia-signals-empty {
+      font-size: 12px;
+      color: #00aa00;
+    }
+
+    .lia-profile-summary {
+      border: 1px solid #003300;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    /* PROCESSING / MATCHING OVERLAY (shared style) */
+
+    .lia-processing-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.96);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      z-index: 20;
+      gap: 8px;
+    }
+
+    .lia-processing-text {
+      font-size: 12px;
+      color: #00ff00;
+      text-align: center;
+      max-width: none;    /* allow full width */
+      white-space: nowrap; /* prevent wrapping into two lines */
+    }
+
+    .lia-processing-canvas-wrapper {
+      border: 1px solid #003300;
+      width: 1040px;
+      height: 100%;
+      max-height: 440px;
+      background: #000000;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* END OVERLAY (inside app, kept simple) */
+
+    .lia-end-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.9);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    .lia-end-window {
+      width: 100%;
+      max-width: 720px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .lia-end-title {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #ffffff;
+      border-bottom: 1px solid #003300;
+      padding-bottom: 4px;
+      font-family: "Courier New";
+    }
+
+.lia-end-body {
+  font-size: 12px;
+  color: #00ff00;
+  line-height: 1.5;
+  font-family: "Courier New";
+}
+
+/* FORCE ALL CHILD ELEMENTS TO USE THE SAME FONT */
+.lia-end-body * {
+  font-family: "Consolas", "Courier New", monospace !important;
+}
+
+    .lia-end-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 6px;
+    }
+
+    .lia-end-row {
+      margin-top: 10px;
+      padding: 6px;
+      border-top: 1px solid #003300;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: #00aa00;
+    }
+
+    /* Goodbye overlay container */
+    .lia-goodbye-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.95);
+      display: none;
+      align-items: flex-start;   /* top of the screen */
+      justify-content: center;   /* centered horizontally */
+      padding-top: 40px;         /* a bit of margin from the very top */
+      z-index: 2002;             /* above the quit overlay */
+    }
+
+
+    /* Goodbye overlay: uniqueness map replay at quit */
+    .lia-goodbye-window {
+      position: relative;
+      width: 100%;
+      max-width: 960px;
+      height: 70vh;
+      max-height: 540px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .lia-goodbye-text {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #00ff00;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      opacity: 1;
+      text-align: center;
+      width: 100%;
+      transition: opacity 1.2s ease-out;
+    }
+
+    .lia-goodbye-role-image-wrapper {
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 6px;
+      opacity: 1;
+      transition: opacity 1.2s ease-out;
+    }
+
+    .lia-goodbye-role-image-wrapper img {
+      max-height: 100%;
+      max-width: 60%;
+      object-fit: contain;
+      image-rendering: auto;
+    }
+
+    .lia-goodbye-canvas-shell {
+      flex: 1;
+      border: 1px solid #00ff00;
+      background: #000000;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #lia-goodbye-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000000;
+    }
+
+    /* RESPONSIVE */
+
+    @media (max-width: 900px) {
+      .lia-layout.lia-layout-visible {
+        grid-template-columns: 1fr;
+      }
+
+      .lia-sidebar {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 220px;
+        background: #000000;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        z-index: 10;
+      }
+
+      .lia-sidebar.lia-sidebar-open {
+        transform: translateX(0);
+      }
+
+      .lia-main {
+        padding-top: 4px;
+      }
+    }
+
+/* Force dropdowns to use the same DOS style as inputs */
+.lia-select {
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  background-color: #000000;
+  color: #00ff00;
+  border: 1px solid #004400;
+  font-size: 12px;
+  font-family: "Courier New";
+}
+
+  </style>
+</head>
+
+<body>
+  <div class="lia-global-header">
+    <div class="lia-global-title">Lia 1.0 - the simulation</div>
+  </div>
+
+  <div class="lia-global-footer">
+    <div class="lia-global-footer-inner">
+      <button class="lia-btn lia-small" id="lia-quit-btn" type="button" aria-label="Quit simulation">
+        Quit simulation
+      </button>
+    </div>
+  </div>
+
+<div id="lia-sim-app">
+  <!-- ===================== LANDING + PROFILE + NARRATIVE ===================== -->
+  <div id="lia-landing">
+    <div class="lia-landing-frame lia-dos-panel">
+      <div class="lia-landing-inner">
+        <!-- Boot (7s) -->
+        <div class="lia-landing-stage active" id="landing-stage-boot">
+          <div>
+            <div class="lia-landing-title">Lia 1.0</div>
+            <div class="lia-landing-subtitle">Booting</div>
+
+            <div class="lia-progress-shell">
+              <div>Initializing local DOS shell…</div>
+              <div class="lia-progress-bar">
+                <div class="lia-progress-bar-inner" id="landing-boot-bar"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Intro text 1 -->
+        <div class="lia-landing-stage" id="landing-stage-text-1">
+          <div class="lia-landing-title">Lia 1.0 · DOS Simulation</div>
+          <div class="lia-landing-subtitle">
+            A prototype “identity routing” environment, running locally in your browser.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-section-title">Welcome</div>
+            <div class="lia-landing-text">
+              Lia 1.0 is an early, self-contained simulation of a future tool that:
+              <ul>
+                <li>Helps you tell your story in a way that foregrounds thresholds and patterns, not just jobs.</li>
+                <li>Authors three possible “roles” you could hold in the world, written from your narrative.</li>
+                <li>Shows a set of fictional organizations that feel aligned with those roles.</li>
+              </ul>
+            </div>
+            <div class="lia-landing-section-title">Local-only</div>
+            <div class="lia-landing-text">
+              This simulation runs only in your browser. Nothing is sent to a server. Refreshing or closing the tab will erase it.
+            </div>
+            <div class="lia-landing-disclaimer">
+              This is a prototype. It is not making real matches, and it will never contact any organization on your behalf.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <span></span>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-next-1">Next</button>
+          </div>
+        </div>
+
+        <!-- Intro text 2 -->
+        <div class="lia-landing-stage" id="landing-stage-text-2">
+          <div class="lia-landing-title">Lia 1.0 · How it works</div>
+          <div class="lia-landing-subtitle">
+            A short narrative interview, authored roles, and fictional matches.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-section-title">Flow</div>
+            <div class="lia-landing-text">
+              <ol>
+                <li>You enter a few basic profile details (kept on this device only).</li>
+                <li>You move through a short narrative interview (three questions).</li>
+                <li>Lia 1.0 infers three roles from your answers.</li>
+                <li>You choose a search horizon (geographical / contextual).</li>
+                <li>You see a set of fictional matches – organizations aligned with those roles.</li>
+                <li>You can send “signals of interest” to those matches (inside the simulation only).</li>
+              </ol>
+            </div>
+
+            <div class="lia-landing-section-title">What this is not</div>
+            <div class="lia-landing-text">
+              This is not a recruitment platform, job board, or coaching tool. It is a way to explore whether
+              a different narrative of your working identity could connect to a different landscape of possibilities.
+            </div>
+            <div class="lia-landing-disclaimer">
+              You can close this window at any time. Nothing here is permanent. It is a sketch of a future system, not the system itself.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-back-2">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-set-profile">Set your profile</button>
+          </div>
+        </div>
+
+        <!-- Profile loading (7s) -->
+        <div class="lia-landing-stage" id="landing-stage-loading-profile">
+          <div class="lia-landing-title">Setting up your profile shell…</div>
+          <div class="lia-landing-subtitle">Lia is preparing three lightweight profile screens.</div>
+
+          <div class="lia-progress-shell">
+            <div>Allocating local memory for your details…</div>
+            <div class="lia-progress-bar">
+              <div class="lia-progress-bar-inner" id="landing-profile-bar"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile 1 (name + how Lia refers) -->
+        <div class="lia-landing-stage" id="landing-stage-profile-1">
+          <div class="lia-landing-title" style="text-align:left;">Create your Lia profile</div>
+          <div class="lia-landing-subtitle" style="text-align:left;">
+            Step 1 of 3 · Full name and how Lia should refer to you.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-form-grid">
+              <div class="lia-landing-form-row">
+                <label for="landing-name">Full name</label>
+                <input id="landing-name" class="lia-input" type="text"
+                       placeholder="Full name" />
+              </div>
+              <div class="lia-landing-form-row">
+                <label for="landing-gender">How do you want Lia to refer to you? (optional)</label>
+                <select id="landing-gender" class="lia-select">
+                  <option value="">No preference</option>
+                  <option value="she">She / her</option>
+                  <option value="he">He / him</option>
+                  <option value="they">They / them</option>
+                  <option value="custom">Prefer another wording</option>
+                </select>
+              </div>
+            </div>
+            <div class="lia-landing-disclaimer">
+              These details stay inside this browser tab. They will not be sent anywhere.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-profile-1-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-profile-1-next">Next</button>
+          </div>
+        </div>
+
+        <!-- Profile 2 (email + phone + LinkedIn) -->
+        <div class="lia-landing-stage" id="landing-stage-profile-2">
+          <div class="lia-landing-title" style="text-align:left;">Create your Lia profile</div>
+          <div class="lia-landing-subtitle" style="text-align:left;">
+            Step 2 of 3 · Contact details that stay on this device.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-form-grid">
+              <div class="lia-landing-form-row">
+                <label for="landing-email">Email</label>
+                <input id="landing-email" class="lia-input" type="email"
+                       placeholder="email@domain.com" />
+              </div>
+              <div class="lia-landing-form-row">
+                <label for="landing-phone">Phone (optional)</label>
+                <input id="landing-phone" class="lia-input" type="text"
+                       placeholder="Your phone number" />
+              </div>
+              <div class="lia-landing-form-row">
+                <label for="landing-linkedin">LinkedIn (optional)</label>
+                <input id="landing-linkedin" class="lia-input" type="url"
+                       placeholder="https://www.linkedin.com/in/..." />
+                <div class="lia-note">
+                  Optional. It simply helps anchor your story in the world of work.
+                </div>
+              </div>
+            </div>
+            <div class="lia-landing-disclaimer">
+              These details are stored only inside this simulation and vanish if you close or refresh the tab.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-profile-2-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-profile-2-next">Next</button>
+          </div>
+        </div>
+
+        <!-- Profile 3 (photo + confirm) -->
+        <div class="lia-landing-stage" id="landing-stage-profile-3">
+          <div class="lia-landing-title" style="text-align:left;">Create your Lia profile</div>
+          <div class="lia-landing-subtitle" style="text-align:left;">
+            Step 3 of 3 · Optional photo.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-form-grid">
+              <div class="lia-landing-form-row">
+                <label for="landing-photo">Upload a photo (optional)</label>
+                <input id="landing-photo" type="file" accept="image/*" class="lia-input" />
+                <div class="lia-note">
+                  If you upload a photo, Lia will only show a grayscale echo inside this DOS window.
+                  It’s cosmetic, not analytical, and never leaves your device.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-profile-3-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-profile-confirm">
+              Confirm profile
+            </button>
+          </div>
+        </div>
+
+        <!-- Final profile loading (7s) -->
+        <div class="lia-landing-stage" id="landing-stage-loading-final">
+          <div class="lia-landing-title">Creating profile</div>
+          <div class="lia-landing-subtitle">
+            Lia is sealing this run to your local profile.
+          </div>
+
+          <div class="lia-progress-shell">
+            <div>Writing profile data into this simulation only…</div>
+            <div class="lia-progress-bar">
+              <div class="lia-progress-bar-inner" id="landing-final-bar"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Narrative intro 1 -->
+        <div class="lia-landing-stage" id="landing-narrative-intro-1">
+          <div class="lia-landing-title">Narrative interviews · Simulation</div>
+          <div class="lia-landing-subtitle">
+            A short, written taste of a longer, voice-based practice.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-section-title">What are narrative interviews?</div>
+            <div class="lia-landing-text">
+              In Lia, narrative interviews are long-form conversations that move through lived episodes
+              rather than a list of skills. You stay with specific stories – thresholds, transitions, and
+              periods where something in your working life reconfigured.
+            </div>
+
+            <div class="lia-landing-section-title">Why Lia uses them</div>
+            <div class="lia-landing-text">
+              Lia listens not for perfect answers but for <span class="lia-strong">uniqueness</span>:
+              the ways you cross thresholds, hold tension, and make sense of change. From there, she maps
+              those stories into <span class="lia-strong">identity patterns</span> – recurring motifs that
+              can be expressed as possible roles in the world.
+            </div>
+
+            <div class="lia-landing-disclaimer">
+              What follows is a lightweight simulation of that process, running locally in your browser.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <span></span>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-narrative-1-next">
+              Next
+            </button>
+          </div>
+        </div>
+
+        <!-- Narrative intro 2 -->
+        <div class="lia-landing-stage" id="landing-narrative-intro-2">
+          <div class="lia-landing-title">Narrative interviews · Simulation</div>
+          <div class="lia-landing-subtitle">
+            Three written questions instead of a full, voice-based interview.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-section-title">What this simulation is</div>
+            <div class="lia-landing-text">
+              In a full Lia setting, a narrative interview would be longer and usually voice-based.
+              You would talk, not type – because spoken stories carry rhythm, pauses and side paths
+              that are hard to capture in a form.
+              <br><br>
+              Here you’re entering a <span class="lia-strong">short simulation</span>:
+              just three written questions, to give a feel for how it works. The answers you type will still
+              be used to let Lia 1.0 infer roles and identity patterns, but at a much smaller scale.
+            </div>
+
+            <div class="lia-landing-section-title">Voice in future versions</div>
+            <div class="lia-landing-text">
+              This simulation doesn’t record your voice. In future versions, voice will be central to
+              narrative interviews – talking is often a better way to relay personal stories, hesitations and
+              thresholds.
+            </div>
+
+            <div class="lia-landing-disclaimer">
+              You can move back and forth within the three questions before submitting your answers.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-narrative-2-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-narrative-2-start">
+              Begin the narrative simulation
+            </button>
+          </div>
+        </div>
+
+        <!-- Narrative questions (one at a time) -->
+        <div class="lia-landing-stage" id="landing-narrative-questions">
+          <div class="lia-landing-title" style="text-align:left;">Narrative interview · Simulation</div>
+          <div class="lia-landing-subtitle" id="landing-narrative-counter" style="text-align:left;">
+            Question 1 of 3
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-question-title" id="landing-question-title"></div>
+            <div class="lia-landing-question-counter" id="landing-question-counter"></div>
+            <textarea id="landing-question-answer"
+                      class="lia-landing-textarea"
+                      placeholder="Type your answer here. Use as much or as little detail as you like."></textarea>
+            <div class="lia-landing-meta">
+              You can move back and forth between questions before submitting.
+              Press Ctrl+Enter (or ⌘+Enter) to go forward.
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-question-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-question-next">
+              Next question →
+            </button>
+          </div>
+        </div>
+
+        <!-- Narrative roles (after animation) -->
+        <div class="lia-landing-stage" id="landing-narrative-roles">
+          <div class="lia-landing-title" style="text-align:left;">Your roles</div>
+          <div class="lia-landing-subtitle" style="text-align:left;">
+            Lia has written three roles from your narrative. None of them is “right”; they are lenses to test.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-roles-grid" id="landing-roles-grid"></div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-roles-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-roles-next">
+              Confirm role
+            </button>
+          </div>
+        </div>
+
+        <!-- Role confirmation (new step between roles and horizon) -->
+        <div class="lia-landing-stage" id="landing-role-confirm">
+          <div class="lia-landing-title" style="text-align:left;">Confirm your role</div>
+          <div class="lia-landing-subtitle" style="text-align:left;">
+            You’re about to use this role as the lens for fictional matches. Check the description and continue, or go back and pick another.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-role-confirm-wrapper">
+              <div class="lia-role-confirm-image" id="landing-role-confirm-image">
+                <!-- image is set dynamically based on role + pronouns -->
+              </div>
+              <div class="lia-role-confirm-body">
+                <div class="lia-role-confirm-title" id="landing-role-confirm-title"></div>
+                <div class="lia-role-confirm-text" id="landing-role-confirm-text"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-role-confirm-back">Back to roles</button>
+            <button class="lia-btn lia-btn-primary" id="btn-role-confirm-next">
+              Continue to the search horizon
+            </button>
+          </div>
+        </div>
+
+        <!-- Area / horizon (still in central panel) -->
+        <div class="lia-landing-stage" id="landing-narrative-area">
+          <div class="lia-landing-title" style="text-align:left;">Search horizon</div>
+          <div class="lia-landing-subtitle" style="text-align:left;">
+            Decide where Lia should imagine you showing up.
+          </div>
+
+          <div class="lia-landing-scroll">
+  <div class="lia-landing-text">
+    This is not a real search; it sketches a landscape of organizations — some real, some fictional — that could host the roles Lia authored for you.
+    When you enter a city, please type it in English followed by the country, separated by a comma (for example: “Bologna, Italy”).
+  </div>
+
+            <div class="lia-landing-form-grid" style="margin-top:10px;">
+              <div class="lia-landing-form-row">
+                <label for="landing-area">Location or horizon</label>
+                <input id="landing-area" class="lia-input"
+                       placeholder="City, region, network, or a phrase (e.g. ‘European civic space’)" />
+              </div>
+
+              <div class="lia-landing-form-row">
+                <label class="lia-inline">
+                  <input type="checkbox" id="landing-worldwide" />
+                  <span>Also open to matches worldwide.</span>
+                </label>
+              </div>
+
+              <div class="lia-landing-form-row">
+                <div class="lia-note" id="landing-area-feedback">
+                  No area given yet. Lia will treat the horizon as open.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-area-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-area-next">
+              Generate matches
+            </button>
+          </div>
+        </div>
+
+        <!-- Matches (still in central panel) -->
+        <div class="lia-landing-stage" id="landing-narrative-matches">
+          <div class="lia-landing-title" style="text-align:left;">Speculative matches</div>
+          <div class="lia-landing-subtitle" id="landing-matches-subtitle" style="text-align:left;">
+            Organizations imagined for your chosen role and horizon.
+          </div>
+
+          <div class="lia-landing-scroll">
+            <div class="lia-landing-text" style="margin-bottom:8px;">
+              These organizations are fictional. They are a way of testing the roles and horizon you chose,
+              not real job offers.
+            </div>
+
+            <div id="landing-match-list" class="lia-landing-match-list"></div>
+          </div>
+
+          <div class="lia-landing-actions">
+            <button class="lia-btn" id="btn-landing-matches-back">Back</button>
+            <button class="lia-btn lia-btn-primary" id="btn-landing-open-interface">
+              Open full Lia interface
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Processing animation overlay for landing (FIRST ANIMATION) -->
+    <div class="lia-processing-overlay" id="lia-landing-processing-overlay">
+      <div class="lia-processing-text" id="lia-landing-processing-text">
+        Lia is thinking…
+      </div>
+      <div class="lia-processing-canvas-wrapper">
+        <canvas id="lia-landing-processing-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== MAIN APP (INTERFACE AFTER MATCHES) ===================== -->
+  <div class="lia-layout lia-dos-panel" id="lia-app">
+    <!-- SIDEBAR -->
+    <aside class="lia-sidebar">
+      <div class="lia-sidebar-inner">
+        <div>
+          <div class="lia-header-title">LIA 1.0</div>
+          <div class="lia-header-sub">Local simulation – runs only in your browser.</div>
+        </div>
+
+        <div>
+          <div class="lia-nav-title">Flow</div>
+          <ul class="lia-nav-list" id="lia-nav-list">
+            <li class="lia-nav-item active" data-step="0">
+              <span class="lia-nav-index">01</span> Profile
+            </li>
+            <li class="lia-nav-item" data-step="1">
+              <span class="lia-nav-index">02</span> Photo
+            </li>
+            <li class="lia-nav-item" data-step="2">
+              <span class="lia-nav-index">03</span> Narrative
+            </li>
+            <li class="lia-nav-item" data-step="3">
+              <span class="lia-nav-index">04</span> Authored Role
+            </li>
+            <li class="lia-nav-item" data-step="4">
+              <span class="lia-nav-index">05</span> Area
+            </li>
+            <li class="lia-nav-item" data-step="5">
+              <span class="lia-nav-index">06</span> Matches
+            </li>
+            <li class="lia-nav-item" data-step="6">
+              <span class="lia-nav-index">07</span> Signals
+            </li>
+          </ul>
+        </div>
+
+        <div class="lia-sidebar-avatar">
+          <div class="lia-avatar-circle" id="sidebar-avatar">–</div>
+          <div>
+            <div class="lia-sidebar-user-label">Current profile</div>
+            <div class="lia-sidebar-user-name" id="sidebar-name">Guest</div>
+          </div>
+        </div>
+
+        <div class="lia-sidebar-footnote">
+          Lia 1.0 is a sketch of a future system. Everything here is fictional, local-only, and erasable.
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="lia-main">
+      <div class="lia-main-header">
+        <div class="lia-main-title" id="lia-main-title">Your profile</div>
+        <div class="lia-main-subtitle" id="lia-main-subtitle">
+          Step 1 of 7 · Minimal details to begin.
+        </div>
+      </div>
+
+      <div class="lia-main-body">
+        <div class="lia-main-scroll">
+          <!-- STEP 0: PROFILE -->
+          <section class="lia-step active" data-step="0">
+            <div class="lia-section-title">Profile shell</div>
+            <div class="lia-note">
+              These fields mirror what you set up at the start. They stay on this device only.
+            </div>
+
+            <div class="lia-field-group" style="margin-top:8px;">
+              <div class="lia-field">
+                <label for="lia-name">Full name</label>
+                <input id="lia-name" class="lia-input" type="text" />
+              </div>
+              <div class="lia-field">
+                <label for="lia-email">Email</label>
+                <input id="lia-email" class="lia-input" type="email" />
+              </div>
+            </div>
+
+            <div class="lia-field-group">
+              <div class="lia-field">
+                <label for="lia-phone">Phone (optional)</label>
+                <input id="lia-phone" class="lia-input" type="text" />
+              </div>
+              <div class="lia-field">
+                <label for="lia-linkedin">LinkedIn (optional)</label>
+                <input id="lia-linkedin" class="lia-input" type="url" />
+              </div>
+              <div class="lia-field">
+                <label for="lia-gender">How should Lia refer to you? (optional)</label>
+                <select id="lia-gender" class="lia-select">
+                  <option value="">No preference</option>
+                  <option value="she">She / her</option>
+                  <option value="he">He / him</option>
+                  <option value="they">They / them</option>
+                  <option value="custom">Prefer another wording</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <!-- STEP 1: PHOTO -->
+          <section class="lia-step" data-step="1">
+            <div class="lia-section-title">Photo (optional)</div>
+            <div class="lia-note">
+              If you upload a photo, Lia will only show a grayscale echo inside this DOS window.
+              It’s cosmetic, not analytical.
+            </div>
+
+            <div class="lia-photo-row" style="margin-top:8px;">
+              <div class="lia-photo-circle-preview" id="lia-photo-circle">
+                No photo
+              </div>
+              <div class="lia-col">
+                <div class="lia-field">
+                  <label for="lia-photo">Upload a photo</label>
+                  <input id="lia-photo" type="file" accept="image/*" />
+                </div>
+                <div class="lia-note">
+                  This never leaves your device. Refreshing the page deletes it.
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- STEP 2: NARRATIVE SUMMARY -->
+          <section class="lia-step" data-step="2">
+            <div class="lia-section-title">Narrative interview · Summary</div>
+            <div class="lia-note">
+              You already completed the three-question simulation in the opening screen.
+              Here you can reread what you wrote.
+            </div>
+
+            <div class="lia-field">
+              <label id="lia-summary-q1-label">Question 1</label>
+              <textarea id="lia-summary-q1" class="lia-textarea" readonly></textarea>
+            </div>
+            <div class="lia-field">
+              <label id="lia-summary-q2-label">Question 2</label>
+              <textarea id="lia-summary-q2" class="lia-textarea" readonly></textarea>
+            </div>
+            <div class="lia-field">
+              <label id="lia-summary-q3-label">Question 3</label>
+              <textarea id="lia-summary-q3" class="lia-textarea" readonly></textarea>
+            </div>
+          </section>
+
+          <!-- STEP 3: AUTHORED ROLE -->
+          <section class="lia-step" data-step="3">
+            <div class="lia-section-title">Authored role</div>
+            <div class="lia-note">
+              This is the authored role you confirmed in the opening simulation. It stays as the lens for matches and signals.
+            </div>
+
+            <div class="lia-roles-grid" id="lia-roles-container" style="margin-top:8px;"></div>
+          </section>
+
+          <!-- STEP 4: AREA -->
+          <section class="lia-step" data-step="4">
+            <div class="lia-section-title">Search horizon</div>
+            <div class="lia-area-row">
+             <div class="lia-note">
+  Decide where Lia should imagine you showing up. This is not a real search; it’s a way to sketch a landscape.
+  When you enter a city, please type it in English followed by the country, separated by a comma (for example: “Bologna, Italy”).
+</div>
+
+              <div class="lia-field">
+                <label for="lia-area">Location or horizon</label>
+                <input id="lia-area" class="lia-input"
+                       placeholder="City, region, network, or a phrase (e.g. ‘European civic space’)" />
+              </div>
+
+              <label class="lia-inline">
+                <input type="checkbox" id="lia-worldwide" />
+                <span>Also open to matches worldwide.</span>
+              </label>
+
+              <div class="lia-note" id="lia-area-feedback">
+                No area given yet. Lia will treat the horizon as open.
+              </div>
+            </div>
+          </section>
+
+          <!-- STEP 5: MATCHES -->
+          <section class="lia-step" data-step="5">
+            <div class="lia-section-title" id="lia-matches-title">
+              Matches · Your role
+            </div>
+
+            <div class="lia-match-toolbar">
+              <div class="lia-note">
+                These are fictional organizations, tuned to your chosen role and area.
+              </div>
+              <div class="lia-inline">
+                <span>Sort:</span>
+                <select id="lia-sort" class="lia-select">
+                  <option value="relevance">By relevance</option>
+                  <option value="name">By name</option>
+                  <option value="proximity">By proximity (simulated)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="lia-match-list" id="lia-match-list"></div>
+          </section>
+
+          <!-- STEP 6: SIGNALS -->
+          <section class="lia-step" data-step="6">
+            <div class="lia-section-title">Your signals</div>
+            <div class="lia-note">
+              Inside Lia 1.0, “signals” are just simulated notes of interest — a way of seeing which fictional
+              matches pulled you in.
+            </div>
+
+            <div style="margin-top:8px;" class="lia-signals-list" id="lia-signals-list">
+            </div>
+          </section>
+        </div>
+
+        <!-- Step footer with step info -->
+        <div class="lia-step-footer">
+          <div class="lia-inline">
+            <span>Step flow:</span>
+            <span class="lia-tag" id="lia-step-tag">01 · Profile</span>
+          </div>
+          <button class="lia-btn lia-small" id="btn-end-open">
+            End simulation
+          </button>
+        </div>
+
+        <!-- Processing overlay (inside app – SECOND ANIMATION) -->
+        <div class="lia-processing-overlay" id="lia-processing-overlay">
+          <div class="lia-processing-text" id="lia-processing-text">
+            Lia is thinking…
+          </div>
+          <div class="lia-processing-canvas-wrapper">
+            <canvas id="lia-processing-canvas"></canvas>
+          </div>
+        </div>
+
+        <!-- End-of-simulation overlay (driven by JS endPages) -->
+        <div class="lia-end-overlay" id="lia-end-overlay">
+          <div class="lia-end-window lia-dos-panel">
+            <div class="lia-end-title">
+              Lia 1.0 · End of simulation
+            </div>
+            <div class="lia-end-body" id="lia-end-body">
+              <!-- JS will inject the current end page content here -->
+            </div>
+            <div class="lia-end-actions">
+              <button class="lia-btn lia-small" id="btn-end-prev">
+                Previous
+              </button>
+              <button class="lia-btn lia-small lia-btn-primary" id="btn-end-next">
+                Next
+              </button>
+              <button class="lia-btn lia-small" id="btn-end-close">
+                Close
+              </button>
+            </div>
+            <div class="lia-end-row" id="lia-end-row">
+              <span>What would you like to do now?</span>
+              <div class="lia-inline">
+                <button class="lia-btn lia-small" id="btn-end-back-landing">
+                  Back to landing
+                </button>
+                <button class="lia-btn lia-small" id="btn-end-restart">
+                  Restart simulation
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Goodbye overlay: uniqueness map replay -->
+        <div class="lia-goodbye-overlay" id="lia-goodbye-overlay">
+          <div class="lia-goodbye-window lia-dos-panel">
+            <div class="lia-goodbye-text" id="lia-goodbye-text"></div>
+            <div class="lia-goodbye-canvas-shell">
+              <canvas id="lia-goodbye-canvas"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+(function () {
+  "use strict";
+
+
+  function requestParentExit(payload) {
+    payload = payload || { type: "LIA_EXIT" };
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(payload, "*");
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function exitLiaExperience() {
+    if (requestParentExit({ type: "LIA_EXIT" })) return;
+    window.location.href = "https://www.enricopoli.com/pagex";
+  }
+
+  function restartLiaExperience() {
+    if (requestParentExit({ type: "LIA_RESTART" })) return;
+    window.location.reload();
+  }
+
+
+  // ====================== QUIT (GLOBAL) ======================
+  // Fixed footer button that never overlaps the simulation content
+  // because #lia-sim-app reserves space via padding-bottom: 44px.
+  var quitBtn = document.getElementById("lia-quit-btn");
+  if (quitBtn) {
+    quitBtn.addEventListener("click", function () {
+      if (window.confirm("Are you sure you want to quit LIA 1.0?")) {
+        exitLiaExperience();
+      }
+    });
+  }
+
+
+
+  var LOADING_DURATION = 7000;          // 7s for progress bars
+  var UNIQUENESS_DURATION = 8000;       // 1st animation: 6–8s -> ~8s
+  var NETWORK_DURATION = 10000;         // 2nd animation: 8–10s -> ~10s
+
+  // ====================== STATE ======================
+
+  var state = {
+    profile: {
+      name: "",
+      email: "",
+      phone: "",
+      linkedin: "",
+      gender: ""
+    },
+    photoDataUrl: null,
+    narrative: ["", "", ""],
+    currentQuestionIndex: 0,
+    roles: [],
+    selectedRoleIndex: 0,
+    area: "",
+    worldwide: false,
+    matches: [],
+    signals: []
+  };
+
+  // This will store the "map of uniqueness" generated by the FIRST animation,
+  // so the SECOND animation can pick it up and embed it in a wider network.
+  var uniquenessMapData = null;
+
+  // Full pool of possible narrative interview questions.
+  // Each run will randomly select three of these.
+  var allInterviewQuestions = [
+    "Can you tell me the story of how this journey first began for you?",
+    "What is the earliest moment you remember that feels connected to where you are today?",
+    "Walk me through a day or moment that felt like a turning point in this experience.",
+    "Can you describe a situation when things didn’t go as expected and how you navigated it?",
+    "Tell me about a time when you felt especially motivated or inspired in this context.",
+    "What’s a moment in this process that challenged you the most?",
+    "Can you recall an episode that made you rethink your assumptions?",
+    "Describe a situation where someone else played a key role in shaping your path.",
+    "Tell me about a moment when you realized things were changing.",
+    "Can you share the story of a success that still feels meaningful to you?",
+    "Tell me about a time when you had doubts, and what happened next.",
+    "Walk me through an encounter or conversation that influenced your decisions.",
+    "Describe a moment when you felt particularly connected to your purpose or goals.",
+    "What’s a story that captures the culture or atmosphere of the environment you worked in?",
+    "Can you recall an unexpected event that shaped the direction of your work?",
+    "Tell me about a moment when collaboration made a difference.",
+    "Describe a situation where you had to learn something quickly or adapt.",
+    "What’s a story that illustrates your relationship with risk or uncertainty?",
+    "Can you share an example of a moment that felt especially rewarding?",
+    "Tell me about a situation where you had to make a difficult choice.",
+    "Can you recall an experience that taught you something important about yourself?",
+    "Describe a moment when you saw the impact of your efforts on others.",
+    "Tell me the story of a time when you felt misunderstood — and how that unfolded.",
+    "Can you walk me through a moment when you felt completely aligned with your team or mission?",
+    "Describe an episode that revealed a hidden challenge or opportunity.",
+    "Tell me about a time when feedback changed your perspective.",
+    "What’s a story that represents your biggest learning from this experience?",
+    "Can you recall a moment when you experienced a breakthrough?",
+    "Describe a situation that still leaves you with strong emotions today.",
+    "Looking back, what’s a story that best summarizes the journey as a whole?"
+  ];
+
+  // The three questions actually used in this run (selected from allInterviewQuestions).
+  var interviewQuestions = [];
+
+  var stepMeta = [
+    { title: "Your profile", subtitle: "Step 1 of 7 · Minimal details to begin." },
+    { title: "Photo (optional)", subtitle: "Step 2 of 7 · A grayscale echo only, never required." },
+    { title: "Narrative interview", subtitle: "Step 3 of 7 · Summary of your three answers." },
+    { title: "Authored role", subtitle: "Step 4 of 7 · Your authored role, confirmed from your story." },
+    { title: "Search horizon", subtitle: "Step 5 of 7 · Decide where Lia should look for matches." },
+    { title: "Matches", subtitle: "Step 6 of 7 · Explore organizations aligned with your roles." },
+    { title: "Your signals", subtitle: "Step 7 of 7 · See where you’ve chosen to make contact." }
+  ];
+
+  var currentStep = 0;
+
+  // ====================== DOM SHORTCUTS ======================
+
+  var landing = document.getElementById("lia-landing");
+  var app = document.getElementById("lia-app");
+
+  var landingStages = Array.prototype.slice.call(
+    document.querySelectorAll(".lia-landing-stage")
+  );
+
+  // Boot + profile stages
+  var landingStageBoot = document.getElementById("landing-stage-boot");
+  var landingStageText1 = document.getElementById("landing-stage-text-1");
+  var landingStageText2 = document.getElementById("landing-stage-text-2");
+  var landingStageLoadingProfile = document.getElementById("landing-stage-loading-profile");
+  var landingStageProfile1 = document.getElementById("landing-stage-profile-1");
+  var landingStageProfile2 = document.getElementById("landing-stage-profile-2");
+  var landingStageProfile3 = document.getElementById("landing-stage-profile-3");
+  var landingStageLoadingFinal = document.getElementById("landing-stage-loading-final");
+
+  var landingBootBar = document.getElementById("landing-boot-bar");
+  var landingProfileBar = document.getElementById("landing-profile-bar");
+  var landingFinalBar = document.getElementById("landing-final-bar");
+
+  var landingNameInput = document.getElementById("landing-name");
+  var landingGenderSelect = document.getElementById("landing-gender");
+  var landingEmailInput = document.getElementById("landing-email");
+  var landingPhoneInput = document.getElementById("landing-phone");
+  var landingLinkedinInput = document.getElementById("landing-linkedin");
+  var landingPhotoInput = document.getElementById("landing-photo");
+
+  // Narrative landing
+  var landingNarrativeIntro1 = document.getElementById("landing-narrative-intro-1");
+  var landingNarrativeIntro2 = document.getElementById("landing-narrative-intro-2");
+  var landingNarrativeQuestions = document.getElementById("landing-narrative-questions");
+  var landingQuestionTitle = document.getElementById("landing-question-title");
+  var landingQuestionCounter = document.getElementById("landing-question-counter");
+  var landingQuestionAnswer = document.getElementById("landing-question-answer");
+  var landingNarrativeCounter = document.getElementById("landing-narrative-counter");
+
+  var landingNarrativeRoles = document.getElementById("landing-narrative-roles");
+  var landingRolesGrid = document.getElementById("landing-roles-grid");
+
+  // New role confirmation stage
+  var landingRoleConfirm = document.getElementById("landing-role-confirm");
+  var landingRoleConfirmTitle = document.getElementById("landing-role-confirm-title");
+  var landingRoleConfirmText = document.getElementById("landing-role-confirm-text");
+  var landingRoleConfirmImage = document.getElementById("landing-role-confirm-image");
+
+  var landingNarrativeArea = document.getElementById("landing-narrative-area");
+  var landingAreaInput = document.getElementById("landing-area");
+  var landingWorldwideCheckbox = document.getElementById("landing-worldwide");
+  var landingAreaFeedback = document.getElementById("landing-area-feedback");
+
+  var landingNarrativeMatches = document.getElementById("landing-narrative-matches");
+  var landingMatchList = document.getElementById("landing-match-list");
+  var landingMatchesSubtitle = document.getElementById("landing-matches-subtitle");
+
+  // Landing buttons
+  var btnLandingNext1 = document.getElementById("btn-landing-next-1");
+  var btnLandingBack2 = document.getElementById("btn-landing-back-2");
+  var btnLandingSetProfile = document.getElementById("btn-landing-set-profile");
+
+  var btnLandingProfile1Back = document.getElementById("btn-landing-profile-1-back");
+  var btnLandingProfile1Next = document.getElementById("btn-landing-profile-1-next");
+  var btnLandingProfile2Back = document.getElementById("btn-landing-profile-2-back");
+  var btnLandingProfile2Next = document.getElementById("btn-landing-profile-2-next");
+  var btnLandingProfile3Back = document.getElementById("btn-landing-profile-3-back");
+  var btnLandingProfileConfirm = document.getElementById("btn-landing-profile-confirm");
+
+  var btnLandingNarrative1Next = document.getElementById("btn-landing-narrative-1-next");
+  var btnLandingNarrative2Back = document.getElementById("btn-landing-narrative-2-back");
+  var btnLandingNarrative2Start = document.getElementById("btn-landing-narrative-2-start");
+
+  var btnLandingQuestionBack = document.getElementById("btn-landing-question-back");
+  var btnLandingQuestionNext = document.getElementById("btn-landing-question-next");
+
+  var btnLandingRolesBack = document.getElementById("btn-landing-roles-back");
+  var btnLandingRolesNext = document.getElementById("btn-landing-roles-next");
+
+  // New role confirm buttons
+  var btnRoleConfirmBack = document.getElementById("btn-role-confirm-back");
+  var btnRoleConfirmNext = document.getElementById("btn-role-confirm-next");
+
+  var btnLandingAreaBack = document.getElementById("btn-landing-area-back");
+  var btnLandingAreaNext = document.getElementById("btn-landing-area-next");
+
+  var btnLandingMatchesBack = document.getElementById("btn-landing-matches-back");
+  var btnLandingOpenInterface = document.getElementById("btn-landing-open-interface");
+
+  // Landing processing overlay (FIRST animation)
+  var landingProcessingOverlay = document.getElementById("lia-landing-processing-overlay");
+  var landingProcessingText = document.getElementById("lia-landing-processing-text");
+  var landingProcessingCanvas = document.getElementById("lia-landing-processing-canvas");
+
+  // APP DOM
+  var sidebarAvatar = document.getElementById("sidebar-avatar");
+  var sidebarName = document.getElementById("sidebar-name");
+  var navList = document.getElementById("lia-nav-list");
+  var navItems = Array.prototype.slice.call(navList.querySelectorAll(".lia-nav-item"));
+
+  var mainTitleEl = document.getElementById("lia-main-title");
+  var mainSubtitleEl = document.getElementById("lia-main-subtitle");
+  var steps = Array.prototype.slice.call(document.querySelectorAll(".lia-step"));
+  var stepTag = document.getElementById("lia-step-tag");
+
+  var liaNameInput = document.getElementById("lia-name");
+  var liaEmailInput = document.getElementById("lia-email");
+  var liaPhoneInput = document.getElementById("lia-phone");
+  var liaLinkedinInput = document.getElementById("lia-linkedin");
+  var liaGenderSelect = document.getElementById("lia-gender");
+
+  var liaPhotoInput = document.getElementById("lia-photo");
+  var liaPhotoCircle = document.getElementById("lia-photo-circle");
+  var liaPhotoLabel = document.querySelector('label[for="lia-photo"]');
+
+  // Narrative summary in app
+  var summaryQ1Label = document.getElementById("lia-summary-q1-label");
+  var summaryQ2Label = document.getElementById("lia-summary-q2-label");
+  var summaryQ3Label = document.getElementById("lia-summary-q3-label");
+  var summaryQ1 = document.getElementById("lia-summary-q1");
+  var summaryQ2 = document.getElementById("lia-summary-q2");
+  var summaryQ3 = document.getElementById("lia-summary-q3");
+
+  // Roles in app
+  var rolesContainer = document.getElementById("lia-roles-container");
+
+  // Area in app
+  var areaInput = document.getElementById("lia-area");
+  var worldwideCheckbox = document.getElementById("lia-worldwide");
+  var areaFeedbackEl = document.getElementById("lia-area-feedback");
+
+  // Matches in app
+  var matchesTitleEl = document.getElementById("lia-matches-title");
+  var matchesListEl = document.getElementById("lia-match-list");
+  var sortSelect = document.getElementById("lia-sort");
+
+  // Signals
+  var signalsListEl = document.getElementById("lia-signals-list");
+
+  // App processing overlay (SECOND animation)
+  var appProcessingOverlay = document.getElementById("lia-processing-overlay");
+  var appProcessingText = document.getElementById("lia-processing-text");
+  var appProcessingCanvas = document.getElementById("lia-processing-canvas");
+
+  // End overlay + controls
+  var endOverlay = document.getElementById("lia-end-overlay");
+  var endBody = document.getElementById("lia-end-body");
+  var endRow = document.getElementById("lia-end-row");
+  var btnEndOpen = document.getElementById("btn-end-open");
+  var btnEndPrev = document.getElementById("btn-end-prev");
+  var btnEndNext = document.getElementById("btn-end-next");
+  var btnEndClose = document.getElementById("btn-end-close");
+  var btnEndBackLanding = document.getElementById("btn-end-back-landing");
+  var btnEndRestart = document.getElementById("btn-end-restart");
+
+
+
+  // Goodbye overlay (map of uniqueness replay)
+  var goodbyeOverlay = document.getElementById("lia-goodbye-overlay");
+  var goodbyeText = document.getElementById("lia-goodbye-text");
+  var goodbyeCanvas = document.getElementById("lia-goodbye-canvas");
+
+
+
+  function startGoodbyeSequence() {
+    // If controller/overlay is missing, fallback to direct redirect
+    if (!goodbyeProcessing || !goodbyeOverlay || !goodbyeCanvas) {
+      exitLiaExperience();
+      return;
+    }
+
+    // Prepare GOODBYE text (with name, if any)
+    var name = "";
+    if (state && state.profile && state.profile.name) {
+      name = state.profile.name.trim();
+    } else if (liaNameInput && liaNameInput.value) {
+      name = liaNameInput.value.trim();
+    }
+
+    var msg = "GOODBYE";
+    if (name) msg += " " + name.toUpperCase();
+
+    // Run the same "uniqueness" animation used at the start, then exit the iframe.
+    goodbyeProcessing.start(msg, function () {
+      exitLiaExperience();
+    });
+  }
+
+
+
+  // ====================== HELPERS ======================
+
+  // End-of-simulation pages content (HTML fragments)
+  var endPages = [
+    `
+<p>The Lia 1.0 simulation you have just experienced is only the threshold.</p>
+<p>To transform Lia from a conceptual prototype into a fully operational intelligence, two core engines now enter their training phase: the Person Engine and the Organization Engine.</p>
+<p><strong>1. Training the Person Engine — IdenLab</strong></p>
+<p>IdenLab is the environment where narrative interviews are collected and transformed into the first Maps of Uniqueness. These maps emerge from values, motivations, emotional patterns, symbolic images, and turning points drawn directly from lived human stories.</p>
+<p>Over the next phase, IdenLab will gather a growing corpus of these qualitative narratives. With each new interview, Lia learns to recognize how identity unfolds—not as a set of traits, but as a living constellation of meaning. This dataset becomes the training ground for the Person Engine: the part of Lia capable of reading uniqueness, generalizing patterns without reducing individuals to categories, and imagining the human side of new roles.</p>
+    `,
+    `
+<p><strong>2. Training the Organization Engine — Systems Atlas</strong></p>
+<p>In parallel, Systems Atlas begins assembling the second half of Lia’s learning: Evolution Profiles of organizations. Through strategic documents, project descriptions, leadership conversations, and cultural signals, Lia learns how organizations think, where they struggle, and how they are quietly trying to evolve.</p>
+<p>This material trains the Organization Engine to detect tensions, latent needs, capability gaps, and emergent directions. In other words, it learns to sense the possibility spaces where new roles could genuinely take shape.</p>
+<p><strong>Toward Lia 1.0 as a Working Intelligence</strong></p>
+<p>When both engines gather enough depth—enough human narratives on one side, and enough organizational evolution data on the other—Lia 1.0 becomes truly operational.</p>
+<p>At that point, Lia will be able to:</p>
+<ul>
+  <li>read a person’s uniqueness,</li>
+  <li>read an organization’s trajectory, and</li>
+  <li>generate new roles at the point where the two meet.</li>
+</ul>
+<p>These authored roles form the foundation of a new kind of work ecosystem—one where roles emerge from people, and organizations evolve from the identities they integrate.</p>
+<p>This is the path ahead: a slow, careful, ethically grounded training process that will allow Lia to grow from simulation to reality, one story and one organization at a time.</p>
+    `
+  ];
+
+  var endPageIndex = 0;
+
+  function renderEndPage() {
+    if (!endBody) return;
+    if (endPageIndex < 0) endPageIndex = 0;
+    if (endPageIndex > endPages.length - 1) endPageIndex = endPages.length - 1;
+    endBody.innerHTML = endPages[endPageIndex];
+
+    if (btnEndPrev) {
+      btnEndPrev.disabled = endPageIndex === 0;
+    }
+    if (btnEndNext) {
+      btnEndNext.disabled = endPageIndex === endPages.length - 1;
+    }
+
+    if (endRow) {
+      endRow.style.display = endPageIndex === endPages.length - 1 ? "flex" : "none";
+    }
+  }
+
+  function openEndOverlay() {
+    if (!endOverlay) return;
+    endPageIndex = 0;
+    renderEndPage();
+    endOverlay.style.display = "flex";
+  }
+
+  function showLandingStage(el) {
+    landingStages.forEach(function (stage) {
+      stage.classList.remove("active");
+    });
+    if (el) {
+      el.classList.add("active");
+    }
+  }
+
+  function animateBar(barEl) {
+    if (!barEl) return;
+    barEl.style.width = "0%";
+    var start = performance.now();
+    function frame(now) {
+      var elapsed = now - start;
+      var progress = Math.min(1, elapsed / LOADING_DURATION);
+      barEl.style.width = (progress * 100).toFixed(1) + "%";
+      if (progress < 1) {
+        requestAnimationFrame(frame);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function getInitials(name) {
+    if (!name) return "";
+    var parts = name.trim().split(/\s+/);
+    var initials = parts[0].charAt(0);
+    if (parts.length > 1) {
+      initials += parts[parts.length - 1].charAt(0);
+    }
+    return initials.toUpperCase();
+  }
+
+  function updateSidebarUser() {
+    var name = state.profile.name || "Guest";
+    sidebarName.textContent = name;
+    if (state.photoDataUrl) {
+      sidebarAvatar.innerHTML =
+        '<img src="' + state.photoDataUrl + '" alt="Profile photo"/>';
+    } else {
+      sidebarAvatar.textContent = getInitials(name) || "–";
+    }
+  }
+
+  function updateMainHeader(stepIndex) {
+    var meta = stepMeta[stepIndex] || stepMeta[0];
+    mainTitleEl.textContent = meta.title;
+    mainSubtitleEl.textContent = meta.subtitle;
+    var tagNumber = String(stepIndex + 1);
+    if (tagNumber.length < 2) tagNumber = "0" + tagNumber;
+    var labels = ["Profile", "Photo", "Narrative", "Authored Role", "Area", "Matches", "Signals"];
+    var tagLabel = labels[stepIndex] || "Step";
+    stepTag.textContent = tagNumber + " · " + tagLabel;
+  }
+
+  function showStep(stepIndex) {
+    currentStep = stepIndex;
+    steps.forEach(function (step) {
+      var index = parseInt(step.getAttribute("data-step"), 10);
+      step.classList.toggle("active", index === stepIndex);
+    });
+    navItems.forEach(function (item) {
+      var index = parseInt(item.getAttribute("data-step"), 10);
+      item.classList.toggle("active", index === stepIndex);
+    });
+    updateMainHeader(stepIndex);
+  }
+
+  function syncProfileFromLanding() {
+    state.profile.name = landingNameInput.value || "";
+    state.profile.gender = landingGenderSelect.value || "";
+    state.profile.email = landingEmailInput.value || "";
+    state.profile.phone = landingPhoneInput.value || "";
+    state.profile.linkedin = landingLinkedinInput.value || "";
+  }
+
+  function syncMainProfileToFields() {
+    liaNameInput.value = state.profile.name;
+    liaEmailInput.value = state.profile.email;
+    liaPhoneInput.value = state.profile.phone;
+    liaLinkedinInput.value = state.profile.linkedin;
+    liaGenderSelect.value = state.profile.gender || "";
+  }
+
+  function syncMainProfileToState() {
+    state.profile.name = liaNameInput.value || "";
+    state.profile.email = liaEmailInput.value || "";
+    state.profile.phone = liaPhoneInput.value || "";
+    state.profile.linkedin = liaLinkedinInput.value || "";
+    state.profile.gender = liaGenderSelect.value || "";
+  }
+
+  function handlePhotoFile(file, targetEl) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var url = e.target.result;
+      state.photoDataUrl = url;
+      if (targetEl) {
+        targetEl.innerHTML = '<img src="' + url + '" alt="Photo preview">';
+      }
+      updateSidebarUser();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ====================== PROCESSING CONTROLLERS ======================
+
+  function createProcessingController(overlayEl, textEl, canvasEl, mode) {
+    var ctx = null;
+    var animationId = null;
+
+    function resize() {
+      if (!canvasEl) return;
+      var rect = canvasEl.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      canvasEl.width = rect.width;
+      canvasEl.height = rect.height;
+    }
+
+    function clear() {
+      if (!canvasEl) return;
+      if (!ctx) ctx = canvasEl.getContext("2d");
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+    }
+
+    function start(text, onComplete) {
+      if (!overlayEl || !canvasEl) {
+        if (onComplete) onComplete();
+        return;
+      }
+      resize();
+      clear();
+      textEl.textContent = text || "Lia is thinking…";
+      overlayEl.style.display = "flex";
+
+      var duration = mode === "uniqueness" ? UNIQUENESS_DURATION : NETWORK_DURATION;
+      var startTime = performance.now();
+      if (!ctx) ctx = canvasEl.getContext("2d");
+
+      // Pre-generate nodes + edges for both modes
+      var baseNodes = [];
+      var baseEdges = [];
+
+      function generateBaseMap() {
+        baseNodes = [];
+        baseEdges = [];
+        var w = canvasEl.width;
+        var h = canvasEl.height;
+        var cx = w / 2;
+        var cy = h / 2;
+        var count = 40;
+        var radius = Math.min(w, h) * 0.3;
+
+        for (var i = 0; i < count; i++) {
+          var angle = (i / count) * Math.PI * 2 + (Math.random() * 0.4 - 0.2);
+          var r = radius * (0.4 + Math.random() * 0.6);
+          baseNodes.push({
+            x: cx + Math.cos(angle) * r,
+            y: cy + Math.sin(angle) * r
+          });
+        }
+
+        // connect near neighbours to form a coherent shape
+    for (var a = 0; a < count; a++) {
+      for (var b = a + 1; b < count; b++) {
+        var na = baseNodes[a];
+        var nb = baseNodes[b];
+        var dx = na.x - nb.x;
+        var dy = na.y - nb.y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        var maxDist = radius * 0.9;
+
+        // only connect relatively close nodes, with a slightly higher probability
+        if (dist < maxDist && Math.random() < 0.35) {
+          baseEdges.push({ from: a, to: b });
+        }
+      }
+    }
+
+        // store globally as "map of uniqueness"
+        uniquenessMapData = {
+          width: w,
+          height: h,
+          nodes: baseNodes.map(function (n) { return { x: n.x, y: n.y }; }),
+          edges: baseEdges.slice()
+        };
+      }
+
+      // SECOND MODE: derive outer network from previously stored map
+      var outerNodes = [];
+      var outerEdges = [];
+      var connectEdges = []; // precomputed links between inner map and outer net
+
+      function generateOuterNetwork() {
+        if (!uniquenessMapData) return;
+        outerNodes = [];
+        outerEdges = [];
+        connectEdges = [];
+
+        var w = canvasEl.width;
+        var h = canvasEl.height;
+        var cx = w / 2;
+        var cy = h / 2;
+        var count = 55;
+        var radius = Math.min(w, h) * 0.45;
+
+        for (var i = 0; i < count; i++) {
+          var angle = (i / count) * Math.PI * 2 + (Math.random() * 0.6 - 0.3);
+          var r = radius * (0.6 + Math.random() * 0.5);
+          outerNodes.push({
+            x: cx + Math.cos(angle) * r,
+            y: cy + Math.sin(angle) * r
+          });
+        }
+
+        for (var a = 0; a < count; a++) {
+          for (var b = a + 1; b < count; b++) {
+            if (Math.random() < 0.08) {
+              outerEdges.push({ from: a, to: b });
+            }
+          }
+        }
+
+        // precompute a stable set of inner–outer connections
+        if (uniquenessMapData && uniquenessMapData.nodes && uniquenessMapData.nodes.length) {
+          var innerCount = uniquenessMapData.nodes.length;
+          var maxConnections = 40;
+          for (var c = 0; c < maxConnections; c++) {
+            var innerIndex = Math.floor(Math.random() * innerCount);
+            var outerIndex = Math.floor(Math.random() * count);
+            connectEdges.push({ inner: innerIndex, outer: outerIndex });
+          }
+        }
+      }
+
+      if (mode === "uniqueness") {
+        generateBaseMap();
+      } else {
+        if (!uniquenessMapData) {
+          generateBaseMap(); // fallback so we always have something
+        }
+        generateOuterNetwork();
+      }
+
+      function drawUniqueness(progress) {
+        var w = canvasEl.width;
+        var h = canvasEl.height;
+
+        // Clear background
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, w, h);
+
+        // When a new run starts, reset the cached world
+        if (progress < 0.001) {
+          drawUniqueness._world = null;
+          drawUniqueness._fractions = null;
+        }
+
+        // Lazy-init the "world" (nodes, dust, edges) the first time
+        if (!drawUniqueness._world) {
+          // --- CONFIGURATION (mirrors FIRST ANIMATION.txt) ---
+          var COLOR = { r: 0, g: 255, b: 140 };
+          var NODE_COUNT = 12;
+          var DUST_COUNT = 40;
+          var DRIFT_SPEED = 0.06;
+          var INTERNAL_EDGE_RATIO = 0.25;
+
+          var cx = w / 2;
+          var cy = h / 2;
+          var radius = Math.min(w, h) * 0.3;
+
+          var nodes = [];
+          var dust = [];
+          var edges = [];
+
+          // 1. Create Stars (Nodes) on a symbolic closed loop
+          for (var i = 0; i < NODE_COUNT; i++) {
+            var angleBase = (i / NODE_COUNT) * Math.PI * 2;
+            var angle = angleBase + (Math.random() * 0.5 - 0.25);
+            var r = radius * (0.6 + Math.random() * 0.5);
+
+            nodes.push({
+              x: cx + Math.cos(angle) * r,
+              y: cy + Math.sin(angle) * r,
+              angle: angleBase,
+              vx: (Math.random() - 0.5) * DRIFT_SPEED,
+              vy: (Math.random() - 0.5) * DRIFT_SPEED,
+              size: 0.75 + Math.random() * 1.0,
+              // Make some nodes appear almost immediately (no dark pause)
+              birth: 0.02 + (i / NODE_COUNT) * 0.5 + Math.random() * 0.05,
+              twinkleOffset: Math.random() * Math.PI * 2
+            });
+          }
+
+          // Sort nodes by angle so we can build a clean closed loop
+          nodes.sort(function (a, b) { return a.angle - b.angle; });
+
+          // 2. Background dust
+          for (var d = 0; d < DUST_COUNT; d++) {
+            dust.push({
+              x: Math.random() * w,
+              y: Math.random() * h,
+              vx: (Math.random() - 0.5) * 0.02,
+              vy: (Math.random() - 0.5) * 0.02,
+              size: Math.random() * 0.8,
+              alpha: 0.1 + Math.random() * 0.2
+            });
+          }
+
+          // 3. Connections – guaranteed closed loop + internal structure
+          // Part A: closed loop
+          for (var i2 = 0; i2 < NODE_COUNT; i2++) {
+            var j2 = (i2 + 1) % NODE_COUNT;
+            edges.push({ a: i2, b: j2 });
+          }
+
+          // Part B: internal chords
+          for (var ii = 0; ii < NODE_COUNT; ii++) {
+            for (var jj = ii + 2; jj < NODE_COUNT; jj++) {
+              if (Math.random() < INTERNAL_EDGE_RATIO) {
+                edges.push({ a: ii, b: jj });
+              }
+            }
+          }
+
+          // Timing for edges (when each segment draws)
+          for (var e = 0; e < edges.length; e++) {
+            var na = nodes[edges[e].a];
+            var nb = nodes[edges[e].b];
+            var maxBirth = Math.max(na.birth, nb.birth);
+            edges[e].start = maxBirth + 0.05 + Math.random() * 0.1;
+            edges[e].end = edges[e].start + 0.15 + Math.random() * 0.15;
+          }
+
+          drawUniqueness._world = {
+            nodes: nodes,
+            dust: dust,
+            edges: edges,
+            color: COLOR
+          };
+
+          // Approximate the original delay/build/hold ratios from FIRST ANIMATION
+          // (no initial dark-screen delay – nodes start immediately)
+          var delayMs = 0;
+          var durationMs = 8000;
+          var holdMs = 2500;
+          var total = delayMs + durationMs + holdMs;
+          drawUniqueness._fractions = {
+            delay: delayMs / total,
+            build: durationMs / total
+          };
+        }
+
+        var world = drawUniqueness._world;
+        var COLOR = world.color;
+        var fractions = drawUniqueness._fractions;
+
+        // Map controller progress (0–1) to original delay/build/hold timeline
+        var delayFrac = fractions.delay;
+        var buildFrac = fractions.build;
+        var t;
+        if (progress < delayFrac) {
+          t = 0;
+        } else if (progress < delayFrac + buildFrac) {
+          t = (progress - delayFrac) / buildFrac;
+        } else {
+          t = 1;
+        }
+
+        // Easing helpers (same as in your standalone script)
+        function easeOutCubic(tVal) {
+          return 1 - Math.pow(1 - tVal, 3);
+        }
+        function easeInOutSine(tVal) {
+          return -(Math.cos(Math.PI * tVal) - 1) / 2;
+        }
+
+        ctx.globalCompositeOperation = "lighter";
+
+        // 1) Background dust
+        var dustFade = Math.min(1, t * 2);
+        ctx.fillStyle = "#ffffff";
+        for (var di = 0; di < world.dust.length; di++) {
+          var dpt = world.dust[di];
+          dpt.x += dpt.vx;
+          dpt.y += dpt.vy;
+          ctx.globalAlpha = dpt.alpha * dustFade * 0.4;
+          ctx.beginPath();
+          ctx.arc(dpt.x, dpt.y, dpt.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // 2) Stars (nodes) with glow + twinkle
+        var now = Date.now();
+        for (var ni = 0; ni < world.nodes.length; ni++) {
+          var n = world.nodes[ni];
+          n.x += n.vx;
+          n.y += n.vy;
+
+          if (t < n.birth) {
+            continue;
+          }
+
+          var age = (t - n.birth) / 0.2;
+          if (age < 0) age = 0;
+          if (age > 1) age = 1;
+          var scale = easeOutCubic(age);
+
+          var twinkle = 0.8 + 0.2 * Math.sin(now * 0.002 + n.twinkleOffset);
+          var alpha = scale * twinkle;
+
+          // outer glow
+          var glowSize = n.size * 12 * scale;
+          var grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowSize);
+          grad.addColorStop(0, "rgba(" + COLOR.r + "," + COLOR.g + "," + COLOR.b + "," + (0.4 * alpha) + ")");
+          grad.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = grad;
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
+          ctx.fill();
+
+          // core
+          ctx.fillStyle = "rgba(220,255,240," + alpha + ")";
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.size * scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // 3) Connections (closed loop + internal structure)
+        for (var ei = 0; ei < world.edges.length; ei++) {
+          var edge = world.edges[ei];
+          var na2 = world.nodes[edge.a];
+          var nb2 = world.nodes[edge.b];
+
+          var p = (t - edge.start) / (edge.end - edge.start);
+          if (p < 0) p = 0;
+          if (p > 1) p = 1;
+          if (p <= 0) continue;
+
+          var drawLen = easeInOutSine(p);
+          var tx = na2.x + (nb2.x - na2.x) * drawLen;
+          var ty = na2.y + (nb2.y - na2.y) * drawLen;
+
+          ctx.strokeStyle = "rgba(" + COLOR.r + "," + COLOR.g + "," + COLOR.b + "," + (0.1 + p * 0.3) + ")";
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.moveTo(na2.x, na2.y);
+          ctx.lineTo(tx, ty);
+          ctx.stroke();
+        }
+
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+      }
+
+      function drawNetwork(progress) {
+        var w = canvasEl.width;
+        var h = canvasEl.height;
+
+        if (!w || !h) return;
+
+        // Clear background
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, w, h);
+
+        // Clamp progress
+        if (progress < 0) progress = 0;
+        if (progress > 1) progress = 1;
+
+        // --- CONFIGURATION (from ANIMATION 2: MAP FINDS HOME) ---
+        var CONFIG = {
+          startHold: 500,              // Phase 1: hold inner map
+          workNetworkDuration: 8500,   // Phase 2: build world of work + matches
+          coEvolutionHold: 2500,       // Phase 3: hold integrated image
+
+          uniquenessNodeCount: 12,
+          workNodeCount: 30,
+          dustCount: 70,
+
+          driftSpeedUniqueness: 0.04,
+          driftSpeedWork: 0.06,
+
+          uniquenessInternalEdgeRatio: 0.25,
+          workNetworkInternalEdgeRatio: 0.15,
+          matchConnectionCount: 3,
+
+          colorUniqueness: { r: 0, g: 255, b: 140 },
+          colorWork: { r: 100, g: 200, b: 255 },
+          colorMatch: { r: 255, g: 255, b: 200 }
+        };
+
+        // --- EASING & UTILITIES ---
+        function easeOutCubic(t) {
+          return 1 - Math.pow(1 - t, 3);
+        }
+
+        function easeInOutSine(t) {
+          return -(Math.cos(Math.PI * t) - 1) / 2;
+        }
+
+        function lerp(a, b, t) {
+          return a + (b - a) * t;
+        }
+
+        function lerpColor(c1, c2, t) {
+          return {
+            r: Math.round(lerp(c1.r, c2.r, t)),
+            g: Math.round(lerp(c1.g, c2.g, t)),
+            b: Math.round(lerp(c1.b, c2.b, t))
+          };
+        }
+
+        // --- WORLD GENERATION (lazy init, cached across frames) ---
+        function createNetworkWorld() {
+          var cx = w / 2;
+          var cy = h / 2;
+          var uniquenessRadius = Math.min(w, h) * 0.25;
+          var workNetworkMinRadius = Math.min(w, h) * 0.35;
+          var workNetworkMaxRadius = Math.min(w, h) * 0.45;
+
+          var uniquenessNodes = [];
+          var workNodes = [];
+          var dust = [];
+          var edges = [];
+
+          var i, j;
+
+          // 1) Map of Uniqueness (inner ring)
+          for (i = 0; i < CONFIG.uniquenessNodeCount; i++) {
+            var angleBase = (i / CONFIG.uniquenessNodeCount) * Math.PI * 2;
+            var angle = angleBase + (Math.random() * 0.5 - 0.25);
+            var r = uniquenessRadius * (0.6 + Math.random() * 0.5);
+
+            uniquenessNodes.push({
+              id: i,
+              x: cx + Math.cos(angle) * r,
+              y: cy + Math.sin(angle) * r,
+              angle: angleBase,
+              vx: (Math.random() - 0.5) * CONFIG.driftSpeedUniqueness,
+              vy: (Math.random() - 0.5) * CONFIG.driftSpeedUniqueness,
+              size: 0.75 + Math.random() * 1.0,
+              birth: 0, // inner map is fully present from the start
+              twinkleOffset: Math.random() * Math.PI * 2,
+              type: "uniqueness"
+            });
+          }
+
+          uniquenessNodes.sort(function (a, b) { return a.angle - b.angle; });
+
+          // Closed loop edges + internal chords (inner map)
+          for (i = 0; i < CONFIG.uniquenessNodeCount; i++) {
+            j = (i + 1) % CONFIG.uniquenessNodeCount;
+            edges.push({
+              a: uniquenessNodes[i].id,
+              b: uniquenessNodes[j].id,
+              type: "uniqueness",
+              birth: 0,
+              start: 0,
+              end: 0
+            });
+          }
+
+          for (i = 0; i < CONFIG.uniquenessNodeCount; i++) {
+            for (j = i + 2; j < CONFIG.uniquenessNodeCount; j++) {
+              if (Math.random() < CONFIG.uniquenessInternalEdgeRatio) {
+                edges.push({
+                  a: uniquenessNodes[i].id,
+                  b: uniquenessNodes[j].id,
+                  type: "uniqueness",
+                  birth: 0,
+                  start: 0,
+                  end: 0
+                });
+              }
+            }
+          }
+
+          // 2) World of Work nodes (outer ring)
+          var workNodeStartID = CONFIG.uniquenessNodeCount;
+          for (i = 0; i < CONFIG.workNodeCount; i++) {
+            var angleWork = (i / CONFIG.workNodeCount) * Math.PI * 2 + (Math.random() * 0.8 - 0.4);
+            var rWork = workNetworkMinRadius + Math.random() * (workNetworkMaxRadius - workNetworkMinRadius);
+
+            workNodes.push({
+              id: workNodeStartID + i,
+              x: cx + Math.cos(angleWork) * rWork,
+              y: cy + Math.sin(angleWork) * rWork,
+              vx: (Math.random() - 0.5) * CONFIG.driftSpeedWork,
+              vy: (Math.random() - 0.5) * CONFIG.driftSpeedWork,
+              size: 0.5 + Math.random() * 0.75,
+              // work nodes are born during Phase 2 (0 → ~0.75)
+              birth: 0.05 + (i / CONFIG.workNodeCount) * 0.7 + (Math.random() * 0.05),
+              twinkleOffset: Math.random() * Math.PI * 2,
+              type: "work"
+            });
+          }
+
+          // 3) Background dust
+          for (i = 0; i < CONFIG.dustCount; i++) {
+            dust.push({
+              x: Math.random() * w,
+              y: Math.random() * h,
+              vx: (Math.random() - 0.5) * 0.02,
+              vy: (Math.random() - 0.5) * 0.02,
+              size: Math.random() * 0.8,
+              alpha: 0.1 + Math.random() * 0.2
+            });
+          }
+
+          var allNodes = uniquenessNodes.concat(workNodes);
+
+          // 4) World of work internal edges
+          for (i = 0; i < workNodes.length; i++) {
+            for (j = i + 1; j < workNodes.length; j++) {
+              if (Math.random() < CONFIG.workNetworkInternalEdgeRatio) {
+                edges.push({
+                  a: workNodes[i].id,
+                  b: workNodes[j].id,
+                  type: "work",
+                  birth: Math.max(workNodes[i].birth, workNodes[j].birth) + 0.05 + Math.random() * 0.05
+                });
+              }
+            }
+          }
+
+          // 5) Match connections (inner → outer)
+          var shuffled = uniquenessNodes.slice().sort(function () { return Math.random() - 0.5; });
+          var maxMatches = Math.min(CONFIG.matchConnectionCount, shuffled.length);
+          for (i = 0; i < maxMatches; i++) {
+            var uNode = shuffled[i];
+            var closestWorkNode = null;
+            var minDist = Infinity;
+
+            for (j = 0; j < workNodes.length; j++) {
+              var wNode = workNodes[j];
+              var dx = uNode.x - wNode.x;
+              var dy = uNode.y - wNode.y;
+              var dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < minDist) {
+                minDist = dist;
+                closestWorkNode = wNode;
+              }
+            }
+
+            if (closestWorkNode) {
+              edges.push({
+                a: uNode.id,
+                b: closestWorkNode.id,
+                type: "match",
+                // matches appear between ~25% and ~40% of Phase 2
+                birth: 0.25 + Math.random() * 0.15
+              });
+            }
+          }
+
+          // 6) Edge timings
+          for (i = 0; i < edges.length; i++) {
+            var edge = edges[i];
+            if (edge.birth === 0) {
+              edge.start = 0;
+              edge.end = 0;
+            } else {
+              edge.start = edge.birth;
+              edge.end = edge.start + 0.05 + Math.random() * 0.05; // fast line draw
+            }
+          }
+
+          return {
+            allNodes: allNodes,
+            dust: dust,
+            edges: edges
+          };
+        }
+
+        // Lazy-init world, reuse across frames
+        if (!drawNetwork._world || drawNetwork._w !== w || drawNetwork._h !== h) {
+          drawNetwork._world = createNetworkWorld();
+          drawNetwork._w = w;
+          drawNetwork._h = h;
+        }
+
+        var world = drawNetwork._world;
+
+        // --- TIME MAPPING (use progress as normalized time 0..1) ---
+        var totalAnimationDuration =
+          CONFIG.startHold + CONFIG.workNetworkDuration + CONFIG.coEvolutionHold;
+
+        // Synthesize a virtual elapsed time from progress
+        var totalElapsed = progress * totalAnimationDuration;
+
+        // Match completion ~45% through Phase 2
+        var matchCompletionTime =
+          CONFIG.startHold + CONFIG.workNetworkDuration * 0.45;
+
+        var phaseTime;
+        if (totalElapsed < CONFIG.startHold) {
+          phaseTime = 0;
+        } else {
+          var workElapsed = totalElapsed - CONFIG.startHold;
+          phaseTime = workElapsed / CONFIG.workNetworkDuration;
+          if (phaseTime < 0) phaseTime = 0;
+          if (phaseTime > 1) phaseTime = 1;
+        }
+
+        // Co-evolution colour blending once matches are in
+        var coEvolutionStartTime = matchCompletionTime;
+        var coEvolutionDuration = totalAnimationDuration - coEvolutionStartTime;
+        var coEvolutionProgress = 0;
+
+        if (totalElapsed > coEvolutionStartTime) {
+          var clampedElapsed = totalElapsed;
+          if (clampedElapsed > totalAnimationDuration) {
+            clampedElapsed = totalAnimationDuration;
+          }
+          coEvolutionProgress =
+            (clampedElapsed - coEvolutionStartTime) / coEvolutionDuration;
+          if (coEvolutionProgress < 0) coEvolutionProgress = 0;
+          if (coEvolutionProgress > 1) coEvolutionProgress = 1;
+        }
+
+        ctx.globalCompositeOperation = "lighter";
+
+        // --- 1. Dust ---
+        var dustFade = Math.min(1, totalElapsed / (CONFIG.startHold + 500));
+        ctx.fillStyle = "#ffffff";
+        for (var di = 0; di < world.dust.length; di++) {
+          var dpt = world.dust[di];
+          dpt.x += dpt.vx;
+          dpt.y += dpt.vy;
+          ctx.globalAlpha = dpt.alpha * dustFade * 0.4;
+          ctx.beginPath();
+          ctx.arc(dpt.x, dpt.y, dpt.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // --- 2. Nodes (inner uniqueness + outer work) ---
+        var now = totalElapsed; // pseudo-time for twinkle phase
+        for (var ni = 0; ni < world.allNodes.length; ni++) {
+          var n = world.allNodes[ni];
+
+          n.x += n.vx;
+          n.y += n.vy;
+
+          var birthProgress = 0;
+          if (n.type === "uniqueness") {
+            // inner map is always "on"
+            birthProgress = 1;
+          } else {
+            if (phaseTime < n.birth) {
+              continue; // not yet visible
+            }
+            var age = (phaseTime - n.birth) / 0.2; // quick 0.2 window
+            if (age < 0) age = 0;
+            if (age > 1) age = 1;
+            birthProgress = age;
+          }
+
+          var scale = easeOutCubic(birthProgress);
+          var twinkle = 0.8 + 0.2 * Math.sin(now * 0.002 + n.twinkleOffset);
+          var alpha = scale * twinkle;
+
+          var baseColor =
+            n.type === "uniqueness" ? CONFIG.colorUniqueness : CONFIG.colorWork;
+          var finalColor = baseColor;
+
+          if (n.type === "work") {
+            // work nodes gradually tint toward uniqueness colour in Phase 3
+            finalColor = lerpColor(
+              baseColor,
+              CONFIG.colorUniqueness,
+              coEvolutionProgress * 0.4
+            );
+          }
+
+          // Outer glow
+          var glowSize = n.size * 12 * scale;
+          var grad = ctx.createRadialGradient(
+            n.x,
+            n.y,
+            0,
+            n.x,
+            n.y,
+            glowSize
+          );
+          grad.addColorStop(
+            0,
+            "rgba(" +
+              finalColor.r +
+              "," +
+              finalColor.g +
+              "," +
+              finalColor.b +
+              "," +
+              0.4 * alpha +
+              ")"
+          );
+          grad.addColorStop(1, "rgba(0,0,0,0)");
+
+          ctx.fillStyle = grad;
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, glowSize, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Core
+          ctx.fillStyle =
+            "rgba(" +
+            (finalColor.r + 20) +
+            "," +
+            (finalColor.g + 20) +
+            "," +
+            (finalColor.b + 20) +
+            "," +
+            alpha +
+            ")";
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.size * scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // --- 3. Connections ---
+        for (var ei = 0; ei < world.edges.length; ei++) {
+          var e = world.edges[ei];
+
+          // find nodes by id (no Array.find for compatibility)
+          var nA = null;
+          var nB = null;
+          for (var k = 0; k < world.allNodes.length; k++) {
+            var cand = world.allNodes[k];
+            if (cand.id === e.a) nA = cand;
+            else if (cand.id === e.b) nB = cand;
+            if (nA && nB) break;
+          }
+          if (!nA || !nB) continue;
+
+          var isVisibleA =
+            nA.type === "uniqueness" || phaseTime >= nA.birth;
+          var isVisibleB =
+            nB.type === "uniqueness" || phaseTime >= nB.birth;
+          if (!isVisibleA || !isVisibleB) {
+            continue;
+          }
+
+          var lineProgress;
+          if (e.birth === 0) {
+            // inner map edges
+            lineProgress = 1;
+          } else {
+            if (phaseTime < e.start) continue;
+            lineProgress = (phaseTime - e.start) / (e.end - e.start);
+            if (lineProgress < 0) lineProgress = 0;
+            if (lineProgress > 1) lineProgress = 1;
+          }
+
+          if (lineProgress <= 0) continue;
+
+          var drawLen = easeInOutSine(lineProgress);
+          var targetX = nA.x + (nB.x - nA.x) * drawLen;
+          var targetY = nA.y + (nB.y - nA.y) * drawLen;
+
+          var edgeColor = CONFIG.colorUniqueness;
+          var edgeAlpha = 0.1 + lineProgress * 0.3;
+          var lineWidth = 0.9;
+
+          if (e.type === "work") {
+            edgeColor = lerpColor(
+              CONFIG.colorWork,
+              CONFIG.colorUniqueness,
+              coEvolutionProgress * 0.4
+            );
+            edgeAlpha = 0.08 + lineProgress * 0.2;
+            lineWidth = 0.7;
+          } else if (e.type === "match") {
+            edgeColor = CONFIG.colorMatch;
+            edgeAlpha = 0.2 + lineProgress * 0.5;
+            lineWidth = 1.2;
+          }
+
+          ctx.strokeStyle =
+            "rgba(" +
+            edgeColor.r +
+            "," +
+            edgeColor.g +
+            "," +
+            edgeColor.b +
+            "," +
+            edgeAlpha +
+            ")";
+          ctx.lineWidth = lineWidth;
+          ctx.beginPath();
+          ctx.moveTo(nA.x, nA.y);
+          ctx.lineTo(targetX, targetY);
+          ctx.stroke();
+        }
+
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+      }
+
+      function frame(now) {
+        var elapsed = now - startTime;
+        var rawProgress = Math.min(1, elapsed / duration);
+
+        if (mode === "uniqueness") {
+          // Use most of the time to *build* the map of uniqueness,
+          // then let the final constellation linger as a still image.
+          var buildFraction = 0.75; // 75% build, last 25% linger
+          var buildProgress = Math.min(1, elapsed / (duration * buildFraction));
+          drawUniqueness(buildProgress);
+        } else {
+          drawNetwork(rawProgress);
+        }
+
+        if (rawProgress < 1) {
+          animationId = requestAnimationFrame(frame);
+        } else {
+          overlayEl.style.display = "none";
+          if (onComplete) onComplete();
+        }
+      }
+
+      animationId = requestAnimationFrame(frame);
+    }
+
+    return {
+      resize: resize,
+      start: start
+    };
+  }
+
+   var landingProcessing = createProcessingController(
+    landingProcessingOverlay,
+    landingProcessingText,
+    landingProcessingCanvas,
+    "uniqueness"
+  );
+
+  // SECOND animation on the landing, using the same canvas but in "network" mode
+  var landingNetworkProcessing = createProcessingController(
+    landingProcessingOverlay,
+    landingProcessingText,
+    landingProcessingCanvas,
+    "network"
+  );
+
+  // Goodbye replay (uniqueness map) before redirecting back to landing
+  var goodbyeProcessing = createProcessingController(
+    goodbyeOverlay,
+    goodbyeText,
+    goodbyeCanvas,
+    "uniqueness"
+  );
+
+
+function renderAppRoles() {
+  rolesContainer.innerHTML = "";
+
+  if (!state.roles || !state.roles.length) return;
+
+  // Always show only the role the user selected on the landing.
+  var index = (typeof state.selectedRoleIndex === "number") ? state.selectedRoleIndex : 0;
+  if (index < 0 || index >= state.roles.length) index = 0;
+  var role = state.roles[index];
+
+  // Keep state consistent
+  state.selectedRoleIndex = index;
+
+  var card = document.createElement("div");
+  card.className = "lia-role-card selected";
+
+  // Role image on the left, using the same logic as the landing confirmation
+  var imageWrapper = document.createElement("div");
+  imageWrapper.className = "lia-role-image";
+
+  var imgUrl = pickRoleImageUrl();
+  if (imgUrl) {
+    var img = document.createElement("img");
+    img.src = imgUrl;
+    img.alt = "Illustration for your role";
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "contain";
+    imageWrapper.appendChild(img);
+  } else if (role.imageLabel) {
+    // Fallback: text label if no image could be picked
+    imageWrapper.textContent = role.imageLabel;
+  }
+
+  var body = document.createElement("div");
+  body.className = "lia-role-body";
+
+  var title = document.createElement("div");
+  title.className = "lia-role-title";
+  title.textContent = role.title;
+
+  var subtitle = document.createElement("div");
+  subtitle.textContent = role.subtitle;
+
+  var desc = document.createElement("div");
+  desc.textContent = role.description;
+
+  body.appendChild(title);
+  body.appendChild(subtitle);
+  body.appendChild(desc);
+
+  card.appendChild(imageWrapper);
+  card.appendChild(body);
+
+  rolesContainer.appendChild(card);
+}
+
+  // ====================== ROLES & MATCHES ======================
+
+  function generateRolesFromNarrative() {
+    var text = state.narrative.join(" ").toLowerCase();
+
+    function hasWord(str) {
+      return text.indexOf(str.toLowerCase()) !== -1;
+    }
+
+    // Library of all possible roles
+    var allRoles = [];
+
+    allRoles.push({
+      key: "director_sensitive_economics",
+      title: "Director of Sensitive Economics",
+      subtitle: "Reads profit as resonance, not performance.",
+      imageLabel: "sensitive\neconomics",
+      description:
+        "Mission: Reads profit as resonance, not performance. " +
+        "Core competencies: Ethical foresight, emotional data literacy, systemic financial sense. " +
+        "Drives: Sustainability, collective intelligence, long-term value. " +
+        "Signature question: What is this number trying to tell us about who we’re becoming? " +
+        "Risks: Over-sensitivity, analysis paralysis. " +
+        "Impact zone: Strategy, financial governance, organizational culture."
+    });
+
+    allRoles.push({
+      key: "failure_alchemist",
+      title: "Failure Alchemist",
+      subtitle: "Turns errors into shared wisdom.",
+      imageLabel: "failure\nalchemist",
+      description:
+        "Mission: Turns errors into shared wisdom. " +
+        "Core competencies: Facilitation, narrative reconstruction, psychological safety. " +
+        "Drives: Transparency, continuous learning, humility. " +
+        "Signature question: What truth is emerging from this failure? " +
+        "Risks: Emotional overload, becoming the dumping ground for issues. " +
+        "Impact zone: Team culture, retrospectives, crisis recovery."
+    });
+
+    allRoles.push({
+      key: "mutant_manager",
+      title: "Mutant Manager",
+      subtitle: "Leads by perception, not control.",
+      imageLabel: "mutant\nmanager",
+      description:
+        "Mission: Leads by perception, not control. " +
+        "Core competencies: Sensemaking, relational intelligence, uncertainty navigation. " +
+        "Drives: Truth, clarity, adaptability. " +
+        "Signature question: What is the system feeling right now? " +
+        "Risks: Vulnerability fatigue, misinterpreting signals. " +
+        "Impact zone: Leadership, HR, organizational navigation."
+    });
+
+    allRoles.push({
+      key: "semantic_innovator",
+      title: "Semantic Innovator",
+      subtitle: "Changes language to unlock new possibilities.",
+      imageLabel: "semantic\ninnovator",
+      description:
+        "Mission: Changes language to unlock new possibilities. " +
+        "Core competencies: Linguistic creativity, systemic insight, pattern disruption. " +
+        "Drives: Meaning, identity evolution, conceptual clarity. " +
+        "Signature question: Which new word makes this problem solvable? " +
+        "Risks: Misalignment, abstraction. " +
+        "Impact zone: Branding, communication, organizational design."
+    });
+
+    allRoles.push({
+      key: "logical_dreams_cartographer",
+      title: "Cartographer of Logical Dreams",
+      subtitle: "Maps visions into coherent system architectures.",
+      imageLabel: "logical\ndreams",
+      description:
+        "Mission: Maps visions into coherent system architectures. " +
+        "Core competencies: Pattern recognition, conceptual cartography, visionary logic. " +
+        "Drives: Imagination, clarity, elegant reasoning. " +
+        "Signature question: What is the invisible structure beneath this idea? " +
+        "Risks: Over-idealisation. " +
+        "Impact zone: Product strategy, innovation labs."
+    });
+
+    allRoles.push({
+      key: "interface_seamstress",
+      title: "Interface Seamstress",
+      subtitle: "Designs interfaces that help humans breathe better.",
+      imageLabel: "interface\nseamstress",
+      description:
+        "Mission: Designs interfaces that help humans breathe better. " +
+        "Core competencies: UX craft, emotional ergonomics, sensory aesthetics. " +
+        "Drives: Comfort, inclusivity, cognitive ease. " +
+        "Signature question: How does this experience feel in the body? " +
+        "Risks: Over-empathetic design, softness over clarity. " +
+        "Impact zone: UX / UI, service design."
+    });
+
+    allRoles.push({
+      key: "organized_anarchist",
+      title: "Organized Anarchist",
+      subtitle: "Breaks old patterns while preserving purpose.",
+      imageLabel: "organised\nanarchist",
+      description:
+        "Mission: Breaks old patterns while preserving purpose. " +
+        "Core competencies: Controlled disruption, boundary pushing, nuance. " +
+        "Drives: Authenticity, liberation, reinvention. " +
+        "Signature question: What rule is ready to be lovingly destroyed? " +
+        "Risks: Rebellion without strategy. " +
+        "Impact zone: Innovation, culture transformation."
+    });
+
+    allRoles.push({
+      key: "conflict_curator",
+      title: "Conflict Curator",
+      subtitle: "Makes conflict productive and meaningful.",
+      imageLabel: "conflict\ncurator",
+      description:
+        "Mission: Makes conflict productive and meaningful. " +
+        "Core competencies: Mediation, emotional clarity, neutral hosting. " +
+        "Drives: Truth, alignment, transformation. " +
+        "Signature question: What is this conflict trying to teach us? " +
+        "Risks: Emotional burnout. " +
+        "Impact zone: HR, leadership, team dynamics."
+    });
+
+    allRoles.push({
+      key: "data_narrator",
+      title: "Data Narrator",
+      subtitle: "Turns data into stories that guide human decisions.",
+      imageLabel: "data\nnarrator",
+      description:
+        "Mission: Turns data into stories that guide human decisions. " +
+        "Core competencies: Data literacy, storytelling, strategic framing. " +
+        "Drives: Understanding, insight, shared meaning. " +
+        "Signature question: What story is the data whispering? " +
+        "Risks: Overspinning narratives. " +
+        "Impact zone: Analytics, communication, product."
+    });
+
+    allRoles.push({
+      key: "supply_chain_philosopher",
+      title: "Supply Chain Philosopher",
+      subtitle: "Brings ethical and existential depth to logistics.",
+      imageLabel: "supply\nchain\nphilosopher",
+      description:
+        "Mission: Brings ethical and existential depth to logistics. " +
+        "Core competencies: Ethical reasoning, systems thinking, operational empathy. " +
+        "Drives: Interdependence, sustainability, transparency. " +
+        "Signature question: What invisible relationships power this chain? " +
+        "Risks: Excessive abstraction. " +
+        "Impact zone: Operations, sustainability."
+    });
+
+    allRoles.push({
+      key: "custodian_resonance",
+      title: "Custodian of Resonance",
+      subtitle: "Safeguards emotional and cultural coherence in teams.",
+      imageLabel: "custodian\nof\nresonance",
+      description:
+        "Mission: Safeguards emotional and cultural coherence in teams. " +
+        "Core competencies: Emotional resonance, culture sensing, relational tuning. " +
+        "Drives: Harmony, belonging, inner alignment. " +
+        "Signature question: What mood is shaping our decisions right now? " +
+        "Risks: Over-responsibility. " +
+        "Impact zone: Leadership, people operations."
+    });
+
+    allRoles.push({
+      key: "custodian_blind_spot",
+      title: "Custodians of the blind spots",
+      subtitle: "Reveals the unknowns leaders must face.",
+      imageLabel: "custodian\nof\nblind spots",
+      description:
+        "Mission: Reveals the unknowns leaders must face. " +
+        "Core competencies: Radical honesty, vulnerability facilitation, metacognition. " +
+        "Drives: Growth, self-awareness, team maturity. " +
+        "Signature question: What am I not seeing that you can? " +
+        "Risks: Team discomfort. " +
+        "Impact zone: Leadership, coaching, innovation."
+    });
+
+    allRoles.push({
+      key: "decision_node",
+      title: "Decision Node",
+      subtitle: "Makes local, autonomous, context-rich decisions.",
+      imageLabel: "decision\nnode",
+      description:
+        "Mission: Makes local, autonomous, context-rich decisions. " +
+        "Core competencies: Autonomy, wisdom, distributed leadership. " +
+        "Drives: Agility, responsibility, organic intelligence. " +
+        "Signature question: What is the right decision for this node, right now? " +
+        "Risks: Fragmentation. " +
+        "Impact zone: Organizational design, operations."
+    });
+
+    allRoles.push({
+      key: "voice_architect",
+      title: "Voice Architect",
+      subtitle: "Designs the linguistic system of an organization.",
+      imageLabel: "voice\narchitect",
+      description:
+        "Mission: Designs the linguistic system of an organization. " +
+        "Core competencies: Language design, brand voice, semiotics. " +
+        "Drives: Coherence, identity, meaning. " +
+        "Signature question: What language makes this organization alive? " +
+        "Risks: Over-engineered language. " +
+        "Impact zone: Branding, culture, internal communication."
+    });
+
+    allRoles.push({
+      key: "prompt_weaver",
+      title: "Prompt Weaver",
+      subtitle: "Crafts prompts, metaphors and narratives that generate products.",
+      imageLabel: "prompt\nweaver",
+      description:
+        "Mission: Crafts prompts, metaphors and narratives that generate products. " +
+        "Core competencies: Storycraft, cognitive framing, generative thinking. " +
+        "Drives: Creativity, clarity, emergence. " +
+        "Signature question: What prompt births the right outcome? " +
+        "Risks: Prompt overfitting. " +
+        "Impact zone: AI collaboration, product creation."
+    });
+
+    allRoles.push({
+      key: "sense_distiller",
+      title: "Sense Distiller",
+      subtitle: "Extracts meaning from emotion, data and chaos.",
+      imageLabel: "sense\ndistiller",
+      description:
+        "Mission: Extracts meaning from emotion, data and chaos. " +
+        "Core competencies: Intuition, pattern distillation, emotional intelligence. " +
+        "Drives: Clarity, authenticity, coherence. " +
+        "Signature question: What is the essence here? " +
+        "Risks: Oversimplification. " +
+        "Impact zone: Leadership, research, communication."
+    });
+
+    allRoles.push({
+      key: "senselab_facilitator",
+      title: "SenseLab Facilitator",
+      subtitle: "Designs and facilitates labs where new senses of direction emerge.",
+      imageLabel: "senselab\nfacilitator",
+      description:
+        "Mission: Designs and facilitates labs where new senses of direction emerge. " +
+        "Core competencies: Group facilitation, experiment design, sensemaking. " +
+        "Drives: Collective learning, reflection, shared meaning. " +
+        "Signature question: What experiment would let us feel the future from here? " +
+        "Risks: Workshop fatigue, insight without follow-through. " +
+        "Impact zone: Strategy, culture, transformation programs."
+    });
+
+    allRoles.push({
+      key: "human_evolution_space_designer",
+      title: "Human Evolution Space Designer",
+      subtitle: "Designs spaces and rituals where people can practice new ways of being.",
+      imageLabel: "human\nevolution\nspace\ndesigner",
+      description:
+        "Mission: Designs spaces and rituals where people can practice new ways of being. " +
+        "Core competencies: Spatial design, ritual design, behavioural prototyping. " +
+        "Drives: Growth, embodiment, long-term regeneration. " +
+        "Signature question: What kind of space makes this new human story possible? " +
+        "Risks: Over-designed experiences, exclusion through aesthetics. " +
+        "Impact zone: Learning environments, workplaces, civic spaces."
+    });
+
+    allRoles.push({
+      key: "human_evolution_space_designer",
+      title: "Human Evolution Space Designer",
+      subtitle: "Creates environments where people evolve.",
+      imageLabel: "evolution\nspace",
+      description:
+        "Mission: Creates environments where people evolve. " +
+        "Core competencies: Organizational design, facilitation, experience design. " +
+        "Drives: Growth, potential, transformation. " +
+        "Signature question: What space accelerates who we can become? " +
+        "Risks: Conceptual vagueness. " +
+        "Impact zone: HR, culture, learning."
+    });
+
+    allRoles.push({
+      key: "sense_lab_facilitator",
+      title: "Sense-Lab Facilitator",
+      subtitle: "Hosts spaces where meaning is generated collectively.",
+      imageLabel: "sense\nlab",
+      description:
+        "Mission: Hosts spaces where meaning is generated collectively. " +
+        "Core competencies: Workshop design, dialogue facilitation, creative inquiry. " +
+        "Drives: Emergence, alignment, shared vision. " +
+        "Signature question: What wants to emerge in this room? " +
+        "Risks: Lack of structure. " +
+        "Impact zone: Innovation, leadership, transformation."
+    });
+
+    // Pick three roles from the library (simple random sample for now)
+    var roles = [];
+    var pool = allRoles.slice();
+
+    for (var i = 0; i < 3 && pool.length > 0; i++) {
+      var idx = Math.floor(Math.random() * pool.length);
+      roles.push(pool[idx]);
+      pool.splice(idx, 1);
+    }
+
+    state.roles = roles;
+    state.selectedRoleIndex = 0;
+  }
+
+  function generateMatches() {
+    var role = state.roles[state.selectedRoleIndex] || state.roles[0];
+    var area = state.area && state.area.trim();
+    var horizon = area || "an open horizon";
+    var worldwide = state.worldwide;
+
+    var baseName = role ? role.title : "Your role";
+
+    // Pool of possible organisations (mix of real + fictional)
+    var templates = [
+      // --- Real organisations (described generically) ---
+      {
+        org: "Mozilla Foundation",
+        type: "Non-profit / digital rights",
+        focus:
+          "Global foundation working on an open, healthy internet; could host someone who turns complex socio-technical tensions into new roles and governance patterns."
+      },
+      {
+        org: "MIT Media Lab",
+        type: "University lab",
+        focus:
+          "Interdisciplinary research lab blending technology, design and society; a good home for roles that prototype future-facing practices inside messy, living systems."
+      },
+      {
+        org: "Ashoka",
+        type: "Social entrepreneurship network",
+        focus:
+          "Global network of social entrepreneurs; would value profiles that translate emergent roles into concrete, scalable experiments across regions and sectors."
+      },
+      {
+        org: "UNDP Accelerator Labs",
+        type: "UN innovation network",
+        focus:
+          "Distributed innovation labs inside the UN system; a place where systemic, experimental roles can translate local signals into global learning."
+      },
+      {
+        org: "Nesta",
+        type: "Public innovation foundation",
+        focus:
+          "UK-based innovation foundation exploring the future of work, learning and care; a good match for roles that re-design institutions around human and planetary flourishing."
+      },
+      {
+        org: "Patagonia",
+        type: "Impact-led company",
+        focus:
+          "Outdoor company known for linking business with activism; could host roles that connect supply chains, ethics and storytelling in very concrete ways."
+      },
+      {
+        org: "Mondragon Corporation",
+        type: "Cooperative group",
+        focus:
+          "Network of worker cooperatives; fertile ground for roles that explore shared ownership, distributed decision-making and economic dignity."
+      },
+      {
+        org: "The Rockefeller Foundation",
+        type: "Philanthropic foundation",
+        focus:
+          "Global philanthropic actor experimenting with systems change; a context where emerging roles can braid narrative, capital and field-building."
+      },
+      {
+        org: "Acumen",
+        type: "Impact investment fund",
+        focus:
+          "Impact investor working between markets and justice; would suit profiles that translate ambiguous social signals into investable experiments."
+      },
+      {
+        org: "European Commission Joint Research Centre",
+        type: "Public policy research centre",
+        focus:
+          "Science-for-policy hub inside the EU; a space where new roles can bridge research, foresight and lived experience into future regulations."
+      },
+      {
+        org: "BBC R&D",
+        type: "Public media lab",
+        focus:
+          "Research and development wing of a public broadcaster; fertile terrain for roles re-imagining narratives, participation and public-interest media."
+      },
+      {
+        org: "Wellcome Trust",
+        type: "Research foundation",
+        focus:
+          "Global health and science foundation; could host roles that weave ethics, futures and lived experience into research agendas and funding logics."
+      },
+      {
+        org: "The New School / Parsons",
+        type: "University / design school",
+        focus:
+          "Progressive university and design school; good for roles that treat education as a prototype space for new organisational and civic grammars."
+      },
+      {
+        org: "UNICEF Innovation",
+        type: "UN innovation unit",
+        focus:
+          "Innovation arm within a child-focused UN agency; a context where experimental roles help translate children’s realities into new services and tools."
+      },
+      {
+        org: "City of Amsterdam – Digital Innovation",
+        type: "Public sector / city innovation",
+        focus:
+          "Municipal ecosystem experimenting with digital rights, participation and governance; could host roles that re-design the interface between citizens and institutions."
+      },
+
+      // --- Fictional / speculative organisations ---
+      {
+        org: "Threshold Studio",
+        type: "Independent organisation",
+        focus:
+          "Experimental practice studio translating personal thresholds into collective projects; ideal for roles that sit between inner change and outer structures."
+      },
+      {
+        org: "Room 2045",
+        type: "Civic / public–interest",
+        focus:
+          "Small civic lab designing future rooms for institutions; a place where hybrid roles prototype rituals, pilot spaces and long-horizon governance."
+      },
+      {
+        org: "Constellation Office",
+        type: "Advisory / design",
+        focus:
+          "Networked consultancy helping organisations re-map their internal roles and identities; a match for profiles that see organisations as living constellations."
+      },
+      {
+        org: "Quiet Signal Cooperative",
+        type: "Cooperative",
+        focus:
+          "Worker-owned collective building slow, high-trust collaborations; suited to roles that listen for weak signals and design work at a humane tempo."
+      },
+      {
+        org: "Common Ground Node",
+        type: "Cultural platform",
+        focus:
+          "Long-term platform for residencies and narrative work; a home for roles that turn personal research into collective, situated culture."
+      },
+      {
+        org: "Relational Finance Lab",
+        type: "Experimental finance studio",
+        focus:
+          "Explores money as relationship, not only transaction; would welcome roles that read balance sheets as stories about power, care and time."
+      },
+      {
+        org: "Symbiotic Supply Commons",
+        type: "Supply-chain coalition",
+        focus:
+          "Multi-actor table working on fair and regenerative logistics; a good fit for roles that see supply chains as ecosystems, not pipelines."
+      },
+      {
+        org: "School for Mutant Management",
+        type: "Learning lab",
+        focus:
+          "Micro-school where managers learn to lead through ambiguity and perception; built for roles that rewrite what leadership feels like from the inside."
+      },
+      {
+        org: "Soft Systems Observatory",
+        type: "Research collective",
+        focus:
+          "Observatory tracking soft data: moods, trust, informal rituals; ideal for roles that turn invisible dynamics into shared maps and experiments."
+      },
+      {
+        org: "Perceptive Cities Network",
+        type: "City-to-city network",
+        focus:
+          "Network of municipalities learning from one another in real time; a context where new roles curate signals, prototypes and distributed learning."
+      },
+      {
+        org: "Intertidal Institute",
+        type: "Futures & ecology lab",
+        focus:
+          "Institute focused on in-between zones: coasts, margins, transitions; perfect for roles that work where identities and systems are shifting."
+      },
+      {
+        org: "Deep Time Studio",
+        type: "Speculative design studio",
+        focus:
+          "Studio that designs from the perspective of decades and centuries; suits roles that stretch organisational attention beyond quarterly horizons."
+      },
+      {
+        org: "Fragile Futures Bureau",
+        type: "Public imagination office",
+        focus:
+          "Bureau that protects emerging, fragile ideas before they reach policy or market; a home for roles that nurture possibility instead of rushing to scale."
+      },
+      {
+        org: "Distributed Foresight Cooperative",
+        type: "Foresight cooperative",
+        focus:
+          "Co-op where communities collectively sense and narrate their futures; compatible with roles that democratise foresight and scenario work."
+      },
+      {
+        org: "Everyday Rituals Lab",
+        type: "Culture & behaviour studio",
+        focus:
+          "Lab redesigning meetings, handovers and daily gestures; a fit for roles that understand culture as something encoded in tiny, repeatable acts."
+      },
+      {
+        org: "Embodied Interfaces Studio",
+        type: "UX / somatic design",
+        focus:
+          "Studio creating interfaces that respect nervous systems; built for roles that read stress, breath and attention as core design constraints."
+      },
+      {
+        org: "Meaningful Metrics Guild",
+        type: "Measurement collective",
+        focus:
+          "Guild that re-writes KPIs to track resonance, care and long-term value; ideal for roles that translate messy human realities into gentle numbers."
+      },
+      {
+        org: "Co-Evolving Organisations Network",
+        type: "Peer-learning network",
+        focus:
+          "Network of organisations experimenting with new governance; would host roles that act as gardeners of distributed sense-making."
+      },
+      {
+        org: "Fluid Governance Lab",
+        type: "Governance lab",
+        focus:
+          "Lab prototyping governance that adapts to context instead of freezing it; a space for roles that choreograph decisions rather than enforce them."
+      },
+      {
+        org: "Language & Power Observatory",
+        type: "Research observatory",
+        focus:
+          "Observatory tracking how language shapes power, access and possibility; perfect for roles that tune vocabularies and metaphors across a system."
+      },
+      {
+        org: "Civic Imagination Office",
+        type: "City imagination unit",
+        focus:
+          "Office that invites residents to prototype new forms of public life; would welcome roles that turn citizen stories into policies and prototypes."
+      },
+      {
+        org: "Speculative Supply Lab",
+        type: "Logistics futures lab",
+        focus:
+          "Lab re-imagining supply chains as shared, living infrastructure; a match for roles that make logistics ethical, transparent and story-rich."
+      },
+      {
+        org: "Planetary Maintenance Agency",
+        type: "Maintenance agency",
+        focus:
+          "Agency dedicated to the quiet work of maintaining infrastructures and ecologies; ideal for roles that dignify repair, care and upkeep."
+      },
+      {
+        org: "Careful Data Studio",
+        type: "Data & ethics studio",
+        focus:
+          "Studio treating data as something borrowed from people, not extracted; suited to roles that hold statistical insight and emotional safety together."
+      },
+      {
+        org: "Commoning Infrastructures Lab",
+        type: "Commons lab",
+        focus:
+          "Lab that supports communities in co-owning and co-governing their infrastructures; a home for roles that turn assets into commons."
+      }
+    ];
+
+    // Randomly select up to 7 matches from the pool
+    var pool = templates.slice();
+    var matches = [];
+    var count = Math.min(7, pool.length);
+
+    for (var i = 0; i < count; i++) {
+      var randomIndex = Math.floor(Math.random() * pool.length);
+      var tpl = pool[randomIndex];
+      pool.splice(randomIndex, 1);
+
+      matches.push({
+        id: "match_" + i,
+        org: tpl.org,
+        roleLabel: baseName,
+        location: horizon + (worldwide ? " · also open worldwide" : ""),
+        type: tpl.type,
+        focus: tpl.focus,
+        relevanceScore: 100 - i * 7 + Math.floor(Math.random() * 5),
+        proximityScore: 50 + Math.floor(Math.random() * 50),
+        signaled: state.signals.indexOf("match_" + i) !== -1
+      });
+    }
+
+    state.matches = matches;
+  }
+
+  function sortMatches(kind) {
+    var matches = state.matches.slice();
+    if (kind === "name") {
+      matches.sort(function (a, b) {
+        return a.org.localeCompare(b.org);
+      });
+    } else if (kind === "proximity") {
+      matches.sort(function (a, b) {
+        return b.proximityScore - a.proximityScore;
+      });
+    } else {
+      // relevance
+      matches.sort(function (a, b) {
+        return b.relevanceScore - a.relevanceScore;
+      });
+    }
+    return matches;
+  }
+
+  // ====================== RENDER HELPERS ======================
+
+  function renderLandingRoles() {
+    landingRolesGrid.innerHTML = "";
+    state.roles.forEach(function (role, index) {
+      var card = document.createElement("div");
+      card.className =
+        "lia-landing-role-card" + (index === state.selectedRoleIndex ? " selected" : "");
+      card.setAttribute("data-role-index", index);
+
+      var body = document.createElement("div");
+      body.className = "lia-landing-role-body";
+
+      var title = document.createElement("div");
+      title.className = "lia-landing-role-title";
+      title.textContent = role.title;
+
+      var subtitle = document.createElement("div");
+      subtitle.textContent = role.subtitle;
+
+      body.appendChild(title);
+      body.appendChild(subtitle);
+
+      card.appendChild(body);
+
+      card.addEventListener("click", function () {
+        state.selectedRoleIndex = index;
+        renderLandingRoles();
+      });
+
+      landingRolesGrid.appendChild(card);
+    });
+  }
+
+  function renderLandingMatches() {
+    landingMatchList.innerHTML = "";
+    var role = state.roles[state.selectedRoleIndex] || state.roles[0];
+    if (!role) return;
+
+    landingMatchesSubtitle.textContent =
+      "Organizations imagined for “" + role.title + "” in " +
+      (state.area && state.area.trim() ? state.area.trim() : "an open horizon") +
+      (state.worldwide ? " · also open worldwide." : ".");
+
+    state.matches.forEach(function (m) {
+      var card = document.createElement("div");
+      card.className = "lia-landing-match-card";
+
+      var header = document.createElement("div");
+      header.className = "lia-landing-match-header";
+
+      var org = document.createElement("div");
+      org.className = "lia-landing-match-org";
+      org.textContent = m.org;
+
+      var meta = document.createElement("div");
+      meta.className = "lia-landing-match-meta";
+      meta.textContent = m.type;
+
+      header.appendChild(org);
+      header.appendChild(meta);
+
+      var body1 = document.createElement("div");
+      body1.textContent = m.focus;
+
+      var body2 = document.createElement("div");
+      body2.className = "lia-landing-match-meta";
+      body2.textContent =
+        "Imagined role: " + m.roleLabel +
+        " · Horizon: " +
+        (state.area && state.area.trim() ? state.area.trim() : "open") +
+        (state.worldwide ? " (worldwide)" : "");
+
+      var actions = document.createElement("div");
+      actions.className = "lia-match-actions";
+
+      var btnSignal = document.createElement("button");
+      btnSignal.className = "lia-btn lia-small";
+      btnSignal.textContent = m.signaled ? "Signal sent – Unsend" : "Send signal of interest";
+
+      btnSignal.addEventListener("click", function () {
+        if (m.signaled) {
+          // UNSEND
+          m.signaled = false;
+          state.signals = state.signals.filter(function (id) { return id !== m.id; });
+        } else {
+          // SEND
+          m.signaled = true;
+          if (state.signals.indexOf(m.id) === -1) {
+            state.signals.push(m.id);
+          }
+        }
+        // Update landing matches button states and keep signals in sync
+        renderLandingMatches();
+        renderAppMatches();
+        renderSignals();
+      });
+
+      actions.appendChild(btnSignal);
+
+      card.appendChild(header);
+      card.appendChild(body1);
+      card.appendChild(body2);
+      card.appendChild(actions);
+
+      landingMatchList.appendChild(card);
+    });
+  }
+
+  function renderAppRoles() {
+    rolesContainer.innerHTML = "";
+
+    if (!state.roles || !state.roles.length) return;
+
+    // Always show only the role the user selected on the landing.
+    var index = (typeof state.selectedRoleIndex === "number") ? state.selectedRoleIndex : 0;
+    if (index < 0 || index >= state.roles.length) index = 0;
+    var role = state.roles[index];
+
+    // Keep state consistent
+    state.selectedRoleIndex = index;
+
+    var card = document.createElement("div");
+    card.className = "lia-role-card selected";
+
+    // Role image on the left, using the same logic as the landing confirmation
+    var imageWrapper = document.createElement("div");
+    imageWrapper.className = "lia-role-image";
+
+    var imgUrl = pickRoleImageUrl();
+    if (imgUrl) {
+      var img = document.createElement("img");
+      img.src = imgUrl;
+      img.alt = "Illustration for your role";
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "contain";
+      imageWrapper.appendChild(img);
+    } else if (role.imageLabel) {
+      // Fallback: text label if no image could be picked
+      imageWrapper.textContent = role.imageLabel;
+    }
+
+    var body = document.createElement("div");
+    body.className = "lia-role-body";
+
+    var title = document.createElement("div");
+    title.className = "lia-role-title";
+    title.textContent = role.title;
+
+    var subtitle = document.createElement("div");
+    subtitle.textContent = role.subtitle;
+
+    var desc = document.createElement("div");
+    desc.textContent = role.description;
+
+    body.appendChild(title);
+    body.appendChild(subtitle);
+    body.appendChild(desc);
+
+    card.appendChild(imageWrapper);
+    card.appendChild(body);
+
+    rolesContainer.appendChild(card);
+  }
+
+  // Attempt to normalise/complete locations like "Bologna" -> "Bologna, Italy"
+  function normalizeArea(raw) {
+    var value = (raw || "").trim();
+    if (!value) return "";
+    // If the user already typed a comma, assume they gave city + country/region
+    if (value.indexOf(",") !== -1) return value;
+
+    var lower = value.toLowerCase();
+
+    // Common world cities → countries (extendable)
+    var cityToCountry = {
+      "bologna": "Italy",
+      "rome": "Italy",
+      "milano": "Italy",
+      "milan": "Italy",
+      "turin": "Italy",
+      "torino": "Italy",
+      "naples": "Italy",
+      "napoli": "Italy",
+      "venice": "Italy",
+      "venezia": "Italy",
+
+      "berlin": "Germany",
+      "hamburg": "Germany",
+      "munich": "Germany",
+      "muenchen": "Germany",
+      "frankfurt": "Germany",
+      "cologne": "Germany",
+      "koeln": "Germany",
+      "stuttgart": "Germany",
+
+      "paris": "France",
+      "lyon": "France",
+      "marseille": "France",
+      "toulouse": "France",
+
+      "london": "United Kingdom",
+      "manchester": "United Kingdom",
+      "edinburgh": "United Kingdom",
+      "birmingham": "United Kingdom",
+
+      "madrid": "Spain",
+      "barcelona": "Spain",
+      "valencia": "Spain",
+      "sevilla": "Spain",
+      "seville": "Spain",
+
+      "lisbon": "Portugal",
+      "porto": "Portugal",
+
+      "vienna": "Austria",
+      "brussels": "Belgium",
+      "amsterdam": "Netherlands",
+      "rotterdam": "Netherlands",
+
+      "zurich": "Switzerland",
+      "geneva": "Switzerland",
+
+      "new york": "United States",
+      "new york city": "United States",
+      "san francisco": "United States",
+      "los angeles": "United States",
+      "chicago": "United States",
+      "boston": "United States",
+      "seattle": "United States",
+      "austin": "United States",
+      "washington": "United States",
+      "washington dc": "United States",
+
+      "toronto": "Canada",
+      "vancouver": "Canada",
+      "montreal": "Canada",
+
+      "mexico city": "Mexico",
+      "são paulo": "Brazil",
+      "sao paulo": "Brazil",
+      "rio de janeiro": "Brazil",
+      "buenos aires": "Argentina",
+
+      "tokyo": "Japan",
+      "osaka": "Japan",
+      "kyoto": "Japan",
+
+      "seoul": "South Korea",
+
+      "beijing": "China",
+      "shanghai": "China",
+      "hong kong": "China",
+
+      "singapore": "Singapore",
+
+      "sydney": "Australia",
+      "melbourne": "Australia",
+      "brisbane": "Australia",
+
+      "cape town": "South Africa",
+      "johannesburg": "South Africa",
+
+      "nairobi": "Kenya",
+
+      "cairo": "Egypt",
+
+      "istanbul": "Turkey",
+
+      "dubai": "United Arab Emirates"
+    };
+
+    if (cityToCountry[lower]) {
+      return value + ", " + cityToCountry[lower];
+    }
+
+    // Fallback: leave the original as-is
+    return value;
+  }
+
+  function updateAreaFeedback(inputEl, worldwide, feedbackEl, shouldNormaliseInput) {
+    if (!inputEl || !feedbackEl) return;
+
+    // Normalise and "complete" the location (e.g. "Bologna" -> "Bologna, Italy")
+    var raw = inputEl.value || "";
+    var normalised = normalizeArea(raw);
+
+    // Only push the normalised value back into the field when explicitly requested.
+    // This avoids stripping spaces while the user is still typing.
+    if (shouldNormaliseInput !== false) {
+      inputEl.value = normalised;
+    }
+
+    // Build feedback message
+    var text;
+    if (normalised) {
+      text = "Lia will imagine matches in " + normalised + ".";
+    } else {
+      text = "No area given yet. Lia will treat the horizon as open.";
+    }
+
+    if (worldwide) {
+      text += " Also open to matches worldwide.";
+    }
+
+    feedbackEl.textContent = text;
+  }
+
+  function renderAppMatches() {
+    matchesListEl.innerHTML = "";
+    var sorted = sortMatches(sortSelect.value);
+    var role = state.roles[state.selectedRoleIndex] || state.roles[0];
+    matchesTitleEl.textContent = "Matches · " + (role ? role.title : "Your role");
+
+    sorted.forEach(function (m) {
+      var card = document.createElement("div");
+      card.className = "lia-match-card";
+
+      var header = document.createElement("div");
+      header.className = "lia-match-header";
+
+      var org = document.createElement("div");
+      org.className = "lia-match-org";
+      org.textContent = m.org;
+
+      var meta = document.createElement("div");
+      meta.className = "lia-match-meta";
+      meta.textContent = m.type + " · Simulated proximity " + m.proximityScore;
+
+      header.appendChild(org);
+      header.appendChild(meta);
+
+      var body1 = document.createElement("div");
+      body1.textContent = m.focus;
+
+      var body2 = document.createElement("div");
+      body2.className = "lia-match-meta";
+      body2.textContent = "Role: " + m.roleLabel + " · Horizon: " +
+        (state.area && state.area.trim() ? state.area.trim() : "open") +
+        (state.worldwide ? " (worldwide)" : "");
+
+      var actions = document.createElement("div");
+      actions.className = "lia-match-actions";
+
+      var btnSignal = document.createElement("button");
+      btnSignal.className = "lia-btn lia-small";
+      btnSignal.textContent = m.signaled ? "Signal sent – Unsend" : "Send signal of interest";
+
+      btnSignal.addEventListener("click", function () {
+        if (m.signaled) {
+          // UNSEND
+          m.signaled = false;
+          state.signals = state.signals.filter(function (id) { return id !== m.id; });
+        } else {
+          // SEND
+          m.signaled = true;
+          if (state.signals.indexOf(m.id) === -1) {
+            state.signals.push(m.id);
+          }
+        }
+        renderLandingMatches();
+        renderAppMatches();
+        renderSignals();
+      });
+
+      actions.appendChild(btnSignal);
+
+      card.appendChild(header);
+      card.appendChild(body1);
+      card.appendChild(body2);
+      card.appendChild(actions);
+
+      matchesListEl.appendChild(card);
+    });
+  }
+
+  function renderSignals() {
+    signalsListEl.innerHTML = "";
+    if (!state.signals.length) {
+      var empty = document.createElement("div");
+      empty.className = "lia-signals-empty";
+      empty.textContent = "No signals sent yet inside this simulation.";
+      signalsListEl.appendChild(empty);
+      return;
+    }
+
+    var idSet = {};
+    state.signals.forEach(function (id) { idSet[id] = true; });
+
+    var matches = state.matches.filter(function (m) { return idSet[m.id]; });
+    matches.forEach(function (m) {
+      var row = document.createElement("div");
+      row.className = "lia-profile-summary";
+
+      var header = document.createElement("div");
+      header.textContent = m.org + " · " + m.type;
+
+      var meta = document.createElement("div");
+      meta.className = "lia-note";
+      meta.textContent =
+        "Role: " + m.roleLabel +
+        " · Horizon: " + (state.area && state.area.trim() ? state.area.trim() : "open") +
+        (state.worldwide ? " (worldwide)" : "");
+
+      var actions = document.createElement("div");
+      actions.className = "lia-match-actions";
+
+      var btnUnsend = document.createElement("button");
+      btnUnsend.className = "lia-btn lia-small";
+      btnUnsend.textContent = "Unsend signal";
+
+      btnUnsend.addEventListener("click", function () {
+        // Mark this match as not signaled anymore
+        m.signaled = false;
+        // Remove from the signals array
+        state.signals = state.signals.filter(function (id) { return id !== m.id; });
+        // Re-render everywhere signals appear
+        renderLandingMatches();
+        renderAppMatches();
+        renderSignals();
+      });
+
+      actions.appendChild(btnUnsend);
+
+      row.appendChild(header);
+      row.appendChild(meta);
+      row.appendChild(actions);
+
+      signalsListEl.appendChild(row);
+    });
+  }
+
+  // Role confirmation images (picked based on how the user wants to be referred to)
+
+  // Mapping from role keys to specific male / female / non-binary illustrations
+  var ROLE_IMAGE_MAP = {
+    "logical_dreams_cartographer": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/78ac84d0-a271-4e20-b010-88f20771fca5/1.+Cartographer+of+Logical+Dreams_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/bd42853a-eeac-44ab-b362-6836b56b5f2f/1.+Cartographer+of+Logical+Dreams_male.png?content-type=image%2Fpng"
+    },
+    "conflict_curator": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/a953cd31-a36f-473a-bb53-514776ef333e/2.+Conflict+Curator_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/52bda3d5-9247-4587-805a-5f73d83ceb1c/2.+Conflict+Curator_male.png?content-type=image%2Fpng"
+    },
+    "custodian_resonance": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/1a63d440-9aef-4a4c-b857-bfda21d1cfb6/3.+Custodian+of+Resonance_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/eb976bd1-6a92-41af-8318-df3d333ab464/3.+Custodian+of+Resonance_male.png?content-type=image%2Fpng"
+    },
+    "custodian_blind_spot": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/e478211d-1bc6-4e0c-b83b-89a50032920c/4.+Custodians+of+the+blind+spots_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/766fc9e0-7179-4206-9d5a-90ed82369231/4.+Custodians+of+the+blind+spots_male.png?content-type=image%2Fpng"
+    },
+    "data_narrator": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/f7ab6b39-2eb3-4ac6-b3e4-1f22ccc6f29d/5.+Data+Narrator_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/0d4dc0dc-c3af-4c96-97bd-95f6433692f5/5.+Data+Narrator_male.png?content-type=image%2Fpng"
+    },
+    "decision_node": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/4703ced8-bbd4-4712-9b2f-d38db6be9cfa/6.+Decision+Node_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/0227dd42-661f-4ca2-8805-ba11c71b32bb/6.+Decision+Node_male.png?content-type=image%2Fpng"
+    },
+    "director_sensitive_economics": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/7bfb7b08-271d-46b2-95ce-a6070c4a9dfa/7.+Director+of+Sensitive+Economic_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/8014d5f4-4744-4e52-8a08-7c9dd0a6bde2/7.+Director+of+Sensitive+Economic_male.png?content-type=image%2Fpng"
+    },
+    "voice_architect": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/a9a1ac67-a7b4-49bf-ab54-0866e131f325/8.+Voice+Architect+_+female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/dc47a5a8-848a-45df-8b96-134b01866500/8.+Voice+Architect+_+male.png?content-type=image%2Fpng"
+    },
+    "senselab_facilitator": {
+      nb:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/f31525e8-f4bc-495b-822e-ed0c587e96da/9.+SenseLab+Facilitator_nonbinary.png?content-type=image%2Fpng",
+      male: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/99aed384-bcf7-4a08-a43e-959b59651382/9.+SenseLab+Facilitator_male.png?content-type=image%2Fpng"
+    },
+    // alias for the second key variant in the library
+    "sense_lab_facilitator": {
+      nb:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/f31525e8-f4bc-495b-822e-ed0c587e96da/9.+SenseLab+Facilitator_nonbinary.png?content-type=image%2Fpng",
+      male: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/99aed384-bcf7-4a08-a43e-959b59651382/9.+SenseLab+Facilitator_male.png?content-type=image%2Fpng"
+    },
+    "supply_chain_philosopher": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/00b6b5c1-2a3c-4760-b687-0a55c87e14be/10.+Supply+Chain+Philosopher_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/1e42c6c3-3fc9-4cb7-b6de-69e1b18dfa66/10.+Supply+Chain+Philosopher_male.png?content-type=image%2Fpng"
+    },
+    "sense_distiller": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/5cc1c9b2-708f-4a20-809a-625bf709adf7/11.+Sense+Distiller_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/c0031e50-664e-420a-b307-fdd4fd15a23b/11.+Sense+Distiller_male.png?content-type=image%2Fpng"
+    },
+    "human_evolution_space_designer": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/b11ca413-4d14-4ab3-bcdb-a70391452d02/12.+Human+Evolution+Space+Designer_female.png?content-type=image%2Fpng",
+      nb:    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/0b21b541-bcce-4e47-bb9b-305b146abe0b/12.+Human+Evolution+Space+Designer_nonbinary.png?content-type=image%2Fpng",
+      male:  "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/85b9fe6d-95db-4890-86dc-46abe2699a97/12.+Human+Evolution+Space+Designer_male.png?content-type=image%2Fpng"
+    },
+    "failure_alchemist": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/765f69c8-0748-4061-89b8-95869f8e14fb/13.+Failure+Alchemist_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/c4cbc2c1-dde2-48ba-97d0-4910a7ebf127/13.+Failure+Alchemist_male.png?content-type=image%2Fpng"
+    },
+    "interface_seamstress": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/0c76d8ba-955d-44b4-acff-9baf61d94e62/14.+Interface+Seamstress_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/42d87c70-03d7-4afa-94d4-d5a36c38511f/14.+Interface+Seamster_male.png?content-type=image%2Fpng"
+    },
+    "organized_anarchist": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/de802fbd-18f8-470c-b507-eaa00868d8ed/15.+Organized+Anarchist_female.png?content-type=image%2Fpng",
+      nb:    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/5f601ca6-a695-4e5a-af65-1394137bbb60/15.+Organized+Anarchist_nonbinary.png?content-type=image%2Fpng",
+      male:  "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/da1f014d-c3c8-4660-bfc6-a266e2e372c5/15.+Organized+Anarchist_male.png?content-type=image%2Fpng"
+    },
+    "prompt_weaver": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/e8585a89-aa21-4044-8863-621a058ffac4/16.+Prompt+Weaver_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/385aa100-a649-4cb3-a06e-2f3b92e0f3a6/16.+Prompt+Weaver_male.png?content-type=image%2Fpng"
+    },
+    "mutant_manager": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/6a01fc67-5fab-4587-a592-f3ad7d5c6dc6/18.+Mutant+manager_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/ed51933d-f235-485c-8706-4248a02f95fe/18.+Mutant+manager_male.png?content-type=image%2Fpng"
+    },
+    "semantic_innovator": {
+      female: "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/8730b4d9-149d-4043-b014-5aa9c73afa99/17.+Semantic+Innovator_female.png?content-type=image%2Fpng",
+      male:   "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/b4932a47-36af-4cf1-9c90-16e172c7e383/17.+Semantic+Innovator_male.png?content-type=image%2Fpng"
+    }
+  };
+
+  var ROLE_IMAGES_FEMALE = [
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/00462842-0415-4c3e-9f72-96523d63fa23/2.+Conflict+Curator_female.png?content-type=image%2Fpng",
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/95035f2c-b927-49af-8d0e-5df012fc2866/5.+Custodians+of+the+white+spots_female.png?content-type=image%2Fpng",
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/0c7008f1-608a-4c46-be64-1b9ba323d7c6/1.+Cartographer+of+Logical+Dreams_female.png?content-type=image%2Fpng",
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/c8b6e302-9481-4bf6-adf8-fe1d97638907/3.+Custodian+of+Resonance_female.png?content-type=image%2Fpng"
+  ];
+
+  var ROLE_IMAGES_MALE = [
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/2bef1ea0-c1e1-4dc8-a231-4bda0a90199a/4.+Custodians+of+the+white+spots_male.png?content-type=image%2Fpng",
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/a15c0d34-fc74-47e0-becb-31e5e8412ef1/3.+Custodian+of+Resonance_male.png?content-type=image%2Fpng",
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/94af19ef-a6b1-4b57-9f60-83d66cc1dd1b/1.+Cartographer+of+Logical+Dreams_male.png?content-type=image%2Fpng",
+    "https://images.squarespace-cdn.com/content/594b81192cba5e5e2be2bfa1/8110be71-a280-4d90-b3e5-ae04f129c4e7/2.+Conflict+Curator_male.png?content-type=image%2Fpng"
+  ];
+
+  var ROLE_IMAGES_ALL = ROLE_IMAGES_FEMALE.concat(ROLE_IMAGES_MALE);
+
+  function pickRoleImageUrl() {
+    var pronoun = state.profile && state.profile.gender;
+
+    // If the user did not choose any pronoun,
+    // randomly pick "she" or "he" so an image is always generated.
+    if (!pronoun) {
+      pronoun = Math.random() < 0.5 ? "she" : "he";
+    }
+
+    var role = null;
+
+    if (state.roles &&
+      typeof state.selectedRoleIndex === "number" &&
+      state.roles[state.selectedRoleIndex]) {
+      role = state.roles[state.selectedRoleIndex];
+    }
+
+    if (!role) return "";
+
+    var images = ROLE_IMAGE_MAP && ROLE_IMAGE_MAP[role.key];
+    if (!images) return "";
+
+    function pickRandomFrom(list) {
+      if (!list || !list.length) return "";
+      var index = Math.floor(Math.random() * list.length);
+      return list[index];
+    }
+
+    var genderKey;
+    if (pronoun === "she") {
+      genderKey = "female";
+    } else if (pronoun === "he") {
+      genderKey = "male";
+    } else {
+      genderKey = "any";
+    }
+
+    // they / custom / no preference:
+    // prefer non-binary if available, otherwise random between male / female
+    if (genderKey === "any") {
+      var anyPool = [];
+      if (images.nb) anyPool.push(images.nb);
+      if (images.female) anyPool.push(images.female);
+      if (images.male) anyPool.push(images.male);
+      return pickRandomFrom(anyPool);
+    }
+
+    // Explicit preference (she/he)
+    if (genderKey === "female" && images.female) {
+      return images.female;
+    }
+    if (genderKey === "male" && images.male) {
+      return images.male;
+    }
+
+    // Fallback if the exact variant doesn't exist
+    var fallback = [];
+    if (images.nb) fallback.push(images.nb);
+    if (images.female) fallback.push(images.female);
+    if (images.male) fallback.push(images.male);
+    return pickRandomFrom(fallback);
+  }
+
+  function updateRoleConfirmImage() {
+    if (!landingRoleConfirmImage) return;
+
+    // DOS-style loading animation while Lia "creates" the image
+    var frames = [
+      "[ CREATING ROLE IMAGE   ]",
+      "[ CREATING ROLE IMAGE . ]",
+      "[ CREATING ROLE IMAGE ..]",
+      "[ CREATING ROLE IMAGE...]"
+    ];
+    var frameIndex = 0;
+
+    landingRoleConfirmImage.innerHTML =
+      '<div id="lia-image-loader" ' +
+      'style="font-size:11px;color:#00aa00;text-align:center;' +
+      'padding:4px;white-space:pre;font-family:monospace;">' +
+      frames[0] +
+      '</div>';
+
+    var loaderEl = document.getElementById("lia-image-loader");
+
+    var spinner = setInterval(function () {
+      if (!loaderEl) return;
+      frameIndex = (frameIndex + 1) % frames.length;
+      loaderEl.textContent = frames[frameIndex];
+    }, 250);
+
+    // After ~2 seconds, stop the animation and show the actual image
+    setTimeout(function () {
+      clearInterval(spinner);
+      if (!landingRoleConfirmImage) return;
+
+      var src = pickRoleImageUrl();
+      if (!src) {
+        landingRoleConfirmImage.innerHTML = "";
+        return;
+      }
+
+      landingRoleConfirmImage.innerHTML =
+        '<img src="' + src + '" alt="Illustration for your role" ' +
+        'style="width:100%;height:100%;object-fit:contain;" />';
+    }, 2000);
+  }
+
+  
+  // ====================== LANDING FLOW ======================
+
+  function refreshQuestion() {
+    var idx = state.currentQuestionIndex;
+    landingNarrativeCounter.textContent = "Question " + (idx + 1) + " of 3";
+    landingQuestionTitle.textContent = interviewQuestions[idx];
+    landingQuestionCounter.textContent = "";
+    landingQuestionAnswer.value = state.narrative[idx] || "";
+
+    // Update CTA label based on whether this is the last question
+    if (idx === 2) {
+      btnLandingQuestionNext.textContent = "Generate Map of Uniqueness";
+    } else {
+      btnLandingQuestionNext.textContent = "Next question \u2192";
+    }
+  }
+
+  // Sync area + worldwide selection from the landing screen
+  function syncAreaFromLanding() {
+    // First update feedback (this may also normalise + complete the location)
+    updateAreaFeedback(landingAreaInput, landingWorldwideCheckbox.checked, landingAreaFeedback);
+    // Then store the (possibly normalised) value in state
+    state.area = landingAreaInput.value || "";
+    state.worldwide = !!landingWorldwideCheckbox.checked;
+  }
+
+  function initLandingFlow() {
+    // Boot
+    animateBar(landingBootBar);
+    setTimeout(function () {
+      showLandingStage(landingStageText1);
+    }, LOADING_DURATION);
+
+    // Intro navigation
+    btnLandingNext1.addEventListener("click", function () {
+      showLandingStage(landingStageText2);
+    });
+
+    btnLandingBack2.addEventListener("click", function () {
+      showLandingStage(landingStageText1);
+    });
+
+    btnLandingSetProfile.addEventListener("click", function () {
+      showLandingStage(landingStageLoadingProfile);
+      animateBar(landingProfileBar);
+      setTimeout(function () {
+        showLandingStage(landingStageProfile1);
+      }, LOADING_DURATION);
+    });
+
+    // Profile stages
+    btnLandingProfile1Back.addEventListener("click", function () {
+      showLandingStage(landingStageText2);
+    });
+
+    btnLandingProfile1Next.addEventListener("click", function () {
+      syncProfileFromLanding();
+      showLandingStage(landingStageProfile2);
+    });
+
+    btnLandingProfile2Back.addEventListener("click", function () {
+      showLandingStage(landingStageProfile1);
+    });
+
+    btnLandingProfile2Next.addEventListener("click", function () {
+      syncProfileFromLanding();
+      showLandingStage(landingStageProfile3);
+    });
+
+    btnLandingProfile3Back.addEventListener("click", function () {
+      showLandingStage(landingStageProfile2);
+    });
+
+    landingPhotoInput.addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (file) {
+        // At landing we don't show preview; only later inside the app
+        handlePhotoFile(file, null);
+      }
+    });
+
+    btnLandingProfileConfirm.addEventListener("click", function () {
+      syncProfileFromLanding();
+      updateSidebarUser();
+      showLandingStage(landingStageLoadingFinal);
+      animateBar(landingFinalBar);
+      setTimeout(function () {
+        showLandingStage(landingNarrativeIntro1);
+      }, LOADING_DURATION);
+    });
+
+    // Narrative intro
+    btnLandingNarrative1Next.addEventListener("click", function () {
+      showLandingStage(landingNarrativeIntro2);
+    });
+
+    btnLandingNarrative2Back.addEventListener("click", function () {
+      showLandingStage(landingNarrativeIntro1);
+    });
+
+    btnLandingNarrative2Start.addEventListener("click", function () {
+      state.currentQuestionIndex = 0;
+
+      // Pick three distinct questions at random from the full pool.
+      interviewQuestions = [];
+      if (allInterviewQuestions && allInterviewQuestions.length > 0) {
+        var pool = allInterviewQuestions.slice();
+        for (var i = 0; i < 3 && pool.length > 0; i++) {
+          var index = Math.floor(Math.random() * pool.length);
+          interviewQuestions.push(pool[index]);
+          pool.splice(index, 1);
+        }
+      }
+
+      refreshQuestion();
+      showLandingStage(landingNarrativeQuestions);
+    });
+
+    // Narrative questions
+    btnLandingQuestionBack.addEventListener("click", function () {
+      var idx = state.currentQuestionIndex;
+      state.narrative[idx] = landingQuestionAnswer.value || "";
+      if (idx === 0) {
+        showLandingStage(landingNarrativeIntro2);
+      } else {
+        state.currentQuestionIndex = idx - 1;
+        refreshQuestion();
+      }
+    });
+
+    btnLandingQuestionNext.addEventListener("click", function () {
+      handleQuestionNext();
+    });
+
+    landingQuestionAnswer.addEventListener("keydown", function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleQuestionNext();
+      }
+    });
+
+    function handleQuestionNext() {
+      var idx = state.currentQuestionIndex;
+      state.narrative[idx] = landingQuestionAnswer.value || "";
+      if (idx < 2) {
+        state.currentQuestionIndex = idx + 1;
+        refreshQuestion();
+      } else {
+        // LAST question -> FIRST ANIMATION
+        landingProcessing.start(
+          "Lia is inferring a map of uniqueness from your stories…",
+          function () {
+            generateRolesFromNarrative();
+            renderLandingRoles();
+            showLandingStage(landingNarrativeRoles);
+          }
+        );
+      }
+    }
+
+    // Roles
+    btnLandingRolesBack.addEventListener("click", function () {
+      showLandingStage(landingNarrativeQuestions);
+    });
+
+    // NEW: go to role confirmation instead of directly to area
+    btnLandingRolesNext.addEventListener("click", function () {
+      // Use the currently selected role (default is index 0)
+      var role = state.roles[state.selectedRoleIndex] || state.roles[0];
+      if (role) {
+        landingRoleConfirmTitle.textContent = role.title;
+        landingRoleConfirmText.textContent = role.description;
+      } else {
+        landingRoleConfirmTitle.textContent = "";
+        landingRoleConfirmText.textContent = "";
+      }
+      updateRoleConfirmImage();
+      showLandingStage(landingRoleConfirm);
+    });
+
+    // Role confirmation
+    btnRoleConfirmBack.addEventListener("click", function () {
+      showLandingStage(landingNarrativeRoles);
+    });
+
+    btnRoleConfirmNext.addEventListener("click", function () {
+      showLandingStage(landingNarrativeArea);
+    });
+
+ // Area / matches
+// Live feedback on landing horizon (do NOT normalise while typing,
+// so spaces and partial input are preserved)
+landingAreaInput.addEventListener("input", function () {
+      updateAreaFeedback(
+        landingAreaInput,
+        landingWorldwideCheckbox.checked,
+        landingAreaFeedback,
+        false // do not normalise the input field on each keystroke
+      );
+    });
+
+    landingWorldwideCheckbox.addEventListener("change", function () {
+      updateAreaFeedback(landingAreaInput, landingWorldwideCheckbox.checked, landingAreaFeedback);
+    });
+
+    btnLandingAreaBack.addEventListener("click", function () {
+      showLandingStage(landingRoleConfirm);
+    });
+
+    btnLandingAreaNext.addEventListener("click", function () {
+      // Save the area from landing and update feedback
+      syncAreaFromLanding();
+
+      // SECOND ANIMATION: alignment between map of uniqueness and the broader network
+      landingNetworkProcessing.start(
+        "Lia is aligning your map of uniqueness with a broader network of work…",
+        function () {
+          generateMatches();
+          renderLandingMatches();
+          showLandingStage(landingNarrativeMatches);
+        }
+      );
+    });
+
+    // Matches
+    btnLandingMatchesBack.addEventListener("click", function () {
+      showLandingStage(landingNarrativeArea);
+    });
+
+    btnLandingOpenInterface.addEventListener("click", function () {
+      // Move into full interface
+      landing.classList.add("lia-hidden");
+      app.classList.add("lia-layout-visible");
+
+      // Sync main profile + narrative + roles + matches
+      syncMainProfileToFields();
+      updateSidebarUser();
+
+      // Sync photo into main interface (preview circle + label)
+      if (liaPhotoCircle) {
+        if (state.photoDataUrl) {
+          liaPhotoCircle.innerHTML =
+            '<img src="' + state.photoDataUrl + '" alt="Photo preview">';
+        } else {
+          liaPhotoCircle.textContent = "No photo";
+        }
+      }
+      if (liaPhotoLabel) {
+        liaPhotoLabel.textContent = state.photoDataUrl ? "Change photo" : "Upload a photo";
+      }
+
+      summaryQ1Label.textContent = interviewQuestions[0] || "Question 1";
+      summaryQ2Label.textContent = interviewQuestions[1] || "Question 2";
+      summaryQ3Label.textContent = interviewQuestions[2] || "Question 3";
+      summaryQ1.value = state.narrative[0] || "";
+      summaryQ2.value = state.narrative[1] || "";
+      summaryQ3.value = state.narrative[2] || "";
+
+      renderAppRoles();
+
+      areaInput.value = state.area;
+      worldwideCheckbox.checked = state.worldwide;
+      updateAreaFeedback(areaInput, state.worldwide, areaFeedbackEl);
+
+      // IMPORTANT: reuse the matches already generated on the landing,
+      // so they remain identical in the full interface.
+      renderAppMatches();
+      renderSignals();
+
+      // Land directly on “06 · Matches”
+      showStep(5);
+    });
+  }
+
+  // ====================== MAIN APP EVENTS ======================
+
+  function initApp() {
+    // Sidebar nav
+    navItems.forEach(function (item) {
+      item.addEventListener("click", function () {
+        var stepIndex = parseInt(item.getAttribute("data-step"), 10);
+        showStep(stepIndex);
+      });
+    });
+
+    // Profile edits
+    function handleProfileInput() {
+      syncMainProfileToState();
+      updateSidebarUser();
+    }
+
+    liaNameInput.addEventListener("input", handleProfileInput);
+    liaEmailInput.addEventListener("input", handleProfileInput);
+    liaPhoneInput.addEventListener("input", handleProfileInput);
+    liaLinkedinInput.addEventListener("input", handleProfileInput);
+    liaGenderSelect.addEventListener("change", handleProfileInput);
+
+    // Photo inside app
+    liaPhotoInput.addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (file) {
+        handlePhotoFile(file, liaPhotoCircle);
+        if (liaPhotoLabel) {
+          liaPhotoLabel.textContent = "Change photo";
+        }
+      }
+    });
+
+    // Area inside app
+    function syncAreaFromApp() {
+      // First update feedback (this may also normalise + complete the location)
+      updateAreaFeedback(areaInput, worldwideCheckbox.checked, areaFeedbackEl);
+      // Then store the (possibly normalised) value in state
+      state.area = areaInput.value || "";
+      state.worldwide = !!worldwideCheckbox.checked;
+      generateMatches();
+      renderAppMatches();
+      renderSignals();
+    }
+
+    areaInput.addEventListener("input", syncAreaFromApp);
+    worldwideCheckbox.addEventListener("change", syncAreaFromApp);
+
+    // Sorting
+    sortSelect.addEventListener("change", function () {
+      renderAppMatches();
+    });
+
+    // End simulation controls
+    if (btnEndOpen) {
+      btnEndOpen.addEventListener("click", function () {
+        openEndOverlay();
+      });
+    }
+
+    if (btnEndClose) {
+      btnEndClose.addEventListener("click", function () {
+        endOverlay.style.display = "none";
+      });
+    }
+
+    if (btnEndPrev) {
+      btnEndPrev.addEventListener("click", function () {
+        if (endPageIndex > 0) {
+          endPageIndex--;
+          renderEndPage();
+        }
+      });
+    }
+
+    if (btnEndNext) {
+      btnEndNext.addEventListener("click", function () {
+        if (endPageIndex < endPages.length - 1) {
+          endPageIndex++;
+          renderEndPage();
+        }
+      });
+    }
+
+    if (btnEndBackLanding) {
+      btnEndBackLanding.addEventListener("click", function () {
+        startGoodbyeSequence();
+      });
+    }
+
+    if (btnEndRestart) {
+      btnEndRestart.addEventListener("click", function () {
+        restartLiaExperience();
+      });
+    }
+
+    // Initial header
+    updateMainHeader(0);
+  }
+
+  // ====================== INIT ======================
+
+  function onResize() {
+    landingProcessing.resize();
+    appProcessing.resize();
+  }
+
+  window.addEventListener("resize", onResize);
+
+  initLandingFlow();
+  initApp();
+  onResize();
+})();
+});
+</script>
+</body>
+</html>
