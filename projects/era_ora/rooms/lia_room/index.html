@@ -455,7 +455,7 @@ AFRAME.registerComponent('rig-walk', {
     });
 
 
-    // ── Snow: cinematic wind-driven particles with turbulence & swirl ──────────
+    // ── Snow: cinematic wind-driven particles ──────────────────────────────────
     AFRAME.registerComponent('snow', {
       schema: {
         count:       { type: 'number', default: 4000 },
@@ -475,7 +475,7 @@ AFRAME.registerComponent('rig-walk', {
       init: function () {
         const d = this.data;
         const N = d.count;
-        this._officeCenter = { x: 0, z: -75 };
+        this._officeCX = 0; this._officeCZ = -75;
         this._platClearR = 8.0;
         this._sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : function(){ return 0; };
 
@@ -491,33 +491,35 @@ AFRAME.registerComponent('rig-walk', {
 
         for (let i = 0; i < N; i++) {
           this._spawnDelay[i] = Math.pow(Math.random(), 1.6) * d.rampTime;
-          positions[i * 3] = positions[i * 3 + 1] = positions[i * 3 + 2] = 9999;
-          this._fallSpeeds[i] = d.fallSpeed * (0.35 + Math.random() * 0.95);
-          this._driftX[i] = (Math.random() - 0.5) * 0.5;
-          this._driftZ[i] = (Math.random() - 0.5) * 0.5;
-          this._phase[i] = Math.random() * Math.PI * 2;
-          this._swirlR[i] = 0.02 + Math.random() * 0.12;
-          this._swirlSpd[i] = (0.8 + Math.random() * 2.4) * (Math.random() < 0.5 ? 1 : -1);
-          this._turbScale[i] = 0.5 + Math.random() * 1.0;
+          positions[i*3] = positions[i*3+1] = positions[i*3+2] = 9999;
+          this._fallSpeeds[i] = d.fallSpeed * (0.3 + Math.random()*1.0);
+          this._driftX[i] = (Math.random()-0.5)*0.5;
+          this._driftZ[i] = (Math.random()-0.5)*0.5;
+          this._phase[i] = Math.random()*Math.PI*2;
+          this._swirlR[i] = 0.015+Math.random()*0.12;
+          this._swirlSpd[i] = (0.7+Math.random()*2.5)*(Math.random()<0.5?1:-1);
+          this._turbScale[i] = 0.4+Math.random()*1.0;
         }
 
         const geom = new THREE.BufferGeometry();
         geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
+        // Soft glowing flake sprite
         const cv = document.createElement('canvas');
-        cv.width = 64; cv.height = 64;
+        cv.width=64; cv.height=64;
         const ctx = cv.getContext('2d');
-        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-        grad.addColorStop(0, 'rgba(255,255,255,1.0)');
-        grad.addColorStop(0.15, 'rgba(255,255,255,0.8)');
-        grad.addColorStop(0.45, 'rgba(240,248,255,0.35)');
-        grad.addColorStop(1, 'rgba(220,235,255,0)');
-        ctx.fillStyle = grad; ctx.fillRect(0, 0, 64, 64);
+        const grad = ctx.createRadialGradient(32,32,0,32,32,32);
+        grad.addColorStop(0,'rgba(255,255,255,1.0)');
+        grad.addColorStop(0.12,'rgba(255,255,255,0.85)');
+        grad.addColorStop(0.4,'rgba(240,248,255,0.35)');
+        grad.addColorStop(0.7,'rgba(220,238,255,0.10)');
+        grad.addColorStop(1,'rgba(200,225,255,0)');
+        ctx.fillStyle=grad; ctx.fillRect(0,0,64,64);
         const spriteTex = new THREE.CanvasTexture(cv);
 
         const mat = new THREE.PointsMaterial({
-          map: spriteTex, size: d.size, transparent: true, opacity: 0.9,
-          depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true, color: 0xffffff
+          map:spriteTex, size:d.size, transparent:true, opacity:0.9,
+          depthWrite:false, blending:THREE.NormalBlending, sizeAttenuation:true, color:0xffffff
         });
 
         this._points = new THREE.Points(geom, mat);
@@ -527,142 +529,128 @@ AFRAME.registerComponent('rig-walk', {
         this._elapsed = 0;
         this._posAttr = geom.getAttribute('position');
         this._spawned = new Uint8Array(N);
-        this._windState = { x: d.windX, z: d.windZ, tx: d.windX, tz: d.windZ, timer: 0 };
+        this._ws = { x:d.windX, z:d.windZ, tx:d.windX, tz:d.windZ, timer:0 };
       },
 
-      _isIndoor: function (x, z) {
-        if (x > -7.5 && x < 7.5 && z > -82 && z < -68) return true;
-        if (x > 2.0 && x < 7.0 && z > -69 && z < -56) return true;
-        if (x > -7.0 && x < -2.0 && z > -97 && z < -84) return true;
+      _isIndoor: function(x,z){
+        // Generous indoor zones matching snow-ground
+        if(x>-7.8 && x<7.8 && z>-82.3 && z<-67.7) return true;
+        if(x>1.8 && x<7.2 && z>-69.1 && z<-55.9) return true;
+        if(x>-7.2 && x<-1.8 && z>-97.1 && z<-83.9) return true;
+        // Doorway zones
+        if(x>2.8 && x<6.2 && z>-70.5 && z<-66.5) return true;
+        if(x>-6.2 && x<-2.8 && z>-83.5 && z<-79.5) return true;
         return false;
       },
 
-      _nearPlatform: function (x, z) {
-        return Math.sqrt(x*x + z*z) < this._platClearR;
-      },
+      _nearPlatform: function(x,z){ return Math.sqrt(x*x+z*z)<this._platClearR; },
 
-      _zoneMask: function (x, z) {
-        const sn = this._sn;
-        const cx = this._officeCenter.x, cz = this._officeCenter.z;
-        const dx = x - cx, dz = z - cz;
-        const r = Math.sqrt(dx*dx + dz*dz);
+      _zoneMask: function(x,z){
+        const sn=this._sn;
+        const dx=x-this._officeCX, dz=z-this._officeCZ;
+        const r=Math.sqrt(dx*dx+dz*dz);
 
-        // Platform hard exclusion
-        const pDist = Math.sqrt(x*x + z*z);
-        if (pDist < this._platClearR - 1) return 0;
-        let platFade = 1;
-        if (pDist < this._platClearR + 2) {
-          platFade = (pDist - this._platClearR + 1) / 3;
-          platFade = Math.max(0, Math.min(1, platFade));
-          platFade = platFade * platFade * (3 - 2 * platFade);
+        // Platform
+        const pd=Math.sqrt(x*x+z*z);
+        if(pd<this._platClearR-1) return 0;
+        let pf=1;
+        if(pd<this._platClearR+2){
+          pf=(pd-this._platClearR+1)/3;
+          pf=Math.max(0,Math.min(1,pf)); pf=pf*pf*(3-2*pf);
         }
 
-        const nA = sn(x * 0.05, z * 0.05) * 6.5;
-        const nB = sn(x * 0.11 + 22, z * 0.11 - 9) * 2.5;
-        const outerR = 28 + nA + nB;
-        const innerFull = 15 + sn(x * 0.08 - 30, z * 0.08 + 17) * 1.5;
+        const nA=sn(x*0.05,z*0.05)*6.5;
+        const nB=sn(x*0.11+22,z*0.11-9)*2.5;
+        const outerR=36+nA+nB;
+        const innerFull=12+sn(x*0.08-30,z*0.08+17)*1.5;
 
-        let m = (outerR - r) / Math.max(0.001, (outerR - innerFull));
-        m = Math.max(0, Math.min(1, m));
-        m = m * m * (3 - 2 * m);
+        let m=(outerR-r)/Math.max(0.001,(outerR-innerFull));
+        m=Math.max(0,Math.min(1,m)); m=m*m*(3-2*m);
 
-        const rSpawn = Math.sqrt(x*x + z*z);
-        let spawnFade = (rSpawn - 20) / 14;
-        spawnFade = Math.max(0, Math.min(1, spawnFade));
-        spawnFade = spawnFade * spawnFade * (3 - 2 * spawnFade);
-        m *= spawnFade;
+        const sr=Math.sqrt(x*x+z*z);
+        let sf=(sr-18)/30; sf=Math.max(0,Math.min(1,sf)); sf=sf*sf*(3-2*sf);
+        m*=sf;
 
-        const towardSpawn = Math.max(0, (z + 75) / 75);
-        m *= (1 - 0.65 * towardSpawn);
-        m *= platFade;
-
-        return Math.max(0, Math.min(1, m));
+        const fb=Math.max(0,(z+75)/75);
+        m*=(1-0.55*fb);
+        m*=pf;
+        return Math.max(0,Math.min(1,m));
       },
 
-      _respawn: function (i) {
-        const d = this.data;
-        const arr = this._posAttr.array;
-        let x, z, tries = 0;
-        do {
-          x = this._officeCenter.x + (Math.random() - 0.5) * 70;
-          z = this._officeCenter.z + (Math.random() - 0.5) * 70;
+      _respawn: function(i){
+        const d=this.data, arr=this._posAttr.array;
+        let x,z,tries=0;
+        do{
+          x=this._officeCX+(Math.random()-0.5)*80;
+          z=this._officeCZ+(Math.random()-0.5)*80;
           tries++;
-          var mask = this._zoneMask(x, z);
-          if (mask > 0.02 && !this._isIndoor(x, z) && !this._nearPlatform(x, z) && Math.random() < mask) break;
-        } while (tries < 20);
+          var mask=this._zoneMask(x,z);
+          if(mask>0.02 && !this._isIndoor(x,z) && !this._nearPlatform(x,z) && Math.random()<mask) break;
+        }while(tries<25);
 
-        if (tries >= 20 || this._isIndoor(x, z) || this._nearPlatform(x, z) || mask <= 0.02) {
-          arr[i * 3] = arr[i * 3 + 1] = arr[i * 3 + 2] = 9999;
-          return;
+        if(tries>=25||this._isIndoor(x,z)||this._nearPlatform(x,z)||mask<=0.02){
+          arr[i*3]=arr[i*3+1]=arr[i*3+2]=9999; return;
         }
-
-        arr[i * 3] = x;
-        arr[i * 3 + 1] = d.ceiling + Math.random() * 10;
-        arr[i * 3 + 2] = z;
-        this._phase[i] = Math.random() * Math.PI * 2;
+        arr[i*3]=x; arr[i*3+1]=d.ceiling+Math.random()*10; arr[i*3+2]=z;
+        this._phase[i]=Math.random()*Math.PI*2;
       },
 
-      tick: function (t, dt) {
-        if (!dt) return;
-        const dtS = Math.min(dt / 1000, 0.05);
-        this._elapsed += dtS;
-        const d = this.data, N = d.count, arr = this._posAttr.array, elapsed = this._elapsed;
-        const sn = this._sn;
+      tick: function(t,dt){
+        if(!dt) return;
+        const dtS=Math.min(dt/1000,0.05);
+        this._elapsed+=dtS;
+        const d=this.data,N=d.count,arr=this._posAttr.array,el=this._elapsed,sn=this._sn;
 
         // Evolving wind
-        const ws = this._windState;
-        ws.timer -= dtS;
-        if (ws.timer <= 0) {
-          ws.tx = d.windX + (Math.random()-0.4)*d.gustStr*2.5;
-          ws.tz = d.windZ + (Math.random()-0.5)*d.gustStr*2;
-          ws.timer = 1.5+Math.random()*4;
+        const ws=this._ws;
+        ws.timer-=dtS;
+        if(ws.timer<=0){
+          ws.tx=d.windX+(Math.random()-0.4)*d.gustStr*2.5;
+          ws.tz=d.windZ+(Math.random()-0.5)*d.gustStr*2;
+          ws.timer=1.5+Math.random()*4;
         }
-        const wl = 1-Math.exp(-1.2*dtS);
-        ws.x += (ws.tx-ws.x)*wl;
-        ws.z += (ws.tz-ws.z)*wl;
+        const wl=1-Math.exp(-1.2*dtS);
+        ws.x+=(ws.tx-ws.x)*wl; ws.z+=(ws.tz-ws.z)*wl;
 
-        const g1 = Math.sin(elapsed*0.47)*0.35;
-        const g2 = Math.sin(elapsed*1.13+2)*0.18;
-        const g3 = Math.sin(elapsed*0.19+5)*0.5;
-        const gwx = ws.x + g1 + g2;
-        const gwz = ws.z + g3*0.4 + Math.cos(elapsed*0.31)*0.2;
+        // Layered gust oscillation
+        const gwx=ws.x+Math.sin(el*0.47)*0.35+Math.sin(el*1.13+2)*0.18;
+        const gwz=ws.z+Math.sin(el*0.19+5)*0.2+Math.cos(el*0.31)*0.18;
 
-        for (let i = 0; i < N; i++) {
-          if (!this._spawned[i]) {
-            if (elapsed >= this._spawnDelay[i]) { this._spawned[i] = 1; this._respawn(i); }
+        for(let i=0;i<N;i++){
+          if(!this._spawned[i]){
+            if(el>=this._spawnDelay[i]){this._spawned[i]=1;this._respawn(i);}
             continue;
           }
-
-          const px = arr[i*3], py = arr[i*3+1], pz = arr[i*3+2];
+          const px=arr[i*3],py=arr[i*3+1],pz=arr[i*3+2];
 
           // Spatial turbulence
-          const tt = elapsed * 0.3;
-          const turbX = sn(px*0.06+tt, pz*0.06-tt*0.7) * this._turbScale[i] * 0.8;
-          const turbZ = sn(px*0.06-11+tt*0.5, pz*0.06+7+tt) * this._turbScale[i] * 0.6;
-          const turbY = sn(px*0.04+50, pz*0.04+elapsed*0.25) * 0.4;
+          const tt=el*0.3;
+          const turbX=sn(px*0.055+tt,pz*0.055-tt*0.7)*this._turbScale[i]*0.75;
+          const turbZ=sn(px*0.055-11+tt*0.5,pz*0.055+7+tt)*this._turbScale[i]*0.55;
+          const turbY=sn(px*0.04+50,pz*0.04+el*0.25)*0.35;
 
           // Swirl
-          this._phase[i] += this._swirlSpd[i] * dtS;
-          const swX = Math.cos(this._phase[i]) * this._swirlR[i];
-          const swZ = Math.sin(this._phase[i]) * this._swirlR[i];
+          this._phase[i]+=this._swirlSpd[i]*dtS;
+          const swX=Math.cos(this._phase[i])*this._swirlR[i];
+          const swZ=Math.sin(this._phase[i])*this._swirlR[i];
 
           // Height-dependent wind
-          const hf = Math.min(1, Math.max(0.25, py / d.ceiling));
+          const hf=Math.min(1,Math.max(0.2,py/d.ceiling));
 
-          arr[i*3]   += (gwx*hf + this._driftX[i] + turbX + swX) * dtS;
-          arr[i*3+1] -= (this._fallSpeeds[i] - turbY*0.3) * dtS;
-          arr[i*3+2] += (gwz*hf + this._driftZ[i] + turbZ + swZ) * dtS;
+          arr[i*3]+=(gwx*hf+this._driftX[i]+turbX+swX)*dtS;
+          arr[i*3+1]-=(this._fallSpeeds[i]-turbY*0.25)*dtS;
+          arr[i*3+2]+=(gwz*hf+this._driftZ[i]+turbZ+swZ)*dtS;
 
-          const nx = arr[i*3], nz = arr[i*3+2];
-          if (arr[i*3+1] < d.floor || this._isIndoor(nx,nz) || this._nearPlatform(nx,nz) || this._zoneMask(nx,nz) < 0.02) {
+          const nx=arr[i*3],nz=arr[i*3+2];
+          if(arr[i*3+1]<d.floor||this._isIndoor(nx,nz)||this._nearPlatform(nx,nz)||this._zoneMask(nx,nz)<0.02){
             this._respawn(i);
           }
         }
-        this._posAttr.needsUpdate = true;
+        this._posAttr.needsUpdate=true;
       },
 
-      remove: function () {
-        if (this._points) {
+      remove: function(){
+        if(this._points){
           this.el.sceneEl.object3D.remove(this._points);
           this._points.geometry.dispose();
           this._points.material.dispose();
@@ -706,285 +694,295 @@ AFRAME.registerComponent('rig-walk', {
       };
     })(window._snoise={});
 
-    // ── Snow ground: frost underlayer + smooth continuous snow drifts ────────────
+    // ── Snow ground: frost underlayer + cinematic smooth snow drifts ─────────────
     AFRAME.registerComponent('snow-ground', {
       init: function () {
         const sn = window._snoise.simplex2;
-        const self = this;
         this._meshes = [];
 
-        const RADIUS = 120;
-        const SEG = 480;
-        const GROUND_Y = 0.08;
-        const HIDDEN_Y = -0.20;
+        const RADIUS = 130;
+        const SEG = 500;
+        const GROUND_Y = 0.085;
+        const HIDDEN_Y = -0.25;
 
-        const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68, cx: 0, cz: -75 };
-        const transCorridor = { x1: 2.0, x2: 7.0, z1: -69, z2: -56 };
-        const exitCorridor = { x1: -7.0, x2: -2.0, z1: -97, z2: -84 };
-        const platCenter = { x: 0, z: 0 };
-        const platClearR = 8.0;
+        // ── Architecture bounds (world-space, generous padding) ──
+        // Office interior: walls at x ±7, z -81.5 to -68.5 → pad +0.8
+        const officeBox = { x1: -7.8, x2: 7.8, z1: -82.3, z2: -67.7 };
+        // Transition corridor: walls at x 2.4-6.6, z -68.5 to -56.5 → pad +0.6
+        const transBox  = { x1: 1.8, x2: 7.2, z1: -69.1, z2: -55.9 };
+        // Exit corridor: walls at x -6.6 to -2.4, z -96.5 to -84.5 → pad +0.6
+        const exitBox   = { x1: -7.2, x2: -1.8, z1: -97.1, z2: -83.9 };
+        // Doorway zones (cover the wall openings so snow can't creep through)
+        const doorNorth = { x1: 2.8, x2: 6.2, z1: -70.5, z2: -66.5 }; // north opening
+        const doorSouth = { x1: -6.2, x2: -2.8, z1: -83.5, z2: -79.5 }; // south opening
+
+        const officeCX = 0, officeCZ = -75;
+        const platCX = 0, platCZ = 0, platClearR = 8.0;
 
         function smoothstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
         function smootherstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*t*(t*(t*6-15)+10); }
-        function isInsideRect(x,z,r,pad){ return x>r.x1-pad && x<r.x2+pad && z>r.z1-pad && z<r.z2+pad; }
-        function distToRect(x,z,r){
-          const dx=Math.max(r.x1-x,0,x-r.x2), dz=Math.max(r.z1-z,0,z-r.z2);
-          const out=Math.sqrt(dx*dx+dz*dz);
-          if(out>0) return out;
-          return -Math.min(x-r.x1,r.x2-x,z-r.z1,r.z2-z);
+        function inBox(x,z,b){ return x>=b.x1 && x<=b.x2 && z>=b.z1 && z<=b.z2; }
+        function distToBox(x,z,b){
+          const dx=Math.max(b.x1-x,0,x-b.x2), dz=Math.max(b.z1-z,0,z-b.z2);
+          return Math.sqrt(dx*dx+dz*dz);
         }
-        function platDist(x,z){ return Math.sqrt((x-platCenter.x)*(x-platCenter.x)+(z-platCenter.z)*(z-platCenter.z)); }
+        function distFromPlat(x,z){ return Math.sqrt((x-platCX)*(x-platCX)+(z-platCZ)*(z-platCZ)); }
 
-        // ── Snow coverage mask — organic boundary, no hard edges ──
+        // Is this point inside any indoor space?
+        function isIndoor(x,z) {
+          return inBox(x,z,officeBox) || inBox(x,z,transBox) || inBox(x,z,exitBox) || inBox(x,z,doorNorth) || inBox(x,z,doorSouth);
+        }
+
+        // Distance to nearest indoor boundary (positive = outside, negative = inside)
+        function distToIndoor(x,z) {
+          const d = Math.min(distToBox(x,z,officeBox), distToBox(x,z,transBox), distToBox(x,z,exitBox), distToBox(x,z,doorNorth), distToBox(x,z,doorSouth));
+          if(isIndoor(x,z)) return -0.01; // inside
+          return d;
+        }
+
+        // ── Snow coverage mask ──
         function snowMask(x, z) {
-          const pd = platDist(x,z);
-          if (pd < platClearR - 3) return 0;
-          const platFade = smootherstep(platClearR - 3, platClearR + 4, pd);
+          // Indoor → zero
+          if(isIndoor(x,z)) return 0;
 
-          const wx = x + sn(x*0.028+41, z*0.028-17)*9 + sn(x*0.075,z*0.075)*3.5;
-          const wz = z + sn(x*0.028-13, z*0.028+23)*9 + sn(x*0.075+7,z*0.075-9)*3.5;
-          const dx = wx - office.cx, dz = wz - office.cz;
-          const r = Math.sqrt(dx*dx + dz*dz);
+          // Near indoor → fast taper so no spillage
+          const dIn = distToIndoor(x,z);
+          const indoorTaper = smoothstep(0, 1.8, dIn);
 
-          const n1 = sn(wx*0.04, wz*0.04) * 7.5;
-          const n2 = sn(wx*0.09+13, wz*0.09-8) * 3.8;
-          const n3 = sn(wx*0.16-3, wz*0.16+6) * 1.6;
-          const outer = 33 + n1 + n2 + n3;
-          const inner = 13 + sn(wx*0.055-5, wz*0.055+14) * 2.5;
+          // Platform exclusion
+          const pd = distFromPlat(x,z);
+          if(pd < platClearR - 2) return 0;
+          const platFade = smootherstep(platClearR - 2, platClearR + 5, pd);
+
+          // Domain-warped radial falloff centered on office
+          const wx = x + sn(x*0.025+41, z*0.025-17)*10 + sn(x*0.065,z*0.065)*4;
+          const wz = z + sn(x*0.025-13, z*0.025+23)*10 + sn(x*0.065+7,z*0.065-9)*4;
+          const dx = wx-officeCX, dz = wz-officeCZ;
+          const r = Math.sqrt(dx*dx+dz*dz);
+
+          const n1 = sn(wx*0.035,wz*0.035)*9;
+          const n2 = sn(wx*0.08+13,wz*0.08-8)*4.5;
+          const n3 = sn(wx*0.15-3,wz*0.15+6)*2;
+          const outer = 42 + n1 + n2 + n3;
+          const inner = 12 + sn(wx*0.05-5,wz*0.05+14)*3;
 
           let m = 1 - smootherstep(inner, outer, r);
 
+          // Spawn side suppression
           const spawnR = Math.sqrt(x*x + z*z);
-          m *= smootherstep(20, 48, spawnR);
+          m *= smootherstep(18, 50, spawnR);
           const frontBias = Math.max(0, Math.min(1, (z+75)/75));
-          m *= (1 - 0.5 * frontBias * (0.85 + 0.15*(sn(x*0.05+60,z*0.05-10)*0.5+0.5)));
+          m *= (1 - 0.45*frontBias*(0.8+0.2*(sn(x*0.04+60,z*0.04-10)*0.5+0.5)));
 
-          m *= platFade;
+          m *= platFade * indoorTaper;
 
-          // Very subtle edge breakup
-          const en = sn(x*0.12+100, z*0.12-100)*0.5+0.5;
-          const eb = smoothstep(0.0,0.3,m) * (1-smoothstep(0.3,0.85,m));
-          m += (en-0.5)*0.1*eb;
+          // Organic edge breakup
+          const en = sn(x*0.1+100,z*0.1-100)*0.5+0.5;
+          const eb = smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
+          m += (en-0.5)*0.08*eb;
 
           return Math.max(0, Math.min(1, m));
         }
 
-        // ── Frost mask — wider, softer ──
+        // ── Frost mask (wider, softer) ──
         function frostMask(x, z) {
-          const pd = platDist(x,z);
-          if (pd < platClearR - 2) return 0;
-          const platFade = smootherstep(platClearR - 2, platClearR + 8, pd);
+          if(isIndoor(x,z)) return 0;
+          const dIn = distToIndoor(x,z);
+          const indoorTaper = smoothstep(0, 0.8, dIn);
 
-          const wx = x + sn(x*0.022+41, z*0.022-17)*12 + sn(x*0.06,z*0.06)*5;
-          const wz = z + sn(x*0.022-13, z*0.022+23)*12 + sn(x*0.06+7,z*0.06-9)*5;
-          const dx = wx - office.cx, dz = wz - office.cz;
-          const r = Math.sqrt(dx*dx + dz*dz);
+          const pd = distFromPlat(x,z);
+          if(pd < platClearR - 1) return 0;
+          const platFade = smootherstep(platClearR - 1, platClearR + 10, pd);
 
-          const n1 = sn(wx*0.03, wz*0.03) * 10;
-          const n2 = sn(wx*0.07+13, wz*0.07-8) * 5;
-          const outer = 50 + n1 + n2;
-          const inner = 10 + sn(wx*0.04-5, wz*0.04+14) * 3;
+          const wx = x + sn(x*0.02+41,z*0.02-17)*14 + sn(x*0.05,z*0.05)*6;
+          const wz = z + sn(x*0.02-13,z*0.02+23)*14 + sn(x*0.05+7,z*0.05-9)*6;
+          const dx = wx-officeCX, dz = wz-officeCZ;
+          const r = Math.sqrt(dx*dx+dz*dz);
+
+          const n1 = sn(wx*0.025,wz*0.025)*12;
+          const n2 = sn(wx*0.06+13,wz*0.06-8)*6;
+          const outer = 58 + n1 + n2;
+          const inner = 8 + sn(wx*0.04-5,wz*0.04+14)*4;
 
           let m = 1 - smootherstep(inner, outer, r);
 
-          const spawnR = Math.sqrt(x*x + z*z);
-          m *= smootherstep(14, 55, spawnR);
-          const frontBias = Math.max(0, Math.min(1, (z+75)/75));
-          m *= (1 - 0.4 * frontBias);
+          const spawnR = Math.sqrt(x*x+z*z);
+          m *= smootherstep(12, 58, spawnR);
+          m *= (1 - 0.35*Math.max(0,Math.min(1,(z+75)/75)));
 
-          m *= platFade;
+          m *= platFade * indoorTaper;
           return Math.max(0, Math.min(1, m));
         }
 
         // ══════════════════════════════════════════════════════════════
-        //  LAYER 1 — FROST (wide icy sheen sitting just above lunar ground)
+        //  LAYER 1 — FROST (wide icy sheen just above lunar ground)
         // ══════════════════════════════════════════════════════════════
-        const FROST_EXTENT = 180;
-        const frostTexSize = 512;
-        const frostCv = document.createElement('canvas');
-        frostCv.width = frostTexSize; frostCv.height = frostTexSize;
-        const frostCtx = frostCv.getContext('2d');
-        const fid = frostCtx.createImageData(frostTexSize, frostTexSize);
-        const fp = fid.data;
-
-        for (let py = 0; py < frostTexSize; py++) {
-          for (let px = 0; px < frostTexSize; px++) {
-            const idx = (py*frostTexSize+px)*4;
-            const wx = (px/frostTexSize - 0.5) * FROST_EXTENT * 2;
-            const wz = (py/frostTexSize - 0.5) * FROST_EXTENT * 2;
-
-            let fm = frostMask(wx, wz);
-            // Organic grain in frost boundary
-            fm *= 0.65 + 0.35*(sn(wx*0.1+50,wz*0.1-50)*0.5+0.5);
-            // Inside buildings = 0
-            if(isInsideRect(wx,wz,office,-0.3) || isInsideRect(wx,wz,transCorridor,-0.3) || isInsideRect(wx,wz,exitCorridor,-0.3)) fm=0;
-
-            // Clamp to max ~55% opacity (frost is subtle, not opaque)
-            const alpha = Math.max(0, Math.min(255, fm * 145));
-            fp[idx]   = 255; fp[idx+1] = 255; fp[idx+2] = 255; fp[idx+3] = Math.floor(alpha);
+        const FROST_EXT = 200;
+        const ftSize = 512;
+        const fCv = document.createElement('canvas'); fCv.width=ftSize; fCv.height=ftSize;
+        const fCtx = fCv.getContext('2d');
+        const fid = fCtx.createImageData(ftSize,ftSize); const fp = fid.data;
+        for(let py=0;py<ftSize;py++){
+          for(let px=0;px<ftSize;px++){
+            const idx=(py*ftSize+px)*4;
+            const wx=(px/ftSize-0.5)*FROST_EXT*2;
+            const wz=(py/ftSize-0.5)*FROST_EXT*2;
+            let fm = frostMask(wx,wz);
+            fm *= 0.6+0.4*(sn(wx*0.08+50,wz*0.08-50)*0.5+0.5);
+            // Subtle sparkle grain
+            fm *= 0.85+0.15*(sn(wx*0.5+200,wz*0.5-200)*0.5+0.5);
+            const alpha = Math.max(0,Math.min(255, fm*130));
+            fp[idx]=248; fp[idx+1]=252; fp[idx+2]=255; fp[idx+3]=Math.floor(alpha);
           }
         }
-        frostCtx.putImageData(fid, 0, 0);
+        fCtx.putImageData(fid,0,0);
+        const frostTex = new THREE.CanvasTexture(fCv);
+        frostTex.magFilter=THREE.LinearFilter;
+        frostTex.minFilter=THREE.LinearMipmapLinearFilter;
 
-        const frostTex = new THREE.CanvasTexture(frostCv);
-        frostTex.magFilter = THREE.LinearFilter;
-        frostTex.minFilter = THREE.LinearMipmapLinearFilter;
-
-        // Frost normal map (subtle icy crystalline texture)
-        const fnmSize = 256;
-        const fnmCv = document.createElement('canvas'); fnmCv.width=fnmSize; fnmCv.height=fnmSize;
-        const fnmCtx = fnmCv.getContext('2d');
-        const fnmd = fnmCtx.createImageData(fnmSize, fnmSize); const fnp = fnmd.data;
-        for(let py=0; py<fnmSize; py++){
-          for(let px=0; px<fnmSize; px++){
-            const idx=(py*fnmSize+px)*4;
-            const nx=px/fnmSize*30, ny=py/fnmSize*30;
-            const dx2 = sn(nx*4+10,ny*4)*0.3 + sn(nx*12+5,ny*12)*0.2 + sn(nx*28,ny*28+3)*0.1;
-            const dy2 = sn(nx*4,ny*4+20)*0.3 + sn(nx*12,ny*12+8)*0.2 + sn(nx*28+7,ny*28)*0.1;
+        // Frost normal (icy crystalline)
+        const fnS=256;
+        const fnCv=document.createElement('canvas'); fnCv.width=fnS; fnCv.height=fnS;
+        const fnCtx=fnCv.getContext('2d');
+        const fnd=fnCtx.createImageData(fnS,fnS); const fnp=fnd.data;
+        for(let py=0;py<fnS;py++){
+          for(let px=0;px<fnS;px++){
+            const idx=(py*fnS+px)*4;
+            const nx=px/fnS*30,ny=py/fnS*30;
+            const dx2=sn(nx*4+10,ny*4)*0.28+sn(nx*12+5,ny*12)*0.18+sn(nx*25,ny*25+3)*0.12;
+            const dy2=sn(nx*4,ny*4+20)*0.28+sn(nx*12,ny*12+8)*0.18+sn(nx*25+7,ny*25)*0.12;
             fnp[idx]=Math.floor((dx2*0.5+0.5)*255);
             fnp[idx+1]=Math.floor((dy2*0.5+0.5)*255);
             fnp[idx+2]=220; fnp[idx+3]=255;
           }
         }
-        fnmCtx.putImageData(fnmd, 0, 0);
-        const frostNorm = new THREE.CanvasTexture(fnmCv);
+        fnCtx.putImageData(fnd,0,0);
+        const frostNorm=new THREE.CanvasTexture(fnCv);
         frostNorm.wrapS=frostNorm.wrapT=THREE.RepeatWrapping;
-        frostNorm.repeat.set(35,35);
+        frostNorm.repeat.set(40,40);
 
         const frostMat = new THREE.MeshStandardMaterial({
-          color: 0xd8e4ee, transparent: true, map: frostTex,
-          normalMap: frostNorm, normalScale: new THREE.Vector2(0.25,0.25),
-          roughness: 0.4, metalness: 0.05, depthWrite: false, side: THREE.FrontSide,
-          envMapIntensity: 0.15, blending: THREE.NormalBlending,
-          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2
+          color:0xd0dde8, transparent:true, map:frostTex,
+          normalMap:frostNorm, normalScale:new THREE.Vector2(0.22,0.22),
+          roughness:0.35, metalness:0.08, depthWrite:false, side:THREE.FrontSide,
+          envMapIntensity:0.2, blending:THREE.NormalBlending,
+          polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-2
         });
-        const frostGeom = new THREE.PlaneGeometry(FROST_EXTENT*2, FROST_EXTENT*2, 1, 1);
+        const frostGeom = new THREE.PlaneGeometry(FROST_EXT*2,FROST_EXT*2,1,1);
         frostGeom.rotateX(-Math.PI/2);
-        const frostMesh = new THREE.Mesh(frostGeom, frostMat);
-        frostMesh.position.y = GROUND_Y + 0.005;
+        const frostMesh = new THREE.Mesh(frostGeom,frostMat);
+        frostMesh.position.y = GROUND_Y + 0.004;
         frostMesh.frustumCulled = false;
         this.el.sceneEl.object3D.add(frostMesh);
         this._meshes.push(frostMesh);
 
         // ══════════════════════════════════════════════════════════════
-        //  LAYER 2 — SNOW (smooth displaced mesh, continuous transitions)
+        //  LAYER 2 — SNOW (smooth displaced mesh, zero cliff edges)
         // ══════════════════════════════════════════════════════════════
-        const snowGeom = new THREE.PlaneGeometry(RADIUS*2, RADIUS*2, SEG, SEG);
+        const snowGeom = new THREE.PlaneGeometry(RADIUS*2,RADIUS*2,SEG,SEG);
         snowGeom.rotateX(-Math.PI/2);
         const pos = snowGeom.getAttribute('position');
 
-        // Wind direction for asymmetric drifts
-        const windAng = Math.atan2(0.45, 1.05);
-        const wdX = Math.cos(windAng), wdZ = Math.sin(windAng);
+        // Wind direction for asymmetric sastrugi
+        const wAng=Math.atan2(0.45,1.05), wdX=Math.cos(wAng), wdZ=Math.sin(wAng);
 
-        for (let i = 0; i < pos.count; i++) {
-          const x = pos.getX(i), z = pos.getZ(i);
-          const edgeR = Math.sqrt(x*x + z*z);
+        for(let i=0;i<pos.count;i++){
+          const x=pos.getX(i), z=pos.getZ(i);
+          const edgeR = Math.sqrt(x*x+z*z);
 
-          // Mesh edge
-          if (edgeR > RADIUS * 0.985) { pos.setY(i, -1.0); continue; }
+          if(edgeR > RADIUS*0.985){ pos.setY(i,-1.5); continue; }
 
-          // Inside buildings — hidden below floor
-          if(isInsideRect(x,z,office,-0.08) || isInsideRect(x,z,transCorridor,-0.08) || isInsideRect(x,z,exitCorridor,-0.08)) {
-            pos.setY(i, -0.55); continue;
+          // Get continuous snow mask (already handles indoor, platform, edges)
+          const m = snowMask(x,z);
+
+          // ── Compute drift height (assuming full coverage) ──
+          let drift = 0;
+          // Rolling terrain
+          drift += (sn(x*0.018+3,z*0.018-5)*0.5+0.5)*0.30;
+          // Medium undulations
+          drift += (sn(x*0.048+20,z*0.048-8)*0.5+0.5)*0.18;
+          // Wind-aligned sastrugi ridges
+          const saX=x*wdX+z*wdZ, saZ=-x*wdZ+z*wdX;
+          drift += (sn(saX*0.13,saZ*0.045)*0.5+0.5)*0.10;
+          // Fine detail
+          drift += (sn(x*0.25+3,z*0.25-2)*0.5+0.5)*0.05;
+          drift += (sn(x*0.55-7,z*0.55+9)*0.5+0.5)*0.02;
+
+          // Extra height near walls (snow piles against them) — but ONLY for vertices clearly outside
+          const dOff = distToBox(x,z,officeBox);
+          const dTr = distToBox(x,z,transBox);
+          const dEx = distToBox(x,z,exitBox);
+          if(!isIndoor(x,z)){
+            // Gentle accumulation band just outside walls (1-5m from wall)
+            const wallProx = Math.max(
+              smoothstep(5,0.8,dOff),
+              smoothstep(4,0.6,dTr)*0.8,
+              smoothstep(4,0.6,dEx)*0.8
+            );
+            drift += wallProx * 0.35 * (0.6+0.4*(sn(x*0.2+4,z*0.2-6)*0.5+0.5));
           }
 
-          // Get continuous snow mask
-          let m = snowMask(x, z);
-
-          // Structure proximity boosts mask to avoid gaps near walls
-          const dOff = distToRect(x,z,office);
-          const dTr  = distToRect(x,z,transCorridor);
-          const dEx  = distToRect(x,z,exitCorridor);
-          const nOff = Math.max(0,1-smoothstep(0,4.5,dOff));
-          const nTr  = Math.max(0,1-smoothstep(0,3.2,dTr));
-          const nEx  = Math.max(0,1-smoothstep(0,3.2,dEx));
-          const structM = Math.max(nOff, nTr*0.9, nEx*0.9);
-          m = Math.max(m, structM * 0.8);
-
-          // ── Compute raw drift height (as if full coverage) ──
-          let drift = 0;
-          // Large rolling terrain
-          drift += (sn(x*0.02+3, z*0.02-5)*0.5+0.5) * 0.28;
-          // Medium undulations
-          drift += (sn(x*0.05+20, z*0.05-8)*0.5+0.5) * 0.17;
-          // Wind-aligned sastrugi
-          const saX = x*wdX + z*wdZ, saZ = -x*wdZ + z*wdX;
-          drift += (sn(saX*0.15, saZ*0.05)*0.5+0.5) * 0.09;
-          // Fine detail
-          drift += (sn(x*0.28+3, z*0.28-2)*0.5+0.5) * 0.04;
-
-          // Accumulation against walls
-          const wallAccum = nOff*0.45 + nTr*0.30 + nEx*0.28;
-          drift += wallAccum * (0.6+0.4*(sn(x*0.2+4,z*0.2-6)*0.5+0.5));
-
-          // Seal strip against wall bases
-          drift += Math.max(0,1-smoothstep(0,0.6,dOff))*0.12;
-          drift += Math.max(0,1-smoothstep(0,0.5,dTr))*0.09;
-          drift += Math.max(0,1-smoothstep(0,0.5,dEx))*0.09;
-
           // Edge fade
-          drift *= (1 - smootherstep(RADIUS*0.82, RADIUS*0.97, edgeR));
+          drift *= (1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
 
-          // ── KEY: smooth continuous blend from hidden → ground → snow surface ──
-          // m=0 → y=HIDDEN_Y (below lunar ground, invisible)
-          // m→1 → y=GROUND_Y + drift (full snow)
-          // Transition is perfectly smooth because m is continuous
+          // ── Continuous Y: m=0→hidden, m=1→full snow ──
           const snowSurface = GROUND_Y + drift;
           const y = HIDDEN_Y + (snowSurface - HIDDEN_Y) * m;
-
           pos.setY(i, y);
         }
 
         pos.needsUpdate = true;
         snowGeom.computeVertexNormals();
 
-        // ── Normal map: multi-scale snow surface detail ──
-        const nmSize = 768;
-        const nmCv = document.createElement('canvas'); nmCv.width=nmSize; nmCv.height=nmSize;
-        const nmCtx = nmCv.getContext('2d');
-        const nmd = nmCtx.createImageData(nmSize, nmSize); const nd = nmd.data;
-        for(let py=0;py<nmSize;py++){
-          for(let px=0;px<nmSize;px++){
-            const idx=(py*nmSize+px)*4;
-            const nx=px/nmSize*26, ny=py/nmSize*26;
-            let dx2 = sn(nx*2.5+100,ny*2.5)*0.35;
-            dx2 += sn(nx*6+50,ny*6)*0.22;
-            dx2 += sn(nx*14,ny*14+30)*0.12;
-            dx2 += sn(nx*30+17,ny*30-11)*0.05;
-            let dy2 = sn(nx*2.5,ny*2.5+200)*0.35;
-            dy2 += sn(nx*6,ny*6+80)*0.22;
-            dy2 += sn(nx*14+70,ny*14)*0.12;
-            dy2 += sn(nx*30-9,ny*30+22)*0.05;
-            // Sastrugi ridges in normals
-            const sa2 = nx*0.866+ny*0.5, sb2 = -nx*0.5+ny*0.866;
-            dx2 += sn(sa2*7,sb2*2.5)*0.07;
+        // ── Snow normal map ──
+        const nmS=768;
+        const nmCv=document.createElement('canvas'); nmCv.width=nmS; nmCv.height=nmS;
+        const nmCtx=nmCv.getContext('2d');
+        const nmd=nmCtx.createImageData(nmS,nmS); const nd=nmd.data;
+        for(let py=0;py<nmS;py++){
+          for(let px=0;px<nmS;px++){
+            const idx=(py*nmS+px)*4;
+            const nx=px/nmS*28, ny=py/nmS*28;
+            let dx2 = sn(nx*2.2+100,ny*2.2)*0.32;
+            dx2 += sn(nx*5.5+50,ny*5.5)*0.22;
+            dx2 += sn(nx*13,ny*13+30)*0.13;
+            dx2 += sn(nx*28+17,ny*28-11)*0.06;
+            let dy2 = sn(nx*2.2,ny*2.2+200)*0.32;
+            dy2 += sn(nx*5.5,ny*5.5+80)*0.22;
+            dy2 += sn(nx*13+70,ny*13)*0.13;
+            dy2 += sn(nx*28-9,ny*28+22)*0.06;
+            // Wind-aligned ridges
+            const sa=nx*0.866+ny*0.5, sb=-nx*0.5+ny*0.866;
+            dx2 += sn(sa*6.5,sb*2)*0.06;
+            // Sparkle
+            const sp = sn(nx*42+333,ny*42-222);
+            if(sp>0.6) dx2 += (sp-0.6)*0.3*(Math.sin(px*17.3+py*11.7)>0?1:-1);
             nd[idx]=Math.floor(Math.max(0,Math.min(255,(dx2*0.5+0.5)*255)));
             nd[idx+1]=Math.floor(Math.max(0,Math.min(255,(dy2*0.5+0.5)*255)));
-            nd[idx+2]=210; nd[idx+3]=255;
+            nd[idx+2]=212; nd[idx+3]=255;
           }
         }
         nmCtx.putImageData(nmd,0,0);
-        const snowNorm = new THREE.CanvasTexture(nmCv);
+        const snowNorm=new THREE.CanvasTexture(nmCv);
         snowNorm.wrapS=snowNorm.wrapT=THREE.RepeatWrapping;
-        snowNorm.repeat.set(48,48);
+        snowNorm.repeat.set(50,50);
 
         const snowMat = new THREE.MeshStandardMaterial({
-          color: 0xeaf0f5, roughness: 0.96, metalness: 0.0,
-          normalMap: snowNorm, normalScale: new THREE.Vector2(0.38,0.38),
-          envMapIntensity: 0.06, side: THREE.FrontSide, depthWrite: true
+          color:0xeaf1f6, roughness:0.95, metalness:0.0,
+          normalMap:snowNorm, normalScale:new THREE.Vector2(0.4,0.4),
+          envMapIntensity:0.07, side:THREE.FrontSide, depthWrite:true
         });
-        const snowMesh = new THREE.Mesh(snowGeom, snowMat);
-        snowMesh.receiveShadow = true; snowMesh.frustumCulled = false;
+        const snowMesh = new THREE.Mesh(snowGeom,snowMat);
+        snowMesh.receiveShadow=true; snowMesh.frustumCulled=false;
         this.el.sceneEl.object3D.add(snowMesh);
         this._meshes.push(snowMesh);
       },
       remove: function () {
         this._meshes.forEach(function(m){
-          if(m.parent) m.parent.remove(m);
+          if(m.parent)m.parent.remove(m);
           m.geometry.dispose();
-          if(m.material.map) m.material.map.dispose();
-          if(m.material.normalMap) m.material.normalMap.dispose();
+          if(m.material.map)m.material.map.dispose();
+          if(m.material.normalMap)m.material.normalMap.dispose();
           m.material.dispose();
         });
       }
@@ -1470,7 +1468,6 @@ AFRAME.registerComponent('hand-clamp', {
     const camPos = getCamWorldPos();
     const target = getTerminalWorldPoint(state.active);
     const dir = target.sub(camPos).setY(0).normalize();
-    // Build world-space forward from look-controls yaw + rig rotation
     const yp = getYawPitchObjects();
     const lcYaw = yp && yp.yaw ? yp.yaw.rotation.y : 0;
     const totalYaw = lcYaw + rig.object3D.rotation.y;
