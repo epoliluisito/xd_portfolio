@@ -706,13 +706,14 @@ AFRAME.registerComponent('rig-walk', {
         const HIDDEN_Y = -0.25;
 
         // ── Interior volumes (snow must NEVER appear here) ──
-        // These are the air-space inside walls — tight to inner wall faces
-        const officeIn  = { x1:-6.85, x2:6.85, z1:-81.35, z2:-68.65 };
-        const transIn   = { x1:2.55,  x2:6.45, z1:-68.5,  z2:-56.5  };
-        const exitIn    = { x1:-6.45, x2:-2.55,z1:-96.5,  z2:-84.5  };
-        // Doorway bridge zones (the opening gaps in the walls)
-        const doorN     = { x1:3.15,  x2:5.85, z1:-69.2,  z2:-67.8  };
-        const doorS     = { x1:-5.85, x2:-3.15,z1:-82.2,  z2:-80.8  };
+        // Shrunk ~0.6m INWARD from inner wall faces so snow mesh overlaps
+        // slightly into wall geometry — walls hide it, eliminates dark gaps
+        const officeIn  = { x1:-6.25, x2:6.25, z1:-80.75, z2:-69.25 };
+        const transIn   = { x1:3.15,  x2:5.85, z1:-68.0,  z2:-57.0  };
+        const exitIn    = { x1:-5.85, x2:-3.15,z1:-96.0,  z2:-85.0  };
+        // Doorway bridge zones (tight to the actual opening)
+        const doorN     = { x1:3.5,   x2:5.5,  z1:-69.0,  z2:-68.2  };
+        const doorS     = { x1:-5.5,  x2:-3.5, z1:-81.8,  z2:-81.0  };
 
         // ── Outer shells (for wall-accumulation distance) ──
         // These include the wall thickness — snow piles against these outer faces
@@ -930,26 +931,29 @@ AFRAME.registerComponent('rig-walk', {
 
           const m=snowMask(x,z);
 
-          // ── Drift height ──
+          // ── Drift height: gentle rolling (visual detail via normal map) ──
           let drift=0;
-          drift+=(sn(x*0.018+3,z*0.018-5)*0.5+0.5)*0.30;
-          drift+=(sn(x*0.048+20,z*0.048-8)*0.5+0.5)*0.18;
+          // Very large gentle terrain rolls
+          drift+=(sn(x*0.012+3,z*0.012-5)*0.5+0.5)*0.25;
+          // Medium undulations
+          drift+=(sn(x*0.032+20,z*0.032-8)*0.5+0.5)*0.14;
+          // Gentle sastrugi
           const saX=x*wdX+z*wdZ,saZ=-x*wdZ+z*wdX;
-          drift+=(sn(saX*0.13,saZ*0.045)*0.5+0.5)*0.10;
-          drift+=(sn(x*0.25+3,z*0.25-2)*0.5+0.5)*0.05;
-          drift+=(sn(x*0.55-7,z*0.55+9)*0.5+0.5)*0.02;
+          drift+=(sn(saX*0.07,saZ*0.025)*0.5+0.5)*0.07;
+          // Subtle fine variation (won't cause visible faceting)
+          drift+=(sn(x*0.1+3,z*0.1-2)*0.5+0.5)*0.03;
 
-          // ── Wall accumulation: snow piles against outer building surfaces ──
-          if(!isIndoor(x,z) && !inWallVolume(x,z)){
+          // ── Wall accumulation: snow banks against outer building surfaces ──
+          if(!isIndoor(x,z)){
             const dw=distToWalls(x,z);
-            // Thick drift right at wall (0-1m), tapering over 6m
-            const wallDrift=smoothstep(6,0,dw);
-            // Vary height along wall face for organic look
-            const wallNoise=0.55+0.45*(sn(x*0.18+4,z*0.18-6)*0.5+0.5);
-            drift+=wallDrift*0.50*wallNoise;
-            // Extra thick right at base (0-0.4m) — snow banked tight against wall
-            const baseDrift=smoothstep(0.5,0,dw);
-            drift+=baseDrift*0.15;
+            // Drift tapering over 8m, thickest right at wall
+            const wallDrift=smootherstep(8,0,dw);
+            // Organic variation along wall face
+            const wallNoise=0.5+0.5*(sn(x*0.15+4,z*0.15-6)*0.5+0.5);
+            drift+=wallDrift*0.55*wallNoise;
+            // Extra bank right at base (0-0.8m)
+            const baseDrift=smootherstep(0.8,0,dw);
+            drift+=baseDrift*0.20;
           }
 
           drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
@@ -996,7 +1000,7 @@ AFRAME.registerComponent('rig-walk', {
 
         const snowMat=new THREE.MeshStandardMaterial({
           color:0xeaf1f6,roughness:0.95,metalness:0.0,
-          normalMap:snowNorm,normalScale:new THREE.Vector2(0.4,0.4),
+          normalMap:snowNorm,normalScale:new THREE.Vector2(0.52,0.52),
           envMapIntensity:0.07,side:THREE.FrontSide,depthWrite:true
         });
         const snowMesh=new THREE.Mesh(snowGeom,snowMat);
