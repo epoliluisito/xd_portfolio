@@ -455,7 +455,7 @@ AFRAME.registerComponent('rig-walk', {
     });
 
 
-    // ── Snow: wind-driven particles, sparse→intense over 30s ──────────────────
+    // ── Snow: cinematic wind-driven particles with turbulence & swirl ──────────
     AFRAME.registerComponent('snow', {
       schema: {
         count:       { type: 'number', default: 4000 },
@@ -476,38 +476,89 @@ AFRAME.registerComponent('rig-walk', {
         const d = this.data;
         const N = d.count;
         this._officeCenter = { x: 0, z: -75 };
+        this._platformCenter = { x: 0, z: 0 };
+        this._platformClearR = 6.0;
         this._sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : function(){ return 0; };
 
         this._fallSpeeds = new Float32Array(N);
+        this._baseFallSpeeds = new Float32Array(N);
         this._driftX = new Float32Array(N);
         this._driftZ = new Float32Array(N);
         this._spawnDelay = new Float32Array(N);
+        this._phase = new Float32Array(N);       // per-particle phase offset for swirl
+        this._swirlR = new Float32Array(N);      // swirl radius per particle
+        this._swirlSpeed = new Float32Array(N);  // swirl angular speed
+        this._turbScale = new Float32Array(N);   // turbulence sensitivity
+        this._sizes = new Float32Array(N);       // per-particle size
         const positions = new Float32Array(N * 3);
 
         for (let i = 0; i < N; i++) {
           this._spawnDelay[i] = Math.pow(Math.random(), 1.6) * d.rampTime;
           positions[i * 3] = positions[i * 3 + 1] = positions[i * 3 + 2] = 9999;
-          this._fallSpeeds[i] = d.fallSpeed + (Math.random() - 0.5) * d.fallVar;
-          this._driftX[i] = (Math.random() - 0.5) * 0.45;
-          this._driftZ[i] = (Math.random() - 0.5) * 0.45;
+
+          // Varied fall speeds — lighter flakes fall slower, heavier faster
+          const weight = Math.random();
+          this._baseFallSpeeds[i] = d.fallSpeed * (0.35 + weight * 0.95);
+          this._fallSpeeds[i] = this._baseFallSpeeds[i];
+
+          this._driftX[i] = (Math.random() - 0.5) * 0.5;
+          this._driftZ[i] = (Math.random() - 0.5) * 0.5;
+
+          // Swirl: each flake gently spirals as it falls
+          this._phase[i] = Math.random() * Math.PI * 2;
+          this._swirlR[i] = 0.02 + Math.random() * 0.14;
+          this._swirlSpeed[i] = (0.8 + Math.random() * 2.4) * (Math.random() < 0.5 ? 1 : -1);
+          this._turbScale[i] = 0.5 + Math.random() * 1.0;
+
+          // Size variation — small flakes are numerous, large ones rare
+          this._sizes[i] = d.size * (0.4 + Math.pow(Math.random(), 2.2) * 1.4);
         }
 
         const geom = new THREE.BufferGeometry();
         geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geom.setAttribute('size', new THREE.BufferAttribute(this._sizes, 1));
 
+        // Soft, slightly glowing snowflake sprite
         const cv = document.createElement('canvas');
-        cv.width = 32; cv.height = 32;
+        cv.width = 64; cv.height = 64;
         const ctx = cv.getContext('2d');
-        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-        grad.addColorStop(0, 'rgba(255,255,255,0.95)');
-        grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = grad; ctx.fillRect(0, 0, 32, 32);
+        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0,    'rgba(255,255,255,1.0)');
+        grad.addColorStop(0.15, 'rgba(255,255,255,0.85)');
+        grad.addColorStop(0.4,  'rgba(240,248,255,0.45)');
+        grad.addColorStop(0.7,  'rgba(220,235,255,0.12)');
+        grad.addColorStop(1,    'rgba(200,220,255,0)');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, 64, 64);
         const spriteTex = new THREE.CanvasTexture(cv);
 
-        const mat = new THREE.PointsMaterial({
-          map: spriteTex, size: d.size, transparent: true, opacity: 0.92,
-          depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true, color: 0xffffff
+        // Custom shader material for per-particle size
+        const mat = new THREE.ShaderMaterial({
+          uniforms: {
+            uTex: { value: spriteTex },
+            uBaseSize: { value: d.size },
+          },
+          vertexShader: `
+            attribute float size;
+            varying float vAlpha;
+            void main() {
+              vec4 mv = modelViewMatrix * vec4(position, 1.0);
+              gl_PointSize = size * (800.0 / -mv.z);
+              gl_PointSize = clamp(gl_PointSize, 0.5, 24.0);
+              vAlpha = smoothstep(0.5, 2.0, gl_PointSize);
+              gl_Position = projectionMatrix * mv;
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D uTex;
+            varying float vAlpha;
+            void main() {
+              vec4 tex = texture2D(uTex, gl_PointCoord);
+              gl_FragColor = vec4(tex.rgb, tex.a * vAlpha * 0.92);
+            }
+          `,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.NormalBlending,
         });
 
         this._points = new THREE.Points(geom, mat);
@@ -516,7 +567,11 @@ AFRAME.registerComponent('rig-walk', {
 
         this._elapsed = 0;
         this._posAttr = geom.getAttribute('position');
+        this._sizeAttr = geom.getAttribute('size');
         this._spawned = new Uint8Array(N);
+
+        // Wind state — smoothly varying global wind
+        this._windState = { x: d.windX, z: d.windZ, targetX: d.windX, targetZ: d.windZ, timer: 0 };
       },
 
       _isIndoor: function (x, z) {
@@ -526,25 +581,37 @@ AFRAME.registerComponent('rig-walk', {
         return false;
       },
 
+      _nearPlatform: function (x, z) {
+        const dx = x - this._platformCenter.x, dz = z - this._platformCenter.z;
+        return Math.sqrt(dx*dx + dz*dz) < this._platformClearR;
+      },
+
       _zoneMask: function (x, z) {
         const sn = this._sn;
         const cx = this._officeCenter.x, cz = this._officeCenter.z;
         const dx = x - cx, dz = z - cz;
         const r = Math.sqrt(dx*dx + dz*dz);
 
-        // Keep snow concentrated near office, with noisy/organic outer contour.
+        // Hard platform exclusion
+        const pdx = x - this._platformCenter.x, pdz = z - this._platformCenter.z;
+        const pDist = Math.sqrt(pdx*pdx + pdz*pdz);
+        if (pDist < this._platformClearR - 1.0) return 0;
+        let platformFade = 1.0;
+        if (pDist < this._platformClearR) {
+          platformFade = (pDist - (this._platformClearR - 1.0)) / 1.0;
+          platformFade = Math.max(0, Math.min(1, platformFade));
+          platformFade = platformFade * platformFade * (3 - 2 * platformFade);
+        }
+
         const nA = sn(x * 0.05, z * 0.05) * 6.5;
         const nB = sn(x * 0.11 + 22, z * 0.11 - 9) * 2.5;
-        const outerR = 28 + nA + nB;   // irregular boundary
+        const outerR = 28 + nA + nB;
         const innerFull = 15 + sn(x * 0.08 - 30, z * 0.08 + 17) * 1.5;
 
-        // Soft ramp between no-snow and full-snow
         let m = (outerR - r) / Math.max(0.001, (outerR - innerFull));
         m = Math.max(0, Math.min(1, m));
         m = m * m * (3 - 2 * m);
 
-        // Hard clear near spawn-facing side (camera starts looking opposite office, around z ~0 / - side path)
-        // Fade out all snow when approaching origin region.
         const spawnClearR = 34;
         const rSpawn = Math.sqrt(x*x + z*z);
         let spawnFade = (rSpawn - 20) / (spawnClearR - 20);
@@ -552,9 +619,10 @@ AFRAME.registerComponent('rig-walk', {
         spawnFade = spawnFade * spawnFade * (3 - 2 * spawnFade);
         m *= spawnFade;
 
-        // Directional suppression toward the front-facing side to avoid visible edge line there.
-        const towardSpawn = Math.max(0, (z + 75) / 75); // 1 near z=0, 0 at office
+        const towardSpawn = Math.max(0, (z + 75) / 75);
         m *= (1 - 0.7 * towardSpawn);
+
+        m *= platformFade;
 
         return Math.max(0, Math.min(1, m));
       },
@@ -564,22 +632,25 @@ AFRAME.registerComponent('rig-walk', {
         const arr = this._posAttr.array;
         let x, z, tries = 0;
         do {
-          // sample around office, not around camera
           x = this._officeCenter.x + (Math.random() - 0.5) * 70;
           z = this._officeCenter.z + (Math.random() - 0.5) * 70;
           tries++;
           var mask = this._zoneMask(x, z);
-          if (mask > 0.02 && !this._isIndoor(x, z) && Math.random() < mask) break;
+          if (mask > 0.02 && !this._isIndoor(x, z) && !this._nearPlatform(x, z) && Math.random() < mask) break;
         } while (tries < 20);
 
-        if (tries >= 20 || this._isIndoor(x, z) || this._zoneMask(x, z) <= 0.02) {
+        if (tries >= 20 || this._isIndoor(x, z) || this._nearPlatform(x, z) || this._zoneMask(x, z) <= 0.02) {
           arr[i * 3] = arr[i * 3 + 1] = arr[i * 3 + 2] = 9999;
           return;
         }
 
         arr[i * 3] = x;
-        arr[i * 3 + 1] = d.ceiling + Math.random() * 8;
+        arr[i * 3 + 1] = d.ceiling + Math.random() * 10;
         arr[i * 3 + 2] = z;
+
+        // Re-randomize swirl on respawn for variety
+        this._phase[i] = Math.random() * Math.PI * 2;
+        this._swirlR[i] = 0.02 + Math.random() * 0.14;
       },
 
       tick: function (t, dt) {
@@ -587,24 +658,63 @@ AFRAME.registerComponent('rig-walk', {
         const dtS = Math.min(dt / 1000, 0.05);
         this._elapsed += dtS;
         const d = this.data, N = d.count, arr = this._posAttr.array, elapsed = this._elapsed;
+        const sn = this._sn;
 
-        const gustPhase = elapsed * d.gustFreq * Math.PI * 2;
-        const gustX = Math.sin(gustPhase) * d.gustStr;
-        const gustZ = Math.cos(gustPhase * 0.7) * d.gustStr * 0.6;
-        const wx = d.windX + gustX;
-        const wz = d.windZ + gustZ;
+        // Evolving wind: smoothly shift wind direction with gust bursts
+        const ws = this._windState;
+        ws.timer -= dtS;
+        if (ws.timer <= 0) {
+          ws.targetX = d.windX + (Math.random() - 0.4) * d.gustStr * 2.5;
+          ws.targetZ = d.windZ + (Math.random() - 0.5) * d.gustStr * 2.0;
+          ws.timer = 1.5 + Math.random() * 4.0;
+        }
+        const windLerp = 1 - Math.exp(-1.2 * dtS);
+        ws.x += (ws.targetX - ws.x) * windLerp;
+        ws.z += (ws.targetZ - ws.z) * windLerp;
+
+        // Global gust oscillation layers
+        const g1 = Math.sin(elapsed * 0.47) * 0.35;
+        const g2 = Math.sin(elapsed * 1.13 + 2.0) * 0.18;
+        const g3 = Math.sin(elapsed * 0.19 + 5.0) * 0.5;
+        const globalWindX = ws.x + g1 + g2;
+        const globalWindZ = ws.z + (g3 * 0.4) + Math.cos(elapsed * 0.31) * 0.2;
 
         for (let i = 0; i < N; i++) {
           if (!this._spawned[i]) {
             if (elapsed >= this._spawnDelay[i]) { this._spawned[i] = 1; this._respawn(i); }
             continue;
           }
-          arr[i * 3]     += (wx + this._driftX[i]) * dtS;
-          arr[i * 3 + 1] -= this._fallSpeeds[i] * dtS;
-          arr[i * 3 + 2] += (wz + this._driftZ[i]) * dtS;
 
-          const m = this._zoneMask(arr[i * 3], arr[i * 3 + 2]);
-          if (arr[i * 3 + 1] < d.floor || this._isIndoor(arr[i * 3], arr[i * 3 + 2]) || m < 0.02) {
+          const px = arr[i * 3];
+          const py = arr[i * 3 + 1];
+          const pz = arr[i * 3 + 2];
+
+          // Spatial turbulence field (noise-based, varies with position and time)
+          const turbT = elapsed * 0.3;
+          const turbX = sn(px * 0.06 + turbT, pz * 0.06 - turbT * 0.7) * this._turbScale[i] * 0.9;
+          const turbZ = sn(px * 0.06 - 11 + turbT * 0.5, pz * 0.06 + 7 + turbT) * this._turbScale[i] * 0.7;
+          // Vertical turbulence — flakes occasionally stall or speed up
+          const turbY = sn(px * 0.04 + 50, pz * 0.04 + elapsed * 0.25) * 0.45;
+
+          // Swirl (helical descent)
+          this._phase[i] += this._swirlSpeed[i] * dtS;
+          const swirlX = Math.cos(this._phase[i]) * this._swirlR[i];
+          const swirlZ = Math.sin(this._phase[i]) * this._swirlR[i];
+
+          // Height-dependent wind: stronger wind higher up, calmer near ground
+          const heightFactor = Math.min(1.0, Math.max(0.25, py / d.ceiling));
+          const localWindX = globalWindX * heightFactor;
+          const localWindZ = globalWindZ * heightFactor;
+
+          // Integrate
+          arr[i * 3]     += (localWindX + this._driftX[i] + turbX + swirlX) * dtS;
+          arr[i * 3 + 1] -= (this._baseFallSpeeds[i] - turbY * 0.3) * dtS;
+          arr[i * 3 + 2] += (localWindZ + this._driftZ[i] + turbZ + swirlZ) * dtS;
+
+          // Respawn conditions
+          const nx = arr[i * 3], nz = arr[i * 3 + 2];
+          const m = this._zoneMask(nx, nz);
+          if (arr[i * 3 + 1] < d.floor || this._isIndoor(nx, nz) || this._nearPlatform(nx, nz) || m < 0.02) {
             this._respawn(i);
           }
         }
@@ -656,19 +766,20 @@ AFRAME.registerComponent('rig-walk', {
       };
     })(window._snoise={});
 
-    // ── Snow ground: procedural displaced mesh + procedural normal map ─────────
+    // ── Snow ground: cinematic displaced mesh with realistic drifts & sparkle ──
     AFRAME.registerComponent('snow-ground', {
       init: function () {
         const sn = window._snoise.simplex2;
 
         const RADIUS = 120;
-        const SEG = 360;
+        const SEG = 420;          // higher res for smoother drifts
         const BASE_Y = 0.08;
 
         const office = { x1: -7.5, x2: 7.5, z1: -82, z2: -68, cx: 0, cz: -75 };
         const transCorridor = { x1: 2.0, x2: 7.0, z1: -69, z2: -56 };
         const exitCorridor = { x1: -7.0, x2: -2.0, z1: -97, z2: -84 };
-        const platformR = 2.1;
+        const platformCenter = { x: 0, z: 0 };
+        const platformClearR = 5.5;
 
         function isInsideRectPad(x,z,r,pad){ return x>r.x1-pad && x<r.x2+pad && z>r.z1-pad && z<r.z2+pad; }
         function distToRectEdge(x,z,r){
@@ -680,36 +791,63 @@ AFRAME.registerComponent('rig-walk', {
           return -toSides;
         }
         function smoothstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*(3-2*t); }
+        // Quintic smoothstep for ultra-smooth transitions
+        function smootherstep(a,b,x){ let t=(x-a)/(b-a); t=Math.max(0,Math.min(1,t)); return t*t*t*(t*(t*6-15)+10); }
 
         function zoneMask(x, z) {
-          // Domain-warped radial field for a softer, less polygonal snow boundary.
-          const wx = x + sn(x*0.035 + 41, z*0.035 - 17) * 7.0 + sn(x*0.09, z*0.09) * 2.0;
-          const wz = z + sn(x*0.035 - 13, z*0.035 + 23) * 7.0 + sn(x*0.09 + 7, z*0.09 - 9) * 2.0;
+          // Domain-warped radial field for organic snow boundary
+          const wx = x + sn(x*0.035 + 41, z*0.035 - 17) * 7.5 + sn(x*0.09, z*0.09) * 2.5;
+          const wz = z + sn(x*0.035 - 13, z*0.035 + 23) * 7.5 + sn(x*0.09 + 7, z*0.09 - 9) * 2.5;
           const dx = wx - office.cx, dz = wz - office.cz;
           const r = Math.sqrt(dx*dx + dz*dz);
 
           const n1 = sn(wx*0.045, wz*0.045) * 6.0;
-          const n2 = sn(wx*0.10 + 13.4, wz*0.10 - 8.2) * 2.8;
-          const n3 = sn(wx*0.18 - 3.1, wz*0.18 + 6.4) * 1.0;
+          const n2 = sn(wx*0.10 + 13.4, wz*0.10 - 8.2) * 3.2;
+          const n3 = sn(wx*0.18 - 3.1, wz*0.18 + 6.4) * 1.2;
 
-          const outer = 31 + n1 + n2 + n3;
-          const inner = 17 + sn(wx*0.07 - 5, wz*0.07 + 14) * 1.8;
-          let m = 1 - smoothstep(inner, outer, r);
+          const outer = 32 + n1 + n2 + n3;
+          const inner = 16 + sn(wx*0.07 - 5, wz*0.07 + 14) * 2.0;
+          let m = 1 - smootherstep(inner, outer, r);
 
-          // Spawn-facing clear side, but avoid a hard geometric line.
+          // Spawn-facing clear side with organic noise
           const spawnR = Math.sqrt(x*x + z*z);
-          let spawnFade = smoothstep(16, 40, spawnR);
+          let spawnFade = smootherstep(16, 42, spawnR);
           const frontBias = Math.max(0, Math.min(1, (z + 75) / 75));
-          const frontNoise = 0.88 + 0.12 * (sn(x*0.06 + 60, z*0.06 - 10) * 0.5 + 0.5);
-          m *= spawnFade * (1 - 0.58 * frontBias * frontNoise);
+          const frontNoise = 0.85 + 0.15 * (sn(x*0.06 + 60, z*0.06 - 10) * 0.5 + 0.5);
+          m *= spawnFade * (1 - 0.6 * frontBias * frontNoise);
 
-          // Boundary breakup without creating isolated holes/islands.
+          // Platform exclusion — hard clear zone around platform
+          const pdx = x - platformCenter.x, pdz = z - platformCenter.z;
+          const pDist = Math.sqrt(pdx*pdx + pdz*pdz);
+          const platFade = smootherstep(platformClearR - 1.5, platformClearR + 2.0, pDist);
+          m *= platFade;
+
+          // Boundary breakup — organic feathered edge
           const edgeNoise = sn(x*0.14 + 100, z*0.14 - 100) * 0.5 + 0.5;
+          const edgeNoise2 = sn(x*0.28 - 50, z*0.28 + 50) * 0.5 + 0.5;
           const edgeBoost = smoothstep(0.0, 0.35, m) * (1 - smoothstep(0.35, 0.9, m));
-          m += (edgeNoise - 0.5) * 0.16 * edgeBoost;
+          m += (edgeNoise - 0.5) * 0.18 * edgeBoost;
+          m += (edgeNoise2 - 0.5) * 0.08 * edgeBoost;
+
+          // Scattered thin patches just beyond main snow boundary (realistic sparse coverage)
+          if (m < 0.04 && pDist > platformClearR + 3.0) {
+            const patchNoise = sn(x * 0.12 + 200, z * 0.12 - 200);
+            if (patchNoise > 0.55) {
+              const patchStrength = (patchNoise - 0.55) / 0.45;
+              const distFromOffice = Math.sqrt((x-office.cx)*(x-office.cx) + (z-office.cz)*(z-office.cz));
+              if (distFromOffice < outer + 8) {
+                m = Math.max(m, patchStrength * 0.25);
+              }
+            }
+          }
 
           return Math.max(0, Math.min(1, m));
         }
+
+        // Wind direction for asymmetric drift patterns
+        const windAngle = Math.atan2(0.3, 0.8); // matches snow windX/windZ
+        const windDirX = Math.cos(windAngle);
+        const windDirZ = Math.sin(windAngle);
 
         const geom = new THREE.PlaneGeometry(RADIUS * 2, RADIUS * 2, SEG, SEG);
         geom.rotateX(-Math.PI / 2);
@@ -720,62 +858,89 @@ AFRAME.registerComponent('rig-walk', {
           const edgeR = Math.sqrt(x*x + z*z);
           if (edgeR > RADIUS * 0.985) { pos.setY(i, -1.0); continue; }
 
-          const platformDist = Math.sqrt(x*x + z*z) - platformR;
-          const inPlatform = platformDist < -0.05;
+          // Platform exclusion
+          const platDx = x - platformCenter.x, platDz = z - platformCenter.z;
+          const platDist = Math.sqrt(platDx*platDx + platDz*platDz);
+          if (platDist < platformClearR - 0.5) { pos.setY(i, -0.55); continue; }
+
           const inOffice = isInsideRectPad(x,z,office,-0.10);
           const inTrans = isInsideRectPad(x,z,transCorridor,-0.10);
           const inExit = isInsideRectPad(x,z,exitCorridor,-0.10);
-          if (inPlatform || inOffice || inTrans || inExit) { pos.setY(i, -0.55); continue; }
+          if (inOffice || inTrans || inExit) { pos.setY(i, -0.55); continue; }
 
           let m = zoneMask(x, z);
 
-          // Structure proximity can force local snow so we don't get visible floor gaps near walls.
+          // Structure proximity forces local snow (no dark gaps near walls)
           const dOffice = distToRectEdge(x,z,office);
           const dTrans = distToRectEdge(x,z,transCorridor);
           const dExit = distToRectEdge(x,z,exitCorridor);
-          const dPlat = platformDist;
+          const dPlat = platDist - platformClearR;
 
-          const nearOffice = Math.max(0, 1 - smoothstep(0.0, 4.4, dOffice));
-          const nearTrans  = Math.max(0, 1 - smoothstep(0.0, 3.0, dTrans));
-          const nearExit   = Math.max(0, 1 - smoothstep(0.0, 3.0, dExit));
-          const nearPlat   = Math.max(0, 1 - smoothstep(0.0, 2.8, dPlat));
+          const nearOffice = Math.max(0, 1 - smoothstep(0.0, 4.8, dOffice));
+          const nearTrans  = Math.max(0, 1 - smoothstep(0.0, 3.2, dTrans));
+          const nearExit   = Math.max(0, 1 - smoothstep(0.0, 3.2, dExit));
+          const nearPlat   = Math.max(0, 1 - smoothstep(0.0, 3.0, dPlat));
           const structureMask = Math.max(nearOffice, nearTrans*0.9, nearExit*0.9, nearPlat*0.85);
 
-          // Fill small/noisy voids near the snow boundary and around architecture.
           const mEff = Math.max(m, structureMask * 0.82);
 
           if (mEff <= 0.01) { pos.setY(i, -0.35); continue; }
 
-          // Base drifts (multi-scale)
+          // ── Multi-octave height displacement (realistic snow drifts) ──
           let h = 0;
-          h += (sn(x*0.028, z*0.028) * 0.5 + 0.5) * 0.25;
-          h += (sn(x*0.07 + 20, z*0.07 - 8) * 0.5 + 0.5) * 0.16;
-          h += (sn(x*0.16 - 9, z*0.16 + 11) * 0.5 + 0.5) * 0.08;
-          h += (sn(x*0.33 + 3, z*0.33 - 2) * 0.5 + 0.5) * 0.03;
+
+          // Large rolling drifts
+          h += (sn(x*0.022 + 3, z*0.022 - 5) * 0.5 + 0.5) * 0.30;
+          // Medium undulations
+          h += (sn(x*0.055 + 20, z*0.055 - 8) * 0.5 + 0.5) * 0.18;
+          // Small ripples (wind-formed sastrugi)
+          const sastrugiX = x * windDirX + z * windDirZ;
+          const sastrugiZ = -x * windDirZ + z * windDirX;
+          h += (sn(sastrugiX*0.18, sastrugiZ*0.06) * 0.5 + 0.5) * 0.10;
+          // Fine detail
+          h += (sn(x*0.33 + 3, z*0.33 - 2) * 0.5 + 0.5) * 0.04;
+          h += (sn(x*0.65 - 7, z*0.65 + 9) * 0.5 + 0.5) * 0.015;
+
+          // Windward/leeward asymmetry — snow piles deeper on leeward side of structures
+          const windDot = (x - office.cx) * windDirX + (z - office.cz) * windDirZ;
+          const leewardBoost = smoothstep(0.0, 12.0, -windDot) * 0.12;
+          h += leewardBoost * mEff;
+
           h *= mEff;
 
-          // Soft boundary berm to hide the start of the snow zone.
-          const boundaryBand = smoothstep(0.03, 0.26, mEff) * (1 - smoothstep(0.26, 0.62, mEff));
-          h += boundaryBand * 0.18 * (0.6 + 0.4*(sn(x*0.10 + 8, z*0.10 - 12)*0.5+0.5));
+          // Soft boundary berm — natural ridge where snow starts thinning
+          const boundaryBand = smoothstep(0.03, 0.22, mEff) * (1 - smoothstep(0.22, 0.58, mEff));
+          h += boundaryBand * 0.22 * (0.5 + 0.5*(sn(x*0.10 + 8, z*0.10 - 12)*0.5+0.5));
 
-          // Accumulation around office + corridors + platform edges (volumetric integration)
+          // Accumulation drifts against architecture
           const edgeAccum =
-            nearOffice * 0.42 +
-            nearTrans  * 0.28 +
-            nearExit   * 0.24 +
-            nearPlat   * 0.22;
-          h += edgeAccum * (0.70 + 0.30*(sn(x*0.22+4, z*0.22-6)*0.5+0.5));
+            nearOffice * 0.48 +
+            nearTrans  * 0.32 +
+            nearExit   * 0.28 +
+            nearPlat   * 0.24;
+          // Vary accumulation with noise for organic look
+          const accumNoise = 0.6 + 0.4*(sn(x*0.22+4, z*0.22-6)*0.5+0.5);
+          h += edgeAccum * accumNoise;
 
-          // Extra seal strip right against edges to avoid visible dark cracks
+          // Extra: small mounds / hummocks near edges (like real wind-deposited snow)
+          const hummock = smoothstep(0.5, 2.5, dOffice) * (1 - smoothstep(2.5, 5.5, dOffice));
+          h += hummock * 0.15 * (sn(x*0.3 + 40, z*0.3 - 20)*0.5+0.5);
+
+          // Seal strip against walls (no dark cracks)
           const seal =
-            Math.max(0, 1 - smoothstep(0.0, 0.55, dOffice)) * 0.10 +
-            Math.max(0, 1 - smoothstep(0.0, 0.40, dTrans)) * 0.08 +
-            Math.max(0, 1 - smoothstep(0.0, 0.40, dExit)) * 0.08 +
-            Math.max(0, 1 - smoothstep(0.0, 0.35, dPlat)) * 0.06;
+            Math.max(0, 1 - smoothstep(0.0, 0.6, dOffice)) * 0.12 +
+            Math.max(0, 1 - smoothstep(0.0, 0.45, dTrans)) * 0.09 +
+            Math.max(0, 1 - smoothstep(0.0, 0.45, dExit)) * 0.09;
           h += seal;
 
-          // Large-scale fade at mesh edge
-          h *= (1 - smoothstep(RADIUS * 0.83, RADIUS * 0.98, edgeR));
+          // Platform rim snow lip — small accumulation ring around the clear zone
+          if (dPlat > 0 && dPlat < 3.0) {
+            const rimBand = smoothstep(0.0, 0.8, dPlat) * (1 - smoothstep(0.8, 3.0, dPlat));
+            h += rimBand * 0.18 * (0.6 + 0.4 * (sn(x*0.25 + 15, z*0.25 - 15)*0.5+0.5));
+          }
+
+          // Fade at mesh edge
+          h *= (1 - smootherstep(RADIUS * 0.82, RADIUS * 0.97, edgeR));
 
           pos.setY(i, BASE_Y + h);
         }
@@ -783,30 +948,83 @@ AFRAME.registerComponent('rig-walk', {
         pos.needsUpdate = true;
         geom.computeVertexNormals();
 
-        const nmSize = 512;
+        // ── High-detail procedural normal map with sparkle grain ──
+        const nmSize = 1024;
         const nmCv = document.createElement('canvas'); nmCv.width = nmSize; nmCv.height = nmSize;
         const nmCtx = nmCv.getContext('2d');
         const imgData = nmCtx.createImageData(nmSize, nmSize); const dd = imgData.data;
         for (let py = 0; py < nmSize; py++) {
           for (let px = 0; px < nmSize; px++) {
             const idx = (py * nmSize + px) * 4;
-            const nx = px / nmSize * 22, ny = py / nmSize * 22;
-            const dx = sn(nx*3+100, ny*3)*0.45 + sn(nx*9+50, ny*9)*0.22 + sn(nx*18, ny*18+30)*0.10;
-            const dy = sn(nx*3, ny*3+200)*0.45 + sn(nx*9, ny*9+80)*0.22 + sn(nx*18+70, ny*18)*0.10;
-            dd[idx] = Math.floor((dx * 0.5 + 0.5) * 255);
-            dd[idx+1] = Math.floor((dy * 0.5 + 0.5) * 255);
-            dd[idx+2] = 205; dd[idx+3] = 255;
+            const nx = px / nmSize * 28, ny = py / nmSize * 28;
+
+            // Multi-scale surface detail
+            let dx = sn(nx*2.5+100, ny*2.5)*0.38;       // large undulations
+            dx += sn(nx*6+50, ny*6)*0.22;                // medium ripples
+            dx += sn(nx*14, ny*14+30)*0.12;              // fine grain
+            dx += sn(nx*32+17, ny*32-11)*0.06;           // micro sparkle grain
+
+            let dy = sn(nx*2.5, ny*2.5+200)*0.38;
+            dy += sn(nx*6, ny*6+80)*0.22;
+            dy += sn(nx*14+70, ny*14)*0.12;
+            dy += sn(nx*32-9, ny*32+22)*0.06;
+
+            // Wind-aligned sastrugi ridges in normal map
+            const saX = nx * 0.866 + ny * 0.5;  // rotated to wind direction
+            const saY = -nx * 0.5 + ny * 0.866;
+            dx += sn(saX*8, saY*2.5)*0.08;
+            dy += sn(saX*8+5, saY*2.5-3)*0.04;
+
+            // Ice crystal sparkle — random bright spots
+            const sparkle = sn(nx*45+333, ny*45-222);
+            if (sparkle > 0.65) {
+              const sp = (sparkle - 0.65) / 0.35;
+              dx += sp * 0.15 * (Math.random() > 0.5 ? 1 : -1);
+              dy += sp * 0.15 * (Math.random() > 0.5 ? 1 : -1);
+            }
+
+            dd[idx]   = Math.floor(Math.max(0, Math.min(255, (dx * 0.5 + 0.5) * 255)));
+            dd[idx+1] = Math.floor(Math.max(0, Math.min(255, (dy * 0.5 + 0.5) * 255)));
+            dd[idx+2] = 210; dd[idx+3] = 255;
           }
         }
         nmCtx.putImageData(imgData, 0, 0);
         const normalTex = new THREE.CanvasTexture(nmCv);
         normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
-        normalTex.repeat.set(44, 44);
+        normalTex.repeat.set(52, 52);
+
+        // ── Subtle color variation texture (bluish shadows in dips, warm highlights on ridges) ──
+        const colSize = 512;
+        const colCv = document.createElement('canvas'); colCv.width = colSize; colCv.height = colSize;
+        const colCtx = colCv.getContext('2d');
+        const colData = colCtx.createImageData(colSize, colSize); const cd = colData.data;
+        for (let py = 0; py < colSize; py++) {
+          for (let px = 0; px < colSize; px++) {
+            const idx = (py * colSize + px) * 4;
+            const nx = px / colSize * 20, ny = py / colSize * 20;
+            const v = sn(nx*0.8+5, ny*0.8-3) * 0.5 + 0.5; // 0..1 variation
+            // From cool blue-grey (v=0) to warm white (v=1)
+            cd[idx]   = Math.floor(225 + v * 26);   // R: 225-251
+            cd[idx+1] = Math.floor(232 + v * 20);   // G: 232-252
+            cd[idx+2] = Math.floor(240 + v * 14);   // B: 240-254
+            cd[idx+3] = 255;
+          }
+        }
+        colCtx.putImageData(colData, 0, 0);
+        const colorTex = new THREE.CanvasTexture(colCv);
+        colorTex.wrapS = colorTex.wrapT = THREE.RepeatWrapping;
+        colorTex.repeat.set(14, 14);
 
         const mat = new THREE.MeshStandardMaterial({
-          color: 0xeef2f5, roughness: 0.98, metalness: 0.0,
-          normalMap: normalTex, normalScale: new THREE.Vector2(0.35, 0.35),
-          envMapIntensity: 0.05, side: THREE.FrontSide, depthWrite: true
+          map: colorTex,
+          color: 0xeef3f7,
+          roughness: 0.95,
+          metalness: 0.0,
+          normalMap: normalTex,
+          normalScale: new THREE.Vector2(0.42, 0.42),
+          envMapIntensity: 0.08,
+          side: THREE.FrontSide,
+          depthWrite: true
         });
         const mesh = new THREE.Mesh(geom, mat);
         mesh.receiveShadow = true; mesh.frustumCulled = false;
@@ -1341,9 +1559,10 @@ AFRAME.registerComponent('hand-clamp', {
     const seat = getSeatWorldPoint(state.active);
     const target = getTerminalWorldPoint(state.active);
     const start = { x: rp.x, z: rp.z, y: cam.object3D.position.y, yaw: state.saved.yaw, pitch: state.saved.pitch };
+    const rigYaw = rig.object3D.rotation.y;
     const end = {
       x: seat.x, z: seat.z, y: 1.18,
-      yaw: yawToFace({x:seat.x,z:seat.z}, target),
+      yaw: yawToFace({x:seat.x,z:seat.z}, target) - rigYaw,
       pitch: pitchToFace(rig.object3D.position.y, {x:seat.x,z:seat.z}, target, 1.18)
     };
     state.mode = 'autopilot';
