@@ -181,6 +181,57 @@
       display:none;
     }
 
+
+
+    .page-nav-arrows{
+      position:fixed;
+      inset:0;
+      z-index:9997;
+      pointer-events:none;
+    }
+    .page-nav-arrow{
+      position:fixed;
+      left:50%;
+      transform:translateX(-50%);
+      width:18px;
+      height:12px;
+      user-select:none;
+      pointer-events:none;
+      opacity:.9;
+      font-size:0;
+      line-height:0;
+      filter:drop-shadow(0 0 2px rgba(255,255,255,.18));
+    }
+    .page-nav-arrow::before,
+    .page-nav-arrow::after{
+      content:"";
+      position:absolute;
+      top:4px;
+      width:10px;
+      height:2px;
+      background:rgba(255,255,255,.88);
+    }
+    .page-nav-arrow::before{
+      left:0;
+      transform-origin:right center;
+      transform:rotate(35deg);
+    }
+    .page-nav-arrow::after{
+      right:0;
+      transform-origin:left center;
+      transform:rotate(-35deg);
+    }
+    .page-nav-arrow--up{ top:10px; transform:translateX(-50%) rotate(180deg); }
+    .page-nav-arrow--down{ bottom:10px; }
+    .page-nav-arrow[hidden]{ display:none !important; }
+    @media (max-width:860px){
+      .page-nav-arrow{ width:16px; height:10px; }
+      .page-nav-arrow::before,
+      .page-nav-arrow::after{ top:3px; width:9px; }
+      .page-nav-arrow--up{ top:8px; }
+      .page-nav-arrow--down{ bottom:8px; }
+    }
+
     @media (max-width:860px){
       :root{--hdr-pad-x:20px;--hdr-pad-top:22px}
       .nav{display:none}
@@ -219,6 +270,13 @@
     </section>
   </main>
 
+  <div class="page-nav-arrows" aria-hidden="true">
+    <span class="page-nav-arrow page-nav-arrow--up" id="pageNavUp" hidden>^</span>
+    <span class="page-nav-arrow page-nav-arrow--down" id="pageNavDown" hidden>v</span>
+  </div>
+
+
+
   <input class="nav-state" type="checkbox" id="navState" aria-hidden="true" />
   <label class="nav-backdrop" for="navState" aria-hidden="true"></label>
   <aside class="nav-panel" id="navPanel" aria-hidden="true">
@@ -243,6 +301,56 @@
       }
       if (s) s.addEventListener('change', sync);
       sync();
+
+      const wrap = document.querySelector('.snap-wrap');
+      const blocks = wrap ? Array.from(wrap.querySelectorAll('.page-block')) : [];
+      const upBtn = document.getElementById('pageNavUp');
+      const downBtn = document.getElementById('pageNavDown');
+      let currentIndex = 0;
+
+      function updateArrows(){
+        if (!blocks.length) return;
+        if (upBtn) upBtn.hidden = currentIndex <= 0;
+        if (downBtn) downBtn.hidden = currentIndex >= blocks.length - 1;
+      }
+
+      if (wrap && blocks.length){
+        if ('IntersectionObserver' in window){
+          const io = new IntersectionObserver(function(entries){
+            let best = null;
+            for (const entry of entries){
+              if (!entry.isIntersecting) continue;
+              if (!best || entry.intersectionRatio > best.intersectionRatio){
+                best = entry;
+              }
+            }
+            if (best){
+              const i = blocks.indexOf(best.target);
+              if (i !== -1){
+                currentIndex = i;
+                updateArrows();
+              }
+            }
+          }, { root: wrap, threshold: [0.35, 0.55, 0.75] });
+          blocks.forEach(b => io.observe(b));
+        } else {
+          const onScroll = function(){
+            const mid = wrap.scrollTop + (wrap.clientHeight * 0.5);
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            blocks.forEach(function(b, i){
+              const center = b.offsetTop + (b.offsetHeight * 0.5);
+              const dist = Math.abs(center - mid);
+              if (dist < bestDist){ bestDist = dist; bestIdx = i; }
+            });
+            currentIndex = bestIdx;
+            updateArrows();
+          };
+          wrap.addEventListener('scroll', onScroll, { passive: true });
+          onScroll();
+        }
+        updateArrows();
+      }
     })();
   </script>
 </body>
