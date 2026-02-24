@@ -966,42 +966,41 @@ AFRAME.registerComponent('rig-walk', {
 
         pos.needsUpdate=true;
         snowGeom.computeVertexNormals();
-
-        // ── Normal map ──
-        const nmS=768;
-        const nmCv=document.createElement('canvas');nmCv.width=nmS;nmCv.height=nmS;
-        const nmCtx=nmCv.getContext('2d');
-        const nmd=nmCtx.createImageData(nmS,nmS);const nd=nmd.data;
-        for(let py=0;py<nmS;py++){
-          for(let px=0;px<nmS;px++){
-            const idx=(py*nmS+px)*4;
-            const nx=px/nmS*28,ny=py/nmS*28;
-            let dx2=sn(nx*2.2+100,ny*2.2)*0.32;
-            dx2+=sn(nx*5.5+50,ny*5.5)*0.22;
-            dx2+=sn(nx*13,ny*13+30)*0.13;
-            dx2+=sn(nx*28+17,ny*28-11)*0.06;
-            let dy2=sn(nx*2.2,ny*2.2+200)*0.32;
-            dy2+=sn(nx*5.5,ny*5.5+80)*0.22;
-            dy2+=sn(nx*13+70,ny*13)*0.13;
-            dy2+=sn(nx*28-9,ny*28+22)*0.06;
-            const sa=nx*0.866+ny*0.5,sb=-nx*0.5+ny*0.866;
-            dx2+=sn(sa*6.5,sb*2)*0.06;
-            const sp=sn(nx*42+333,ny*42-222);
-            if(sp>0.6)dx2+=(sp-0.6)*0.3*(Math.sin(px*17.3+py*11.7)>0?1:-1);
-            nd[idx]=Math.floor(Math.max(0,Math.min(255,(dx2*0.5+0.5)*255)));
-            nd[idx+1]=Math.floor(Math.max(0,Math.min(255,(dy2*0.5+0.5)*255)));
-            nd[idx+2]=212;nd[idx+3]=255;
-          }
+        // ── PBR textures (repo'd in ./assets/texture) ──
+        // AO requires uv2 in Three.js
+        if (snowGeom.getAttribute('uv') && !snowGeom.getAttribute('uv2')) {
+          const uv = snowGeom.getAttribute('uv');
+          snowGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
         }
-        nmCtx.putImageData(nmd,0,0);
-        const snowNorm=new THREE.CanvasTexture(nmCv);
-        snowNorm.wrapS=snowNorm.wrapT=THREE.RepeatWrapping;
-        snowNorm.repeat.set(50,50);
+
+        const texLoader = new THREE.TextureLoader();
+        const texAniso = 4;
+        const snowColorTex = texLoader.load('./assets/texture/Snow_color.webp');
+        const snowNormalTex = texLoader.load('./assets/texture/snow_normal_gl.webp');
+        const snowRoughTex = texLoader.load('./assets/texture/Snow0_roughness.jpg');
+        const snowAoTex = texLoader.load('./assets/texture/Snow_ao.jpg');
+
+        [snowColorTex, snowNormalTex, snowRoughTex, snowAoTex].forEach((t) => {
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(12, 12);
+          t.anisotropy = texAniso;
+        });
+
+        snowColorTex.colorSpace = THREE.SRGBColorSpace;
 
         const snowMat=new THREE.MeshStandardMaterial({
-          color:0xeaf1f6,roughness:0.95,metalness:0.0,
-          normalMap:snowNorm,normalScale:new THREE.Vector2(0.52,0.52),
-          envMapIntensity:0.07,side:THREE.FrontSide,depthWrite:true
+          color:0xffffff,
+          map:snowColorTex,
+          normalMap:snowNormalTex,
+          roughnessMap:snowRoughTex,
+          aoMap:snowAoTex,
+          normalScale:new THREE.Vector2(0.45,0.45),
+          roughness:0.95,
+          metalness:0.0,
+          aoMapIntensity:0.35,
+          envMapIntensity:0.07,
+          side:THREE.FrontSide,
+          depthWrite:true
         });
         const snowMesh=new THREE.Mesh(snowGeom,snowMat);
         snowMesh.receiveShadow=true;snowMesh.frustumCulled=false;
@@ -1014,6 +1013,8 @@ AFRAME.registerComponent('rig-walk', {
           m.geometry.dispose();
           if(m.material.map)m.material.map.dispose();
           if(m.material.normalMap)m.material.normalMap.dispose();
+          if(m.material.roughnessMap)m.material.roughnessMap.dispose();
+          if(m.material.aoMap)m.material.aoMap.dispose();
           m.material.dispose();
         });
       }
