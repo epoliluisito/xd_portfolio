@@ -7546,13 +7546,14 @@ AFRAME.registerComponent('tp-camera-springarm', {
     // lift the camera upward to see over the obstruction.
     liftScale: { type: 'number', default: 1.4 },    // lift = compression * liftScale
     maxLift: { type: 'number', default: 1.8 },       // absolute ceiling on upward escape
-    liftProbe: { type: 'number', default: 2.2 },     // how far to probe upward for clearance
-    tightEnterFactor: { type: 'number', default: 0.82 },
-    tightExitFactor: { type: 'number', default: 0.98 },
-    tightEnterMs: { type: 'number', default: 180 },
-    tightExitMs: { type: 'number', default: 260 },
-    emergencyDist: { type: 'number', default: 0.34 },
-    camGapMaskTrigger: { type: 'number', default: 0.95 }
+    liftProbe: { type: 'number', default: 2.2 },      // how far to probe upward for clearance
+    tightEnterFactor: { type: 'number', default: 0.78 },
+    tightExitFactor: { type: 'number', default: 0.96 },
+    tightEnterMs: { type: 'number', default: 220 },
+    tightExitMs: { type: 'number', default: 280 },
+    emergencyDist: { type: 'number', default: 0.32 },
+    camMaskDist: { type: 'number', default: 0.55 },
+    camMaskMaxYAbovePivot: { type: 'number', default: 0.35 }
   },
 
   init: function () {
@@ -7601,8 +7602,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._camMaskMeshes = new WeakSet();
     for (let i = 0; i < nodes.length; i++) {
       const nodeEl = nodes[i];
-      const isCamMask = !!(nodeEl.classList && nodeEl.classList.contains('cam-collider'));
       const root = nodeEl.object3D;
+      const isCamMask = !!(nodeEl.classList && nodeEl.classList.contains('cam-collider'));
       if (!root) continue;
       root.traverse((o) => {
         if (!o.isMesh) return;
@@ -7635,11 +7636,13 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     const r = Math.max(0, this.data.sphereRadius);
     const offsets = this._offsets;
+    // Use center + horizontal shoulder samples only.
+    // Vertical samples here create false positives under doorjambs/lintels.
     offsets[0].set(0,0,0);
     offsets[1].copy(this._right).multiplyScalar(r);
     offsets[2].copy(this._right).multiplyScalar(-r);
-    offsets[3].copy(this._sweepUp).multiplyScalar(r);
-    offsets[4].copy(this._sweepUp).multiplyScalar(-r);
+    offsets[3].set(0,0,0);
+    offsets[4].set(0,0,0);
 
     let best = desiredLen;
 
@@ -7652,10 +7655,11 @@ AFRAME.registerComponent('tp-camera-springarm', {
       const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
       if (hits && hits.length) {
         let hit = hits[0];
-        if (this._camMaskMeshes && this._camMaskMeshes.has(hit.object)) {
-          // Door/gap mask colliders should only affect the camera when very close to the player.
-          // This prevents false arm collapse while passing under lintels or near jambs.
-          if (hit.distance > this.data.camGapMaskTrigger) {
+        if (this._camMaskMeshes && this._camMaskMeshes.has(hit.object) && hit.point) {
+          // Door/gap masks should only stop the camera when very close and not above the player's head.
+          const distFromPivot = hit.point.distanceTo(origin);
+          const maxY = this._pivotW.y + this.data.camMaskMaxYAbovePivot;
+          if (distFromPivot > this.data.camMaskDist || hit.point.y > maxY) {
             hit = null;
           }
         }
@@ -7733,13 +7737,12 @@ AFRAME.registerComponent('tp-camera-springarm', {
     // _sphereSweepClampDist now returns raw distance (may be < minDist)
     const rawTarget = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
 
-    // Hysteresis for tight-camera fallback: stay in readable third-person unless
-    // compression is sustained, then allow the arm to collapse.
+    // Hold readable 3rd-person unless strong compression is sustained.
     const minD = this.data.minDist;
     const enterThresh = minD * this.data.tightEnterFactor;
     const exitThresh = minD * this.data.tightExitFactor;
     const dtMs = Math.max(0, dt || 0);
-    const emergency = (rawTarget <= this.data.emergencyDist);
+    const emergency = rawTarget <= this.data.emergencyDist;
 
     if (!this._tightMode) {
       if (rawTarget < enterThresh) {
@@ -7763,8 +7766,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
       }
     }
 
-    // In normal mode, keep a readable third-person minimum distance and use lift/ceiling logic.
-    // Only collapse below minDist in sustained tight spaces (or emergency close obstruction).
     const allowCollapse = this._tightMode || emergency;
     const targetDist = allowCollapse ? Math.max(0.05, rawTarget) : Math.max(minD, rawTarget);
 
