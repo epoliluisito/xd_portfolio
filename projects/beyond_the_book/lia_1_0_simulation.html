@@ -1867,7 +1867,7 @@
               <span>What would you like to do now?</span>
               <div class="lia-inline">
                 <button class="lia-btn lia-small" id="btn-end-back-landing">
-                  Back to landing
+                  End Simulation
                 </button>
                 <button class="lia-btn lia-small" id="btn-end-restart">
                   Restart simulation
@@ -1899,13 +1899,54 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function requestParentExit(payload) {
     payload = payload || { type: "LIA_EXIT" };
-    try {
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage(payload, "*");
-        return true;
+
+    function postTo(target, message) {
+      try {
+        if (target && target !== window) {
+          target.postMessage(message, "*");
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+
+    var sent = false;
+
+    // Primary message (current integration)
+    sent = postTo(window.parent, payload) || sent;
+    sent = postTo(window.top, payload) || sent;
+
+    // Compatibility messages for different overlay listeners in parent pages
+    var type = payload && payload.type ? String(payload.type) : "";
+    if (type === "LIA_EXIT") {
+      var exitMessages = [
+        { type: "LIA_CLOSE" },
+        { type: "CLOSE_LIA" },
+        { type: "CLOSE_IFRAME" },
+        { type: "CLOSE_OVERLAY" },
+        { action: "closeLia" },
+        { action: "closeOverlay" },
+        "LIA_EXIT",
+        "CLOSE_LIA",
+        "CLOSE_OVERLAY"
+      ];
+      for (var i = 0; i < exitMessages.length; i++) {
+        sent = postTo(window.parent, exitMessages[i]) || sent;
+        sent = postTo(window.top, exitMessages[i]) || sent;
       }
-    } catch (e) {}
-    return false;
+    } else if (type === "LIA_RESTART") {
+      var restartMessages = [
+        { type: "RESTART_LIA" },
+        { action: "restartLia" },
+        "LIA_RESTART"
+      ];
+      for (var r = 0; r < restartMessages.length; r++) {
+        sent = postTo(window.parent, restartMessages[r]) || sent;
+        sent = postTo(window.top, restartMessages[r]) || sent;
+      }
+    }
+
+    return sent;
   }
 
   function exitLiaExperience() {
