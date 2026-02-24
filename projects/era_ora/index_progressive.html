@@ -7540,6 +7540,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
     smoothDist: { type: 'number', default: 0.18 },
     pullInSmooth: { type: 'number', default: 0.35 },
     hardSnapDist: { type: 'number', default: 0.18 },
+    collapseEnterDist: { type: 'number', default: 0.24 },
+    collapseExitDist: { type: 'number', default: 0.34 },
     sphereRadius: { type: 'number', default: 0.22 },
     ceilingPadding: { type: 'number', default: 0.08 },
     ceilingProbe: { type: 'number', default: 0.42 },
@@ -7577,6 +7579,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._curDist = this._baseDist;
     this._ceilingDrop = 0;
     this._curLift = 0;          // current vertical escape offset
+    this._allowCollapse = false; // only allow near-POV when strictly necessary
     this._downVec = new THREE.Vector3(0, -1, 0);
 
     this._colliderMeshes = [];
@@ -7711,9 +7714,21 @@ AFRAME.registerComponent('tp-camera-springarm', {
     // _sphereSweepClampDist now returns raw distance (may be < minDist)
     const rawTarget = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
 
-    // For arm distance, still respect minDist as a soft preference:
-    // the arm won't extend beyond minDist unless lift can't compensate.
-    const targetDist = Math.max(0.05, rawTarget);
+    // Keep TP distance whenever possible. Only allow near-POV collapse when
+    // the obstruction is truly too close for a usable third-person offset.
+    const minD = Math.max(0.05, this.data.minDist);
+    const collapseEnter = Math.max(0.05, this.data.collapseEnterDist || 0.24);
+    const collapseExit = Math.max(collapseEnter + 0.02, this.data.collapseExitDist || 0.34);
+
+    if (this._allowCollapse) {
+      if (rawTarget > collapseExit) this._allowCollapse = false;
+    } else {
+      if (rawTarget <= collapseEnter) this._allowCollapse = true;
+    }
+
+    const targetDist = this._allowCollapse
+      ? Math.max(0.05, rawTarget)
+      : Math.max(minD, rawTarget);
 
     const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
     const aDistInBase = Math.min(1, Math.max(aDist, this.data.pullInSmooth || 0.35));
