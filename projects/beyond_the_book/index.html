@@ -2262,9 +2262,17 @@ function selectItem(i, scroll){
       a.title = 'Email epoli.uk@gmail.com';
     } else {
       a.href = term.url;
-      a.target = '_blank';
-      a.rel = 'noopener';
       a.textContent = term.label;
+      if (it.terminal === 'LIA') {
+        a.addEventListener('click', function(ev){
+          ev.preventDefault();
+          if (typeof window.openLiaOverlay === 'function') window.openLiaOverlay();
+          else window.open(term.url, '_blank', 'noopener');
+        });
+      } else {
+        a.target = '_blank';
+        a.rel = 'noopener';
+      }
     }
     dBtns.appendChild(a);
   }
@@ -2343,6 +2351,7 @@ addEventListener('keydown', e=>{
       if (it.terminal && TERMINALS[it.terminal]) {
         const term = TERMINALS[it.terminal];
         if (term.disabled) window.location.href = 'mailto:epoli.uk@gmail.com';
+        else if (it.terminal === 'LIA' && typeof window.openLiaOverlay === 'function') window.openLiaOverlay();
         else window.open(term.url, '_blank', 'noopener');
       }
     }
@@ -2473,20 +2482,25 @@ tick();
 })();
 
 
-/* PB04 Lia overlay trigger */
+/* PB04 + Lattice Lia overlay trigger (shared) */
 (function(){
-  const openBtn = document.getElementById('pb04TryLia');
   const overlay = document.getElementById('liaOverlay');
   const closeBtn = document.getElementById('liaOverlayClose');
   const frame = document.getElementById('liaOverlayFrame');
-  if(!openBtn || !overlay || !closeBtn || !frame) return;
+  const openBtn = document.getElementById('pb04TryLia');
+  if(!overlay || !closeBtn || !frame) return;
 
   const LIA_URL = './lia_1_0_simulation.html';
   let lastActive = null;
 
+  function getFreshLiaUrl(){
+    const sep = LIA_URL.includes('?') ? '&' : '?';
+    return LIA_URL + sep + 'embed=1&t=' + Date.now();
+  }
+
   function openOverlay(){
     lastActive = document.activeElement;
-    if(!frame.src) frame.src = LIA_URL;
+    frame.src = getFreshLiaUrl();
     overlay.classList.add('active');
     overlay.setAttribute('aria-hidden','false');
     document.body.style.overflow = 'hidden';
@@ -2497,10 +2511,14 @@ tick();
     overlay.classList.remove('active');
     overlay.setAttribute('aria-hidden','true');
     document.body.style.overflow = '';
+    setTimeout(() => { try { frame.removeAttribute('src'); } catch(_){} }, 50);
     if(lastActive && typeof lastActive.focus === 'function') lastActive.focus();
   }
 
-  openBtn.addEventListener('click', openOverlay);
+  window.openLiaOverlay = openOverlay;
+  window.closeLiaOverlay = closeOverlay;
+
+  if (openBtn) openBtn.addEventListener('click', openOverlay);
   closeBtn.addEventListener('click', closeOverlay);
 
   overlay.addEventListener('click', (e) => {
