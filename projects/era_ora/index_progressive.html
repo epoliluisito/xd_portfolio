@@ -7542,11 +7542,9 @@ AFRAME.registerComponent('tp-camera-springarm', {
     ceilingPadding: { type: 'number', default: 0.08 },
     ceilingProbe: { type: 'number', default: 0.42 },
     maxCeilingDrop: { type: 'number', default: 0.65 },
-    // Vertical escape: when walls compress the arm below minDist,
-    // lift the camera upward to see over the obstruction.
-    liftScale: { type: 'number', default: 1.4 },    // lift = compression * liftScale
-    maxLift: { type: 'number', default: 1.8 },       // absolute ceiling on upward escape
-    liftProbe: { type: 'number', default: 2.2 }      // how far to probe upward for clearance
+    liftScale: { type: 'number', default: 1.4 },
+    maxLift: { type: 'number', default: 1.8 },
+    liftProbe: { type: 'number', default: 2.2 }
   },
 
   init: function () {
@@ -7560,11 +7558,16 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._tmp = new THREE.Vector3();
     this._right = new THREE.Vector3();
     this._up = new THREE.Vector3(0, 1, 0);
-    this._sweepDir = new THREE.Vector3();   // dedicated direction vector for sweep (never aliased)
-    this._sweepUp = new THREE.Vector3();    // dedicated up vector for sweep offsets
+    this._sweepDir = new THREE.Vector3();
+    this._sweepUp = new THREE.Vector3();
+    this._testOrigin = new THREE.Vector3();
+    this._testDesired = new THREE.Vector3();
+    this._selOrigin = new THREE.Vector3();
+    this._selDesired = new THREE.Vector3();
+    this._selDir = new THREE.Vector3();
 
     this._offsets = [
-      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), 
+      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(),
       new THREE.Vector3(), new THREE.Vector3()
     ];
 
@@ -7574,12 +7577,14 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     this._curDist = this._baseDist;
     this._ceilingDrop = 0;
-    this._curLift = 0;          // current vertical escape offset
+    this._curLift = 0;
     this._downVec = new THREE.Vector3(0, -1, 0);
 
     this._colliderMeshes = [];
     this._lastRefresh = 0;
     this.refreshColliderMeshes();
+
+    this._placement = { pivotDrop: 0, camDrop: 0, rawDist: this._baseDist, desiredLen: this._baseDist };
 
     this.el.object3D.getWorldPosition(this._smoothedW);
   },
@@ -7603,20 +7608,21 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._colliderMeshes = meshes;
   },
 
-  _sphereSweepClampDist: function (origin, desired, dt) {
+  _sphereSweepClampDist: function (origin, desired) {
     this._tmp.copy(desired).sub(origin);
     const desiredLen = this._tmp.length();
-    if (desiredLen < 1e-4) return this._baseDist;
+    if (desiredLen < 1e-4) {
+      this._rawSweepDist = 0;
+      this._lastDesiredLen = 0;
+      return 0;
+    }
 
-    // Store direction in dedicated vector (NEVER alias to _tmp)
+    this._lastDesiredLen = desiredLen;
     this._sweepDir.copy(this._tmp).divideScalar(desiredLen);
 
     this._right.copy(this._sweepDir).cross(this._up);
-    if (this._right.lengthSq() < 1e-6) {
-      this._right.set(1, 0, 0);
-    } else {
-      this._right.normalize();
-    }
+    if (this._right.lengthSq() < 1e-6) this._right.set(1, 0, 0);
+    else this._right.normalize();
     this._sweepUp.crossVectors(this._right, this._sweepDir).normalize();
 
     const r = Math.max(0, this.data.sphereRadius);
@@ -7628,13 +7634,11 @@ AFRAME.registerComponent('tp-camera-springarm', {
     offsets[4].copy(this._sweepUp).multiplyScalar(-r);
 
     let best = desiredLen;
-
     for (let i = 0; i < offsets.length; i++) {
       this._tmp.copy(origin).add(offsets[i]);
       this.raycaster.set(this._tmp, this._sweepDir);
       this.raycaster.near = 0;
       this.raycaster.far = desiredLen;
-
       const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
       if (hits && hits.length) {
         const d = Math.max(0, hits[0].distance - this.data.padding);
@@ -7643,178 +7647,116 @@ AFRAME.registerComponent('tp-camera-springarm', {
     }
 
     const clamped = Math.min(this._baseDist, best);
-    this._rawSweepDist = clamped;  // raw distance before minDist floor (for lift calculation)
+    this._rawSweepDist = clamped;
     return clamped;
   },
 
-  _evaluateTPCandidate: function (pivotPos, desiredPos) {
-    const raw = this._sphereSweepClampDist(pivotPos, desiredPos, 0);
-    return { rawDist: raw, clampedDist: Math.max(0.05, raw) };
-  },
-
-  _chooseTPCandidate: function (pivotObj) {
-    const basePivot = this._pivotW;
-    const baseDesired = this._desiredW;
-
-    const camDrops = [0, 0.10, 0.18, 0.28, 0.40, 0.55, Math.max(0.6, this.data.maxCeilingDrop)];
-    const originDrops = [0, 0.06, 0.12, 0.18, 0.26];
-    const minD = Math.max(0.05, this.data.minDist);
-
-    if (!this._candPivot) {
-      this._candPivot = new THREE.Vector3();
-      this._candDesired = new THREE.Vector3();
-      this._bestPivot = new THREE.Vector3();
-      this._bestDesired = new THREE.Vector3();
-    }
+  _pickPlacement: function (baseOrigin, baseDesired) {
+    // Lowering-first candidate strategy (camera and pivot), then distance compression.
+    const maxDrop = Math.max(this.data.maxCeilingDrop, 0.65) + 0.35;
+    const steps = [0, 0.12, 0.22, 0.32, 0.45, 0.6, 0.78, maxDrop].filter((v, i, a) => v <= maxDrop + 1e-6 && a.indexOf(v) === i);
+    const minKeepTP = Math.max(0.35, this.data.minDist * 0.9);
 
     let best = null;
-    for (let oi = 0; oi < originDrops.length; oi++) {
-      const oDrop = originDrops[oi];
-      for (let ci = 0; ci < camDrops.length; ci++) {
-        const cDrop = camDrops[ci];
+    let bestScore = -1e9;
 
-        this._candPivot.copy(basePivot);
-        this._candPivot.y -= oDrop;
+    const evalCandidate = (pivotDrop, camDrop, priorityBias) => {
+      this._testOrigin.copy(baseOrigin); if (pivotDrop > 0) this._testOrigin.y -= pivotDrop;
+      this._testDesired.copy(baseDesired); if (camDrop > 0) this._testDesired.y -= camDrop;
 
-        this._candDesired.copy(baseDesired);
-        this._candDesired.y -= (oDrop + cDrop);
+      const raw = this._sphereSweepClampDist(this._testOrigin, this._testDesired);
+      const desiredLen = this._lastDesiredLen || 0;
+      const distRatio = desiredLen > 1e-4 ? (raw / desiredLen) : 0;
+      const keepsTP = raw >= minKeepTP;
 
-        const evalRes = this._evaluateTPCandidate(this._candPivot, this._candDesired);
-        const totalDrop = oDrop + cDrop;
-        const reachesMin = evalRes.rawDist >= (minD - 0.03);
+      // Reward valid distance heavily; reward lowering before collapse.
+      const score = (keepsTP ? 1000 : 0) + raw * 100 + distRatio * 50 - (pivotDrop + camDrop) * 8 - priorityBias;
 
-        const candidate = {
-          rawDist: evalRes.rawDist,
-          clampedDist: evalRes.clampedDist,
-          originDrop: oDrop,
-          camDrop: cDrop,
-          totalDrop,
-          reachesMin
-        };
-
-        if (!best) {
-          best = candidate;
-          this._bestPivot.copy(this._candPivot);
-          this._bestDesired.copy(this._candDesired);
-          continue;
-        }
-
-        let better = false;
-        if (candidate.reachesMin !== best.reachesMin) {
-          better = candidate.reachesMin && !best.reachesMin;
-        } else if (candidate.rawDist > best.rawDist + 0.025) {
-          better = true;
-        } else if (Math.abs(candidate.rawDist - best.rawDist) <= 0.025) {
-          // Prefer less lowering when distance is effectively equivalent
-          if (candidate.totalDrop < best.totalDrop - 0.02) better = true;
-          else if (Math.abs(candidate.totalDrop - best.totalDrop) <= 0.02 && candidate.originDrop < best.originDrop - 0.01) better = true;
-        }
-
-        if (better) {
-          best = candidate;
-          this._bestPivot.copy(this._candPivot);
-          this._bestDesired.copy(this._candDesired);
-        }
+      if (score > bestScore) {
+        bestScore = score;
+        best = { pivotDrop, camDrop, rawDist: raw, desiredLen };
       }
+
+      // If this lowered candidate preserves TP distance well, stop early.
+      if (keepsTP && (pivotDrop > 0 || camDrop > 0)) return true;
+      return false;
+    };
+
+    // Pass 1: lowering-first (pivot+camera together) to pass under jambs/ceilings.
+    for (let i = 0; i < steps.length; i++) {
+      const d = steps[i];
+      if (evalCandidate(d, d, i)) return best;
+    }
+    // Pass 2: camera-only lowering (keep pivot high if possible)
+    for (let i = 1; i < steps.length; i++) {
+      const d = steps[i];
+      if (evalCandidate(0, d, 100 + i)) return best;
+    }
+    // Pass 3: pivot-only lowering
+    for (let i = 1; i < steps.length; i++) {
+      const d = steps[i];
+      if (evalCandidate(d, 0, 200 + i)) return best;
     }
 
-    return {
-      pivot: this._bestPivot,
-      desired: this._bestDesired,
-      rawDist: best ? best.rawDist : this._baseDist,
-      clampedDist: best ? best.clampedDist : this._baseDist,
-      originDrop: best ? best.originDrop : 0,
-      camDrop: best ? best.camDrop : 0
-    };
+    return best || { pivotDrop: 0, camDrop: 0, rawDist: this._sphereSweepClampDist(baseOrigin, baseDesired), desiredLen: this._lastDesiredLen || this._baseDist };
   },
 
-  _computeCeilingDrop: function (camPos, dt) {
+  _computeCeilingDrop: function (camPos) {
     const probeUp = Math.max(0.2, this.data.ceilingProbe);
     this.raycaster.set(camPos, this._up);
     this.raycaster.near = 0;
     this.raycaster.far = probeUp;
-
     const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
     if (!hits || !hits.length) return 0;
-
     const dist = hits[0].distance;
     const needClear = this.data.sphereRadius + this.data.ceilingPadding;
     if (dist >= needClear) return 0;
-
     return Math.min(this.data.maxCeilingDrop, (needClear - dist));
   },
 
-  // Vertical escape: when arm is compressed below minDist by walls,
-  // lift the camera upward to look over the obstruction.
-  _computeLift: function (camPos, rawDist) {
-    const minD = this.data.minDist;
-    if (rawDist >= minD) return 0;
-
-    // How compressed are we? 0 = at minDist, 1 = at pivot
-    const compression = Math.min(1, (minD - rawDist) / Math.max(0.01, minD));
-
-    // Desired lift proportional to compression
-    let desiredLift = compression * this.data.liftScale * minD;
-    desiredLift = Math.min(desiredLift, this.data.maxLift);
-
-    // Probe upward from the (un-lifted) camera position to find ceiling clearance
-    const probeH = Math.max(0.3, this.data.liftProbe);
-    this.raycaster.set(camPos, this._up);
-    this.raycaster.near = 0;
-    this.raycaster.far = probeH;
-
-    const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
-    if (hits && hits.length) {
-      const clearance = Math.max(0, hits[0].distance - this.data.sphereRadius - this.data.ceilingPadding);
-      desiredLift = Math.min(desiredLift, clearance);
-    }
-
-    return Math.max(0, desiredLift);
+  _computeLift: function () {
+    // Disable upward escape for this scene behavior; it fights low-ceiling passage.
+    return 0;
   },
 
   tick: function (t, dt) {
     if (!this.data.pivot) return;
-
     if (t - this._lastRefresh > 1200) {
       this._lastRefresh = t;
       this.refreshColliderMeshes();
     }
 
     const pivotObj = this.data.pivot.object3D;
-
     pivotObj.getWorldPosition(this._pivotW);
-
     this._desiredW.copy(this._baseLocal);
     pivotObj.localToWorld(this._desiredW);
 
-    // Try a small set of lowered TP candidates before accepting heavy compression.
-    // This strongly prefers staying in TP under door jambs / low overheads.
-    const chosen = this._chooseTPCandidate(pivotObj);
-    this._rawSweepDist = chosen.rawDist;
+    this._placement = this._pickPlacement(this._pivotW, this._desiredW);
 
-    const targetDist = chosen.clampedDist;
+    this._selOrigin.copy(this._pivotW);
+    this._selOrigin.y -= this._placement.pivotDrop;
+    this._selDesired.copy(this._desiredW);
+    this._selDesired.y -= this._placement.camDrop;
 
+    this._selDir.copy(this._selDesired).sub(this._selOrigin);
+    const selLen = this._selDir.length();
+    if (selLen < 1e-4) return;
+    this._selDir.multiplyScalar(1 / selLen);
+
+    const targetDist = Math.max(0.05, this._placement.rawDist);
     const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
     const prevDist = this._curDist;
-    if (targetDist < this._curDist) {
-      this._curDist = targetDist;
-    } else {
-      this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
-    }
+    if (targetDist < this._curDist) this._curDist = targetDist;
+    else this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
     const didSnapIn = (this._curDist < prevDist - 0.01);
 
-    this._dir.copy(chosen.desired).sub(chosen.pivot);
-    const len = this._dir.length();
-    if (len < 1e-4) return;
-    this._dir.multiplyScalar(1 / len);
+    this._finalW.copy(this._selOrigin).addScaledVector(this._selDir, this._curDist);
 
-    this._finalW.copy(chosen.pivot).addScaledVector(this._dir, this._curDist);
-
-    // Disable upward 'escape' lift here; under overhead obstacles we want to prefer lowering.
+    // Upward lift disabled; keep variable stable
     this._curLift = 0;
 
-    // Keep existing local ceiling correction as a last micro-adjustment.
-    const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
+    // Final local ceiling trim only (small correction)
+    const desiredDrop = this._computeCeilingDrop(this._finalW);
     const aPos = Math.min(1, Math.max(0, this.data.smoothPos));
     this._ceilingDrop = this._ceilingDrop + (desiredDrop - this._ceilingDrop) * aPos;
     if (this._ceilingDrop > 0) this._finalW.y -= this._ceilingDrop;
@@ -7825,13 +7767,15 @@ AFRAME.registerComponent('tp-camera-springarm', {
     const local = pivotObj.worldToLocal(this._tmp.copy(this._smoothedW));
     local.x = this._baseLocal.x;
     local.z = this._sign * this._curDist;
-    // Allow camera to go below its default height when needed; keep a sane floor relative to pivot.
-    local.y = THREE.MathUtils.clamp(local.y, this._baseLocal.y - 0.95, this._baseLocal.y + 0.05);
+
+    // Preserve the lowered behavior in local Y (apply selected camera drop directly)
+    const targetLocalY = this._baseLocal.y - this._placement.camDrop - this._ceilingDrop;
+    // Keep exact lowering when obstructed; smooth back recovery is handled by smoothed world pos.
+    local.y = Math.min(targetLocalY, local.y);
 
     this.el.object3D.position.copy(local);
   }
 });
-
 // === Third-person mouse look ===
 AFRAME.registerComponent('tp-mouselook', {
   schema: {
