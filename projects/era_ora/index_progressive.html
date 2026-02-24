@@ -7546,7 +7546,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
     ceilingPadding: { type: 'number', default: 0.08 },
     ceilingProbe: { type: 'number', default: 0.42 },
     maxCeilingDrop: { type: 'number', default: 0.65 },
-    preDropMax: { type: 'number', default: 0.75 },
+    preDropMax: { type: 'number', default: 0.95 },
+    pivotDropMax: { type: 'number', default: 0.45 },
     // Vertical escape: when walls compress the arm below minDist,
     // lift the camera upward to see over the obstruction.
     liftScale: { type: 'number', default: 1.4 },    // lift = compression * liftScale
@@ -7655,43 +7656,45 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
 
   _findBestPreDropSweep: function (pivotW, desiredW) {
-    // Try a few downward camera offsets BEFORE deciding to collapse to POV.
-    // This helps under lintels/door jambs where lowering the TP camera is preferable.
-    const maxDown = Math.max(0, this.data.preDropMax || 0.75);
-    const samples = [0, 0.10, 0.18, 0.28, 0.40, 0.55, 0.70];
+    // Try a combination of lowering the camera AND lowering the virtual springarm origin
+    // before allowing collapse to POV. This avoids door-jamb/ceiling-triggered POV snaps.
+    const maxCamDown = Math.max(0, this.data.preDropMax || 0.95);
+    const maxPivotDown = Math.max(0, this.data.pivotDropMax || 0.45);
+    const camDrops = [0, 0.08, 0.14, 0.22, 0.32, 0.45, 0.60, 0.78, 0.95];
+    const pivotDrops = [0, 0.06, 0.12, 0.18, 0.26, 0.34, 0.45];
     const minD = Math.max(0.05, this.data.minDist || 0.85);
 
-    let best = { rawDist: -1, down: 0 };
+    let best = { rawDist: -1, camDown: 0, pivotDown: 0, score: -1e9 };
 
-    for (let i = 0; i < samples.length; i++) {
-      const d = samples[i];
-      if (d > maxDown + 1e-6) continue;
+    for (let pi = 0; pi < pivotDrops.length; pi++) {
+      const pd = pivotDrops[pi];
+      if (pd > maxPivotDown + 1e-6) continue;
 
-      this._tmp.copy(desiredW);
-      this._tmp.y -= d;
-      const raw = this._sphereSweepClampDist(pivotW, this._tmp);
+      const testPivot = this._pivotW.clone();
+      testPivot.y -= pd;
 
-      // Prefer any option that preserves usable TP distance (>= minDist).
-      const usable = raw >= minD ? 1 : 0;
-      const bestUsable = best.rawDist >= minD ? 1 : 0;
+      for (let ci = 0; ci < camDrops.length; ci++) {
+        const cd = camDrops[ci];
+        if (cd > maxCamDown + 1e-6) continue;
 
-      let take = false;
-      if (usable > bestUsable) {
-        take = true;
-      } else if (usable === bestUsable) {
-        if (raw > best.rawDist + 1e-6) {
-          take = true;
-        } else if (Math.abs(raw - best.rawDist) <= 1e-6 && d < best.down) {
-          take = true;
+        this._tmp.copy(desiredW);
+        this._tmp.y -= cd;
+        const raw = this._sphereSweepClampDist(testPivot, this._tmp);
+
+        const usable = raw >= minD ? 1 : 0;
+        // Score: strongly prefer usable TP distance, then more distance,
+        // then modest pivot/cam drops (avoid visible jumps).
+        const score = (usable * 1000) + (raw * 100) - (pd * 10) - (cd * 4);
+
+        if (score > best.score + 1e-6) {
+          best = { rawDist: raw, camDown: cd, pivotDown: pd, score };
         }
       }
-
-      if (take) best = { rawDist: raw, down: d };
     }
 
     if (best.rawDist < 0) {
       const raw = this._sphereSweepClampDist(pivotW, desiredW);
-      return { rawDist: raw, down: 0 };
+      return { rawDist: raw, camDown: 0, pivotDown: 0 };
     }
     return best;
   },
@@ -7758,13 +7761,14 @@ AFRAME.registerComponent('tp-camera-springarm', {
     // Try pre-lowering the TP camera before allowing collapse (door jambs / low beams).
     const preSolve = this._findBestPreDropSweep(this._pivotW, this._desiredW);
     const rawTarget = preSolve.rawDist;
-    this._preDrop = preSolve.down || 0;
+    this._preDrop = preSolve.camDown || 0;
+    this._pivotDrop = preSolve.pivotDown || 0;
 
     // Keep TP distance whenever possible. Only allow near-POV collapse when
     // the obstruction is truly too close for a usable third-person offset.
     const minD = Math.max(0.05, this.data.minDist);
-    const collapseEnter = Math.max(0.05, this.data.collapseEnterDist || 0.24);
-    const collapseExit = Math.max(collapseEnter + 0.02, this.data.collapseExitDist || 0.34);
+    const collapseEnter = Math.max(0.05, this.data.collapseEnterDist || 0.14);
+    const collapseExit = Math.max(collapseEnter + 0.03, this.data.collapseExitDist || 0.22);
 
     if (this._allowCollapse) {
       if (rawTarget > collapseExit) this._allowCollapse = false;
@@ -7800,13 +7804,17 @@ AFRAME.registerComponent('tp-camera-springarm', {
       this._curDist <= Math.max(0.07, (this.data.hardSnapDist || 0.18) + 0.02)
     );
 
-    this._dir.copy(this._desiredW).sub(this._pivotW);
+    const solvePivotW = this._tmp.copy(this._pivotW);
+    if (this._pivotDrop > 0) solvePivotW.y -= this._pivotDrop;
+    const solveDesiredW = this._desiredW.clone();
+    if (this._preDrop > 0) solveDesiredW.y -= this._preDrop;
+
+    this._dir.copy(solveDesiredW).sub(solvePivotW);
     const len = this._dir.length();
     if (len < 1e-4) return;
     this._dir.multiplyScalar(1 / len);
 
-    this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
-    if (this._preDrop > 0) this._finalW.y -= this._preDrop;
+    this._finalW.copy(solvePivotW).addScaledVector(this._dir, this._curDist);
 
     // Vertical escape lift (when compressed below minDist)
     const desiredLift = this._computeLift(this._finalW, this._rawSweepDist);
