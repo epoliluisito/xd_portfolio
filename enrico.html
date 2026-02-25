@@ -16,9 +16,9 @@
     --overlay: rgba(0,0,0,.55);
     --easeSmooth:cubic-bezier(.16,1,.3,1);
     --easeSoft:cubic-bezier(.22,.61,.36,1);
-    --durFast:.34s;
-    --durMed:.52s;
-    --durSlow:.64s;
+    --durFast:.22s;
+    --durMed:.34s;
+    --durSlow:.42s;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-family:"Avenir Next",Avenir,"Helvetica Neue",Helvetica,Arial,sans-serif}
@@ -429,6 +429,7 @@
   font:400 22px/1 Arial, sans-serif; cursor:pointer; z-index:2;
 }
 .client-video-layer.full .client-video-close{ display:flex; }
+.client-video-preload-bin{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;left:-9999px;top:-9999px;}
 
 </style>
 </head>
@@ -643,6 +644,7 @@ function setTargetPos(id, x, y){
   state.targetPos[id] = { x: Math.round(x), y: Math.round(y) };
   state.basePos[id] = { x: Math.round(x), y: Math.round(y) };
 }
+let __fieldRectFrame = 0, __fieldRectCache = null;
 function tickNodeField(){
   const t = performance.now() * 0.001;
   const active = state.activeField;
@@ -671,12 +673,15 @@ function tickNodeField(){
     state.activeField.life *= 0.992;
     const el = nodesRoot.querySelector(`.node[data-id="${state.activeField.id}"]`);
     if (el && window.__rippleAPI && window.__rippleAPI.setField){
-      const r = el.getBoundingClientRect();
-      window.__rippleAPI.setField(
-        Math.max(0, Math.min(1, (r.left + r.width*0.5)/window.innerWidth)),
-        Math.max(0, Math.min(1, 1 - (r.top + Math.min(22, r.height*0.5))/window.innerHeight)),
-        state.activeField.life
-      );
+      __fieldRectFrame = (__fieldRectFrame + 1) % 4;
+      if (!__fieldRectCache || __fieldRectFrame === 0){
+        const r = el.getBoundingClientRect();
+        __fieldRectCache = {
+          x: Math.max(0, Math.min(1, (r.left + r.width*0.5)/window.innerWidth)),
+          y: Math.max(0, Math.min(1, 1 - (r.top + Math.min(22, r.height*0.5))/window.innerHeight))
+        };
+      }
+      window.__rippleAPI.setField(__fieldRectCache.x, __fieldRectCache.y, state.activeField.life);
     }
     if (state.activeField.life < 0.05) state.activeField = null;
   } else if (window.__rippleAPI && window.__rippleAPI.setField) {
@@ -1023,17 +1028,17 @@ function renderDetailCard(node){
     const isFilmDirectorCategory = (node.id === '03');
     let attrs = ' class="chip-item mono"';
     if (isFilmDirectorCategory && vv === 'case study film') {
-      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/google_intrinsic/assets/google_intrinsic.mp4" data-video-title="Case Study Film"';
+      attrs = ' class="chip-item mono has-video" data-video-url="https://films.enricopoli.com/projects/google_intrinsic/assets/google_intrinsic.mp4" data-video-title="Case Study Film"';
     } else if (isFilmDirectorCategory && vv === 'commercials') {
-      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/pg_vicks/assets/pg_vicks.mp4" data-video-title="Commercials"';
+      attrs = ' class="chip-item mono has-video" data-video-url="https://films.enricopoli.com/projects/pg_vicks/assets/pg_vicks.mp4" data-video-title="Commercials"';
     } else if (isFilmDirectorCategory && vv === 'narrative film') {
-      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/wind_day/assets/wind_day_trailer.mp4" data-video-title="Narrative Film"';
+      attrs = ' class="chip-item mono has-video" data-video-url="https://films.enricopoli.com/projects/wind_day/assets/wind_day_trailer.mp4" data-video-title="Narrative Film"';
     } else if (isFilmDirectorCategory && vv === 'branded film/doc/content') {
-      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/puer_apuliae/assets/puer_apuliae_trailer.mp4" data-video-title="Branded Film/Doc/Content"';
+      attrs = ' class="chip-item mono has-video" data-video-url="https://films.enricopoli.com/projects/puer_apuliae/assets/puer_apuliae_trailer.mp4" data-video-title="Branded Film/Doc/Content"';
     } else if (isFilmDirectorCategory && vv === 'documentary') {
-      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/brachetti_solo/assets/brachetti_solo_teaser.mp4" data-video-title="Documentary"';
+      attrs = ' class="chip-item mono has-video" data-video-url="https://films.enricopoli.com/projects/brachetti_solo/assets/brachetti_solo_teaser.mp4" data-video-title="Documentary"';
     } else if (isFilmDirectorCategory && vv === 'fashion film') {
-      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/camera_della_moda_italiana/assets/it_happens_at_night.mp4" data-video-title="Fashion Film"';
+      attrs = ' class="chip-item mono has-video" data-video-url="https://films.enricopoli.com/projects/camera_della_moda_italiana/assets/it_happens_at_night.mp4" data-video-title="Fashion Film"';
     }
     return `<span${attrs}>${v}</span>`;
   }).join('');
@@ -1042,15 +1047,15 @@ function renderDetailCard(node){
     const isFilmDirectorClient = (node.id === '03');
     let attrs = ' class="client-pill"';
     if (isFilmDirectorClient && vv === 'natuzzi italia') {
-      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/the_pursuit_of_harmony/assets/the_pursuit_of_harmony.mp4" data-video-title="Natuzzi Italia"';
+      attrs = ' class="client-pill has-video" data-video-url="https://films.enricopoli.com/projects/the_pursuit_of_harmony/assets/the_pursuit_of_harmony.mp4" data-video-title="Natuzzi Italia"';
     } else if (isFilmDirectorClient && vv === 'nike') {
-      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/we_are_one/assets/we_are_one.mp4" data-video-title="Nike"';
+      attrs = ' class="client-pill has-video" data-video-url="https://films.enricopoli.com/projects/we_are_one/assets/we_are_one.mp4" data-video-title="Nike"';
     } else if (isFilmDirectorClient && vv === 'not(e) for a dreamer') {
-      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/note_for_a_dreamer/assets/note_for_a_dreamer.mp4" data-video-title="Not(e) for a dreamer"';
+      attrs = ' class="client-pill has-video" data-video-url="https://films.enricopoli.com/projects/note_for_a_dreamer/assets/note_for_a_dreamer.mp4" data-video-title="Not(e) for a dreamer"';
     } else if (isFilmDirectorClient && vv === 'mono-y') {
-      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/mono_y/assets/mono_y.mp4" data-video-title="MONO-Y"';
+      attrs = ' class="client-pill has-video" data-video-url="https://films.enricopoli.com/projects/mono_y/assets/mono_y.mp4" data-video-title="MONO-Y"';
     } else if (isFilmDirectorClient && vv === 'google') {
-      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/google_gemini/assets/google_gemini.mp4" data-video-title="Google"';
+      attrs = ' class="client-pill has-video" data-video-url="https://films.enricopoli.com/projects/google_gemini/assets/google_gemini.mp4" data-video-title="Google"';
     }
     return `<span${attrs}>${v}</span>`;
   }).join('');
@@ -1100,6 +1105,8 @@ async function openDetail(id){
   });
 
   renderDetailCard(node);
+  preloadClientVideosInDetail(detailCard);
+  setLiquidPerfMode('detail');
   detailCard.classList.remove('content-in');
   detailCard.classList.remove('topline-in');
   alignDetailCloseToTitle();
@@ -1175,6 +1182,7 @@ async function closeDetail(){
   });
 
   state.openId = null;
+  setLiquidPerfMode('normal');
 }
 async function toggleDetail(id){
   if (state.openId === id) { closeDetail(); return; }
@@ -1466,7 +1474,7 @@ if (resetLayoutBtn) resetLayoutBtn.addEventListener('click', ()=>{
   positionAllNodes();
 });
 if (resetViewBtn) resetViewBtn.addEventListener('click', ()=> setInitialView());
-servicesTrigger.addEventListener('click', (e)=>{ e.stopPropagation(); if(!servicesTrigger.classList.contains('ready')) return; if(!state.introStarted) { startExperience(); return; } toggleMap(); });
+servicesTrigger.addEventListener('click', (e)=>{ e.stopPropagation(); if(!servicesTrigger.classList.contains('ready')) return; if(!clientVideoPreloadStarted) setTimeout(()=>preloadClientVideosInDetail(document), 0); if(!state.introStarted) { startExperience(); return; } toggleMap(); });
 
 
 // Client fullscreen video preview / takeover (Selected clients/works)
@@ -1491,6 +1499,60 @@ let ytApiReady = false;
 let ytPlayer = null;
 let ytPlayerReady = false;
 let ytVideoId = '';
+const clientVideoPreloadCache = new Map();
+let clientVideoPreloadStarted = false;
+window.__liquidPerf = window.__liquidPerf || { minDeltaMs: 0, dprCap: 1.25 };
+const clientVideoPreloadBin = document.createElement('div');
+clientVideoPreloadBin.className = 'client-video-preload-bin';
+document.body.appendChild(clientVideoPreloadBin);
+
+function normalizeClientVideoUrl(src){
+  if (!src) return '';
+  try {
+    const u = new URL(src, window.location.href);
+    if (u.hostname === 'films.enricopoli.com') u.protocol = 'https:';
+    return u.toString();
+  } catch(_) {
+    return String(src).replace(/^http:\/\/films\.enricopoli\.com\//i, 'https://films.enricopoli.com/');
+  }
+}
+function setLiquidPerfMode(mode){
+  const perf = window.__liquidPerf || (window.__liquidPerf = {});
+  if (mode === 'video') { perf.minDeltaMs = 1000/18; perf.dprCap = 1.0; }
+  else if (mode === 'detail') { perf.minDeltaMs = 1000/30; perf.dprCap = 1.1; }
+  else { perf.minDeltaMs = 0; perf.dprCap = 1.25; }
+  if (window.__liquidAPI && window.__liquidAPI.resize) window.__liquidAPI.resize();
+}
+function preloadClientVideosInDetail(scope){
+  if (!scope) return;
+  const els = Array.from(scope.querySelectorAll('.has-video[data-video-url]'));
+  els.forEach((el, idx)=>{
+    const raw = el.dataset.videoUrl;
+    const src = normalizeClientVideoUrl(raw);
+    if (!src) return;
+    if (src !== raw) el.dataset.videoUrl = src;
+    if (clientVideoPreloadCache.has(src)) return;
+    const type = clientVideoSourceType(src);
+    if (type === 'youtube') {
+      const id = getYoutubeId(src);
+      if (id) { clientVideoPreloadCache.set(src, {type:'youtube', id}); ensureYouTubeApi(); }
+      return;
+    }
+    try {
+      const link = document.createElement('link');
+      link.rel = 'preload'; link.as = 'video'; link.href = src;
+      document.head.appendChild(link);
+    } catch(_) {}
+    const v = document.createElement('video');
+    v.preload = idx < 3 ? 'auto' : 'metadata';
+    v.muted = true; v.playsInline = true; v.loop = false;
+    v.src = src;
+    clientVideoPreloadBin.appendChild(v);
+    try { v.load(); } catch(_) {}
+    clientVideoPreloadCache.set(src, {type:'mp4', el:v});
+  });
+  clientVideoPreloadStarted = true;
+}
 
 function clientVideoSourceType(src){
   const s = String(src || '').toLowerCase();
@@ -1546,6 +1608,7 @@ function activateMediaType(type){
   }
 }
 function clientVideoEnsureSource(src){
+  src = normalizeClientVideoUrl(src);
   if (!src) return;
   const type = clientVideoSourceType(src);
   activateMediaType(type);
@@ -1576,6 +1639,7 @@ function clientVideoEnsureSource(src){
 
   if (clientVideoSrc === src && clientMediaType === 'mp4') return;
   clientVideoSrc = src;
+  clientVideoEl.preload = 'auto';
   clientVideoEl.src = src;
   clientVideoEl.load();
 }
@@ -1607,6 +1671,7 @@ function clientVideoTogglePlayPause(){
   else clientVideoEl.pause();
 }
 function showClientVideoPreview(src){
+  src = normalizeClientVideoUrl(src);
   if (!src || clientVideoFullOpen) return;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
   clientVideoEnsureSource(src);
@@ -1634,6 +1699,7 @@ function hideClientVideoPreview(delay=80){
   }, delay);
 }
 function openClientVideoFullscreen(src){
+  src = normalizeClientVideoUrl(src);
   if (!src) return;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
   clientVideoEnsureSource(src);
@@ -1658,22 +1724,18 @@ function openClientVideoFullscreen(src){
   }
 
   clientVideoFullOpen = true;
+  setLiquidPerfMode('video');
   clientVideoLayer.classList.add('show','full');
   clientVideoPlay();
 }
 function closeClientVideoFullscreen(){
   clientVideoFullOpen = false;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
-  clientVideoLayer.style.transition = 'none';
   clientVideoLayer.classList.remove('full','show');
   clientVideoPause();
   if (clientMediaType === 'mp4') clientVideoEl.muted = true;
   if (clientMediaType === 'youtube' && ytPlayerReady && ytPlayer) { try { ytPlayer.mute(); } catch(_) {} }
-  clientVideoLayer.style.display = 'none';
-  requestAnimationFrame(()=>{
-    clientVideoLayer.style.transition = '';
-    clientVideoLayer.style.display = '';
-  });
+  setLiquidPerfMode(state.openId ? 'detail' : 'normal');
 }
 function isClientVideoTrigger(el){
   return !!(el && el.matches && el.matches('.has-video[data-video-url]'));
@@ -2060,7 +2122,9 @@ window.__startIntroTyping = typeSequence;
   window.addEventListener('pointerleave', ()=> hover = 0.0, {passive:true});
 
   function resize(){
-    const dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    const perf = window.__liquidPerf || {};
+    const dprCap = perf.dprCap || 1.25;
+    const dpr = Math.min(dprCap, window.devicePixelRatio || 1);
     const w = Math.floor(window.innerWidth * dpr);
     const h = Math.floor(window.innerHeight * dpr);
     canvas.width = w; canvas.height = h;
@@ -2069,11 +2133,18 @@ window.__startIntroTyping = typeSequence;
     gl.uniform2f(uRes, w, h);
   }
   resize();
+  window.__liquidAPI = { resize };
   window.addEventListener('resize', resize);
 
   const t0 = performance.now();
   const timeScale = 0.095;
+  let lastFrameMs = 0;
   function tick(now){
+    if (document.hidden) { requestAnimationFrame(tick); return; }
+    const perf = window.__liquidPerf || {};
+    const minDeltaMs = perf.minDeltaMs || 0;
+    if (minDeltaMs && (now - lastFrameMs) < minDeltaMs){ requestAnimationFrame(tick); return; }
+    lastFrameMs = now;
     const realT = (now - t0) * 0.001;
     const t = realT * timeScale;
 
@@ -2090,7 +2161,8 @@ window.__startIntroTyping = typeSequence;
       const step = Math.max(0.0016, 0.0085 / (1.0 + speed * 3.0));
       const strength = Math.min(0.65, 0.20 + speed * 0.08);
       if(dist > step){
-        const steps = Math.min(10, Math.floor(dist / step));
+        const perfStepsCap = (window.__liquidPerf && window.__liquidPerf.minDeltaMs) ? 5 : 10;
+        const steps = Math.min(perfStepsCap, Math.floor(dist / step));
         for(let i=1;i<=steps;i++){
           const k = i/(steps+1);
           pulse(lastAdd.x + dx*k, lastAdd.y + dy*k, strength * 0.8);
