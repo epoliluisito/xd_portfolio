@@ -396,9 +396,10 @@
 #legend{display:none !important}
 
   /* loading video overlay */
-  .loading-video-overlay{position:fixed;inset:0;z-index:1;background:transparent;display:flex;align-items:center;justify-content:center;opacity:1;visibility:visible;pointer-events:none;}
+  .loading-video-overlay{position:fixed;inset:0;z-index:1;background:#000;display:flex;align-items:center;justify-content:center;opacity:1;visibility:visible;pointer-events:none;transition:opacity 2.5s ease;}
+  .loading-video-overlay.fading-out{opacity:0;}
   .loading-video-overlay.hide{display:none;}
-  .loading-video-overlay video{height:400px;max-height:70vh;width:auto;max-width:90vw;object-fit:contain;display:block;filter:contrast(1.03);}
+  .loading-video-overlay video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;filter:contrast(1.03);}
   .intro-copy,.intro-line,.intro-line-text,.intro-final-line{position:relative;z-index:41;}
   .intro .services-trigger{position:relative;z-index:42;}
 
@@ -2237,23 +2238,40 @@ window.__startIntroTyping = typeSequence;
     if (typeof window.__startIntroTyping === 'function') window.__startIntroTyping();
   }
 
+  const INTRO_FADE_MS = 2500;
+  let fadeArmed = false;
+
+  function beginFadeOut(){
+    if(hidden || fadeArmed) return;
+    fadeArmed = true;
+    // Start typing first, then begin fading a moment later so the text is already writing as the video fades.
+    startIntroTypingOnce();
+    const FADE_AFTER_TYPING_LEAD_MS = 120;
+    setTimeout(()=>{
+      if(hidden) return;
+      overlay.classList.add('fading-out');
+    }, FADE_AFTER_TYPING_LEAD_MS);
+    setTimeout(()=>{
+      if(hidden) return;
+      hidden = true;
+      overlay.remove();
+    }, INTRO_FADE_MS + FADE_AFTER_TYPING_LEAD_MS + 40);
+  }
+
   function hideOverlay(delayMs = 0){
     if(hidden) return;
     const doHide = ()=>{
       if(hidden) return;
-      hidden = true;
-      overlay.remove();
+      beginFadeOut();
     };
     if (delayMs > 0) setTimeout(doHide, delayMs);
     else doHide();
   }
 
-  // Start text as soon as video is actually playing (or can play)
-  video.addEventListener('playing', startIntroTypingOnce, { once:true });
-  video.addEventListener('canplay', startIntroTypingOnce, { once:true });
+  // Text starts just before the intro video fades, so both overlap visibly
 
-  // Hide overlay only when video ends (small delay to preserve final flicker frame)
-  video.addEventListener('ended', ()=>hideOverlay(180), { once:true });
+  // Hide overlay when the video ends (fade is usually armed before this via metadata timing)
+  video.addEventListener('ended', ()=>hideOverlay(0), { once:true });
 
   // Fallbacks
   video.addEventListener('error', ()=>{
@@ -2282,7 +2300,10 @@ window.__startIntroTyping = typeSequence;
   const safetyTailMs = 900;
   function armDurationSafety(){
     if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-    const totalMs = Math.ceil(video.duration * 1000) + safetyTailMs;
+    const durationMs = Math.ceil(video.duration * 1000);
+    const fadeStartMs = Math.max(0, durationMs - INTRO_FADE_MS);
+    setTimeout(beginFadeOut, fadeStartMs);
+    const totalMs = durationMs + safetyTailMs;
     setTimeout(()=>{
       startIntroTypingOnce();
       hideOverlay();
