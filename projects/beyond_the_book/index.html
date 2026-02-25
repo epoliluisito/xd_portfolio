@@ -3034,5 +3034,174 @@ tick();
     })();
   </script>
 
+
+<style id="mobile-fixes-v3">
+@media (max-width: 860px){
+  /* Keep desktop untouched; mobile only refinements */
+  .snap-block{
+    min-height:auto !important;
+    height:auto !important;
+    overflow:visible !important;
+  }
+
+  /* Keep the key immersive sections full-screen on mobile */
+  .snap-block:first-of-type,
+  #page_block_03{
+    min-height:100svh !important;
+    overflow:hidden !important;
+  }
+
+  /* Fullscreen-video sections become content-height on mobile once videos fit width */
+  #page_block_05, #page_block_09{
+    min-height:auto !important;
+    height:auto !important;
+    background:#000 !important;
+  }
+  #page_block_05 .pb05-video,
+  #page_block_09 .pb09-video{
+    position:relative !important;
+    inset:auto !important;
+    display:block !important;
+    width:100% !important;
+    height:auto !important;
+    max-height:none !important;
+    object-fit:contain !important;
+    background:#000 !important;
+    aspect-ratio:16/9;
+  }
+
+  /* PB07 width-fit video should not leave a tall empty block */
+  #page_block_07{
+    min-height:auto !important;
+    padding-top:18px !important;
+    padding-bottom:18px !important;
+  }
+  #page_block_07 .pb07-video-box{
+    height:auto !important;
+    aspect-ratio:16/9;
+    background:#000;
+  }
+  #page_block_07 .pb07-video-box .pb07-video-inner{
+    position:relative !important;
+    width:100% !important;
+    height:auto !important;
+    top:auto !important;
+    left:auto !important;
+    transform:none !important;
+    display:block !important;
+  }
+
+  /* PB08 collapse to content height (removes black gap) */
+  #page_block_08{
+    min-height:auto !important;
+    padding-top:18px !important;
+    padding-bottom:24px !important;
+  }
+  #page_block_08 .pb04-wrap,
+  #page_block_08 .pb04-grid{
+    min-height:auto !important;
+    height:auto !important;
+    align-content:start !important;
+  }
+
+  /* Safety for media sizing inside content blocks */
+  #page_block_05 video,
+  #page_block_07 video,
+  #page_block_08 img,
+  #page_block_09 video{
+    width:100% !important;
+    max-width:100% !important;
+    height:auto !important;
+  }
+}
+</style>
+
+<script id="mobile-fixes-v3-script">
+(function(){
+  if (!window.matchMedia || !window.matchMedia('(max-width: 860px)').matches) return;
+
+  /* 1) Fix lazy video loading/play on mobile (desktop logic used snap-container as IO root) */
+  function loadVideo(v){
+    if(!v || v.dataset.mobileLoaded === '1') return;
+    const sourceNodes = v.querySelectorAll('source[data-src]');
+    sourceNodes.forEach(s => {
+      const src = s.getAttribute('data-src');
+      if (src && !s.getAttribute('src')) s.setAttribute('src', src);
+    });
+    const ds = v.getAttribute('data-src');
+    if (ds && !v.getAttribute('src')) v.setAttribute('src', ds);
+    v.dataset.mobileLoaded = '1';
+    try { v.load(); } catch(_) {}
+  }
+  function tryPlay(v){
+    if(!v) return;
+    v.muted = true;
+    v.playsInline = true;
+    const p = v.play && v.play();
+    if (p && typeof p.catch === 'function') p.catch(()=>{});
+  }
+
+  const mobileVideos = Array.from(document.querySelectorAll('video[data-lazy-media], #page_block_07 video, #page_block_05 video, #page_block_09 video'));
+  mobileVideos.forEach(v => {
+    loadVideo(v);
+    v.setAttribute('preload','metadata');
+    v.setAttribute('muted','');
+    v.setAttribute('playsinline','');
+    v.setAttribute('autoplay','');
+    v.addEventListener('loadedmetadata', () => {
+      if (v.videoWidth && v.videoHeight) {
+        const ar = (v.videoWidth / v.videoHeight).toFixed(4);
+        v.style.aspectRatio = ar;
+      }
+    }, { once:true });
+    v.addEventListener('canplay', () => tryPlay(v), { once:true });
+  });
+
+  const vio = new IntersectionObserver((entries)=>{
+    entries.forEach(e => {
+      if (e.isIntersecting) tryPlay(e.target);
+      else if (!e.target.loop && e.target.pause) e.target.pause();
+    });
+  }, { root: null, threshold: 0.15 });
+  mobileVideos.forEach(v => vio.observe(v));
+
+  /* 2) Restore PB01 star interactivity for touch by mirroring touch to mousemove */
+  const starCanvas = document.getElementById('star-network-canvas');
+  if (starCanvas){
+    function emitMouseFromTouch(ev){
+      const t = ev.touches && ev.touches[0];
+      if(!t) return;
+      const me = new MouseEvent('mousemove', {
+        clientX: t.clientX,
+        clientY: t.clientY,
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      window.dispatchEvent(me);
+    }
+    window.addEventListener('touchstart', emitMouseFromTouch, { passive: true });
+    window.addEventListener('touchmove', emitMouseFromTouch, { passive: true });
+  }
+
+  /* 3) Recompute mobile section heights after media loads to avoid empty space */
+  function normalizeSectionHeights(){
+    ['page_block_05','page_block_07','page_block_08','page_block_09'].forEach(id=>{
+      const sec = document.getElementById(id);
+      if(!sec) return;
+      sec.style.height = 'auto';
+      sec.style.minHeight = 'auto';
+    });
+  }
+  window.addEventListener('load', normalizeSectionHeights);
+  window.addEventListener('resize', normalizeSectionHeights);
+  mobileVideos.forEach(v => {
+    v.addEventListener('loadedmetadata', normalizeSectionHeights);
+    v.addEventListener('loadeddata', normalizeSectionHeights);
+  });
+  setTimeout(normalizeSectionHeights, 300);
+})();
+</script>
+
 </body>
 </html>
