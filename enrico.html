@@ -404,7 +404,7 @@
 
 
 /* Fullscreen client video preview / takeover */
-.client-pill.has-video { cursor: pointer; }
+.client-pill.has-video, .chip-item.has-video { cursor: pointer; }
 .client-video-layer{
   position:fixed; inset:0; z-index:15; opacity:0; pointer-events:none;
   transition:opacity .22s ease;
@@ -414,10 +414,13 @@
 .client-video-layer.full{
   z-index:9999; opacity:1; pointer-events:auto;
 }
-.client-video-layer video{
+.client-video-layer video,
+.client-video-layer iframe{
   position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
   background:#000;
+  border:0;
 }
+.client-video-layer iframe{ display:none; }
 .client-video-layer .client-video-close{
   position:absolute; top:16px; right:16px; width:36px; height:36px;
   border:1px solid rgba(255,255,255,.8); background:rgba(0,0,0,.35);
@@ -1014,7 +1017,15 @@ function renderDetailCard(node){
   if (String(rawDesc).includes('<')) { detailDesc.innerHTML = rawDesc; } else { detailDesc.textContent = String(rawDesc).toUpperCase(); }
 
   const categoriesItems = (node.categories || node.subtypes || []).slice(0,6);
-  const categories = categoriesItems.map(v=>`<span class="chip-item mono">${v}</span>`).join('');
+  const categories = categoriesItems.map(v=>{
+    const vv = String(v).toLowerCase();
+    const isFilmDirectorCategory = (node.id === '03');
+    let attrs = ' class="chip-item mono"';
+    if (isFilmDirectorCategory && vv === 'case study film') {
+      attrs = ' class="chip-item mono has-video" data-video-url="http://films.enricopoli.com/projects/google_intrinsic/assets/google_intrinsic.mp4" data-video-title="Case Study Film"';
+    }
+    return `<span${attrs}>${v}</span>`;
+  }).join('');
   const selectedClientsWorks = (node.selectedClientsWorks || []).map(v=>{
     const vv = String(v).toLowerCase();
     const isFilmDirectorClient = (node.id === '03');
@@ -1023,6 +1034,12 @@ function renderDetailCard(node){
       attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/the_pursuit_of_harmony/assets/the_pursuit_of_harmony.mp4" data-video-title="Natuzzi Italia"';
     } else if (isFilmDirectorClient && vv === 'nike') {
       attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/we_are_one/assets/we_are_one.mp4" data-video-title="Nike"';
+    } else if (isFilmDirectorClient && vv === 'not(e) for a dreamer') {
+      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/note_for_a_dreamer/assets/note_for_a_dreamer.mp4" data-video-title="Not(e) for a dreamer"';
+    } else if (isFilmDirectorClient && vv === 'mono-y') {
+      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/mono_y/assets/mono_y.mp4" data-video-title="MONO-Y"';
+    } else if (isFilmDirectorClient && vv === 'google') {
+      attrs = ' class="client-pill has-video" data-video-url="http://films.enricopoli.com/projects/google_gemini/assets/google_gemini.mp4" data-video-title="Google"';
     }
     return `<span${attrs}>${v}</span>`;
   }).join('');
@@ -1446,33 +1463,154 @@ const clientVideoLayer = document.createElement('div');
 clientVideoLayer.className = 'client-video-layer';
 clientVideoLayer.innerHTML = `
   <video playsinline preload="metadata" muted loop></video>
+  <iframe allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" title="Client video"></iframe>
   <button class="client-video-close" aria-label="Close video">×</button>
 `;
 document.body.appendChild(clientVideoLayer);
 
 const clientVideoEl = clientVideoLayer.querySelector('video');
+const clientVideoIframe = clientVideoLayer.querySelector('iframe');
 const clientVideoClose = clientVideoLayer.querySelector('.client-video-close');
 let clientVideoSrc = '';
 let clientVideoHoverToken = null;
 let clientVideoFullOpen = false;
+let clientMediaType = 'none'; // 'mp4' | 'youtube'
+let ytApiLoading = false;
+let ytApiReady = false;
+let ytPlayer = null;
+let ytPlayerReady = false;
+let ytVideoId = '';
 
+function clientVideoSourceType(src){
+  const s = String(src || '').toLowerCase();
+  if (s.includes('youtube.com') || s.includes('youtu.be')) return 'youtube';
+  return 'mp4';
+}
+function getYoutubeId(url){
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) return u.pathname.replace('/','').trim();
+    if (u.searchParams.get('v')) return u.searchParams.get('v');
+    const m = u.pathname.match(/\/embed\/([^/?]+)/);
+    if (m) return m[1];
+  } catch(_) {}
+  const m = String(url||'').match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+  return m ? m[1] : '';
+}
+function ensureYouTubeApi(){
+  if (ytApiReady || ytApiLoading) return;
+  ytApiLoading = true;
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  document.head.appendChild(tag);
+}
+window.onYouTubeIframeAPIReady = function(){
+  ytApiReady = true;
+};
+function buildYouTubeEmbedUrl(id, {autoplay=true, muted=true} = {}){
+  const params = new URLSearchParams({
+    autoplay: autoplay ? '1' : '0',
+    mute: muted ? '1' : '0',
+    controls: '0',
+    loop: '1',
+    playlist: id,
+    rel: '0',
+    modestbranding: '1',
+    playsinline: '1',
+    enablejsapi: '1',
+    iv_load_policy: '3',
+    fs: '0'
+  });
+  return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+}
+function activateMediaType(type){
+  clientMediaType = type;
+  if (type === 'youtube') {
+    clientVideoEl.pause();
+    clientVideoEl.style.display = 'none';
+    clientVideoIframe.style.display = 'block';
+  } else {
+    clientVideoIframe.style.display = 'none';
+    clientVideoEl.style.display = 'block';
+  }
+}
 function clientVideoEnsureSource(src){
-  if (!src || clientVideoSrc === src) return;
+  if (!src) return;
+  const type = clientVideoSourceType(src);
+  activateMediaType(type);
+
+  if (type === 'youtube') {
+    const id = getYoutubeId(src);
+    if (!id) return;
+    ensureYouTubeApi();
+    const sourceChanged = (ytVideoId !== id);
+    ytVideoId = id;
+    if (sourceChanged || !clientVideoIframe.src) {
+      clientVideoIframe.src = buildYouTubeEmbedUrl(id, {autoplay:true, muted:true});
+    }
+    if (ytApiReady) {
+      if (!ytPlayer || sourceChanged) {
+        ytPlayerReady = false;
+        ytPlayer = new YT.Player(clientVideoIframe, {
+          events: {
+            onReady: () => { ytPlayerReady = true; },
+            onError: () => {}
+          }
+        });
+      }
+    }
+    clientVideoSrc = src;
+    return;
+  }
+
+  if (clientVideoSrc === src && clientMediaType === 'mp4') return;
   clientVideoSrc = src;
   clientVideoEl.src = src;
   clientVideoEl.load();
 }
 function clientVideoPlay(){
+  if (clientMediaType === 'youtube') {
+    if (ytPlayerReady && ytPlayer && ytPlayer.playVideo) { try { ytPlayer.playVideo(); } catch(_) {} }
+    return;
+  }
   const p = clientVideoEl.play();
   if (p && typeof p.catch === 'function') p.catch(()=>{});
+}
+function clientVideoPause(){
+  if (clientMediaType === 'youtube') {
+    if (ytPlayerReady && ytPlayer && ytPlayer.pauseVideo) { try { ytPlayer.pauseVideo(); } catch(_) {} }
+    return;
+  }
+  clientVideoEl.pause();
+}
+function clientVideoTogglePlayPause(){
+  if (clientMediaType === 'youtube') {
+    if (!ytPlayerReady || !ytPlayer || !ytPlayer.getPlayerState) return;
+    let st = -1;
+    try { st = ytPlayer.getPlayerState(); } catch(_) {}
+    if (st === 1) clientVideoPause();
+    else clientVideoPlay();
+    return;
+  }
+  if (clientVideoEl.paused) clientVideoPlay();
+  else clientVideoEl.pause();
 }
 function showClientVideoPreview(src){
   if (!src || clientVideoFullOpen) return;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
   clientVideoEnsureSource(src);
-  clientVideoEl.muted = true;
-  clientVideoEl.loop = true;
-  clientVideoEl.controls = false;
+  if (clientMediaType === 'youtube') {
+    if (ytPlayerReady && ytPlayer) {
+      try { ytPlayer.mute(); ytPlayer.playVideo(); } catch(_) {}
+    } else {
+      const id = getYoutubeId(src);
+      if (id) clientVideoIframe.src = buildYouTubeEmbedUrl(id, {autoplay:true, muted:true});
+    }
+  } else {
+    clientVideoEl.muted = true;
+    clientVideoEl.loop = true;
+    clientVideoEl.controls = false;
+  }
   clientVideoLayer.classList.remove('full');
   clientVideoLayer.classList.add('show');
   clientVideoPlay();
@@ -1488,11 +1626,26 @@ function openClientVideoFullscreen(src){
   if (!src) return;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
   clientVideoEnsureSource(src);
-  clientVideoEl.muted = false; // unmute on explicit user click
-  clientVideoEl.volume = 1;
-  clientVideoEl.loop = true;
-  clientVideoEl.controls = false;
-  try { clientVideoEl.currentTime = 0; } catch(_) {}
+
+  if (clientMediaType === 'youtube') {
+    const id = getYoutubeId(src);
+    if (ytPlayerReady && ytPlayer) {
+      try {
+        ytPlayer.seekTo(0, true);
+        ytPlayer.unMute();
+        ytPlayer.playVideo();
+      } catch(_) {}
+    } else if (id) {
+      clientVideoIframe.src = buildYouTubeEmbedUrl(id, {autoplay:true, muted:false});
+    }
+  } else {
+    clientVideoEl.muted = false;
+    clientVideoEl.volume = 1;
+    clientVideoEl.loop = true;
+    clientVideoEl.controls = false;
+    try { clientVideoEl.currentTime = 0; } catch(_) {}
+  }
+
   clientVideoFullOpen = true;
   clientVideoLayer.classList.add('show','full');
   clientVideoPlay();
@@ -1500,38 +1653,38 @@ function openClientVideoFullscreen(src){
 function closeClientVideoFullscreen(){
   clientVideoFullOpen = false;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
-  // make close feel immediate, then restore transition for hover fades
   clientVideoLayer.style.transition = 'none';
   clientVideoLayer.classList.remove('full','show');
-  clientVideoEl.pause();
-  clientVideoEl.muted = true;
+  clientVideoPause();
+  if (clientMediaType === 'mp4') clientVideoEl.muted = true;
+  if (clientMediaType === 'youtube' && ytPlayerReady && ytPlayer) { try { ytPlayer.mute(); } catch(_) {} }
   clientVideoLayer.style.display = 'none';
   requestAnimationFrame(()=>{
     clientVideoLayer.style.transition = '';
     clientVideoLayer.style.display = '';
   });
 }
-function isClientVideoPill(el){
-  return !!(el && el.matches && el.matches('.client-pill.has-video[data-video-url]'));
+function isClientVideoTrigger(el){
+  return !!(el && el.matches && el.matches('.has-video[data-video-url]'));
 }
 
 detailCard.addEventListener('mouseover', (e)=>{
-  const pill = e.target.closest('.client-pill.has-video[data-video-url]');
-  if (!isClientVideoPill(pill)) return;
+  const pill = e.target.closest('.has-video[data-video-url]');
+  if (!isClientVideoTrigger(pill)) return;
   showClientVideoPreview(pill.dataset.videoUrl);
 });
 
 detailCard.addEventListener('mouseout', (e)=>{
-  const pill = e.target.closest('.client-pill.has-video[data-video-url]');
-  if (!isClientVideoPill(pill)) return;
+  const pill = e.target.closest('.has-video[data-video-url]');
+  if (!isClientVideoTrigger(pill)) return;
   const rt = e.relatedTarget;
   if (rt && pill.contains(rt)) return;
   hideClientVideoPreview();
 });
 
 detailCard.addEventListener('click', (e)=>{
-  const pill = e.target.closest('.client-pill.has-video[data-video-url]');
-  if (!isClientVideoPill(pill)) return;
+  const pill = e.target.closest('.has-video[data-video-url]');
+  if (!isClientVideoTrigger(pill)) return;
   e.preventDefault();
   e.stopPropagation();
   openClientVideoFullscreen(pill.dataset.videoUrl);
@@ -1540,8 +1693,7 @@ detailCard.addEventListener('click', (e)=>{
 clientVideoLayer.addEventListener('click', (e)=>{
   if (e.target === clientVideoClose) return;
   if (!clientVideoFullOpen) return;
-  if (clientVideoEl.paused) clientVideoPlay();
-  else clientVideoEl.pause();
+  clientVideoTogglePlayPause();
 });
 
 clientVideoClose.addEventListener('click', (e)=>{
