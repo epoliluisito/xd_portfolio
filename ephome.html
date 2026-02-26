@@ -2207,6 +2207,57 @@ function closeClientVideoFullscreen(){
   if (clientMediaType === 'youtube' && ytPlayerReady && ytPlayer) { try { ytPlayer.mute(); } catch(_) {} }
   setLiquidPerfMode(state.openId ? 'detail' : 'normal');
 }
+
+
+/* Desktop-only: Film Direction node hover triggers a single randomized fullscreen preview (opacity .5 via CSS) */
+let __filmDirectionRandomHoverSrc = null;
+function __isDesktopFinePointer(){
+  return !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine) and (min-width: 861px)').matches);
+}
+function __pickRandom(arr){
+  if (!arr || !arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function setupFilmDirectionRandomHoverDesktop(){
+  if (!__isDesktopFinePointer()) return;
+  // Pool is sourced from the existing Film Direction video URLs already embedded in renderDetailCard() for node 03.
+  const pool = [
+    "https://films.enricopoli.com/projects/google_intrinsic/assets/google_intrinsic.mp4",
+    "https://films.enricopoli.com/projects/pg_vicks/assets/pg_vicks.mp4",
+    "https://films.enricopoli.com/projects/wind_day/assets/wind_day_trailer.mp4",
+    "https://films.enricopoli.com/projects/puer_apuliae/assets/puer_apuliae_trailer.mp4",
+    "https://films.enricopoli.com/projects/brachetti_solo/assets/brachetti_solo_teaser.mp4",
+    "https://films.enricopoli.com/projects/camera_della_moda_italiana/assets/it_happens_at_night.mp4",
+    "https://films.enricopoli.com/projects/the_pursuit_of_harmony/assets/the_pursuit_of_harmony.mp4",
+    "https://films.enricopoli.com/projects/we_are_one/assets/we_are_one.mp4",
+    "https://films.enricopoli.com/projects/note_for_a_dreamer/assets/note_for_a_dreamer.mp4",
+    "https://films.enricopoli.com/projects/mono_y/assets/mono_y.mp4",
+    "https://films.enricopoli.com/projects/google_gemini/assets/google_gemini.mp4"
+  ];
+  __filmDirectionRandomHoverSrc = __pickRandom(pool);
+  if (!__filmDirectionRandomHoverSrc) return;
+
+  try { clientVideoPreloadMany([__filmDirectionRandomHoverSrc]); } catch(_) {}
+
+  const hostBtn = nodesRoot && nodesRoot.querySelector('.node[data-id="03"] .node-button');
+  if (!hostBtn) return;
+
+  hostBtn.addEventListener('mouseenter', ()=>{
+    if (!__isDesktopFinePointer()) return;
+    if (!state || state.mode !== 'free') return;
+    if (!state.mapVisible) return;            // only when the scattered fields are visible
+    if (state.openId) return;                 // don't interfere with detail open
+    if (overlay && overlay.classList && overlay.classList.contains('show')) return;
+    if (detailOverlay && detailOverlay.classList && detailOverlay.classList.contains('show')) return;
+    showClientVideoPreview(__filmDirectionRandomHoverSrc);
+  });
+
+  hostBtn.addEventListener('mouseleave', ()=>{
+    if (!__isDesktopFinePointer()) return;
+    hideClientVideoPreview(80);
+  });
+}
+
 function isClientVideoTrigger(el){
   return !!(el && el.matches && el.matches('.has-video[data-video-url]'));
 }
@@ -2484,6 +2535,7 @@ function typeSequence(){
 }
 
 renderNodes();
+setupFilmDirectionRandomHoverDesktop();
 setInitialView();
 setTargetsFromCurrent();
 window.addEventListener('resize', ()=>{ if (state.openId) { alignDetailCloseToTitle(); } });
