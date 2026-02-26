@@ -105,7 +105,7 @@
   .node{
     position:absolute;width:420px;min-height:54px;z-index:5;
     opacity:0;transform:none;
-    transition:opacity var(--durFast) var(--easeSoft), transform var(--durMed) var(--easeSmooth), left var(--durMed) var(--easeSmooth), top var(--durMed) var(--easeSmooth);
+    transition:opacity var(--durFast) var(--easeSoft);
     user-select:none;
   }
   .layer.visible .node.show{opacity:1;transform:none}
@@ -883,8 +883,7 @@
         <p class="intro-line" id="introLine2"></p>
         <p class="intro-line" id="introLine3"></p>
       </div>
-      <button class="services-trigger" id="servicesTrigger" aria-expanded="false" aria-disabled="true" style="display:none"><span id="typedServices"></span></button>
-    </div>
+</div>
     
     <!-- Mobile-only fields list (enabled via JS on small screens) -->
     <div id="mobileFieldsView" aria-hidden="true">
@@ -1044,6 +1043,7 @@ const state = {
   phase:Object.fromEntries(nodes.map((n,i)=>[n.id, (i+1)*1.13])),
   activeField:null,
   introStarted:false,
+  noMotion:true,
   introAnimating:false
 };
 
@@ -1077,6 +1077,13 @@ function tickNodeField(){
   Object.keys(state.pos).forEach(id => {
     const p = state.pos[id];
     const trg = state.targetPos[id] || p;
+    if (state.noMotion){
+      p.x = trg.x; p.y = trg.y;
+      state.basePos[id] = {x:trg.x, y:trg.y};
+      positionNodeEl(id);
+      return;
+    }
+
     // spring-ish settle toward target
     p.x += (trg.x - p.x) * 0.12;
     p.y += (trg.y - p.y) * 0.12;
@@ -1711,7 +1718,17 @@ function startExperience(){
 
   const introCopy = introBlock.querySelector('.intro-copy');
   const line3Text = document.getElementById('introLine3Text');
-  const r = servicesTrigger.getBoundingClientRect();
+  
+
+  // Fallback: if the hub trigger has been removed, start directly in map state.
+  if (!servicesTrigger) {
+    try{ state.introStarted = true; state.introAnimating = false; }catch(_){}
+    try{ introBlock.classList.add('map-started'); }catch(_){}
+    try{ if (typeof arrangeNodesAroundIntroCenter === 'function') arrangeNodesAroundIntroCenter(); }catch(_){}
+    try{ if (typeof showMap === 'function') showMap(); }catch(_){}
+    return;
+  }
+const r = servicesTrigger.getBoundingClientRect();
   const triggerCS = getComputedStyle(servicesTrigger);
 
   if (servicesTrigger.parentElement !== document.body) {
@@ -1786,7 +1803,7 @@ function showMap(){
   nodeLayer.classList.add('visible');
   document.querySelectorAll('.node').forEach(el=> el.classList.remove('disappearing'));
   legend.classList.add('visible');
-  servicesTrigger.setAttribute('aria-expanded','true');
+  if (servicesTrigger) servicesTrigger.setAttribute('aria-expanded','true');
   animateNodesIn();
 }
 function hideMap(){
@@ -1796,7 +1813,7 @@ function hideMap(){
   clearFocus();
   document.querySelectorAll('.node').forEach(el => el.classList.remove('open'));
   legend.classList.remove('visible');
-  servicesTrigger.setAttribute('aria-expanded','false');
+  if (servicesTrigger) servicesTrigger.setAttribute('aria-expanded','false');
   const ids = nodes.map(n=>n.id);
   disappearNodes(ids, {stagger:35, baseDelay:0, pulse:true});
   setTimeout(()=> {
@@ -1927,7 +1944,7 @@ if (resetLayoutBtn) resetLayoutBtn.addEventListener('click', ()=>{
   positionAllNodes();
 });
 if (resetViewBtn) resetViewBtn.addEventListener('click', ()=> setInitialView());
-servicesTrigger.addEventListener('click', (e)=>{ e.stopPropagation(); if(!servicesTrigger.classList.contains('ready')) return; if(!clientVideoPreloadStarted) setTimeout(()=>preloadClientVideosInDetail(document), 0); if(!state.introStarted) { startExperience(); return; } toggleMap(); });
+if (servicesTrigger) servicesTrigger.addEventListener('click', (e)=>{ e.stopPropagation(); if(!servicesTrigger.classList.contains('ready')) return; if(!clientVideoPreloadStarted) setTimeout(()=>preloadClientVideosInDetail(document), 0); if(!state.introStarted) { startExperience(); return; } toggleMap(); });
 
 
 // Client fullscreen video preview / takeover (Selected clients/works)
@@ -2472,7 +2489,7 @@ setTargetsFromCurrent();
 window.addEventListener('resize', ()=>{ if (state.openId) { alignDetailCloseToTitle(); } });
 state.mode = 'free';
 requestAnimationFrame(tickNodeField);
-window.__startIntroTyping = typeSequence;
+window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
 </script>
 
 <script>
@@ -3159,55 +3176,27 @@ window.__startIntroTyping = typeSequence;
     return;
   }
 
-  // DESKTOP: start at the state after clicking "WHAT DO I ACTUALLY DO?"
-  // Show the hub prompt centered, fade it in, then fade nodes in around it.
-  const servicesTrigger = document.getElementById('servicesTrigger');
+  // DESKTOP: hub trigger removed — start directly in the fields map state.
   const introBlock = document.getElementById('introBlock');
   const introCopy = introBlock ? introBlock.querySelector('.intro-copy') : null;
 
-  if (!servicesTrigger || !introBlock) return;
+  if (!introBlock) return;
 
-  // Kill the intro typing / copy completely
+  // Hide the intro typing / copy completely
   if (introCopy) { introCopy.style.display = 'none'; introCopy.style.opacity = '0'; }
 
-  // Force hub prompt content and center it
-  servicesTrigger.textContent = 'WHAT DO I ACTUALLY DO?';
-  servicesTrigger.classList.add('ready');
-  servicesTrigger.setAttribute('aria-disabled','false');
-  servicesTrigger.setAttribute('aria-expanded','true');
-
-  if (servicesTrigger.parentElement !== document.body) {
-    document.body.appendChild(servicesTrigger);
-  }
-
-  servicesTrigger.style.display = 'block';
-  servicesTrigger.style.position = 'fixed';
-  servicesTrigger.style.left = '50%';
-  servicesTrigger.style.top = '50%';
-  servicesTrigger.style.transform = 'translate(-50%,-50%)';
-  servicesTrigger.style.pointerEvents = 'auto';
-  servicesTrigger.style.textAlign = 'center';
-  servicesTrigger.classList.add('centered-hub');
-
-  // Fade in hub
-  servicesTrigger.style.opacity = '0';
-  servicesTrigger.style.transition = 'opacity .42s ease';
-  requestAnimationFrame(()=>{ servicesTrigger.style.opacity = '1'; });
-
-  // Mark intro as started so clicking toggles map (not restart intro)
+  // Mark intro as started so the map is available immediately
   try{ state.introStarted = true; state.introAnimating = false; }catch(_){ }
 
   introBlock.classList.add('map-started');
 
-  // Arrange and reveal nodes
-  // Use existing functions if present; otherwise no-op
   const canArrange = (typeof arrangeNodesAroundIntroCenter === 'function');
   const canShowMap = (typeof showMap === 'function');
 
   setTimeout(()=>{
     try{ if (canArrange) arrangeNodesAroundIntroCenter(); }catch(_){ }
     try{ if (canShowMap) showMap(); }catch(_){ }
-  }, 220);
+  }, 120);
 })();
 </script>
 
