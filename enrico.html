@@ -531,6 +531,63 @@
     text-transform:uppercase;
   }
   .mobile-field:active{transform:translateY(1px);}
+
+  /* Mobile field open (detail) state */
+  #mobileFieldsView.field-open{
+    justify-content:flex-start;
+    align-items:stretch;
+  }
+  #mobileFieldDetail{
+    width:100%;
+    opacity:0;
+    transform:translateY(6px);
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  #mobileFieldsView.field-open #mobileFieldDetail{
+    opacity:1;
+    transform:translateY(0);
+  }
+  #mobileFieldTopChip{
+    text-align:center;
+    margin-top:10px;
+    font-size:15px;
+    font-weight:500;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    line-height:1.25;
+    color:var(--fg);
+  }
+  #mobileFieldBody{
+    margin-top:18px;
+    padding:0 2px;
+    font-size:13.5px;
+    line-height:1.55;
+    color:rgba(238,241,247,.92);
+  }
+  #mobileFieldBody .mf-sec{
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px solid rgba(255,255,255,.08);
+  }
+  #mobileFieldBody .mf-label{
+    display:block;
+    margin:0 0 8px 0;
+    font-size:11px;
+    letter-spacing:.10em;
+    text-transform:uppercase;
+    color:rgba(180,188,203,.95);
+  }
+  #mobileFieldBody ul{
+    margin:0;
+    padding-left:18px;
+  }
+  #mobileFieldBody li{
+    margin:0 0 6px 0;
+  }
+  /* Remove mobile hint line (touch affordance) */
+  .mobile-field .mf-sub{display:none !important;}
+  /* Subtle tap highlight removal */
+  .mobile-field{-webkit-tap-highlight-color: transparent;}
   .mobile-field{opacity:0; transform:translateY(6px); transition:opacity .35s ease, transform .35s ease;}
   /* Detail overlay: allow scroll */
   .detail-overlay.show{overflow-y:auto;}
@@ -2745,21 +2802,123 @@ window.__startIntroTyping = typeSequence;
   mobileTitle.style.transform = 'translateY(6px)';
   mobileTitle.style.transition = 'opacity .45s ease, transform .45s ease';
 
+  
+  function ensureDetailShell(){
+    let shell = document.getElementById('mobileFieldDetail');
+    if(shell) return shell;
+    shell = document.createElement('div');
+    shell.id = 'mobileFieldDetail';
+    shell.innerHTML = `
+      <div id="mobileFieldTopChip"></div>
+      <div id="mobileFieldBody"></div>
+      <div class="detail-cta" style="margin-top:22px">
+        <a class="tag" id="mobileFieldCta" href="#" role="button"></a>
+      </div>
+    `;
+    mobileView.appendChild(shell);
+    return shell;
+  }
+
+  function renderMobileDetail(node){
+    const shell = ensureDetailShell();
+    const top = shell.querySelector('#mobileFieldTopChip');
+    const body = shell.querySelector('#mobileFieldBody');
+    const cta = shell.querySelector('#mobileFieldCta');
+
+    top.textContent = String(node.title || '').toUpperCase();
+
+    const esc = (s)=> String(s ?? '');
+    const makeLis = (arr)=> (Array.isArray(arr) && arr.length)
+      ? `<ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`
+      : '';
+
+    const desc = esc(node.desc);
+    const implies = makeLis(node.subtypes);
+    const clients = makeLis(node.selectedClientsWorks);
+
+    body.innerHTML = `
+      <p style="margin:0">${desc}</p>
+      ${implies ? `<div class="mf-sec"><span class="mf-label mono">${esc(node.includesLabel || 'WHAT IT IMPLIES')}</span>${implies}</div>` : ``}
+      ${clients ? `<div class="mf-sec"><span class="mf-label mono">${esc(node.selectedLabel || 'SELECTED CLIENTS / WORKS')}</span>${clients}</div>` : ``}
+    `;
+
+    const subject = encodeURIComponent(String(node.ctaSubject || `Samples request — ${node.title || ''}`));
+    cta.textContent = String(node.ctaLabel || 'GET IN TOUCH');
+    cta.setAttribute('href', `mailto:epoli.uk@gmail.com?subject=${subject}`);
+  }
+
+  function setListVisible(visible){
+    mobileList.style.display = visible ? 'flex' : 'none';
+    if(visible){
+      const items = [...mobileList.querySelectorAll('.mobile-field')];
+      items.forEach((el, i)=>{
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(8px)';
+        el.style.transition = 'opacity .28s ease, transform .28s ease';
+        setTimeout(()=>{
+          el.style.opacity = '1';
+          el.style.transform = 'translateY(0)';
+        }, 40 + i*60);
+      });
+    }
+  }
+
+  function openMobileField(node){
+    // Fade out list items, then swap to detail view
+    const items = [...mobileList.querySelectorAll('.mobile-field')];
+    items.forEach((el, i)=>{
+      el.style.transition = 'opacity .24s ease, transform .24s ease';
+      setTimeout(()=>{
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(10px)';
+      }, i*18);
+    });
+
+    // Push history state so browser back returns to list without adding extra clickable UI
+    try{
+      history.pushState({ mobileField: node.id }, '', `#field-${node.id}`);
+    }catch(_){}
+
+    setTimeout(()=>{
+      mobileView.classList.add('field-open');
+      setListVisible(false);
+      renderMobileDetail(node);
+      // Ensure detail animates in
+      requestAnimationFrame(()=>{
+        const shell = document.getElementById('mobileFieldDetail');
+        if(shell){
+          shell.style.opacity = '0';
+          shell.style.transform = 'translateY(6px)';
+          requestAnimationFrame(()=>{
+            shell.style.opacity = '1';
+            shell.style.transform = 'translateY(0)';
+          });
+        }
+      });
+      // Scroll to top so content starts in view
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 260);
+  }
+
+  function closeMobileField(){
+    mobileView.classList.remove('field-open');
+    const shell = document.getElementById('mobileFieldDetail');
+    if(shell) shell.remove();
+    setListVisible(true);
+  }
+
   function buildMobileFields(){
     if (window.__mobileFieldsBuilt) return;
     window.__mobileFieldsBuilt = true;
 
-    // Build list (tap opens the same detail panel). Keep interactions minimal.
+    // Build list (tap opens simplified mobile detail view)
     nodes.forEach((n)=>{
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'mobile-field';
-      btn.innerHTML = `        <span class="mf-title">${String(n.title || '').toUpperCase()}</span>
-        <span class="mf-sub mono">${String(n.hint || '')}</span>
-      `;
+      btn.innerHTML = `<span class="mf-title">${String(n.title || '').toUpperCase()}</span>`;
       btn.addEventListener('click', ()=>{
-        // Reuse existing detail rendering
-        openDetail(n);
+        openMobileField(n);
       });
       mobileList.appendChild(btn);
     });
@@ -2780,19 +2939,22 @@ window.__startIntroTyping = typeSequence;
     mobileView.style.display = 'flex';
     mobileView.setAttribute('aria-hidden','false');
 
-    // Animate title then items in
+    // Animate items in
     requestAnimationFrame(()=>{
-      mobileTitle.style.opacity = '1';
-      mobileTitle.style.transform = 'translateY(0)';
-      const items = [...mobileList.querySelectorAll('.mobile-field')];
-      items.forEach((el, i)=>{
-        setTimeout(()=>{
-          el.style.opacity = '1';
-          el.style.transform = 'translateY(0)';
-        }, 140 + i*90);
-      });
+      setListVisible(true);
     });
   }
+
+  // Restore list view on browser back (mobile only)
+  window.addEventListener('popstate', (e)=>{
+    if(!mobileView || mobileView.getAttribute('aria-hidden') === 'true') return;
+    // If we were in field-open state and the new state isn't a mobileField, go back to list.
+    const inOpen = mobileView.classList.contains('field-open');
+    const hasField = e && e.state && e.state.mobileField;
+    if(inOpen && !hasField){
+      closeMobileField();
+    }
+  });
 
   // On mobile, make the hub actionable when ready
   trigger.addEventListener('click', (e)=>{
@@ -2802,6 +2964,7 @@ window.__startIntroTyping = typeSequence;
     showMobileFields();
   }, true);
 })();
+</script>
 </script>
 
 </div>
