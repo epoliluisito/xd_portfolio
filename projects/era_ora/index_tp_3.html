@@ -7710,7 +7710,6 @@ AFRAME.registerComponent('tp-camera-springarm', {
     }
 
     const needClear = this.data.sphereRadius + this.data.ceilingPadding;
-    const needClear = this.data.sphereRadius + this.data.ceilingPadding;
     if (dist >= needClear) return 0;
 
     return Math.min(this.data.maxCeilingDrop, (needClear - dist));
@@ -7762,9 +7761,10 @@ AFRAME.registerComponent('tp-camera-springarm', {
     // _sphereSweepClampDist now returns raw distance (may be < minDist)
     const rawTarget = this._sphereSweepClampDist(this._pivotW, this._desiredW, dt);
 
-    // For arm distance, still respect minDist as a soft preference:
-    // the arm won't extend beyond minDist unless lift can't compensate.
-    const targetDist = Math.max(0.05, rawTarget);
+    // Hard floor at minDist: the arm NEVER collapses below this, even against a solid wall.
+    // The camera may clip slightly through thin geometry — this is intentional and correct.
+    // Collapsing to near-zero (POV) is always worse than a tiny clip.
+    const targetDist = Math.max(this.data.minDist, rawTarget);
 
     const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
     const prevDist = this._curDist;
@@ -7794,21 +7794,8 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     this._finalW.copy(this._pivotW).addScaledVector(this._dir, this._curDist);
 
-    // Vertical escape lift (when compressed below minDist)
-    const desiredLift = this._computeLift(this._finalW, this._rawSweepDist);
-    const aLift = Math.min(1, Math.max(0, this.data.smoothPos));
-    if (desiredLift > this._curLift) {
-      // Lifting up to escape — snap quickly to avoid wall flash
-      this._curLift = this._curLift + (desiredLift - this._curLift) * 0.5;
-    } else {
-      // Settling back down — smooth
-      this._curLift = this._curLift + (desiredLift - this._curLift) * aLift;
-    }
-    if (Math.abs(this._curLift) < 0.001) this._curLift = 0;
-
-    if (this._curLift > 0) {
-      this._finalW.y += this._curLift;
-    }
+    // No lift needed — arm is now hard-floored at minDist, so compression never happens.
+    this._curLift = 0;
 
     // Ceiling drop (existing logic — only for cases where ceiling is hit normally)
     const desiredDrop = this._computeCeilingDrop(this._finalW, dt);
