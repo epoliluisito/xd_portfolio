@@ -375,7 +375,10 @@
     transition:left var(--durSlow) var(--easeSmooth), top var(--durSlow) var(--easeSmooth), transform var(--durSlow) var(--easeSmooth), opacity var(--durFast) var(--easeSoft);
   }
 
-  @media (max-width: 900px){
+  
+  /* Hide mobile-only stacked view by default (enabled via JS on small screens) */
+  #mobileFieldsView{display:none;}
+@media (max-width: 900px){
     .detail-grid{grid-template-columns:1fr; gap:14px}
   }
   .node.disappearing{
@@ -437,11 +440,12 @@
 .client-video-preload-bin{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;left:-9999px;top:-9999px;}
 
 
-/* ---------------- Mobile minimal mode (does not affect desktop) ---------------- */
-@media (max-width: 768px){
+
+/* ---------------- Mobile minimal mode (mobile only; desktop untouched) ---------------- */
+@media (max-width: 600px), (pointer: coarse) and (max-width: 768px){
   html, body{height:auto; overflow-y:auto !important; overflow-x:hidden !important; background:#121212 !important;}
   body{touch-action:manipulation;}
-  /* Kill heavy background layers */
+  /* Disable heavy background layers */
   #liquid, .ui-noise{display:none !important;}
   .viewport{position:relative !important; height:auto !important; min-height:100vh !important; overflow:visible !important; background:transparent !important;}
   .canvas{position:relative !important; height:auto !important;}
@@ -457,10 +461,8 @@
     align-self:flex-start !important;
     justify-content:flex-start !important;
   }
-  /* Ensure hub stays green, left aligned */
   .services-trigger{justify-content:flex-start !important; text-align:left !important;}
   .services-trigger, .services-trigger.ready{color:#b4ffcb !important;}
-  .services-trigger span{display:inline-block;}
 
   /* Mobile fields view */
   #mobileFieldsView{display:none; padding:16px 18px 40px; max-width:720px; margin:0 auto;}
@@ -472,7 +474,7 @@
     padding:14px 14px;
     margin:10px 0;
     border:1px solid rgba(255,255,255,.18);
-    background:rgba(0,0,0,.0);
+    background:transparent;
     color:#fff;
     border-radius:10px;
     cursor:pointer;
@@ -514,6 +516,7 @@
       </div>
       <button class="services-trigger" id="servicesTrigger" aria-expanded="false" aria-disabled="true" style="display:none"><span id="typedServices"></span></button>
     </div>
+    
     <!-- Mobile-only fields list (enabled via JS on small screens) -->
     <div id="mobileFieldsView" aria-hidden="true">
       <h2 class="mono" id="mobileFieldsTitle">WHAT DO I ACTUALLY DO?</h2>
@@ -2383,10 +2386,13 @@ window.__startIntroTyping = typeSequence;
     }
   }, 15000);
 })();
+</script>
 
+
+<script>
 /* ---------------- Mobile minimal flow (intro -> stacked fields) ---------------- */
 (function(){
-  const mq = window.matchMedia('(max-width: 768px)');
+  const mq = window.matchMedia('(max-width: 600px), (pointer: coarse) and (max-width: 768px)');
   if (!mq.matches) return;
 
   // Always allow scrolling on mobile
@@ -2395,21 +2401,18 @@ window.__startIntroTyping = typeSequence;
   document.documentElement.style.overflowX = 'hidden';
   document.body.style.overflowX = 'hidden';
 
-  // Disable heavy background layers (CSS hides them too, but belt & braces)
-  const liquid = document.getElementById('liquid');
-  if (liquid) liquid.style.display = 'none';
-  const noise = document.querySelector('.ui-noise');
-  if (noise) noise.style.display = 'none';
-
-  const introBlockEl = document.getElementById('introBlock');
+  // Ensure mobile view exists
   const mobileView = document.getElementById('mobileFieldsView');
   const mobileTitle = document.getElementById('mobileFieldsTitle');
   const mobileList = document.getElementById('mobileFieldsList');
   const trigger = document.getElementById('servicesTrigger');
+  if (!mobileView || !mobileTitle || !mobileList || !trigger) return;
 
-  if (!mobileView || !mobileList || !trigger) return;
+  // Hide node layer just in case (CSS already does this)
+  const nodeLayer = document.getElementById('nodeLayer');
+  if (nodeLayer) nodeLayer.style.display = 'none';
 
-  // Ensure mobile view title starts hidden for a clean fade-in.
+  // Prepare mobile view title animation
   mobileTitle.style.opacity = '0';
   mobileTitle.style.transform = 'translateY(6px)';
   mobileTitle.style.transition = 'opacity .45s ease, transform .45s ease';
@@ -2418,8 +2421,8 @@ window.__startIntroTyping = typeSequence;
     if (window.__mobileFieldsBuilt) return;
     window.__mobileFieldsBuilt = true;
 
-    // Build list (vertical, readable). Keep interaction minimal: tap opens the same detail panel.
-    nodes.forEach((n, i)=>{
+    // Build list (tap opens the same detail panel). Keep interactions minimal.
+    nodes.forEach((n)=>{
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'mobile-field';
@@ -2429,81 +2432,50 @@ window.__startIntroTyping = typeSequence;
         <span class="mf-sub mono">${String(n.hint || '')}</span>
       `;
       btn.addEventListener('click', ()=>{
-        openDetailMobile(n.id);
+        // Reuse existing detail rendering
+        openDetail(n);
       });
       mobileList.appendChild(btn);
-
-      // Staggered fade-in
-      const delay = 120 + i * 90;
-      setTimeout(()=>{
-        btn.style.opacity = '1';
-        btn.style.transform = 'translateY(0)';
-      }, delay);
     });
-
-    setTimeout(()=>{
-      mobileTitle.style.opacity = '1';
-      mobileTitle.style.transform = 'translateY(0)';
-    }, 80);
   }
 
-  function openDetailMobile(id){
-    const node = nodes.find(n => n.id === id);
-    if (!node) return;
-
-    // Minimal mobile: no map animations, just open the detail overlay.
-    renderDetailCard(node);
-
-    // On mobile we keep previews off (no hover). The detail card is text-first.
-    try{ setLiquidPerfMode('idle'); } catch(e){}
-
-    detailOverlay.classList.add('show');
-    detailCard.classList.remove('topline-in');
-    detailCard.classList.add('content-in');
-    detailCard.style.transform = 'none';
-    detailCard.style.opacity = '1';
-  }
-
-  function transitionToMobileFields(){
-    // Fade out intro text + trigger
-    const introCopy = introBlockEl ? introBlockEl.querySelector('.intro-copy') : null;
+  function showMobileFields(){
+    // Fade out intro copy and trigger; keep header/menu intact.
+    const introCopy = document.querySelector('.intro-copy');
     if (introCopy){
       introCopy.style.transition = 'opacity .35s ease';
       introCopy.style.opacity = '0';
     }
     trigger.style.transition = 'opacity .35s ease';
     trigger.style.opacity = '0';
+    setTimeout(()=>{ trigger.style.display='none'; }, 380);
 
-    setTimeout(()=>{
-      if (introBlockEl) introBlockEl.style.display = 'none';
-      trigger.style.display = 'none'; // remove permanently on mobile
-      trigger.setAttribute('aria-hidden','true');
+    buildMobileFields();
+    mobileView.style.display = 'block';
+    mobileView.setAttribute('aria-hidden','false');
 
-      mobileView.style.display = 'block';
-      mobileView.setAttribute('aria-hidden','false');
-      buildMobileFields();
-      window.scrollTo({top: 0, behavior: 'instant' in window ? 'instant' : 'auto'});
-    }, 380);
+    // Animate title then items in
+    requestAnimationFrame(()=>{
+      mobileTitle.style.opacity = '1';
+      mobileTitle.style.transform = 'translateY(0)';
+      const items = [...mobileList.querySelectorAll('.mobile-field')];
+      items.forEach((el, i)=>{
+        setTimeout(()=>{
+          el.style.opacity = '1';
+          el.style.transform = 'translateY(0)';
+        }, 140 + i*90);
+      });
+    });
   }
 
-  // Capture click to bypass desktop startExperience/toggleMap logic.
+  // On mobile, make the hub actionable when ready
   trigger.addEventListener('click', (e)=>{
-    if (!mq.matches) return;
-    if (!trigger.classList.contains('ready')) return;
+    // If the desktop flow would run, we short-circuit into mobile stacked view.
     e.preventDefault();
     e.stopPropagation();
-    e.stopImmediatePropagation();
-    transitionToMobileFields();
+    showMobileFields();
   }, true);
-
-  // Ensure the desktop node/map never shows on mobile even if other code tries.
-  const nodeLayer = document.getElementById('nodeLayer');
-  if (nodeLayer) nodeLayer.style.display = 'none';
-  const legend = document.getElementById('legend');
-  if (legend) legend.style.display = 'none';
-
 })();
-
 </script>
 </body>
 </html>
