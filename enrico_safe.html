@@ -313,7 +313,7 @@
     display:inline-flex; align-items:center; border:0; padding:0; font-size:12px; line-height:1.25; white-space:nowrap;
     text-transform:uppercase; letter-spacing:.08em; background:none; color:#fff; text-decoration:none;
   }
-  .chip-item::after,.client-pill::after{content:'·'; opacity:.45; margin:0 10px}
+  .chip-item::after,.client-pill::after{content:' · '; opacity:.45; margin:0}
   .chip-row .chip-item:last-child::after,.client-list .client-pill:last-child::after{content:''; margin:0}
   .client-pill.dim{opacity:.75}
   .detail-cta{display:flex; gap:14px; flex-wrap:wrap; margin-top:30px; justify-content:center}
@@ -836,7 +836,7 @@
 <div class="hdr-container">
 <div class="site-header__row">
 <nav aria-label="Primary navigation" class="nav">
-<a data-key="whatdoido" href="https://www.enricopoli.com/home" class="is-active">WHAT DO I ACTUALLY DO</a>
+<a data-key="whatdoido" href="https://www.enricopoli.com/what-do-i-actually-do" class="is-active">WHAT DO I ACTUALLY DO</a>
 <a data-key="xd" href="https://xd.enricopoli.com/">XD</a>
 <a data-key="films" href="https://films.enricopoli.com/" rel="noopener">FILMS</a>
 <a data-key="dreamlog" href="https://www.enricopoli.com/_-dream-log">_ DREAM LOG</a>
@@ -855,7 +855,7 @@
 
 <aside class="nav-panel" aria-label="Mobile menu">
   <label class="nav-panel__close" for="navState" aria-label="Close menu" role="button">CLOSE</label>
-  <a href="https://www.enricopoli.com/home" class="is-active">WHAT DO I ACTUALLY DO</a>
+  <a href="https://www.enricopoli.com/what-do-i-actually-do" class="is-active">WHAT DO I ACTUALLY DO</a>
   <a href="https://xd.enricopoli.com/">XD</a>
   <a href="https://films.enricopoli.com/" rel="noopener">FILMS</a>
   <a href="https://www.enricopoli.com/_-dream-log">_ DREAM LOG</a>
@@ -1044,7 +1044,8 @@ const state = {
   phase:Object.fromEntries(nodes.map((n,i)=>[n.id, (i+1)*1.13])),
   activeField:null,
   introStarted:false,
-  introAnimating:false
+  introAnimating:false,
+  desktopTriggerDismissed:false
 };
 
 function ripplePulseAtViewport(clientX, clientY, strength=0.5){
@@ -1563,7 +1564,7 @@ async function openDetail(id){
 
   detailOverlay.classList.add('show');
   detailCard.style.willChange = 'opacity, transform';
-  if (servicesTrigger) servicesTrigger.style.opacity = '0';
+  if (servicesTrigger && !state.desktopTriggerDismissed) servicesTrigger.style.opacity = '0';
   state.activeField = { id, life: 1.0 };
   ripplePulseNode(id, 1.0);
   alignDetailCloseToTitle();
@@ -1622,7 +1623,7 @@ async function closeDetail(){
   try { await animateTitleFlight(closingId,'to-node'); } catch(e) {}
 
   detailOverlay.classList.remove('show');
-  if (servicesTrigger) servicesTrigger.style.opacity = '';
+  if (servicesTrigger && !state.desktopTriggerDismissed) servicesTrigger.style.opacity = '';
 
   document.querySelectorAll('.node').forEach(el=>{
     el.style.transitionDelay = '';
@@ -1707,38 +1708,91 @@ function arrangeNodesAroundIntroCenter(){
 
 function startExperience(){
   if(state.introStarted || state.introAnimating) return;
-  state.introAnimating = true;
 
-  const introCopy = introBlock.querySelector('.intro-copy');
-  const line3Text = document.getElementById('introLine3Text');
-  const r = servicesTrigger.getBoundingClientRect();
-  const triggerCS = getComputedStyle(servicesTrigger);
+  const isMobileUI = window.matchMedia('(max-width: 600px), (pointer: coarse) and (max-width: 768px)').matches;
 
-  if (servicesTrigger.parentElement !== document.body) {
-    document.body.appendChild(servicesTrigger);
+  // MOBILE: keep existing behavior unchanged.
+  if (isMobileUI){
+      if(state.introStarted || state.introAnimating) return;
+      state.introAnimating = true;
+
+      const introCopy = introBlock.querySelector('.intro-copy');
+      const line3Text = document.getElementById('introLine3Text');
+      const r = servicesTrigger.getBoundingClientRect();
+      const triggerCS = getComputedStyle(servicesTrigger);
+
+      if (servicesTrigger.parentElement !== document.body) {
+        document.body.appendChild(servicesTrigger);
+      }
+
+      servicesTrigger.style.position = 'fixed';
+      servicesTrigger.style.margin = '0';
+      servicesTrigger.style.left = Math.round(r.left) + 'px';
+      servicesTrigger.style.top = Math.round(r.top) + 'px';
+      servicesTrigger.style.width = Math.round(r.width) + 'px';
+      servicesTrigger.style.height = Math.round(r.height) + 'px';
+      servicesTrigger.style.boxSizing = 'border-box';
+
+      // Freeze typography exactly to prevent any visual size shift after reparenting.
+      servicesTrigger.style.font = triggerCS.font;
+      servicesTrigger.style.lineHeight = triggerCS.lineHeight;
+      servicesTrigger.style.letterSpacing = triggerCS.letterSpacing;
+      servicesTrigger.style.fontKerning = triggerCS.fontKerning || 'auto';
+      servicesTrigger.style.fontVariantLigatures = triggerCS.fontVariantLigatures || 'normal';
+      servicesTrigger.style.textTransform = triggerCS.textTransform;
+      servicesTrigger.style.display = 'block';
+      servicesTrigger.style.textAlign = 'left';
+      servicesTrigger.style.transform = 'none';
+      servicesTrigger.style.pointerEvents = 'none';
+      servicesTrigger.classList.add('centered-hub');
+
+      if (document.getElementById('introLine0')) document.getElementById('introLine0').classList.add('fade-out');
+      if (document.getElementById('introLine1')) document.getElementById('introLine1').classList.add('fade-out');
+      if (document.getElementById('introLine2')) document.getElementById('introLine2').classList.add('fade-out');
+      if (line3Text) line3Text.classList.add('fade-out');
+      const soText = document.getElementById('introLine3So');
+      if (soText) soText.classList.add('fade-out');
+
+      requestAnimationFrame(()=>{
+        requestAnimationFrame(()=>{
+          const targetLeft = Math.round((window.innerWidth - r.width) * 0.5);
+          const targetTop = Math.round((window.innerHeight - r.height) * 0.5);
+          servicesTrigger.style.left = targetLeft + 'px';
+          servicesTrigger.style.top = targetTop + 'px';
+          servicesTrigger.style.transform = 'none';
+        });
+      });
+
+      let introRevealDone = false;
+      const finishIntroToMap = ()=>{
+        if (introRevealDone) return;
+        introRevealDone = true;
+        state.introStarted = true;
+        state.introAnimating = false;
+        introBlock.classList.add('map-started');
+        servicesTrigger.style.pointerEvents = 'auto';
+        arrangeNodesAroundIntroCenter();
+        showMap();
+      };
+
+      const onHubCentered = (ev)=>{
+        if (ev.target !== servicesTrigger) return;
+        if (ev.propertyName !== 'left' && ev.propertyName !== 'top') return;
+        servicesTrigger.removeEventListener('transitionend', onHubCentered);
+        finishIntroToMap();
+      };
+      servicesTrigger.addEventListener('transitionend', onHubCentered);
+      setTimeout(()=>{
+        servicesTrigger.removeEventListener('transitionend', onHubCentered);
+        finishIntroToMap();
+      }, 640);
+    return;
   }
 
-  servicesTrigger.style.position = 'fixed';
-  servicesTrigger.style.margin = '0';
-  servicesTrigger.style.left = Math.round(r.left) + 'px';
-  servicesTrigger.style.top = Math.round(r.top) + 'px';
-  servicesTrigger.style.width = Math.round(r.width) + 'px';
-  servicesTrigger.style.height = Math.round(r.height) + 'px';
-  servicesTrigger.style.boxSizing = 'border-box';
+  // DESKTOP: first click dismisses the hub permanently, then reveals fields.
+  state.introAnimating = true;
 
-  // Freeze typography exactly to prevent any visual size shift after reparenting.
-  servicesTrigger.style.font = triggerCS.font;
-  servicesTrigger.style.lineHeight = triggerCS.lineHeight;
-  servicesTrigger.style.letterSpacing = triggerCS.letterSpacing;
-  servicesTrigger.style.fontKerning = triggerCS.fontKerning || 'auto';
-  servicesTrigger.style.fontVariantLigatures = triggerCS.fontVariantLigatures || 'normal';
-  servicesTrigger.style.textTransform = triggerCS.textTransform;
-  servicesTrigger.style.display = 'block';
-  servicesTrigger.style.textAlign = 'left';
-  servicesTrigger.style.transform = 'none';
-  servicesTrigger.style.pointerEvents = 'none';
-  servicesTrigger.classList.add('centered-hub');
-
+  const line3Text = document.getElementById('introLine3Text');
   if (document.getElementById('introLine0')) document.getElementById('introLine0').classList.add('fade-out');
   if (document.getElementById('introLine1')) document.getElementById('introLine1').classList.add('fade-out');
   if (document.getElementById('introLine2')) document.getElementById('introLine2').classList.add('fade-out');
@@ -1746,39 +1800,26 @@ function startExperience(){
   const soText = document.getElementById('introLine3So');
   if (soText) soText.classList.add('fade-out');
 
-  requestAnimationFrame(()=>{
-    requestAnimationFrame(()=>{
-      const targetLeft = Math.round((window.innerWidth - r.width) * 0.5);
-      const targetTop = Math.round((window.innerHeight - r.height) * 0.5);
-      servicesTrigger.style.left = targetLeft + 'px';
-      servicesTrigger.style.top = targetTop + 'px';
-      servicesTrigger.style.transform = 'none';
-    });
-  });
+  state.introStarted = true;
+  state.desktopTriggerDismissed = true;
+  introBlock.classList.add('map-started');
 
-  let introRevealDone = false;
-  const finishIntroToMap = ()=>{
-    if (introRevealDone) return;
-    introRevealDone = true;
-    state.introStarted = true;
-    state.introAnimating = false;
-    introBlock.classList.add('map-started');
-    servicesTrigger.style.pointerEvents = 'auto';
-    arrangeNodesAroundIntroCenter();
-    showMap();
-  };
+  // Fade out and remove the trigger button (never comes back on desktop).
+  try{
+    servicesTrigger.style.pointerEvents = 'none';
+    servicesTrigger.setAttribute('aria-disabled','true');
+    servicesTrigger.style.transition = (servicesTrigger.style.transition ? servicesTrigger.style.transition + ', ' : '') + 'opacity .32s ease';
+    servicesTrigger.style.opacity = '0';
+    setTimeout(()=>{
+      servicesTrigger.style.display = 'none';
+      servicesTrigger.style.visibility = 'hidden';
+    }, 360);
+  }catch(_){}
 
-  const onHubCentered = (ev)=>{
-    if (ev.target !== servicesTrigger) return;
-    if (ev.propertyName !== 'left' && ev.propertyName !== 'top') return;
-    servicesTrigger.removeEventListener('transitionend', onHubCentered);
-    finishIntroToMap();
-  };
-  servicesTrigger.addEventListener('transitionend', onHubCentered);
-  setTimeout(()=>{
-    servicesTrigger.removeEventListener('transitionend', onHubCentered);
-    finishIntroToMap();
-  }, 640);
+  arrangeNodesAroundIntroCenter();
+  showMap();
+
+  state.introAnimating = false;
 }
 function showMap(){
   if (state.mapVisible) return;
@@ -1786,7 +1827,7 @@ function showMap(){
   nodeLayer.classList.add('visible');
   document.querySelectorAll('.node').forEach(el=> el.classList.remove('disappearing'));
   legend.classList.add('visible');
-  servicesTrigger.setAttribute('aria-expanded','true');
+  if (!state.desktopTriggerDismissed) servicesTrigger.setAttribute('aria-expanded','true');
   animateNodesIn();
 }
 function hideMap(){
@@ -1796,7 +1837,7 @@ function hideMap(){
   clearFocus();
   document.querySelectorAll('.node').forEach(el => el.classList.remove('open'));
   legend.classList.remove('visible');
-  servicesTrigger.setAttribute('aria-expanded','false');
+  if (!state.desktopTriggerDismissed) servicesTrigger.setAttribute('aria-expanded','false');
   const ids = nodes.map(n=>n.id);
   disappearNodes(ids, {stagger:35, baseDelay:0, pulse:true});
   setTimeout(()=> {
@@ -1927,7 +1968,7 @@ if (resetLayoutBtn) resetLayoutBtn.addEventListener('click', ()=>{
   positionAllNodes();
 });
 if (resetViewBtn) resetViewBtn.addEventListener('click', ()=> setInitialView());
-servicesTrigger.addEventListener('click', (e)=>{ e.stopPropagation(); if(!servicesTrigger.classList.contains('ready')) return; if(!clientVideoPreloadStarted) setTimeout(()=>preloadClientVideosInDetail(document), 0); if(!state.introStarted) { startExperience(); return; } toggleMap(); });
+servicesTrigger.addEventListener('click', (e)=>{ e.stopPropagation(); if(!servicesTrigger.classList.contains('ready')) return; if(state.desktopTriggerDismissed) return; if(!clientVideoPreloadStarted) setTimeout(()=>preloadClientVideosInDetail(document), 0); if(!state.introStarted) { startExperience(); return; } toggleMap(); });
 
 
 // Client fullscreen video preview / takeover (Selected clients/works)
