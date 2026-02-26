@@ -7635,37 +7635,36 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     const r = Math.max(0, this.data.sphereRadius);
     const offsets = this._offsets;
-    offsets[0].set(0,0,0);
+    offsets[0].set(0, 0, 0);
     offsets[1].copy(this._right).multiplyScalar(r);
     offsets[2].copy(this._right).multiplyScalar(-r);
-    offsets[3].copy(this._sweepUp).multiplyScalar(r);
-    offsets[4].copy(this._sweepUp).multiplyScalar(-r);
+    // NOTE: We intentionally do NOT add vertical (up/down) offset rays.
+    // The upward ray was hitting corridor ceiling exit-faces at near-zero distance,
+    // causing false arm collapse. Ceiling clearance is handled by _computeCeilingDrop.
 
     let best = desiredLen;
-    // Track whether the CENTRE ray (index 0) hit something solid.
-    // Hits detected only by offset rays (but not centre) are likely thin
-    // geometry (door frames, portal arches) and should not fully compress the arm.
     let centerHitDist = Infinity;
-
     const minHitDepth = Math.max(0, this.data.minHitDepth);
+    // Ignore hits within this distance of the pivot — catches geometry the player
+    // is standing inside/against (e.g. a ceiling box whose face ends at the exit plane).
+    const nearClip = 0.20;
 
-    for (let i = 0; i < offsets.length; i++) {
+    for (let i = 0; i < 3; i++) {
       this._tmp.copy(origin).add(offsets[i]);
       this.raycaster.set(this._tmp, this._sweepDir);
-      this.raycaster.near = 0;
+      this.raycaster.near = nearClip;
       this.raycaster.far = desiredLen;
 
       const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
       if (hits && hits.length) {
         const rawHitDist = hits[0].distance;
 
-        // Ignore hits that are extremely close to the desired endpoint
-        // (thin geometry at the very end of the arm — e.g., portal frames).
+        // Ignore hits very close to the desired endpoint (thin frames, portal arches).
         if (minHitDepth > 0 && rawHitDist > desiredLen - minHitDepth) continue;
 
         const d = Math.max(0, rawHitDist - this.data.padding);
         if (d < best) best = d;
-        if (i === 0) centerHitDist = d;  // centre ray result
+        if (i === 0) centerHitDist = d;
       }
     }
 
