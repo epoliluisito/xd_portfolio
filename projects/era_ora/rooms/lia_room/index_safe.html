@@ -702,24 +702,24 @@ AFRAME.registerComponent('rig-walk', {
 
         const RADIUS = 130;
         const SEG = 500;
-        const GROUND_Y = 0.085;
+        const GROUND_Y = 0.012;
         const HIDDEN_Y = -0.25;
 
         // ── Interior volumes (snow must NEVER appear here) ──
-        // Shrunk ~0.6m INWARD from inner wall faces so snow mesh overlaps
-        // slightly into wall geometry — walls hide it, eliminates dark gaps
-        const officeIn  = { x1:-6.84, x2:6.84, z1:-81.34, z2:-68.66 };
-        const transIn   = { x1:2.55,  x2:6.45, z1:-68.34, z2:-56.66 };
-        const exitIn    = { x1:-6.45, x2:-2.55,z1:-96.34, z2:-84.66 };
+        // Tuned to the ACTUAL inner faces of the corridor/office walls.
+        // Goal: zero snow inside, while still letting snow visually kiss the exterior faces.
+        const officeIn  = { x1:-7.10, x2:7.10, z1:-81.90, z2:-68.10 };
+        const transIn   = { x1:2.35,  x2:6.65, z1:-68.80, z2:-56.20 };
+        const exitIn    = { x1:-6.65, x2:-2.35,z1:-94.00, z2:-81.40 };
         // Doorway bridge zones (tight to the actual opening)
-        const doorN     = { x1:3.35,  x2:5.65, z1:-69.35, z2:-67.95 };
-        const doorS     = { x1:-5.65, x2:-3.35,z1:-82.05, z2:-80.65 };
+        const doorN     = { x1:2.95,  x2:6.05, z1:-69.25, z2:-67.75 };
+        const doorS     = { x1:-6.05, x2:-2.95,z1:-82.25, z2:-80.75 };
 
         // ── Outer shells (for wall-accumulation distance) ──
         // These include the wall thickness — snow piles against these outer faces
-        const officeOut = { x1:-7.15, x2:7.15, z1:-81.65, z2:-68.35 };
-        const transOut  = { x1:2.25,  x2:6.75, z1:-68.5,  z2:-56.5  };
-        const exitOut   = { x1:-6.75, x2:-2.25,z1:-96.5,  z2:-84.5  };
+        const officeOut = { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 };
+        const transOut  = { x1:2.18,  x2:6.82, z1:-68.68, z2:-56.32 };
+        const exitOut   = { x1:-6.82, x2:-2.18,z1:-94.00, z2:-81.30 };
 
         const officeCX=0, officeCZ=-75;
         const platCX=0, platCZ=0, platClearR=8.0;
@@ -785,7 +785,7 @@ AFRAME.registerComponent('rig-walk', {
             );
             indoorTaper = smoothstep(0.25, 1.8, dDoor);
           }
-          if(inWallVolume(x,z)) return 0;
+          // allow overlap into wall thickness so snow visually kisses exterior walls
 
           // Platform exclusion
           const pd=distFromPlat(x,z);
@@ -834,7 +834,7 @@ AFRAME.registerComponent('rig-walk', {
               nearDoorS?distToBoxOuter(x,z,doorS):999
             ));
           }
-          if(inWallVolume(x,z)) return 0;
+          // allow overlap into wall thickness so snow visually kisses exterior walls
 
           const pd=distFromPlat(x,z);
           if(pd<platClearR-1) return 0;
@@ -956,6 +956,50 @@ AFRAME.registerComponent('rig-walk', {
             // Extra bank right at base (0-1.2m)
             const baseDrift=smootherstep(1.2,0,dw);
             drift+=baseDrift*0.28;
+          }
+
+          // ── Entrance snow corridors: lower center path, higher side berms ──
+          // North corridor opening (transition_corridor), extends outward toward +Z
+          {
+            const cx=4.5, z0=-56.25;
+            const dz=z-z0;
+            if(dz> -0.6 && dz< 12.0){
+              const pathLen = smootherstep(12.0,-0.4,dz); // strongest at threshold, fades outward
+              const xAbs = Math.abs(x-cx);
+
+              // Carve a clear-ish center lane + build two side banks (≈1m scale),
+              // without creating a solid "plug" right at the threshold.
+              const core = Math.exp(-(xAbs*xAbs)/(2*1.25*1.25));
+              const berm = Math.exp(-((xAbs-1.75)*(xAbs-1.75))/(2*0.55*0.55));
+
+              // Lower the whole surface in the middle (not just the drift detail).
+              // This prevents the tall mound that can form from the base mask + wall drift.
+              const lane = 1 - 0.58 * core * pathLen;
+
+              drift -= 0.38 * core * pathLen;
+              drift += 0.26 * berm * pathLen;
+
+              // Apply lane shaping to the mask by scaling the final drift blend later (see below).
+              // We do it by storing on a local var; injected as a multiplier via drift itself:
+              drift *= lane;
+            }
+          }
+          // South corridor opening (corridor), extends outward toward -Z
+          {
+            const cx=-4.5, z0=-93.75;
+            const dz=z0-z;
+            if(dz> -0.6 && dz< 12.0){
+              const pathLen = smootherstep(12.0,-0.4,dz);
+              const xAbs = Math.abs(x-cx);
+
+              const core = Math.exp(-(xAbs*xAbs)/(2*1.25*1.25));
+              const berm = Math.exp(-((xAbs-1.75)*(xAbs-1.75))/(2*0.55*0.55));
+              const lane = 1 - 0.58 * core * pathLen;
+
+              drift -= 0.38 * core * pathLen;
+              drift += 0.26 * berm * pathLen;
+              drift *= lane;
+            }
           }
 
           drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
@@ -1286,7 +1330,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-entity class="touchpad" position="0.33 0.741 0.29"><a-box width="0.22" height="0.005" depth="0.16" material="shader: standard; color: #d8d8d8; roughness: 0.42; metalness: 0.15; emissive: #1a2a32; emissiveIntensity: 0.03"></a-box><a-plane width="0.20" height="0.14" material="shader: standard; color: #c8c8c8; roughness: 0.18; metalness: 0.25; emissive: #1a3040; emissiveIntensity: 0.05" position="0 0.003 0" rotation="-90 0 0"></a-plane></a-entity>
 </a-entity>
 </a-entity>
-</a-entity><a-entity id="corridor" position="-4.5 0.07 -90.5">
+</a-entity><a-entity id="corridor" position="-4.5 0.07 -87.65">
 <a-plane height="12" id="corridor_floor" material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="4.2"></a-plane>
 <a-box class="solid" depth="12" height="5" id="corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
 <a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
