@@ -2008,6 +2008,7 @@ const clientVideoIframe = clientVideoLayer.querySelector('iframe');
 const clientVideoClose = clientVideoLayer.querySelector('.client-video-close');
 let clientVideoSrc = '';
 let clientVideoHoverToken = null;
+let clientVideoShowToken = 0;
 let clientVideoFullOpen = false;
 let clientMediaType = 'none'; // 'mp4' | 'youtube'
 let ytApiLoading = false;
@@ -2068,6 +2069,36 @@ function preloadClientVideosInDetail(scope){
     clientVideoPreloadCache.set(src, {type:'mp4', el:v});
   });
   clientVideoPreloadStarted = true;
+}
+
+
+function clientVideoPreloadMany(urls){
+  try {
+    const list = Array.from(new Set((urls||[]).map(u=>normalizeClientVideoUrl(u)).filter(Boolean)));
+    if (!list.length) return;
+    list.forEach((src, idx)=>{
+      if (clientVideoPreloadCache.has(src)) return;
+      const type = clientVideoSourceType(src);
+      if (type === 'youtube') {
+        const id = getYoutubeId(src);
+        if (id) { clientVideoPreloadCache.set(src, {type:'youtube', id}); ensureYouTubeApi(); }
+        return;
+      }
+      try {
+        const link = document.createElement('link');
+        link.rel = 'preload'; link.as = 'video'; link.href = src;
+        document.head.appendChild(link);
+      } catch(_) {}
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.muted = true; v.playsInline = true; v.loop = false;
+      v.src = src;
+      clientVideoPreloadBin.appendChild(v);
+      try { v.load(); } catch(_) {}
+      clientVideoPreloadCache.set(src, {type:'mp4', el:v});
+    });
+    clientVideoPreloadStarted = true;
+  } catch(_) {}
 }
 
 function clientVideoSourceType(src){
@@ -2186,26 +2217,61 @@ function clientVideoTogglePlayPause(){
   if (clientVideoEl.paused) clientVideoPlay();
   else clientVideoEl.pause();
 }
+
 function showClientVideoPreview(src){
   src = normalizeClientVideoUrl(src);
   if (!src || clientVideoFullOpen) return;
   if (clientVideoHoverToken) { clearTimeout(clientVideoHoverToken); clientVideoHoverToken = null; }
+  const myShowToken = ++clientVideoShowToken;
+
   clientVideoEnsureSource(src);
+
+  const reveal = ()=>{
+    if (myShowToken !== clientVideoShowToken) return;
+    clientVideoLayer.classList.remove('full');
+    clientVideoLayer.classList.add('show');
+    clientVideoPlay();
+  };
+
   if (clientMediaType === 'youtube') {
     if (ytPlayerReady && ytPlayer) {
       try { ytPlayer.mute(); ytPlayer.playVideo(); } catch(_) {}
+      reveal();
     } else {
       const id = getYoutubeId(src);
       if (id) clientVideoIframe.src = buildYouTubeEmbedUrl(id, {autoplay:true, muted:true});
+      reveal();
     }
-  } else {
-    clientVideoEl.muted = true;
-    clientVideoEl.loop = true;
-    clientVideoEl.controls = false;
+    return;
   }
-  clientVideoLayer.classList.remove('full');
-  clientVideoLayer.classList.add('show');
-  clientVideoPlay();
+
+  clientVideoEl.muted = true;
+  clientVideoEl.loop = true;
+  clientVideoEl.controls = false;
+
+  // Wait briefly for a decodable frame to avoid "blank fade" on first hover.
+  const ready = (clientVideoEl.readyState >= 2);
+  if (ready) { reveal(); return; }
+
+  let done = false;
+  const cleanup = ()=>{
+    if (done) return;
+    done = true;
+    clientVideoEl.removeEventListener('canplay', onCanPlay);
+    clientVideoEl.removeEventListener('loadeddata', onCanPlay);
+  };
+  const onCanPlay = ()=>{
+    cleanup();
+    reveal();
+  };
+  clientVideoEl.addEventListener('canplay', onCanPlay, {once:true});
+  clientVideoEl.addEventListener('loadeddata', onCanPlay, {once:true});
+
+  try { clientVideoEl.load(); } catch(_) {}
+  setTimeout(()=>{
+    cleanup();
+    reveal();
+  }, 220);
 }
 function hideClientVideoPreview(delay=80){
   if (clientVideoFullOpen) return;
@@ -2296,6 +2362,34 @@ function setupFilmDirectionRandomHoverDesktop(){
     if (overlay && overlay.classList && overlay.classList.contains('show')) return;
     if (detailOverlay && detailOverlay.classList && detailOverlay.classList.contains('show')) return;
     showClientVideoPreview(__filmDirectionRandomHoverSrc);
+  });
+
+  hostBtn.addEventListener('mouseleave', ()=>{
+    if (!__isDesktopFinePointer()) return;
+    hideClientVideoPreview(80);
+  });
+}
+
+
+let __experienceDesignHoverSrc = null;
+function setupExperienceDesignHoverDesktop(){
+  if (!__isDesktopFinePointer()) return;
+  __experienceDesignHoverSrc = "https://xd.enricopoli.com/source/xd_reel.mp4";
+  if (!__experienceDesignHoverSrc) return;
+
+  try { clientVideoPreloadMany([__experienceDesignHoverSrc]); } catch(_) {}
+
+  const hostBtn = nodesRoot && nodesRoot.querySelector('.node[data-id="02"] .node-button');
+  if (!hostBtn) return;
+
+  hostBtn.addEventListener('mouseenter', ()=>{
+    if (!__isDesktopFinePointer()) return;
+    if (!state || state.mode !== 'free') return;
+    if (!state.mapVisible) return;
+    if (state.openId) return;
+    if (overlay && overlay.classList && overlay.classList.contains('show')) return;
+    if (detailOverlay && detailOverlay.classList && detailOverlay.classList.contains('show')) return;
+    showClientVideoPreview(__experienceDesignHoverSrc);
   });
 
   hostBtn.addEventListener('mouseleave', ()=>{
@@ -2582,6 +2676,7 @@ function typeSequence(){
 
 renderNodes();
 setupFilmDirectionRandomHoverDesktop();
+setupExperienceDesignHoverDesktop();
 setInitialView();
 setTargetsFromCurrent();
 window.addEventListener('resize', ()=>{ if (state.openId) { alignDetailCloseToTitle(); } });
