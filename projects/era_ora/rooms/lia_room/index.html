@@ -706,20 +706,14 @@ AFRAME.registerComponent('rig-walk', {
         const HIDDEN_Y = -0.25;
 
         // ── Interior volumes (snow must NEVER appear here) ──
-        // Derived from invisible scene markers: [data-snow-keepout]
-        // This makes the mask match the actual built space and keeps the fix editable in-scene.
-        const KEEP_EPS = 0.22;  // small safety expansion to kill residual spills
-        const keepoutEls = Array.from(this.el.querySelectorAll('[data-snow-keepout]'));
-        const keepouts = keepoutEls.map(el => {
-          const b = new THREE.Box3().setFromObject(el.object3D);
-          return { x1: b.min.x - KEEP_EPS, x2: b.max.x + KEEP_EPS, z1: b.min.z - KEEP_EPS, z2: b.max.z + KEEP_EPS };
-        });
-        // Fallback (should not be used if markers are present)
-        const officeIn  = { x1:-6.95, x2:6.95, z1:-81.45, z2:-68.55 };
-        const transIn   = { x1:2.28,  x2:6.72, z1:-68.62, z2:-56.38 };
-        const exitIn    = { x1:-6.72, x2:-2.28,z1:-93.85, z2:-81.45 };
-        const doorN     = { x1:3.15,  x2:5.85, z1:-69.65, z2:-67.65 };
-        const doorS     = { x1:-6.10, x2:-2.90,z1:-83.10, z2:-80.00 };
+        // Tuned to the ACTUAL inner faces of the corridor/office walls.
+        // Goal: zero snow inside, while still letting snow visually kiss the exterior faces.
+        const officeIn  = { x1:-7.10, x2:7.10, z1:-81.90, z2:-68.10 };
+        const transIn   = { x1:2.35,  x2:6.65, z1:-68.80, z2:-56.20 };
+        const exitIn    = { x1:-6.65, x2:-2.35,z1:-94.00, z2:-81.40 };
+        // Doorway bridge zones (tight to the actual opening)
+        const doorN     = { x1:2.95,  x2:6.05, z1:-69.25, z2:-67.75 };
+        const doorS     = { x1:-6.05, x2:-2.95,z1:-82.25, z2:-80.75 };
 
         // ── Outer shells (for wall-accumulation distance) ──
         // These include the wall thickness — snow piles against these outer faces
@@ -741,10 +735,6 @@ AFRAME.registerComponent('rig-walk', {
         function distFromPlat(x,z){return Math.sqrt((x-platCX)*(x-platCX)+(z-platCZ)*(z-platCZ));}
 
         function isIndoor(x,z){
-          if (keepouts && keepouts.length) {
-            for (let i=0;i<keepouts.length;i++) if (inBox(x,z,keepouts[i])) return true;
-            return false;
-          }
           return inBox(x,z,officeIn)||inBox(x,z,transIn)||inBox(x,z,exitIn)||inBox(x,z,doorN)||inBox(x,z,doorS);
         }
 
@@ -1061,42 +1051,6 @@ AFRAME.registerComponent('rig-walk', {
         const snowMesh=new THREE.Mesh(snowGeom,snowMat);
         snowMesh.receiveShadow=true;snowMesh.frustumCulled=false;
         this.el.sceneEl.object3D.add(snowMesh);
-        // ── Snow skirts: vertical seals along keepout boundaries ──
-        // Fixes the visible "floating" edge where the snow plane meets corridor/office walls.
-        const makeSkirts = (boxes) => {
-          const SKIRT_TOP = GROUND_Y + 1.25;
-          const SKIRT_BOT = HIDDEN_Y - 0.02;
-          const skirtH = (SKIRT_TOP - SKIRT_BOT);
-          const midY = (SKIRT_TOP + SKIRT_BOT) * 0.5;
-          const EPS = 0.02;
-          const skirtMat = snowMat.clone();
-          skirtMat.side = THREE.DoubleSide;
-          skirtMat.polygonOffset = true;
-          skirtMat.polygonOffsetFactor = -1;
-          skirtMat.polygonOffsetUnits = -1;
-
-          const addPlane = (w, x, z, rotY) => {
-            const g = new THREE.PlaneGeometry(w, skirtH, 1, 1);
-            const mesh = new THREE.Mesh(g, skirtMat);
-            mesh.position.set(x, midY, z);
-            mesh.rotation.set(0, rotY, 0);
-            mesh.frustumCulled = false;
-            this.el.sceneEl.object3D.add(mesh);
-            this._meshes.push(mesh);
-          };
-
-          for (let i=0;i<boxes.length;i++){
-            const b=boxes[i];
-            // X faces
-            addPlane((b.z2-b.z1), b.x1-EPS, (b.z1+b.z2)/2,  Math.PI/2);
-            addPlane((b.z2-b.z1), b.x2+EPS, (b.z1+b.z2)/2, -Math.PI/2);
-            // Z faces
-            addPlane((b.x2-b.x1), (b.x1+b.x2)/2, b.z1-EPS, 0);
-            addPlane((b.x2-b.x1), (b.x1+b.x2)/2, b.z2+EPS, Math.PI);
-          }
-        };
-        if (keepouts && keepouts.length) makeSkirts(keepouts);
-
         this._meshes.push(snowMesh);
       },
       remove: function(){
@@ -1146,19 +1100,6 @@ AFRAME.registerComponent('rig-walk', {
 <div id="terminalGuide" aria-hidden="true"><div class="tg-card"><div id="terminalGuideMain" class="tg-main"></div><div id="terminalGuideSub" class="tg-sub"></div></div></div>
 <div id="liaOverlay" aria-hidden="true"><iframe id="liaOverlayFrame" allow="fullscreen" src="about:blank"></iframe></div>
 <a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow-ground="" snow="count: 26000; areaWidth: 100; areaDepth: 100; ceiling: 30; fallSpeed: 1.75; fallVar: 0.9; windX: 1.05; windZ: 0.45; gustStr: 0.75; size: 0.06; rampTime: 5">
-    <!-- Snow keepout volumes (used by snow-ground to keep interiors clean). Invisible. -->
-    <a-entity id="snowKeepouts" visible="false">
-      <!-- Office interior -->
-      <a-box data-snow-keepout position="0 1 -75.0" width="13.9" height="3" depth="12.9" material="opacity:0; transparent:true"></a-box>
-      <!-- Transition corridor interior -->
-      <a-box data-snow-keepout position="4.5 1 -62.5" width="4.44" height="3" depth="12.24" material="opacity:0; transparent:true"></a-box>
-      <!-- Exit corridor interior -->
-      <a-box data-snow-keepout position="-4.5 1 -87.65" width="4.44" height="3" depth="12.4" material="opacity:0; transparent:true"></a-box>
-      <!-- Doorway bridge keepouts (tight to openings) -->
-      <a-box data-snow-keepout data-snow-keepout-type="door" position="4.5 1 -68.65" width="2.7" height="3" depth="2.0" material="opacity:0; transparent:true"></a-box>
-      <a-box data-snow-keepout data-snow-keepout-type="door" position="-4.5 1 -81.55" width="3.2" height="3" depth="3.1" material="opacity:0; transparent:true"></a-box>
-    </a-entity>
-
 <a-assets timeout="30000">
 <img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
 <img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
