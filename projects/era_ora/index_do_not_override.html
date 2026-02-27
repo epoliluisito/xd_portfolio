@@ -3402,7 +3402,7 @@ const far = this.data.avoidDist;
       <a-entity id="camPitch" position="0 1.65 0" rotation="0 0 0">
         <a-entity id="thirdPersonCam"
                   camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08; active: false"
-                  tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, .cam-collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.22; ceilingPadding: 0.08; maxCeilingDrop: 0.65"
+                  tp-camera-springarm="pivot: #camPitch; ignore: #racerYaw; colliders: .collider, .cam-collider, [data-tube=&quot;1&quot;]; minDist: 0.85; padding: 0.22; smoothPos: 0.15; smoothDist: 0.18; sphereRadius: 0.16; ceilingPadding: 0.08; maxCeilingDrop: 0.65; minHitDepth: 0.35; thinGeoFloor: 0.65"
                   position="0 0 1.3"
                   rotation="0 0 0">
           <a-entity cursor="rayOrigin: mouse"></a-entity>
@@ -7546,7 +7546,20 @@ AFRAME.registerComponent('tp-camera-springarm', {
     // lift the camera upward to see over the obstruction.
     liftScale: { type: 'number', default: 1.4 },    // lift = compression * liftScale
     maxLift: { type: 'number', default: 1.8 },       // absolute ceiling on upward escape
-    liftProbe: { type: 'number', default: 2.2 }      // how far to probe upward for clearance
+    liftProbe: { type: 'number', default: 2.2 },     // how far to probe upward for clearance
+    // Thin-geometry filter: hits within this distance of the DESIRED endpoint are
+    // treated as thin pass-through geometry (door frames, portal arches) and ignored.
+    // Set to 0 to disable. Typical value: 0.25–0.45.
+    minHitDepth: { type: 'number', default: 0.35 },
+    // Compression guard: camera arm will not go below this fraction of minDist
+    // due to thin/transitional geometry. Only solid walls (confirmed by center ray)
+    // can compress the arm fully. Range 0..1.  0.65 = floor at 65% of minDist.
+    thinGeoFloor: { type: 'number', default: 0.65 },
+    // How many ms a compression must PERSIST before the arm is allowed to fully snap in.
+    // Brief transitional hits (doorframes, corridor exits) clear within this window
+    // and never cause a full compression. Solid walls persist → full snap after delay.
+    // 0 = original instant-snap behaviour. Recommended: 80–120.
+    snapDelay: { type: 'number', default: 90 }
   },
 
   init: function () {
@@ -7576,6 +7589,7 @@ AFRAME.registerComponent('tp-camera-springarm', {
     this._ceilingDrop = 0;
     this._curLift = 0;          // current vertical escape offset
     this._downVec = new THREE.Vector3(0, -1, 0);
+    this._compressionMs = 0;    // ms the arm has been compressed below current dist (persistent-hit timer)
 
     this._colliderMeshes = [];
     this._lastRefresh = 0;
@@ -7628,6 +7642,12 @@ AFRAME.registerComponent('tp-camera-springarm', {
     offsets[4].copy(this._sweepUp).multiplyScalar(-r);
 
     let best = desiredLen;
+    // Track whether the CENTRE ray (index 0) hit something solid.
+    // Hits detected only by offset rays (but not centre) are likely thin
+    // geometry (door frames, portal arches) and should not fully compress the arm.
+    let centerHitDist = Infinity;
+
+    const minHitDepth = Math.max(0, this.data.minHitDepth);
 
     for (let i = 0; i < offsets.length; i++) {
       this._tmp.copy(origin).add(offsets[i]);
@@ -7637,12 +7657,29 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
       const hits = this.raycaster.intersectObjects(this._colliderMeshes, true);
       if (hits && hits.length) {
-        const d = Math.max(0, hits[0].distance - this.data.padding);
+        const rawHitDist = hits[0].distance;
+
+        // Ignore hits that are extremely close to the desired endpoint
+        // (thin geometry at the very end of the arm — e.g., portal frames).
+        if (minHitDepth > 0 && rawHitDist > desiredLen - minHitDepth) continue;
+
+        const d = Math.max(0, rawHitDist - this.data.padding);
         if (d < best) best = d;
+        if (i === 0) centerHitDist = d;  // centre ray result
       }
     }
 
     const clamped = Math.min(this._baseDist, best);
+
+    // If ONLY offset rays triggered (thin geometry like a door frame or arch),
+    // don't let the arm compress below thinGeoFloor * minDist.
+    // The lift system will handle the rest.
+    if (centerHitDist === Infinity && clamped < this.data.thinGeoFloor * this.data.minDist) {
+      const floor = this.data.thinGeoFloor * this.data.minDist;
+      this._rawSweepDist = floor;
+      return floor;
+    }
+
     this._rawSweepDist = clamped;  // raw distance before minDist floor (for lift calculation)
     return clamped;
   },
@@ -7715,11 +7752,25 @@ AFRAME.registerComponent('tp-camera-springarm', {
 
     const aDist = Math.min(1, Math.max(0, this.data.smoothDist));
     const prevDist = this._curDist;
+    const dtMs = Math.max(0, Math.min(dt, 100)); // clamp dt to avoid giant steps
+
     if (targetDist < this._curDist) {
-      // Pulling in (wall collision) — snap immediately to avoid clipping
-      this._curDist = targetDist;
+      // Obstruction detected. Track how long it has persisted.
+      this._compressionMs += dtMs;
+
+      if (this._compressionMs >= this.data.snapDelay) {
+        // Persistent obstruction (real wall) — snap immediately to avoid clipping
+        this._curDist = targetDist;
+      } else {
+        // Brief / transitional hit (doorframe edge, corridor exit lip).
+        // Compress toward target with a fast lerp rather than instant snap.
+        // This allows 1-3 frame grazing hits to self-correct without POV collapse.
+        const fastLerp = 0.45;
+        this._curDist = this._curDist + (targetDist - this._curDist) * fastLerp;
+      }
     } else {
-      // Extending back out — smooth
+      // No obstruction — reset compression timer and smooth back out.
+      this._compressionMs = 0;
       this._curDist = this._curDist + (targetDist - this._curDist) * aDist;
     }
     const didSnapIn = (this._curDist < prevDist - 0.01);
