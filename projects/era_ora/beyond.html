@@ -1,0 +1,3190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>Era, Ora — beyond the book</title>
+<style>
+    :root{
+      --bg:#050608;
+      --fg:#eef2f7;
+      --muted:rgba(238,242,247,.76);
+      --line:rgba(238,242,247,.16);
+      --pad: clamp(16px, 4vw, 44px);
+      --max: 1200px;
+      --radius: 18px;
+      --accent: rgba(255,255,255,.92);
+      --accent2: rgba(255,255,255,.10);
+      --hud: rgba(0,0,0,.26);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    html,body{height:100%}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      overflow:hidden;
+    }
+
+    /* Scroll Container */
+    .snap-container {
+      position: relative;
+      height: 100vh;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+      scrollbar-width: none;
+    }
+    .snap-container::-webkit-scrollbar { display: none; }
+
+    .snap-block {
+      scroll-snap-align: start;
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0 40px;
+      background: var(--bg); /* Solid black for all blocks */
+      overflow: hidden;
+    }
+
+    /* STARS ONLY IN BLOCK 1 */
+    #star-network-canvas {
+      position: absolute; /* Relative to its parent snap-block */
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* --- BLOCK 01: HUD (match original index) --- */
+    .meta{
+      position: relative;
+      width: min(var(--max), 100%);
+      z-index: 10;
+      pointer-events:none;
+    }
+    .meta-panel{
+      position:absolute;
+      inset:-6px -2px -6px -2px;
+      border-radius: var(--radius);
+      background: rgba(0,0,0,.34);
+      border:1px solid rgba(255,255,255,.14);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,.18) inset,
+        0 10px 28px rgba(0,0,0,.14);
+      opacity: 1;
+      clip-path: inset(46% 46% 46% 46% round var(--radius));
+      animation: panelReveal 520ms cubic-bezier(.2,.9,.2,1) 120ms forwards;
+      will-change: clip-path;
+      pointer-events:none;
+    }
+    @keyframes panelReveal{
+      0%   { clip-path: inset(46% 46% 46% 46% round var(--radius)); }
+      100% { clip-path: inset(0% 0% 0% 0% round var(--radius)); }
+    }
+    .meta-scan{
+      position:absolute;
+      inset: -6px -2px -6px -2px;
+      pointer-events:none;
+      border-radius: var(--radius);
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,.06) 0px,
+          rgba(255,255,255,.06) 1px,
+          rgba(0,0,0,0) 4px,
+          rgba(0,0,0,0) 7px
+        );
+      opacity:0;
+      mix-blend-mode: normal;
+    }
+    .meta-inner{
+      position:relative;
+      padding: 12px 14px 10px;
+    }
+    .meta-cols{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 22px;
+      align-items:start;
+    }
+    .meta-col{
+      display:grid;
+      gap: 8px;
+    }
+    .field{
+      display:flex;
+      gap:10px;
+      align-items:baseline;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      padding-bottom:6px;
+    }
+    .label{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:10px;
+      letter-spacing:.18em;
+      text-transform:uppercase;
+      color: rgba(255,255,255,.78);
+      min-width: 92px;
+      white-space:nowrap;
+    }
+    .value{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:12.5px;
+      color: rgba(238,242,247,.90);
+    }
+    .span2{grid-column:1 / -1}
+    .tagrow{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top: 8px;
+    }
+    .tag{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:11.5px;
+      color: rgba(238,242,247,.80);
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.16);
+      padding: 6px 9px;
+      border-radius: 10px;
+    }
+
+    /* Reserve final layout without showing placeholders (matrix) */
+    .label[data-final][data-matrix],
+    .value[data-final][data-matrix],
+    .tag[data-final][data-matrix]{
+      opacity: 0;
+      filter: blur(.6px);
+      transition: opacity 180ms ease-out, filter 180ms ease-out;
+    }
+    .forming .label[data-final][data-matrix],
+    .forming .value[data-final][data-matrix],
+    .forming .tag[data-final][data-matrix]{
+      opacity: 1;
+      filter: blur(0);
+    }
+
+    @media (max-width: 860px){
+      .meta-cols{grid-template-columns: 1fr; gap: 12px;}
+      .label{min-width: 88px;}
+    }
+
+    /* --- CONTENT BLOCKS (2, 3, 4) --- */
+    .block-title {
+        font-family: monospace;
+        font-size: 11px;
+        letter-spacing: 0.6em;
+        color: rgba(255,255,255,.78);
+        margin-bottom: 24px;
+        opacity: 0.7;
+    }
+    .content-box {
+        max-width: 650px;
+        text-align: center;
+        background: rgba(0, 212, 188, 0.02);
+        border: 1px solid rgba(0, 212, 188, 0.1);
+        padding: 48px;
+        border-radius: var(--radius);
+    }
+    p { line-height: 1.8; font-weight: 300; color: rgba(238,242,247,0.65); font-size: 15px; }
+
+    .scroll-hint {
+      position: absolute; bottom: 40px; left: 50%;
+      transform: translateX(-50%); opacity: 0.4;
+    }
+    .arrow {
+      width: 10px; height: 10px; border-right: 2px solid var(--accent);
+      border-bottom: 2px solid var(--accent); transform: rotate(45deg);
+      animation: bob 3s infinite;
+    }
+    @keyframes bob { 0%, 100% { transform: translateY(0) rotate(45deg); } 50% { transform: translateY(10px) rotate(45deg); } }
+
+    
+    /* --- PB02: Overview (editorial) --- */
+    .overview-wrap{width:min(1280px,100%);padding:0 var(--pad);position:relative;z-index:5;display:grid;gap:18px;}
+    .overview-kicker{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.78);}
+    .overview-headline{margin:0;font-weight:650;font-size:clamp(28px,4vw,62px);line-height:.95;letter-spacing:-.03em;text-transform:uppercase;max-width:17ch;}
+    .overview-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;align-items:start;}
+    .overview-left{display:grid;gap:10px;align-content:start;}
+    .overview-image-main{position:relative;min-height:310px;border-radius:2px;overflow:hidden;background:rgba(255,255,255,.03);}
+    .overview-image-main img,.overview-image-main video{width:100%;height:100%;object-fit:cover;display:block;}
+    .overview-image-main .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:rgba(255,255,255,.55);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;letter-spacing:.06em;border:1px solid rgba(255,255,255,.10);}
+    .overview-image-main .ph strong{color:rgba(255,255,255,.82);}
+    .overview-strip{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:140px;}
+    .overview-strip .tile{position:relative;border-radius:2px;overflow:hidden;background:rgba(255,255,255,.025);min-height:140px;}
+    .overview-strip .tile img,.overview-strip .tile video{width:100%;height:100%;object-fit:cover;display:block;}
+    .overview-strip .tile .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;color:rgba(255,255,255,.52);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:10.5px;letter-spacing:.06em;border:1px solid rgba(255,255,255,.10);}
+    .overview-right{display:grid;gap:16px;align-content:start;padding-top:0;}
+    .overview-intro{font-size:14px;line-height:1.4;color:rgba(255,255,255,.82);max-width:46ch;}
+    .overview-sections{display:grid;gap:12px;}
+    .ov-item{border-top:1px solid rgba(255,255,255,.14);padding-top:8px;display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:start;}
+    .ov-label{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.68);padding-top:2px;}
+    .ov-body h3{margin:0 0 4px 0;font-size:16px;line-height:1.12;font-weight:560;letter-spacing:-.01em;}
+    .ov-body p{margin:0;color:rgba(255,255,255,.72);font-size:13px;line-height:1.4;}
+    .overview-note{margin-top:2px;color:rgba(255,255,255,.52);font-size:12px;line-height:1.35;}
+    @media (max-width:980px){.overview-grid{grid-template-columns:1fr;}.overview-headline{max-width:none;}.overview-image-main{min-height:220px;}.overview-strip{grid-template-columns:1fr;}.ov-item{grid-template-columns:1fr;gap:6px;}}
+
+
+
+    /* --- PB03: Context (editorial) --- */
+    .context-wrap{width:min(1280px,100%);padding:0 var(--pad);position:relative;z-index:5;display:grid;grid-template-columns:1fr;gap:14px;align-content:start;}
+    .context-top{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;align-items:start;}
+    .context-title-col .block-title{display:block;margin-bottom:6px;}
+    .context-title-col .title{margin:0;font-size:clamp(26px,3.8vw,58px);line-height:.95;letter-spacing:-.03em;text-transform:uppercase;font-weight:650;max-width:15ch;}
+    .context-title-col .lede{margin:10px 0 0;max-width:48ch;color:rgba(255,255,255,.76);font-size:13.5px;line-height:1.42;}
+    .context-question{border-top:1px solid rgba(255,255,255,.14);padding-top:8px;display:grid;gap:10px;align-content:start;}
+    .context-question .label{min-width:0;color:rgba(255,255,255,.66);font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;}
+    .context-question .q{margin:0;font-size:clamp(20px,2.4vw,34px);line-height:1.05;letter-spacing:-.02em;font-weight:560;max-width:18ch;}
+    .context-question .q em{font-style:italic;font-weight:520;}
+    .context-question .micro{margin:0;color:rgba(255,255,255,.70);font-size:13px;line-height:1.42;max-width:44ch;}
+    .context-layout{display:grid;grid-template-columns:.72fr 1.28fr;gap:16px;align-items:start;}
+    .context-side{display:grid;gap:10px;}
+    .context-side .small-media{position:relative;min-height:220px;background:rgba(255,255,255,.02);border-radius:2px;overflow:hidden;}
+    .context-side .small-media img,.context-side .small-media video{width:100%;height:100%;object-fit:cover;display:block;}
+    .context-side .small-media .ph{position:absolute;inset:0;border:1px solid rgba(255,255,255,.10);display:flex;align-items:center;justify-content:center;text-align:center;padding:16px;color:rgba(255,255,255,.52);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:10.5px;letter-spacing:.06em;}
+    .context-side .note{border-top:1px solid rgba(255,255,255,.14);padding-top:8px;color:rgba(255,255,255,.58);font-size:12.5px;line-height:1.38;}
+    .context-main-media{position:relative;min-height:360px;background:rgba(255,255,255,.02);border-radius:2px;overflow:hidden;}
+    .context-main-media img,.context-main-media video{width:100%;height:100%;object-fit:cover;display:block;}
+    .context-main-media .ph{position:absolute;inset:0;border:1px solid rgba(255,255,255,.10);display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:rgba(255,255,255,.55);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;letter-spacing:.06em;}
+    .context-caption{margin-top:6px;color:rgba(255,255,255,.52);font-size:12px;line-height:1.35;}
+    @media (max-width:980px){.context-top{grid-template-columns:1fr;}.context-layout{grid-template-columns:1fr;}.context-main-media{min-height:230px;}.context-side .small-media{min-height:180px;}.context-title-col .title{max-width:none;}}
+
+
+    /* --- PB02 light theme override --- */
+    #page_block_02{
+      background: #ffffff;
+      color: #101010;
+    }
+    #page_block_02 .overview-kicker{ color: rgba(0,0,0,.72); }
+    #page_block_02 .overview-headline{ color: #050505; }
+    #page_block_02 .overview-intro{ color: rgba(0,0,0,.84); }
+    
+    #page_block_02 .ov-label{ color: rgba(0,0,0,.62); }
+    #page_block_02 .ov-body h3{ color: #070707; }
+    #page_block_02 .ov-body p{ color: rgba(0,0,0,.74); }
+    #page_block_02 .overview-note{ color: rgba(0,0,0,.58); }
+
+    #page_block_02 .overview-image-main,
+    #page_block_02 .overview-strip .tile{
+      background: rgba(0,0,0,.03);
+    }
+
+    #page_block_02 .overview-image-main .ph,
+    #page_block_02 .overview-strip .tile .ph{
+      color: rgba(0,0,0,.52);
+      border: 1px solid rgba(0,0,0,.12);
+    }
+    #page_block_02 .overview-image-main .ph strong,
+    #page_block_02 .overview-strip .tile .ph strong{
+      color: rgba(0,0,0,.82);
+    }
+
+
+    /* --- PB02 remove global vignette/atmosphere --- */
+    #page_block_02{
+      position: relative;
+      isolation: isolate;
+    }
+    #page_block_02::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:#ffffff;
+      z-index:0;
+      pointer-events:none;
+    }
+    #page_block_02 .overview-wrap{
+      position: relative;
+      z-index:1;
+    }
+
+
+    /* --- PB02 fully opaque slab (kill residual vignette) --- */
+    #page_block_02{
+      background: #ffffff !important;
+      box-shadow: inset 0 0 0 200vmax #ffffff;
+    }
+
+
+    /* --- PB02 overlay kill (stacking fix) --- */
+    #page_block_02{
+      position: relative !important;
+      z-index: 3 !important;          /* above body:before/after (z-index:0) */
+      isolation: isolate !important;   /* local stacking context */
+      background: #ffffff !important;
+      box-shadow: none !important;
+    }
+    #page_block_02::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:#ffffff;
+      z-index:0;
+      pointer-events:none;
+    }
+    #page_block_02 > *{
+      position: relative;
+      z-index: 1;
+    }
+
+
+    #page_block_02 .overview-sections{ gap: 14px; }
+    #page_block_02 .ov-item + .ov-item{ margin-top: 2px; }
+    #page_block_02 .ov-body{ max-width: 34ch; }
+
+
+    /* --- PB02 text distribution refinement --- */
+    #page_block_02 .overview-grid{
+      grid-template-columns: 1.08fr .92fr;
+      gap: 22px;
+    }
+
+    #page_block_02 .overview-right{
+      gap: 18px;
+      padding-top: 2px;
+    }
+
+    #page_block_02 .overview-intro{
+      max-width: 42ch;
+      font-size: 13.2px;
+      line-height: 1.45;
+      margin-bottom: 2px;
+    }
+
+    #page_block_02 .overview-sections{
+      gap: 16px;
+    }
+
+    #page_block_02 .ov-item{
+      border-top: 0 !important;
+      padding-top: 0;
+      grid-template-columns: 132px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    #page_block_02 .ov-item + .ov-item{
+      margin-top: 2px;
+    }
+
+    #page_block_02 .ov-label{
+      letter-spacing: .16em;
+      font-size: 9.8px;
+      color: rgba(0,0,0,.50);
+      padding-top: 5px;
+      white-space: nowrap;
+    }
+
+    #page_block_02 .ov-body{
+      max-width: 37ch;
+    }
+
+    #page_block_02 .ov-body h3{
+      font-size: 15px;
+      line-height: 1.12;
+      margin-bottom: 5px;
+      font-weight: 590;
+    }
+
+    #page_block_02 .ov-body p{
+      font-size: 12.6px;
+      line-height: 1.44;
+      color: rgba(0,0,0,.68);
+    }
+
+    @media (max-width: 980px){
+      #page_block_02 .overview-grid{ grid-template-columns: 1fr; gap: 14px; }
+      #page_block_02 .overview-intro{ max-width: none; }
+      #page_block_02 .ov-item{ grid-template-columns: 1fr; gap: 5px; }
+      #page_block_02 .ov-label{ padding-top: 0; }
+      #page_block_02 .ov-body{ max-width: none; }
+    }
+
+
+    /* --- PB02 clean alignment: sections top, intro bottom (no DOM surgery) --- */
+    #page_block_02 .overview-right{
+      display: flex;
+      flex-direction: column;
+      min-height: 462px; /* roughly main image + strip stack */
+      gap: 0;
+      padding-top: 0;
+    }
+
+    #page_block_02 .overview-intro{
+      order: 2;
+      margin-top: auto; /* push intro to bottom */
+      max-width: 40ch;
+      font-size: 13px;
+      line-height: 1.44;
+      color: rgba(0,0,0,.80);
+    }
+
+    #page_block_02 .overview-sections{
+      order: 1;
+      margin-top: 0;
+      gap: 14px;
+    }
+
+    @media (max-width: 980px){
+      #page_block_02 .overview-right{
+        min-height: 0;
+        display: block;
+      }
+      #page_block_02 .overview-intro{
+        margin-top: 0;
+        max-width: none;
+      }
+    }
+
+
+    /* --- PB02 simplified: one image + intro below image --- */
+    #page_block_02 .overview-grid{
+      grid-template-columns: 1.05fr .95fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    #page_block_02 .overview-left{
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    #page_block_02 .overview-image-main{
+      min-height: 370px;
+      background: rgba(0,0,0,.03);
+      border-radius: 2px;
+    }
+
+    #page_block_02 .overview-strip{
+      display: none !important;
+    }
+
+    #page_block_02 .overview-right{
+      display: block;
+      min-height: 0;
+      padding-top: 0;
+    }
+
+    #page_block_02 .overview-intro{
+      font-size: 13px;
+      line-height: 1.44;
+      color: rgba(0,0,0,.80);
+      max-width: 39ch;
+      margin: 0;
+    }
+
+    #page_block_02 .overview-intro-left{
+      margin-top: 2px;
+    }
+
+    #page_block_02 .overview-sections{
+      gap: 14px;
+      margin-top: 0;
+    }
+
+    #page_block_02 .ov-item{
+      grid-template-columns: 132px minmax(0,1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    #page_block_02 .ov-label{
+      padding-top: 5px;
+      color: rgba(0,0,0,.50);
+    }
+
+    #page_block_02 .ov-body{
+      max-width: 37ch;
+    }
+
+    @media (max-width: 980px){
+      #page_block_02 .overview-grid{ grid-template-columns: 1fr; gap: 14px; }
+      #page_block_02 .overview-image-main{ min-height: 220px; }
+      #page_block_02 .overview-intro{ max-width: none; }
+      #page_block_02 .ov-item{ grid-template-columns: 1fr; gap: 5px; }
+      #page_block_02 .ov-body{ max-width: none; }
+    }
+
+
+    /* --- PB01 light starfield override --- */
+    .snap-block:first-of-type{
+      background: #ffffff;
+    }
+    .snap-block:first-of-type .scroll-hint .arrow{
+      border-right-color: rgba(0,0,0,.75);
+      border-bottom-color: rgba(0,0,0,.75);
+    }
+
+
+
+    /* --- FINAL ALIGNMENTS (PB03 == PB02 title positions, PB04 nav label cleanup) --- */
+    #page_block_04 .context-wrap{
+      margin-top: 0 !important;
+      gap: 18px !important;
+    }
+    #page_block_04 .context-title-col .block-title{
+      font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      line-height: 1;
+      margin: 0 0 18px 0 !important;
+      color: rgba(0,0,0,.72);
+    }
+    #page_block_04 .context-title-col .title{
+      margin: 0 !important;
+      font-weight: 650;
+      font-size: clamp(28px,4vw,62px);
+      line-height: .95;
+      letter-spacing: -.03em;
+      text-transform: uppercase;
+      max-width: 17ch;
+      color: #050505;
+    }
+    #page_block_04 .context-title-col .lede{
+      margin-top: 10px;
+    }
+
+    /* keep PB04 visual style as source; match PB02/PB03 slab to PB04 */
+    #page_block_02, #page_block_04{
+      background: #ffffff !important;
+    }
+
+    /* PB04 top nav: no PAGE label, just PREVIOUS/NEXT text + chevrons */
+    #page_block_03 .pb04-page-nav .lbl{ display:none !important; }
+    #page_block_03 .pb04-page-nav .nav-btn{
+      min-width: 132px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    #page_block_03 .pb04-page-nav .nav-btn .txt{
+      display: inline-block;
+      line-height: 1;
+    }
+
+
+/* PB04 replacement (scoped) */
+#page_block_04{
+  background:#fff !important;
+  color: #0a0a0a;
+  padding:clamp(20px,2.2vh,28px) 0 clamp(28px,3vh,36px) !important;
+  min-height:100svh;
+  display:grid;
+  justify-items:center;
+  align-content:start;
+}
+#page_block_04 .pb04-wrap{
+  width:min(1180px,100%);
+  padding:0 clamp(18px,2.1vw,28px);
+}
+#page_block_04 .pb04-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  column-gap:clamp(12px,1.4vw,18px);
+  align-items:start;
+}
+#page_block_04 .kicker{
+  grid-column:1 / -1;
+  margin:0;
+  font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color: rgba(0,0,0,.62);
+  padding-top:2px;
+  text-align:center; /* requested */
+}
+#page_block_04 .title{
+  grid-column:1 / -1;
+  margin:clamp(18px,2.7vh,28px) auto 0;
+  width:min(100%,13ch);
+  text-align:center;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:-.032em;
+  line-height:.92;
+  font-size:clamp(26px,3vw,42px);
+  text-wrap:balance;
+  color: #0a0a0a;
+}
+#page_block_04 .lead{
+  grid-column:1 / -1;
+  margin:clamp(28px,4.2vh,44px) auto 0;
+  width:min(100%,96ch);
+  text-align:center;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:clamp(12px,.9vw,13px);
+  line-height:1.24;
+  color: rgba(0,0,0,.82);
+  letter-spacing:-.01em;
+  text-wrap:balance;
+}
+#page_block_04 .lead strong{color:#080808;font-weight:650}
+#page_block_04 .question{
+  grid-column:1 / -1;
+  margin:clamp(26px,4vh,40px) auto 0;
+  width:min(100%,26ch);
+  text-align:center;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-weight:650;
+  letter-spacing:-.024em;
+  line-height:1.05;
+  font-size:clamp(20px,2vw,29px);
+  text-wrap:balance;
+  color: #0a0a0a;
+}
+#page_block_04 .sub{
+  grid-column:1 / -1;
+  margin:clamp(14px,1.8vh,18px) auto 0;
+  width:min(100%,106ch);
+  text-align:center;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:clamp(12px,.95vw,14px);
+  line-height:1.34;
+  color:rgba(0,0,0,.58);
+  text-wrap:pretty;
+}
+#page_block_04 .flow{
+  grid-column:1 / -1;
+  margin:clamp(34px,5.2vh,48px) auto 0;
+  width:min(100%,42ch);
+  display:grid;
+  grid-template-columns:1fr;
+  row-gap:clamp(22px,2.8vh,28px);
+  align-items:start;
+}
+#page_block_04 .step{
+  display:grid;
+  gap:8px;
+  align-content:start;
+  justify-items:center;
+  text-align:center;
+}
+#page_block_04 .step .meta{
+  margin:0;
+  font:600 9px/1.2 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:rgba(0,0,0,.42);
+}
+#page_block_04 .step .txt{
+  margin:0;
+  width:min(100%,42ch);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:clamp(13px,1.02vw,14px);
+  line-height:1.28;
+  color: rgba(0,0,0,.82);
+  letter-spacing:-.01em;
+  text-wrap:pretty;
+}
+#page_block_04 .step .txt strong{color:#080808;font-weight:700}
+@media (max-width:980px){
+  #page_block_04 .title{margin-top:16px}
+  #page_block_04 .lead{margin-top:24px;width:min(100%,64ch)}
+  #page_block_04 .question{margin-top:24px}
+  #page_block_04 .sub{width:min(100%,66ch)}
+  #page_block_04 .flow{margin-top:28px}
+}
+
+#page_block_06 .lead{
+  width:min(100%,920px);
+}
+#page_block_06 .flow{
+  grid-column:1 / -1;
+  margin:clamp(18px,2.6vh,24px) auto 0;
+  width:min(100%,980px);
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  gap:12px;
+  align-content:start;
+}
+#page_block_06 .step{
+  position:relative;
+  min-width:0;
+  background:#000;
+  border:1px solid rgba(255,255,255,.9);
+  border-radius:0;
+  padding:14px 14px 12px 14px;
+  overflow:hidden;
+}
+#page_block_06 .step::after{content:none;}
+#page_block_06 .step .n{
+  position:absolute;
+  right:10px;
+  top:6px;
+  font:700 clamp(26px,2vw,34px)/1 Inter,ui-sans-serif,system-ui,sans-serif;
+  letter-spacing:-.04em;
+  color:rgba(255,255,255,.12);
+  user-select:none;
+}
+#page_block_06 .step .meta{
+  margin:0 0 7px 0;
+  padding-right:34px;
+  font:600 10px/1.18 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.58);
+}
+#page_block_06 .step .txt{
+  margin:0;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:12px;
+  line-height:1.32;
+  color:rgba(255,255,255,.86);
+  letter-spacing:-.01em;
+  text-wrap:pretty;
+}
+#page_block_06 .step .txt strong{color:#fff;font-weight:700}
+#page_block_06 .step.s1{grid-column:1 / span 7; grid-row:1;}
+#page_block_06 .step.s2{grid-column:8 / span 5; grid-row:1;}
+#page_block_06 .step.s3{grid-column:1 / span 6; grid-row:2;}
+#page_block_06 .step.s4{grid-column:7 / span 6; grid-row:2;}
+#page_block_06 .step.s5{grid-column:3 / span 8; grid-row:3;}
+
+#page_block_07 .pb07-video-box{
+  grid-column:1 / -1;
+  margin:clamp(24px,3.4vh,34px) auto 0;
+  width:min(100%,890px);
+  aspect-ratio:16 / 9;
+  height:auto;
+  max-height:min(58vh,620px);
+  border:1px solid rgba(255,255,255,.28);
+  background:rgba(255,255,255,.03);
+  position:relative;
+  overflow:visible;
+}
+#page_block_07 .pb07-video-box .pb07-video-inner{
+  position:absolute;
+  top:-2px;
+  left:-2px;
+  width:calc(100% + 4px);
+  height:calc(100% + 4px);
+  display:block;
+  object-fit:cover;
+}
+#page_block_07 .pb07-note{
+  grid-column:1 / -1;
+  margin:22px auto 0;
+  width:min(100%,890px);
+  text-align:center;
+  font:500 11px/1.25 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.62);
+}
+
+#page_block_07 .pb07-note a,
+#page_block_07 .pb07-note a:visited{
+  color:inherit;
+  text-decoration:none;
+}
+#page_block_07 .pb07-note a:hover,
+#page_block_07 .pb07-note a:focus-visible{
+  color:#fff;
+  text-decoration:none;
+}
+
+
+
+#page_block_06 .flow{
+  grid-column:1 / span 12;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  column-gap:clamp(18px,2vw,26px);
+  row-gap:10px;
+  margin-top:clamp(16px,2.2vh,22px);
+  width:100%;
+}
+#page_block_06 .step{
+  display:grid;
+  grid-template-columns:110px minmax(0,1fr);
+  gap:12px;
+  align-items:start;
+  border:0 !important;
+  background:transparent !important;
+  padding:0 !important;
+  border-radius:0 !important;
+  box-shadow:none !important;
+}
+#page_block_06 .step.s1,#page_block_06 .step.s2,#page_block_06 .step.s3,#page_block_06 .step.s4,#page_block_06 .step.s5{grid-column:auto;grid-row:auto;}
+#page_block_06 .step .n{display:none !important;}
+#page_block_06 .step .meta{
+  margin:0;
+  color:rgba(255,255,255,.55);
+  font:600 10px/1.1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  padding-top:4px;
+  position:static;
+}
+#page_block_06 .step .txt{margin:0;max-width:none;color:rgba(255,255,255,.88);}
+#page_block_06 .step .txt h3{
+  margin:0 0 4px 0;
+  font:600 15px/1.08 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  color:#fff;
+  letter-spacing:-.02em;
+}
+#page_block_06 .step .txt p{
+  margin:0;
+  font:400 12.5px/1.35 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  color:rgba(255,255,255,.78);
+  letter-spacing:-.008em;
+}
+@media (max-width:640px){
+  #page_block_04 .kicker{font-size:10px}
+  #page_block_04 .title{font-size:clamp(28px,10vw,42px);width:min(100%,12ch)}
+  #page_block_04 .lead,#page_block_04 .sub,#page_block_04 .step .txt{font-size:13px;width:100%}
+  #page_block_04 .question{font-size:clamp(20px,7vw,26px);width:100%}
+  #page_block_04 .flow{row-gap:18px;width:100%}
+}
+
+
+/* --- PB04 Lia CTA + overlay --- */
+#page_block_04 .pb04-lia-cta-wrap{
+  grid-column:1 / -1;
+  margin: clamp(34px,4.6vh,42px) auto 0;
+  display:flex;
+  justify-content:center;
+}
+#page_block_04 .pb04-lia-cta{
+  appearance:none;
+  border:1px solid rgba(0,0,0,.16);
+  background:rgba(255,255,255,.90);
+  color:#000;
+  padding:8px 10px;
+  font:inherit;
+  font-size:11px;
+  line-height:1.2;
+  cursor:pointer;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+}
+#page_block_04 .pb04-lia-cta:hover{
+  background:#fff;
+  border-color:rgba(0,0,0,.28);
+}
+#page_block_04 .pb04-lia-cta:focus-visible{
+  outline:1px solid rgba(0,0,0,.65);
+  outline-offset:2px;
+}
+
+#liaOverlay{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  background:rgba(255,255,255,.74);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+#liaOverlay.active{ display:flex; }
+#liaOverlay .lia-overlay-shell{
+  width:min(1240px, calc(100vw - 28px));
+  height:min(88vh, 860px);
+  border:1px solid rgba(0,0,0,.18);
+  background:#fff;
+  box-shadow:0 12px 34px rgba(0,0,0,.12);
+  display:grid;
+  grid-template-rows:auto 1fr;
+}
+#liaOverlay .lia-overlay-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:8px 10px;
+  border-bottom:1px solid rgba(0,0,0,.14);
+  font:inherit;
+  font-size:11px;
+  line-height:1.2;
+}
+#liaOverlay .lia-overlay-title{
+  text-transform:uppercase;
+  letter-spacing:.02em;
+}
+#liaOverlay .lia-overlay-close{
+  appearance:none;
+  border:1px solid rgba(0,0,0,.18);
+  background:#fff;
+  color:#000;
+  width:22px;
+  height:22px;
+  line-height:18px;
+  text-align:center;
+  font:inherit;
+  font-size:14px;
+  cursor:pointer;
+  padding:0;
+}
+#liaOverlay .lia-overlay-close:hover{
+  border-color:rgba(0,0,0,.32);
+}
+#liaOverlay iframe{
+  width:100%;
+  height:100%;
+  border:0;
+  background:#fff;
+}
+@media (max-width: 640px){
+  #liaOverlay .lia-overlay-shell{
+    width:calc(100vw - 16px);
+    height:calc(100vh - 16px);
+  }
+}
+
+
+/* --- PB05: Video loop --- */
+#page_block_05{
+  background:#ffffff !important;
+  padding:0 !important;
+  display:block;
+  position:relative;
+}
+#page_block_05 .pb05-video{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+  background:#000;
+}
+
+/* --- PB06: Typography synced with PB04 --- */
+#page_block_06,
+#page_block_07{
+  background:#000000 !important;
+  color:#ffffff;
+  padding:clamp(20px,2.2vh,28px) 0 clamp(24px,2.8vh,32px) !important;
+  min-height:100svh;
+  display:grid;
+  justify-items:center;
+  align-content:start;
+}
+#page_block_06 .pb04-wrap,
+#page_block_07 .pb04-wrap{
+  width:min(1180px,100%);
+  padding:0 clamp(18px,2.1vw,28px);
+}
+#page_block_06 .pb04-grid,
+#page_block_07 .pb04-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  column-gap:clamp(12px,1.4vw,18px);
+  align-items:start;
+}
+#page_block_06 .kicker,
+#page_block_07 .kicker{
+  grid-column:1 / -1;
+  margin:0;
+  font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.62);
+  padding-top:2px;
+  text-align:center;
+}
+#page_block_06 .title,
+#page_block_07 .title{
+  grid-column:1 / -1;
+  margin:clamp(18px,2.7vh,28px) auto 0;
+  width:min(100%,16ch);
+  text-align:center;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:-.032em;
+  line-height:.92;
+  font-size:clamp(26px,3vw,42px);
+  text-wrap:balance;
+  color:#ffffff;
+}
+#page_block_06 .lead,
+#page_block_07 .lead{
+  grid-column:1 / -1;
+  margin:clamp(28px,4.2vh,40px) auto 0;
+  width:min(100%,94ch);
+  text-align:center;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:clamp(12px,.9vw,13px);
+  line-height:1.24;
+  color:rgba(255,255,255,.82);
+  letter-spacing:-.01em;
+  text-wrap:balance;
+}
+#page_block_06 .kicker{
+  text-align:left;
+  grid-column:1 / span 12;
+}
+#page_block_06 .title{
+  text-align:left;
+  margin:clamp(18px,2.7vh,28px) 0 0;
+  width:min(100%,18ch);
+  grid-column:1 / span 7;
+}
+#page_block_06 .lead{
+  text-align:left;
+  margin:clamp(24px,3.4vh,32px) 0 0;
+  width:min(100%,52ch);
+  grid-column:1 / span 7;
+  text-wrap:pretty;
+}
+#page_block_06 .flow{
+  margin-top:clamp(16px,2.2vh,22px);
+}
+@media (max-width:640px){
+  #page_block_06 .kicker,
+#page_block_07 .kicker{font-size:10px}
+  #page_block_06 .kicker{text-align:left}
+  #page_block_06 .title{text-align:left;margin-top:16px}
+  #page_block_06 .lead{text-align:left}
+  #page_block_06 .title,
+#page_block_07 .title{font-size:clamp(24px,8vw,34px);width:min(100%,16ch);margin-top:16px}
+  #page_block_06 .lead,
+#page_block_07 .lead{font-size:12px;line-height:1.22;width:100%;margin-top:22px}
+  #page_block_06 .flow{width:100%;grid-template-columns:1fr;gap:10px}
+  #page_block_06 .step{grid-column:1 / -1 !important; grid-row:auto !important; grid-template-columns:1fr; gap:5px}
+  #page_block_06 .step .meta{padding-top:0;font-size:9.5px}
+  #page_block_06 .step .txt h3{font-size:14px}
+  #page_block_06 .step .txt p{font-size:12px;line-height:1.32}
+  #page_block_07 .pb07-video-box{width:100%;aspect-ratio:16 / 9;height:auto;min-height:140px;max-height:240px}
+  #page_block_07 .pb07-note{font-size:9px;letter-spacing:.08em;width:100%}
+}
+
+
+/* --- PB06 layout override: screenshot-like left block + logo, right stack spans title-top to logo-bottom --- */
+#page_block_06 .pb04-grid{
+  min-height: calc(100svh - 64px);
+  align-content: start;
+  grid-template-rows: auto auto auto 1fr;
+  padding-top: clamp(18px, 3vh, 30px);
+  padding-bottom: clamp(8px, 1.4vh, 14px);
+}
+#page_block_06 .kicker{ grid-row:1; }
+#page_block_06 .title{
+  grid-row:2;
+  grid-column:1 / span 5;
+  width:min(100%,10.5ch);
+  margin-top:18px;
+}
+#page_block_06 .lead{
+  grid-row:3;
+  grid-column:1 / span 5;
+  width:min(100%,43ch);
+  margin-top:24px;
+}
+#page_block_06 .pb06-logo-wrap{
+  grid-row:4;
+  grid-column:1 / span 5;
+  align-self:end;
+  margin-top:24px;
+  margin-bottom:6px;
+}
+#page_block_06 .pb06-logo{
+  display:block;
+  width:min(100%,320px);
+  max-width:100%;
+  height:auto;
+  object-fit:contain;
+}
+#page_block_06 .flow{
+  grid-row:2 / span 3;
+  grid-column:7 / span 6;
+  align-self:stretch;
+  margin:18px 0 6px 0;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  gap:0;
+}
+#page_block_06 .step{
+  grid-template-columns: 116px minmax(0,1fr);
+  gap: 18px;
+}
+#page_block_06 .step .meta{ padding-top:5px; font-size:12.5px; letter-spacing:.18em; }
+#page_block_06 .step .txt h3{ margin-bottom:6px; font-size:18px; line-height:1.05; }
+#page_block_06 .step .txt p{ font-size:14.5px; line-height:1.28; }
+
+@media (max-width: 980px){
+  #page_block_06 .pb04-grid{min-height:auto;grid-template-rows:auto;}
+  #page_block_06 .title,#page_block_06 .lead,#page_block_06 .pb06-logo-wrap{grid-column:1 / -1;width:100%;}
+  #page_block_06 .pb06-logo-wrap{grid-row:auto;align-self:start;margin:18px 0 0;}
+  #page_block_06 .pb06-logo{width:min(72vw,260px);}
+  #page_block_06 .flow{grid-row:auto;grid-column:1 / -1;align-self:start;margin-top:18px;margin-bottom:0;display:grid;row-gap:12px;}
+}
+/* --- PB08: Lateral ripples (PB06 typography/layout) --- */
+#page_block_08{
+  background:#000000 !important;
+  color:#ffffff;
+  padding:clamp(20px,2.2vh,28px) 0 clamp(24px,2.8vh,32px) !important;
+  min-height:100svh;
+  display:grid;
+  justify-items:center;
+  align-content:start;
+}
+#page_block_08 .pb04-wrap{
+  width:min(1180px,100%);
+  padding:0 clamp(18px,2.1vw,28px);
+}
+#page_block_08 .pb04-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  column-gap:clamp(12px,1.4vw,18px);
+  align-items:start;
+  min-height: calc(100svh - 64px);
+  align-content:start;
+  grid-template-rows:auto auto auto 1fr;
+  padding-top: clamp(18px, 3vh, 30px);
+  padding-bottom: clamp(8px, 1.4vh, 14px);
+}
+#page_block_08 .kicker{
+  grid-row:1;
+  grid-column:1 / span 12;
+  margin:0;
+  padding-top:2px;
+  text-align:left;
+  font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color:rgba(255,255,255,.62);
+}
+#page_block_08 .title{
+  grid-row:2;
+  grid-column:1 / span 7;
+  margin:clamp(18px,2.7vh,28px) 0 0;
+  width:min(100%,18ch);
+  text-align:left;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:-.032em;
+  line-height:.92;
+  font-size:clamp(26px,3vw,42px);
+  color:#ffffff;
+  text-wrap:balance;
+}
+#page_block_08 .lead{
+  grid-row:3;
+  grid-column:1 / span 5;
+  margin:clamp(24px,3.4vh,32px) 0 0;
+  width:min(100%,52ch);
+  text-align:left;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:clamp(12px,.9vw,13px);
+  line-height:1.24;
+  color:rgba(255,255,255,.82);
+  letter-spacing:-.01em;
+  text-wrap:pretty;
+}
+#page_block_08 .pb08-media{
+  grid-row:1 / span 4;
+  grid-column:1 / span 7;
+  align-self:start;
+  margin-top:clamp(28px,4.4vh,40px);
+}
+#page_block_08 .pb08-media img{
+  display:block;
+  width:100%;
+  height:auto;
+  object-fit:contain;
+}
+#page_block_08 .kicker{grid-column:1 / span 12;}
+#page_block_08 .title{grid-column:8 / span 5;}
+#page_block_08 .lead{
+  grid-column:8 / span 5;
+  width:min(100%,52ch);
+}
+#page_block_08 .pb08-copy{
+  grid-row:4;
+  grid-column:8 / span 5;
+  align-self:start;
+  margin-top:clamp(20px,2.6vh,28px);
+  width:min(100%,52ch);
+}
+#page_block_08 .pb08-copy p{
+  margin:0;
+  text-align:left;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:clamp(12px,.9vw,13px);
+  line-height:1.24;
+  color:rgba(255,255,255,.82);
+  letter-spacing:-.01em;
+  text-wrap:pretty;
+}
+#page_block_08 .pb08-copy p + p{margin-top:14px;}
+@media (max-width:980px){
+  #page_block_08 .pb04-grid{min-height:auto;grid-template-rows:auto;}
+  #page_block_08 .pb08-media,#page_block_08 .title,#page_block_08 .lead,#page_block_08 .pb08-copy{grid-column:1 / -1;width:100%;}
+  #page_block_08 .pb08-media{grid-row:auto;margin-top:14px;}
+  #page_block_08 .kicker{grid-column:1 / -1;}
+}
+@media (max-width:640px){
+  #page_block_08 .kicker{font-size:10px}
+  #page_block_08 .title{font-size:clamp(24px,8vw,34px);width:min(100%,16ch);margin-top:16px}
+  #page_block_08 .lead{font-size:12px;line-height:1.22;width:100%;margin-top:22px}
+  #page_block_08 .pb08-copy{margin-top:18px;width:100%;}
+  #page_block_08 .pb08-copy p{font-size:12px;line-height:1.22;}
+  #page_block_08 .pb08-copy p + p{margin-top:12px;}
+}
+
+
+
+
+    /* --- PB09: Fullscreen video --- */
+    #page_block_09{padding:0 !important; background:#000 !important;}
+    #page_block_09 .pb09-video{
+      position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+      display:block; background:#000;
+    }
+
+
+
+/* ----------------------------------------------------------
+   TOP-RIGHT MENU (copied from index.html)
+----------------------------------------------------------- */
+:root{
+  --nav: hsl(0, 0%, 65%);
+  --nav-active: #00ff00;
+
+  /* tuned to sit a touch lower than previous version */
+  --hdr-pad-top: 27.5px;
+  --hdr-pad-x: 24px;
+
+  /* nav tuning to match Squarespace a bit closer */
+  --nav-size: 8.8px;
+  --nav-track: 1.11px;
+  --nav-gap: 13px;
+}
+
+.site-header{
+  position:fixed;
+  top:0; left:0; right:0;
+  z-index:9999;
+  padding: var(--hdr-pad-top) calc(var(--hdr-pad-x) + env(safe-area-inset-right, 0px)) 12px calc(var(--hdr-pad-x) + env(safe-area-inset-left, 0px));
+  background: transparent;
+  pointer-events:none;
+}
+
+.hdr-container{
+  max-width: var(--max);
+  margin: 0 auto;
+  pointer-events:none;
+}
+
+.site-header__row{
+  display:flex;
+  align-items:flex-start;
+  justify-content:flex-end; /* menu only */
+  pointer-events:none;
+}
+
+.nav{
+  display:flex;
+  align-items:center;
+  gap: var(--nav-gap);
+  pointer-events:auto;
+}
+
+.nav a{
+  font-family: "Futura PT","futura-pt","Futura","Avenir Next","Avenir",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+  font-weight: 400;
+  font-size: var(--nav-size);
+  letter-spacing: var(--nav-track);
+  text-transform: uppercase;
+  line-height: 1.6;
+  color: var(--nav);
+  text-decoration:none;
+  white-space:nowrap;
+  transition: color .18s ease;
+}
+.nav a:hover{ color: var(--nav-active); }
+.nav a.is-active{ color: var(--nav-active); }
+
+/* Mobile */
+.nav-toggle{
+  display:none;
+  pointer-events:auto;
+  font-family: "Futura PT","futura-pt","Futura","Avenir Next","Avenir",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+  font-size: var(--nav-size);
+  letter-spacing: var(--nav-track);
+  text-transform: uppercase;
+  color: var(--nav-active);
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(0,0,0,.25);
+  padding: 8px 10px;
+  border-radius: 999px;
+  cursor:pointer;
+}
+
+.nav-panel{
+  position:fixed;
+  top:0; right:0;
+  height:100vh;
+  width:min(320px, 86vw);
+  padding: 72px 22px 22px;
+  background: rgba(0,0,0,.92);
+  backdrop-filter: blur(10px);
+  transform: translateX(110%);
+  transition: transform .22s ease;
+  z-index: 10000;
+  border-left: 1px solid rgba(255,255,255,.08);
+}
+.nav-panel.is-open{ transform: translateX(0); }
+.nav-panel a{
+  display:block;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  font-family: "Futura PT","futura-pt","Futura","Avenir Next","Avenir",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: var(--nav-track);
+  text-transform: uppercase;
+  color: var(--nav);
+  text-decoration:none;
+}
+.nav-panel a.is-active{ color: var(--nav-active); }
+
+.nav-panel__close{
+  position:fixed;
+  top: 18px;
+  right: 18px;
+  z-index:10001;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(0,0,0,.25);
+  color: var(--nav-active);
+  padding: 8px 10px;
+  border-radius: 999px;
+  cursor:pointer;
+  font-family: "Futura PT","futura-pt","Futura","Avenir Next","Avenir",system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+  font-size: var(--nav-size);
+  letter-spacing: var(--nav-track);
+  text-transform: uppercase;
+}
+
+@media (max-width: 860px){
+  .nav{ display:none; }
+  .nav-toggle{ display:inline-flex; align-items:center; }
+  :root{ --hdr-pad-x: 20px; --hdr-pad-top: 22px; }
+
+  /* When the slide-in menu is open, prevent background scroll (mobile only) */
+  body.nav-open .snap-container{
+    overflow: hidden !important;
+  }
+}
+
+</style>
+
+
+<style id="pb04-embedded-style">
+
+html,body{margin:0;height:100%;overflow:hidden;background:#ffffff;color:#000;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#app{position:fixed;inset:0}
+.hud{position:fixed;z-index:20;font-size:11px;line-height:1.2;pointer-events:none}
+#hudL{left:12px;top:10px} #hudR{right:12px;top:10px;text-align:right}
+.box{display:inline-block;padding:8px 10px;border:1px solid rgba(0,0,0,.16);background:rgba(255,255,255,.9);margin-bottom:6px}
+#hint{position:fixed;left:12px;bottom:12px;z-index:20;padding:6px 9px;border:1px solid rgba(0,0,0,.14);background:rgba(255,255,255,.88);font-size:10px}
+#panel{position:fixed;right:14px;top:74px;bottom:14px;width:500px;border:1px solid rgba(0,0,0,.18);background:rgba(255,255,255,.97);z-index:30;display:none;grid-template-rows:auto 1fr auto}
+#panel.active{display:grid}
+#head{padding:10px 12px;border-bottom:1px solid rgba(0,0,0,.14);position:relative}
+#head .t{font-size:12px;padding-right:24px}
+#head .p{font-size:10px;opacity:.65;margin-top:4px}
+#head .d{font-size:11px;opacity:.85;margin-top:8px;line-height:1.35}
+#panelClose{position:absolute;right:8px;top:8px;width:18px;height:18px;line-height:16px;text-align:center;border:1px solid rgba(0,0,0,.18);background:#fff;font-size:12px;cursor:pointer}
+#rows{overflow:auto;padding:8px;border-bottom:1px solid rgba(0,0,0,.1)}
+.row{display:grid;grid-template-columns:34px 1fr auto auto;gap:8px;align-items:center;border:1px solid rgba(0,0,0,.12);padding:7px 8px;margin-bottom:6px;cursor:pointer}
+.row:hover{background:rgba(0,0,0,.03);border-color:rgba(0,0,0,.2)}
+.row.active{border-color:rgba(0,0,0,.42);background:rgba(0,0,0,.06)}
+.idx{font-size:10px;opacity:.65} .lab{font-size:12px} .code{font-size:10px;opacity:.65} .tag{font-size:10px;border:1px solid rgba(0,0,0,.16);padding:2px 5px;min-width:0;text-align:center}.tag.empty{border-color:transparent;color:transparent;padding:0;width:0;overflow:hidden}
+#detail{padding:12px;overflow:auto}
+#dTitle{font-size:12px;margin-bottom:8px}
+#dDesc{border:1px solid rgba(0,0,0,.12);padding:10px;background:#fff;font-size:12px;line-height:1.45;white-space:pre-wrap;min-height:76px}
+#dMeta{font-size:10px;opacity:.65;margin-top:8px}
+#dBtns a{display:inline-block;margin:10px 6px 0 0;padding:5px 8px;border:1px solid rgba(0,0,0,.18);color:#000;text-decoration:none;font-size:10px}
+#foot{padding:7px 10px;font-size:10px;opacity:.75}
+#intro,#mobileNotice{position:fixed;z-index:40;border:1px solid rgba(0,0,0,.18);background:rgba(255,255,255,.98);box-shadow:0 8px 30px rgba(0,0,0,.08)}
+#intro{left:12px;top:74px;max-width:310px;padding:10px 12px;font-size:11px;line-height:1.35}
+#intro .title{font-size:12px;margin-bottom:6px}
+#intro button,#mobileNotice button{margin-top:8px;border:1px solid rgba(0,0,0,.2);background:#fff;padding:4px 8px;font:inherit;cursor:pointer}
+#mobileNotice{display:none;left:12px;right:12px;bottom:12px;padding:10px 12px;font-size:11px;line-height:1.35}
+@media (max-width: 980px){
+  #panel{left:12px;right:12px;width:auto;top:92px}
+  #hint{right:12px;left:auto}
+  #mobileNotice{display:block}
+}
+
+#page_block_03 { position: relative; overflow: hidden; background:#ffffff; color:#000; font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+
+    /* --- PB03 match PB02 visual language (light editorial slab) --- */
+    #page_block_04{
+      position: relative !important;
+      z-index: 3 !important;
+      isolation: isolate !important;
+      background: #ffffff !important;
+      color: #101010;
+    }
+    #page_block_04::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:#ffffff;
+      z-index:0;
+      pointer-events:none;
+    }
+    #page_block_04 > *{ position:relative; z-index:1; }
+
+    #page_block_04 .block-title,
+    #page_block_04 .context-question .label{
+      color: rgba(0,0,0,.68);
+      font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+    }
+
+    #page_block_04 .context-title-col .title,
+    #page_block_04 .context-question .q{
+      color:#050505;
+      font-weight:650;
+      letter-spacing:-.03em;
+    }
+    #page_block_04 .context-title-col .lede{
+      color: rgba(0,0,0,.82);
+      font-size: 13.2px;
+      line-height: 1.45;
+      max-width: 42ch;
+    }
+    #page_block_04 .context-question{
+      border-top: 1px solid rgba(0,0,0,.14);
+      padding-top: 8px;
+      gap: 8px;
+    }
+    #page_block_04 .context-question .micro{
+      color: rgba(0,0,0,.74);
+      font-size: 13px;
+      line-height: 1.4;
+      max-width: 42ch;
+    }
+
+    #page_block_04 .context-side .small-media,
+    #page_block_04 .context-main-media{
+      background: rgba(0,0,0,.03);
+    }
+    #page_block_04 .context-side .small-media .ph,
+    #page_block_04 .context-main-media .ph{
+      color: rgba(0,0,0,.52);
+      border: 1px solid rgba(0,0,0,.12);
+    }
+    #page_block_04 .context-side .small-media .ph strong,
+    #page_block_04 .context-main-media .ph strong{
+      color: rgba(0,0,0,.82);
+    }
+    #page_block_04 .context-side .note,
+    #page_block_04 .context-caption{
+      color: rgba(0,0,0,.58);
+      border-top-color: rgba(0,0,0,.14);
+    }
+
+    #page_block_04 .context-wrap{ gap: 16px; }
+    #page_block_04 .context-top{ gap: 22px; }
+    #page_block_04 .context-layout{ gap: 22px; grid-template-columns: .78fr 1.22fr; }
+
+#page_block_03 #app,
+#page_block_03 .hud,
+#page_block_03 #hint,
+#page_block_03 #panel,
+#page_block_03 #intro,
+#page_block_03 #mobileNotice { position:absolute; }
+#page_block_03 #app { inset:0; }
+#page_block_03 .hud { z-index:20; }
+#page_block_03 #panel { z-index:30; }
+#page_block_03 #intro, #page_block_03 #mobileNotice { z-index:40; }
+
+/* PB04 page-level snap navigation cue (retro chevrons) */
+#page_block_03 .pb04-page-nav{
+  position:absolute; inset:0; z-index:45; pointer-events:none;
+}
+#page_block_03 .pb04-page-nav .nav-btn{
+  position:absolute; left:50%; transform:translateX(-50%);
+  pointer-events:auto; cursor:pointer;
+  border:1px solid rgba(0,0,0,.22); background:rgba(255,255,255,.92);
+  color:#000; min-width:140px; padding:6px 10px 7px;
+  font: inherit; font-size:10px; line-height:1.1; text-align:center;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  box-shadow:0 2px 10px rgba(0,0,0,.06);
+  letter-spacing:.02em;
+}
+#page_block_03 .pb04-page-nav .nav-btn:hover{
+  background:#fff; border-color:rgba(0,0,0,.35);
+}
+#page_block_03 .pb04-page-nav .nav-btn:focus-visible{
+  outline:1px solid rgba(0,0,0,.65); outline-offset:2px;
+}
+#page_block_03 .pb04-page-nav .nav-up{ top:12px; }
+#page_block_03 .pb04-page-nav .nav-down{ bottom:12px; }
+#page_block_03 .pb04-page-nav .chev{
+  width:10px; height:10px; border-right:1px solid rgba(0,0,0,.9); border-bottom:1px solid rgba(0,0,0,.9);
+}
+#page_block_03 .pb04-page-nav .nav-up .chev{ transform:rotate(-135deg); margin-top:1px; }
+#page_block_03 .pb04-page-nav .nav-down .chev{ transform:rotate(45deg); margin-bottom:1px; }
+#page_block_03 .pb04-page-nav .lbl{ opacity:.72; }
+#page_block_03 .pb04-page-nav .txt{ font-size:11px; }
+#page_block_03 .pb04-page-nav .nav-btn.is-hidden{ display:none; }
+
+#page_block_03 .pb04-page-nav .nav-up .lbl,
+#page_block_03 .pb04-page-nav .nav-up .txt{ display:block; }
+
+@media (max-width: 980px){
+  #page_block_03 .pb04-page-nav .nav-btn{
+    min-width:120px; padding:5px 8px 6px; font-size:9px;
+  }
+}
+
+
+    /* --- PB03 layout match refinement (align with PB02) --- */
+    #page_block_04{
+      justify-content: center;
+    }
+    #page_block_04 .context-wrap{
+      position: relative;
+      z-index: 1;
+      gap: 18px;
+      align-content: start;
+      margin-top: -52px;
+    }
+    #page_block_04 .context-top{
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    #page_block_04 .context-title-col .block-title{
+      display:block;
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      letter-spacing: .14em;
+      line-height: 1;
+    }
+    #page_block_04 .context-title-col .title{
+      max-width: 17ch;
+      margin: 0;
+      font-size: clamp(28px,4vw,62px);
+      line-height: .95;
+    }
+    #page_block_04 .context-title-col .lede{
+      margin: 0;
+      max-width: 46ch;
+    }
+
+    /* make the question row use PB02-like label/body alignment */
+    #page_block_04 .context-question{
+      border-top: 0 !important;
+      padding-top: 0;
+      display: grid;
+      grid-template-columns: 132px minmax(0,1fr);
+      column-gap: 14px;
+      row-gap: 5px;
+      align-items: start;
+      max-width: 100%;
+    }
+    #page_block_04 .context-question .label{
+      grid-column: 1;
+      grid-row: 1 / span 2;
+      padding-top: 4px;
+      letter-spacing: .16em;
+      font-size: 9.8px;
+      color: rgba(0,0,0,.50);
+      white-space: nowrap;
+    }
+    #page_block_04 .context-question .q{
+      grid-column: 2;
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.12;
+      letter-spacing: -0.01em;
+      font-weight: 590;
+      max-width: 37ch;
+    }
+    #page_block_04 .context-question .micro{
+      grid-column: 2;
+      margin: 0;
+      font-size: 12.6px;
+      line-height: 1.44;
+      color: rgba(0,0,0,.68);
+      max-width: 42ch;
+    }
+
+    #page_block_04 .context-layout{
+      gap: 22px;
+      grid-template-columns: .78fr 1.22fr;
+    }
+    #page_block_04 .context-side .note,
+    #page_block_04 .context-caption{
+      border-top: 0 !important;
+      padding-top: 0;
+    }
+
+    @media (max-width: 980px){
+      #page_block_04 .context-wrap{ margin-top: 0; }
+      #page_block_04 .context-question{
+        grid-template-columns: 1fr;
+        gap: 5px;
+      }
+      #page_block_04 .context-question .label,
+      #page_block_04 .context-question .q,
+      #page_block_04 .context-question .micro{
+        grid-column: 1;
+        grid-row: auto;
+        padding-top: 0;
+        white-space: normal;
+      }
+    }
+
+
+
+    /* --- FINAL ALIGNMENTS (PB03 == PB02 title positions, PB04 nav label cleanup) --- */
+    #page_block_04 .context-wrap{
+      margin-top: 0 !important;
+      gap: 18px !important;
+    }
+    #page_block_04 .context-title-col .block-title{
+      font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      line-height: 1;
+      margin: 0 0 18px 0 !important;
+      color: rgba(0,0,0,.72);
+    }
+    #page_block_04 .context-title-col .title{
+      margin: 0 !important;
+      font-weight: 650;
+      font-size: clamp(28px,4vw,62px);
+      line-height: .95;
+      letter-spacing: -.03em;
+      text-transform: uppercase;
+      max-width: 17ch;
+      color: #050505;
+    }
+    #page_block_04 .context-title-col .lede{
+      margin-top: 10px;
+    }
+
+    /* keep PB04 visual style as source; match PB02/PB03 slab to PB04 */
+    #page_block_02, #page_block_04{
+      background: #ffffff !important;
+    }
+
+    /* PB04 top nav: no PAGE label, just PREVIOUS/NEXT text + chevrons */
+    #page_block_03 .pb04-page-nav .lbl{ display:none !important; }
+    #page_block_03 .pb04-page-nav .nav-btn{
+      min-width: 132px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    #page_block_03 .pb04-page-nav .nav-btn .txt{
+      display: inline-block;
+      line-height: 1;
+    }
+
+
+/* --- PB02/PB04 TYPOGRAPHY SYNC (PB04 as base) --- */
+#page_block_02 .overview-kicker{
+  font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace !important;
+  letter-spacing:.18em !important;
+  text-transform:uppercase;
+}
+#page_block_02 .overview-headline{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif !important;
+  font-weight:700 !important;
+  letter-spacing:-.032em !important;
+  line-height:.92 !important;
+  font-size:clamp(30px,3.7vw,54px) !important;
+  text-wrap:balance;
+}
+#page_block_02 .overview-intro,
+#page_block_02 .ov-body h3,
+#page_block_02 .ov-body p{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif !important;
+  letter-spacing:-.01em !important;
+}
+#page_block_02 .overview-intro{
+  font-size:clamp(13px,1.05vw,15px) !important;
+  line-height:1.32 !important;
+}
+#page_block_02 .ov-label{
+  font:600 9px/1.2 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace !important;
+  letter-spacing:.16em !important;
+  text-transform:uppercase;
+}
+#page_block_02 .ov-body h3{
+  font-weight:650 !important;
+  letter-spacing:-.024em !important;
+  line-height:1.05 !important;
+  font-size:clamp(20px,2vw,29px) !important;
+  margin:0 0 6px 0 !important;
+  text-wrap:balance;
+}
+#page_block_02 .ov-body p{
+  font-size:clamp(13px,1.02vw,14px) !important;
+  line-height:1.28 !important;
+  margin:0 !important;
+  text-wrap:pretty;
+}
+@media (max-width:640px){
+  #page_block_02 .overview-kicker{font-size:10px !important;}
+  #page_block_02 .overview-headline{font-size:clamp(28px,10vw,42px) !important;}
+  #page_block_02 .overview-intro,
+  #page_block_02 .ov-body p{font-size:13px !important;}
+  #page_block_02 .ov-body h3{font-size:clamp(20px,7vw,26px) !important;}
+}
+
+</style>
+
+
+
+<style id="mobile-free-scroll-patch">
+@media (max-width: 860px){
+  html, body{ height:100% !important; }
+  body{ overflow:auto !important; }
+
+  /* remove page-block snapping, keep section rhythm */
+  .snap-container{
+    height:auto !important;
+    min-height:100vh;
+    overflow-y:visible !important;
+    scroll-snap-type:none !important;
+    -webkit-overflow-scrolling:touch;
+  }
+  .snap-block{
+    scroll-snap-align:none !important;
+    height:auto !important;
+    min-height:100svh !important;
+    overflow:hidden !important;
+    padding-left:16px !important;
+    padding-right:16px !important;
+  }
+
+  /* blocks that are built as fullscreen media/canvas */
+  #page_block_03, #page_block_05, #page_block_09{
+    padding:0 !important;
+    min-height:100svh !important;
+    overflow:hidden !important;
+  }
+  #page_block_03 .pb04-page-nav{ display:none !important; }
+
+  /* generic media safety */
+  img, video, iframe{
+    max-width:100% !important;
+    height:auto;
+  }
+
+  /* content blocks media should never overflow width */
+  .overview-wrap, .context-wrap, #page_block_04 .pb04-wrap, #page_block_06 .pb04-wrap, #page_block_07 .pb04-wrap, #page_block_08 .pb04-wrap{
+    padding-left:0 !important;
+    padding-right:0 !important;
+  }
+  .overview-image-main, .overview-strip .tile, .context-side .small-media, .context-main-media, #page_block_07 .pb07-video-box{
+    width:100% !important;
+    max-width:100% !important;
+  }
+
+  /* fullscreen videos: fit width on mobile (no horizontal crop) */
+  #page_block_05 .pb05-video,
+  #page_block_09 .pb09-video{
+    position:absolute !important;
+    inset:0 !important;
+    width:100% !important;
+    height:100% !important;
+    object-fit:contain !important;
+    background:#000 !important;
+  }
+
+  /* PB07 video had a slight overscan that breaks mobile width */
+  #page_block_07 .pb07-video-box{ overflow:hidden !important; }
+  #page_block_07 .pb07-video-box .pb07-video-inner{
+    top:0 !important;
+    left:0 !important;
+    width:100% !important;
+    height:100% !important;
+  }
+
+  body.nav-open{ overflow:hidden !important; }
+}
+</style>
+  <aside class="nav-panel" id="navPanel" aria-hidden="true">
+    <button class="nav-panel__close" id="navClose" type="button">CLOSE</button>
+    <a href="https://www.enricopoli.com/home" data-key="whatdoiactuallydo">WHAT DO I ACTUALLY DO</a>
+    <a href="/" data-key="xd">XD</a>
+    <a href="https://www.enricopoli.com/films" data-key="films">FILMS</a>
+    <a href="https://www.enricopoli.com/_-dream-log" data-key="dreamlog">_ DREAM LOG</a>
+    <a href="https://www.enricopoli.com/journal" data-key="journal">JOURNAL</a>
+    <a href="https://www.enricopoli.com/about" data-key="about">ABOUT</a>
+  </aside>
+
+<main class="snap-container">
+    <section class="snap-block">
+        <canvas id="star-network-canvas"></canvas>
+
+        <div class="meta" id="metaHud" aria-label="Project metadata">
+            <div class="meta-panel" aria-hidden="true"></div>
+            <div class="meta-inner">
+                <div class="meta-cols">
+                    <div class="meta-col">
+                        <div class="field"><div class="label" data-final="Project" data-matrix="1">Project</div><div class="value" data-final="Era, Ora > beyond the book" data-matrix="1">Era, Ora &gt; beyond the book</div></div>
+                        <div class="field"><div class="label" data-final="Client" data-matrix="1">Client</div><div class="value" data-final="Dinova (dinova.one)" data-matrix="1">Dinova (dinova.one)</div></div>
+                        <div class="field"><div class="label" data-final="Location" data-matrix="1">Location</div><div class="value" data-final="Italy" data-matrix="1">Italy</div></div>
+                        <div class="field"><div class="label" data-final="Year" data-matrix="1">Year</div><div class="value" data-final="2026" data-matrix="1">2026</div></div>
+                    </div>
+
+                    <div class="meta-col">
+                        <div class="field"><div class="label" data-final="Country" data-matrix="1">Country</div><div class="value" data-final="Italy" data-matrix="1">Italy</div></div>
+
+                        <div class="span2">
+                            <div class="label" data-final="tags" data-matrix="1" style="margin:2px 0 8px; display:block;">tags</div>
+                            <div class="tagrow">
+                                <span class="tag" data-final="Exhibition Design" data-matrix="1">Exhibition Design</span>
+                                <span class="tag" data-final="Experience Design" data-matrix="1">Experience Design</span>
+                                <span class="tag" data-final="UX Design" data-matrix="1">UX Design</span>
+                                <span class="tag" data-final="Speculative Design" data-matrix="1">Speculative Design</span>
+                                <span class="tag" data-final="AI Sense-making" data-matrix="1">AI Sense-making</span>
+                                <span class="tag" data-final="Future of Work" data-matrix="1">Future of Work</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="meta-scan" aria-hidden="true"></div>
+        </div>
+
+            </section>
+
+    <section class="snap-block" id="page_block_02">
+  <div class="overview-wrap">
+    <div class="overview-kicker">02 // OVERVIEW</div>
+    <h2 class="overview-headline">From book to prototype, from prototype to experience.</h2>
+
+    <div class="overview-grid">
+      <div class="overview-left">
+        <div class="overview-image-main">
+          <img src="assets/PB_01_01.png" alt="PB 01 01"/>
+        </div>
+
+        <div class="overview-intro overview-intro-left">
+          The project translates a conceptual book into a public format people can enter: a narrative intelligence, a prototype logic, and an exhibition arc that makes the question of work tangible.
+        </div>
+      </div>
+
+      <div class="overview-right">
+        <div class="overview-sections">
+          <div class="ov-item">
+            <div class="ov-label">Design challenge</div>
+            <div class="ov-body">
+              <h3>Too abstract to adapt directly</h3>
+              <p>The source material is rich but highly conceptual. A direct translation risked becoming a summary or a fragmented experience.</p>
+            </div>
+          </div>
+
+          <div class="ov-item">
+            <div class="ov-label">Solution</div>
+            <div class="ov-body">
+              <h3>Build a narrative system</h3>
+              <p>Lia becomes the anchor: a poetic, reflective intelligence. Around her, a prototype system and an exhibition journey hold the story together.</p>
+            </div>
+          </div>
+
+          <div class="ov-item">
+            <div class="ov-label">Outcome</div>
+            <div class="ov-body">
+              <h3>Lia 1.0 + engines + experiential arc</h3>
+              <p>A coherent foundation now exists: Lia 1.0 as concept, IdenLab and Systems Atlas as engines, and a designed path for public interaction.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+    <section class="snap-block" id="page_block_03" style="padding:0; background:#ffffff;">
+<div id="app"></div>
+<div id="hudL" class="hud"><div class="box">ERA_ORA > beyond the book / LATTICE_INTERFACE<br><span style="opacity:.7">Drag orbit · Wheel zoom · Right-drag pan · Click anchors</span></div><div class="box" id="hudPath">PATH: SOURCE_TEXT</div></div>
+<div id="hudR" class="hud"><div class="box" id="hudNode">NODE: —</div><br><div class="box" id="hudMode">MODE: GLOBAL</div></div>
+<div id="hint">Click a branch to open · Esc close · R recenter · ↑/↓ select · Enter open link</div>
+<div id="intro"><div class="title">Lattice map</div>Click a branch label to open its nodes. The 3D view shows relationships; the panel is the reading surface.<br><button id="introClose">Got it</button></div>
+<div id="mobileNotice">Desktop is recommended for full navigation. On smaller screens, use the panel for reading and tap branch labels to open.<br><button id="mobileClose">Dismiss</button></div>
+
+<div class="pb04-page-nav" aria-label="Page block navigation">
+  <button class="nav-btn nav-up" id="pb04NavUp" type="button" aria-label="Go to previous section">
+    <span class="chev" aria-hidden="true"></span>
+    <span class="txt">PREVIOUS</span>
+  </button>
+  <button class="nav-btn nav-down" id="pb04NavDown" type="button" aria-label="Go to next section">
+    <span class="txt">NEXT</span>
+    <span class="chev" aria-hidden="true"></span>
+  </button>
+</div>
+
+<div id="panel">
+  <div id="head"><button id="panelClose" aria-label="Close panel">×</button><div class="t" id="pTitle"></div><div class="p" id="pPath"></div><div class="d" id="pDesc"></div><div style="margin-top:6px"><button id="pDescToggle" style="border:1px solid rgba(0,0,0,.18);background:#fff;padding:2px 6px;font:inherit;font-size:10px;cursor:pointer">Collapse section note</button></div></div>
+  <div id="rows"></div>
+  <div id="detail"><div id="dTitle">Select a node</div><div id="dDesc">Node descriptions will appear here.</div><div id="dMeta"></div><div id="dBtns"></div></div>
+  <div id="foot">3D = topology. Panel = readable content.</div>
+</div>
+    </section>
+
+
+
+    <section class="snap-block" id="page_block_04" aria-label="PB04 Context">
+    <div class="pb04-wrap">
+      <div class="pb04-grid">
+        <p class="kicker">03 // CONTEXT</p>
+
+        <h2 class="title">A FUNDAMENTAL QUESTION.</h2>
+
+        <p class="lead">The project does <strong>not</strong> adapt the book as content. It takes its central question and reframes it as a live design problem for culture, organizations, and decision-making.</p>
+
+        <p class="question">What becomes of work when machines perform most tasks better than us?</p>
+
+        <p class="sub">The issue is not only replacement. It is how people—and organizations—recognize forms of contribution<br>that remain meaningful in a transformed landscape.</p>
+
+        <div class="flow" aria-label="Narrative progression">
+          <div class="step">
+            <p class="meta">FROM QUESTION TO DESIGN TASK</p>
+            <p class="txt">Once the question is clear, the project shifts from interpretation to design: how can this problem be explored in a form people can actually use?</p>
+          </div>
+
+          <div class="step">
+            <p class="meta">DESIGN DECISION</p>
+            <p class="txt">In this case, the answer is <strong>AI</strong>—not as a topic to describe, but as the medium through which the question can be tested.</p>
+          </div>
+
+          <div class="step">
+            <p class="meta">LIVE PROTOTYPE</p>
+            <p class="txt"><strong>Lia</strong> becomes the concrete response: a reflective intelligence designed to imagine work through identity, relation, and meaning—not efficiency alone.</p>
+          </div>
+        </div>
+
+        <div class="pb04-lia-cta-wrap">
+          <button class="pb04-lia-cta" id="pb04TryLia" type="button">TRY LIA 1.0 SIMULATION</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <section class="snap-block" id="page_block_05" aria-label="PB05 Waiting video">
+      <video class="pb05-video" data-lazy-media autoplay muted loop playsinline preload="none">
+        <source data-src="assets/Waiting.mp4" type="video/mp4">
+      </video>
+    </section>
+
+    <section class="snap-block" id="page_block_06" aria-label="PB06 The Experience">
+      <div class="pb04-wrap">
+        <div class="pb04-grid">
+          <p class="kicker">04 // THE EXPERIENCE</p>
+          <h2 class="title">A NARRATIVE<br>ARCHITECTURE<br>FOR LIA</h2>
+          <p class="lead">Designing Lia is not the end of the process. On its own, an AI output remains abstract: interesting, but easy to misread as a tool, a test, or a one-off result. To bridge Lia into real sense-making, it needs a context people can move through — an experience with orientation, progression, and stakes.<br><br>That is why the project is structured as a sequence of narrative environments. Each room does a different job: it frames the problem, shifts the lens, introduces Lia as an experiential threshold, and then expands the conversation toward collective futures. The architecture is not decoration around the AI; it is the condition that makes Lia legible, meaningful, and culturally useful.</p>
+          <div class="pb06-logo-wrap"><img class="pb06-logo" data-lazy-media data-src="assets/lia_logo.png" alt="Lia logo" loading="lazy"></div>
+
+          <div class="flow" aria-label="Experience architecture">
+            <div class="step s1">
+              <p class="meta">ROOM 01</p>
+              <div class="txt"><h3>Fear as Common Ground</h3><p>The entry point aligns the audience around a shared condition: work instability, disappearing roles, and the cognitive fallout of constant adaptation. The goal is not alarmism, but recognition — a field condition everyone can feel before interpretation begins.</p></div>
+            </div>
+            <div class="step s2">
+              <p class="meta">ROOM 02</p>
+              <div class="txt"><h3>Beyond Performance</h3><p>The path shifts from efficiency metrics to human capacities that resist automation: creativity, care, relation, intuition, imagination, and meaning-making. This is the conceptual turn of the project and the basis for Lia’s logic.</p></div>
+            </div>
+            <div class="step s3">
+              <p class="meta">ROOM 03</p>
+              <div class="txt"><h3>Lia 1.0 as Threshold</h3><p>Lia 1.0 acts as the experiential threshold: an opt-in, playful interaction where narrative traits are translated into an iconic role proposition. It is not assessment; it is a symbolic prototype for roles that emerge from people, not only from predefined functions.</p></div>
+            </div>
+            <div class="step s4">
+              <p class="meta">ROOM 04</p>
+              <div class="txt"><h3>Agorà and Co-Evolution</h3><p>Individual outputs expand into a collective map: an Agorà of constellations, possible organizations, and new work futures. The closing frame is co-evolution — AI as infrastructure, and Lia as a cultural/systemic prompt for governance, value distribution, and coordination.</p></div>
+            </div>
+            <div class="step s5">
+              <p class="meta">ROOM 05</p>
+              <div class="txt"><h3>Good News from AI</h3><p>The final room reframes AI not as a threat narrative, but as an opening: if machines absorb more executable tasks, the question becomes how to redesign institutions around what remains deeply human — meaning, relation, and collective intelligence.</p></div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="snap-block" id="page_block_07" aria-label="PB07 Distributable Experience">
+      <div class="pb04-wrap">
+        <div class="pb04-grid">
+          <p class="kicker">05 // DISTRIBUTABLE EXPERIENCE</p>
+          <h2 class="title">FROM INSTALLATION TO INTERACTIVE 3D</h2>
+          <p class="lead">The project was initially imagined as a physical installation. It then shifted into a 3D interactive format to make the experience more distributable: easier to test, share, iterate, and deploy across contexts without losing its spatial logic. This move keeps the architecture intact while turning the first rooms into a portable prototype that can evolve over time.</p>
+          <div class="pb07-video-box" aria-label="Trailer video">
+            <video class="pb07-video-inner" data-lazy-media autoplay muted loop playsinline preload="none">
+              <source data-src="assets/trailer_era_ora.mp4" type="video/mp4">
+            </video>
+          </div>
+          <p class="pb07-note"><a href="mailto:epoli.uk@gmail.com" title="Email epoli.uk@gmail.com">experience under construction - get in touch to test the first rooms.</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="snap-block" id="page_block_08" aria-label="PB08 Lateral Ripples">
+      <div class="pb04-wrap">
+        <div class="pb04-grid">
+          <div class="pb08-media"><img data-lazy-media data-src="assets/six_thinking_hats.png" alt="Six Thinking Hats theatre scene" loading="lazy"></div>
+          <p class="kicker">06 // LATERAL RIPPLES</p>
+          <h2 class="title">LATERAL RIPPLES:<br>EXPANDING THE VISION<br>BEYOND THE EXHIBITION</h2>
+          <p class="lead">The exhibition built around the Lia 1.0 AI prototype is the first artistic output emerging from Era, Ora, but not its endpoint. It is the first public threshold — the point from which the project can branch, persist, and evolve beyond the printed page.</p>
+          <div class="pb08-copy">
+            <p>From this initial encounter, “lateral ripples” - branching paths - are set in motion to extend the project’s lifespan and give continuity to its vision in other formats, audiences, and cultural contexts.</p>
+            <p><strong>Documentary:</strong> The process of building Lia generates strong material for documentation. The same development journey can be captured either as a cinematic work or as a more direct process record. The film can draw on the first narrative interviews used to train Lia, turning them into both a research device and a form of testimony.</p>
+            <p><strong>Fiction Film:</strong> The reflections, interviews, prototypes, and future scenarios collected across the process can become the blueprint for a fiction film - moving the Era, Ora's vision into a broader cultural space and unlocking a different mode of reflection.</p>
+            <p>The most radical extension is a theatre format: <em>Six Characters in Search of an Author</em> meets <em>Six Thinking Hats</em>. The stage becomes a live device for collective sense-making, not a lecture. Two mirrored conversations unfold: one driven by Boscato’s future roles (Role Strength Curator, Organism Language Alchemist, Creative Tension Weaver), the other by his speculative AIs (LUMIA, SYN, ARA, OMI, KAI, VERA).</p>
+            <p>A minimal setting: only a table, chairs, and the audience. The constraint keeps the tension conceptual rather than decorative.</p>
+            <p>Through tragicomic realism and Pirandellian perspective shifts, the performance becomes a collaborative space where the audience is invited to reflect, doubt, and choose a future together.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <section class="snap-block" id="page_block_09" aria-label="PB09 Aya Visual Experience">
+      <video class="pb09-video" data-lazy-media autoplay muted loop playsinline preload="none">
+        <source data-src="assets/aya_visual_experience.mp4" type="video/mp4">
+      </video>
+    </section>
+
+</main>
+
+<div id="liaOverlay" aria-hidden="true">
+  <div class="lia-overlay-shell" role="dialog" aria-modal="true" aria-label="Lia 1.0 Simulation overlay">
+    <div class="lia-overlay-head">
+      <div class="lia-overlay-title">LIA 1.0 SIMULATION</div>
+      <button class="lia-overlay-close" id="liaOverlayClose" type="button" aria-label="Close overlay">×</button>
+    </div>
+    <iframe id="liaOverlayFrame" title="Lia 1.0 Simulation" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+  </div>
+</div>
+
+
+<script>
+(function(){
+  const charset = "abcdefghijklmnopqrstuvwxyz0123456789_-/.:#";
+  const rand = () => charset[Math.floor(Math.random()*charset.length)];
+
+  function scramble(el, final, opts){
+    const duration = opts.duration ?? 900;
+    const startDelay = opts.delay ?? 0;
+    const settle = opts.settle ?? 0.18;
+    const t0 = performance.now() + startDelay;
+    const len = final.length;
+
+    if(len === 0){ el.textContent = ""; return; }
+
+    function frame(t){
+      const p = Math.min(1, Math.max(0, (t - t0) / duration));
+      if(p <= 0){ requestAnimationFrame(frame); return; }
+
+      const reveal = Math.floor(p * (len + 1));
+      let out = "";
+      for(let i=0;i<len;i++){
+        if(i < reveal){
+          if(i > reveal - Math.ceil(len*settle) && Math.random() < 0.18){ out += rand(); }
+          else{ out += final[i]; }
+        }else out += rand();
+      }
+      el.textContent = out;
+
+      if(p < 1) requestAnimationFrame(frame);
+      else el.textContent = final;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // Kick HUD "forming" state + scramble
+  const hud = document.getElementById("metaHud");
+  if(!hud) return;
+
+  const nodes = hud.querySelectorAll("[data-matrix][data-final]");
+  // hold final strings without showing them first
+  nodes.forEach(n => { n.textContent = ""; });
+
+  // add forming class to reveal borders + opacity
+  setTimeout(() => hud.classList.add("forming"), 140);
+
+  let delay = 220;
+  nodes.forEach((n, i) => {
+    const final = n.getAttribute("data-final") || "";
+    scramble(n, final, { duration: 780, delay: delay + i*26, settle: 0.22 });
+  });
+
+})();
+
+/** * POETIC TEAL ENGINE (Block 1 Exclusive) */
+(function () {
+  const canvas = document.getElementById("star-network-canvas");
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  let width, height;
+
+  const config = {
+    maxNodesBaseDensity: 0.00008,
+    maxNodesCap: 160,
+    spawnPerFrame: 0.5,
+    baseSpeed: 0.05,
+    extraSpeed: 0.2,
+    backgroundFade: 0.6,
+    maxConnectionDist: 180,
+    mouseRadius: 200,
+    magnetSlowStrength: 5,
+    magnetFastStrength: 4
+  };
+
+  let nodes = [];
+  let lastTime = performance.now();
+  const mouse = { x: 0, y: 0, active: false, speed: 0, lastX: 0, lastY: 0, lastT: 0, lastMove: 0 };
+
+  function resize() {
+    width = canvas.parentElement.offsetWidth; 
+    height = canvas.parentElement.offsetHeight;
+    canvas.width = width * dpr; canvas.height = height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function createNode() {
+    return {
+      x: Math.random() * width, y: Math.random() * height,
+      vx: (Math.random() - 0.5) * config.extraSpeed,
+      vy: (Math.random() - 0.5) * config.extraSpeed,
+      size: 0.5 + Math.random() * 0.7,
+      alpha: 0, baseAlpha: 0.2 + Math.random() * 0.45,
+      life: 0
+    };
+  }
+
+  function update(dt) {
+    const limit = Math.floor(Math.min(config.maxNodesCap, (width * height * config.maxNodesBaseDensity)));
+    if (nodes.length < limit) nodes.push(createNode());
+
+    if (performance.now() - mouse.lastMove > 1500) mouse.active = false;
+
+    for (let n of nodes) {
+      n.life += dt;
+      n.x += n.vx * dt * 60; n.y += n.vy * dt * 60;
+      if (n.x < -50) n.x = width + 50; if (n.x > width + 50) n.x = -50;
+      if (n.y < -50) n.y = height + 50; if (n.y > height + 50) n.y = -50;
+
+      let targetAlpha = n.baseAlpha;
+      if (mouse.active) {
+        const dx = mouse.x - n.x, dy = mouse.y - n.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < config.mouseRadius) {
+          const t = 1 - dist / config.mouseRadius;
+          const force = mouse.speed < 250 ? t * t * config.magnetSlowStrength : -t * t * config.magnetFastStrength;
+          n.x += (dx / dist) * force * dt * 30;
+          n.y += (dy / dist) * force * dt * 30;
+          targetAlpha += t * 0.4;
+        }
+      }
+      n.alpha += (Math.min(1, targetAlpha) - n.alpha) * 0.1;
+    }
+  }
+
+  function draw() {
+    ctx.fillStyle = "rgba(0,0,0,0)";
+    ctx.clearRect(0, 0, width, height);
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (d < config.maxConnectionDist) {
+          const t = 1 - d / config.maxConnectionDist;
+          ctx.strokeStyle = `rgba(0, 0, 0, ${t * 0.38 * (a.alpha + b.alpha) * 0.5})`;
+          ctx.lineWidth = 0.5 + t;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+    }
+
+    for (let n of nodes) {
+      const r = Math.max(0.7, n.size * 1.2);
+      ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, n.alpha)})`;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function loop(now) {
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // Mouse handling relative to Block 1
+  window.addEventListener("mousemove", e => {
+    const now = performance.now();
+    const rect = canvas.getBoundingClientRect();
+    // Only process mouse if it's over Block 1
+    if (e.clientY <= rect.bottom) {
+        mouse.speed = Math.hypot(e.clientX - mouse.lastX, e.clientY - mouse.lastY) / ((now - mouse.lastT) / 1000 || 1);
+        mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true;
+        mouse.lastX = e.clientX; mouse.lastY = e.clientY; mouse.lastT = now; mouse.lastMove = now;
+    } else {
+        mouse.active = false;
+    }
+  });
+
+  requestAnimationFrame(loop);
+})();
+
+/** MATRIX ANIMATION **/
+(function() {
+    const chars = "ABCDEFGHIJKLMN0123456789#%&*+-";
+    const elements = document.querySelectorAll('[data-matrix]:not(#metaHud [data-matrix])');
+    function runMatrix(el) {
+        const final = el.getAttribute('data-final');
+        let count = 0;
+        el.classList.add('forming');
+        const interval = setInterval(() => {
+            el.innerText = final.split('').map((char, i) => {
+                if (char === ' ') return ' ';
+                if (i < count) return final[i];
+                return chars[Math.floor(Math.random() * chars.length)];
+            }).join('');
+            if (count >= final.length) clearInterval(interval);
+            count += 0.45;
+        }, 50);
+    }
+    setTimeout(() => {
+        elements.forEach((el, i) => setTimeout(() => runMatrix(el), i * 100));
+    }, 800);
+})();
+</script>
+
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.161.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.161.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const DATA = {"source": {"title": "ERA. ORA\nINTELLIGENZA_\nAUMENTATA,\nLAVORO VIVO.", "subtitle": ""}, "branches": [{"id": "DESIGN_CHALLENGE", "label": "DESIGN_CHALLENGE", "code": "", "pos": [0, 4.2, 12.5], "desc": "Why the project exists and how the scope was defined. This branch traces the path from Dinova's book (conceptually rich but hard to fully experience on the page) to a concrete design direction: making Lia and the future-of-work thesis enterable, testable, and experiential.", "items": [{"label": "Empathize", "code": "CH_001", "desc": "Maps the initial opportunity space (film, documentary, theatre, speculative design, exhibition) and frames the core tension: Era, Ora exceeds the limits of the printed page. The design challenge becomes: how to translate an abstract, systemic vision into something people can enter, feel, and understand."}, {"label": "Define", "code": "CH_002", "desc": "Narrows the focus to the book's most urgent question: what becomes of work, and of people, when machines perform most tasks better than us? Lia is treated as a reflective intelligence, not a productivity engine, so the project scope centers on the future of work and human uniqueness."}, {"label": "Ideate", "code": "CH_003", "desc": "Repositions Lia from literary symbol to designable system. The key move is defining the AI by purpose (not just architecture): Lia is conceived to detect human uniqueness and use it to generate identity-based roles and new organizational possibilities."}, {"label": "Prototype", "code": "CH_004", "desc": "Turns the idea into an operational architecture. Lia 1.0 is articulated as a 3-step prototype: (1) capture uniqueness via narrative interviews, (2) generate authored roles from identity, (3) detect where those roles can exist inside evolving organizations."}, {"label": "Value Assessment", "code": "CH_005", "desc": "Explains why Lia matters even as a speculative prototype. The project is positioned as translational innovation: it already creates strategic value by introducing a new language for people and organizations, where uniqueness becomes the unit of value rather than performance."}, {"label": "Innovation Scale", "code": "CH_006", "desc": "Assesses Lia across maturity and magnitude. Conceptually it reframes work (high magnitude); operationally Lia 1.0 is an early working prototype; at full maturity it points toward a systemic shift where authored roles and co-evolutionary organizations become infrastructure."}, {"label": "Competitive Audit", "code": "CH_007", "desc": "Maps the adjacent ecosystem (skills graphs, talent marketplaces, psychometrics, coaching/wellbeing, foresight, person-job-fit AI). The audit shows a consistent gap: existing systems optimize matching inside predefined roles, while Lia proposes a role-creation engine starting from people."}]}, {"id": "LIA_1_0", "label": "LIA_1.0", "code": "", "pos": [11.8, 1.8, 5.6], "desc": "The first working prototype. Lia 1.0 combines two qualitative learning environments (IdenLab and Systems Atlas) to build Maps of Uniqueness and Evolution Profiles, then generates authored role hypotheses where a person's identity and an organization's latent direction can reinforce each other.", "items": [{"label": "The first working prototype", "code": "CH_010", "desc": "Lia 1.0 is presented as an operational prototype, not just a concept. It can extract and map uniqueness from narrative interviews, read organizational evolution patterns, generate identity-based role hypotheses, and identify where those roles could plausibly take shape."}, {"label": "IdenLab / Narrative Identity", "code": "CH_011", "desc": "IdenLab is the person-side input environment. It guides narrative interviews, records and transcribes them, and prepares qualitative material for Lia to extract signals such as values, motivations, recurring metaphors, emotional patterns, turning points, desires, and symbolic imagery.", "terminal": "LIA"}, {"label": "Systems Atlas / Org Ecosystem", "code": "CH_012", "desc": "Systems Atlas is the organization-side input environment. It gathers strategic documents, org charts, project descriptions, interviews, and team narratives to build Evolution Profiles—structured views of capabilities, culture, tensions, latent needs, and transformation paths.", "terminal": "LIA"}, {"label": "Match & Role Generator", "code": "CH_013", "desc": "Lia's matching logic is not vacancy search. It combines Maps of Uniqueness with Evolution Profiles to author role hypotheses: why a role should exist, what it would change in the organization, and what conditions would help it succeed."}, {"label": "From prototype to full system", "code": "CH_014", "desc": "The prototype becomes meaningful once enough interviews and organizational material are available in a context. A full Lia would scale this into an adaptive intelligence across organizations, improving bias handling and continuously feeding new role logic into existing HR systems."}, {"label": "Open Lia 1.0 Simulation", "code": "CH_015", "desc": "Launches the current Lia 1.0 simulation endpoint used in the broader project ecosystem.", "terminal": "LIA"}]}, {"id": "THE_EXPERIENCE", "label": "THE_EXPERIENCE", "code": "", "pos": [-11.8, 1.8, 5.6], "desc": "The exhibition branch. It translates Lia from concept into a public journey: a narrative and spatial arc that moves visitors from fear and disorientation toward a direct interaction with Lia 1.0, then into a shared collective constellation of possible futures.", "items": [{"label": "AI as System, Art as Vision", "code": "CH_020", "desc": "Establishes Lia's dual nature from the book: she is both a concrete AI proposition and an artistic/mythic figure. The exhibition deliberately uses this ambivalence to make the system feel culturally meaningful rather than just technically impressive."}, {"label": "Audience as Network, Not Dataset", "code": "CH_021", "desc": "Defines the exhibition's UX logic: playful, opt-in interaction; visual and narrative outputs (not reductive metrics); and a room-by-room journey where visitors become participants in a shared field, not just isolated data points."}, {"label": "A journey to define value", "code": "CH_022", "desc": "Frames the exhibition as a transformation path. The value is not only in 'seeing Lia' but in the sequence of states the visitor crosses: uncertainty, recognition, interaction, and collective imagination."}, {"label": "The essential arc", "code": "CH_023", "desc": "High-level route through the experience: Fear (shared disorientation) → Beyond Performance (human reawakening) → Lia 1.0 (interactive threshold) → Agorà (collective constellation) → Good News from AI (legitimacy and continuation)."}, {"label": "Fear", "code": "CH_024", "desc": "The entry room aligns the audience around the lived instability of work. It focuses on disappearing roles, compressed reskilling cycles, and the emotional fallout of role loss—fear as a concrete social condition, not a generic anti-tech reaction.", "terminal": "FEAR"}, {"label": "Beyond Performance", "code": "CH_025", "desc": "The counter-room to Fear. It expands the human frame beyond efficiency and metrics, foregrounding creativity, relation, imagination, care, and sense as the capacities a future of work should be designed around."}, {"label": "Lia 1.0 threshold", "code": "CH_026", "desc": "The interactive centerpiece. Visitors contribute small signals/fragments, Lia generates a symbolic role output, and the system reframes the interaction as the ignition of a new node in a larger network of possible work identities.", "terminal": "LIA"}, {"label": "Agorà", "code": "CH_027", "desc": "The collective layer after interaction. Individual outputs become a projected constellation of emerging roles, affinities, tensions, and unexplored directions—a map of future work imagined as shared infrastructure."}, {"label": "Good News from AI", "code": "CH_028", "desc": "Closes the journey with legitimacy rather than denial. It presents 'good AI' trajectories and frames Lia as part of a broader need for co-evolution: governance, policy, ethics, and new organizational ontologies."}, {"label": "AYA context", "code": "CH_029", "desc": "Opens an external scene/context used elsewhere in the project pipeline.", "terminal": "AYA"}]}, {"id": "PLASTICITY_AGENT", "label": "PLASTICITY_AGENT", "code": "", "pos": [0, -2.6, 12.5], "desc": "A conceptual extension of Lia: from role-generation tool to systemic plasticity agent. This branch interprets economies and organizations as living networks, and positions Lia as a force that helps weak signals consolidate into new circuits of value.", "items": [{"label": "New circuits of value", "code": "CH_030", "desc": "Argues that Lia does not optimize the existing system; it expands the role ecosystem itself. Uniqueness is treated as signal (not noise), and new value flows emerge when previously unrecognized human configurations become structurally connectable."}, {"label": "Catalyze → Connect → Strengthen", "code": "CH_031", "desc": "Summarizes Lia's systemic function: catalyze new possibilities, connect them to contexts, and reinforce them through repeated use—preventing organizational systems from collapsing into closed, repetitive loops."}, {"label": "Weak signals consolidate", "code": "CH_032", "desc": "Links Lia to historical emergence logic. New economies start as isolated anomalies, then stabilize through repetition; Lia accelerates that consolidation phase for authored roles and uniqueness-based work."}, {"label": "From playful → meaningful", "code": "CH_033", "desc": "Reinterprets the exhibition interaction as structural input. Every 'playful' role output is also a node and a test of future synapses, feeding a collective map that can become method and infrastructure over time."}]}, {"id": "LATERAL_RIPPLES", "label": "LATERAL_RIPPLES", "code": "", "pos": [11.8, -2.0, -6.2], "desc": "Secondary outputs that extend Era, Ora beyond the exhibition. This branch captures how Lia can continue as documentary, case-study, theatre, or fiction—turning one project into a broader cultural and narrative ecosystem.", "items": [{"label": "Beyond the exhibition", "code": "CH_040", "desc": "Positions the exhibition as the first artifact, not the final one. The project is designed to generate continuations—'lateral ripples'—that keep Boscato's vision active across formats and audiences."}, {"label": "Documentary / Case Study", "code": "CH_041", "desc": "Two adjacent paths: a documentary grounded in early narrative interviews used to train Lia, or a lighter process-driven case study documenting the making of the system and its implications."}, {"label": "Theatre Piece", "code": "CH_042", "desc": "A stage work inspired by Pirandello and Six Thinking Hats. It pairs speculative roles from the book with imagined AIs in a minimal set, using dialogue and perspective shifts as a live sense-making lab."}]}, {"id": "IDENLAB", "label": "IDENLAB", "code": "", "pos": [-11.8, -2.0, -6.2], "desc": "The person-side application in the Lia system. IdenLab is where narrative interviews are captured and transformed into training material for Maps of Uniqueness—qualitative identity signals that standard HR datasets usually miss.", "items": [{"label": "Narrative interviews", "code": "CH_050", "desc": "Narrative interviews are the core capture method. Instead of sorting people into predefined categories, they invite stories: formative episodes, crises, achievements, memories, contradictions, and experiences that still shape meaning."}, {"label": "Maps of Uniqueness", "code": "CH_051", "desc": "Lia extracts signals from interview transcripts and encodes each person into a living map (not a competency grid): values, motivations, emotional patterns, aesthetics, recurring metaphors, symbolic images, and existential themes."}, {"label": "Ethics and anonymization", "code": "CH_052", "desc": "The system assumes explicit consent and strong safeguards. Anonymized interview material may support broader research or social-interest projects only when the participant has clearly granted permission."}, {"label": "Open IdenLab context", "code": "CH_053", "desc": "Gateway link through the current Lia environment.", "terminal": "LIA"}]}, {"id": "SYSTEMS_ATLAS", "label": "SYSTEMS_ATLAS", "code": "", "pos": [0, 4.2, -12.5], "desc": "The organization-side application in the Lia system. Systems Atlas gathers qualitative organizational material and turns it into Evolution Profiles so Lia can detect where authored roles could exist and how organizations are already trying to change.", "items": [{"label": "Org ecosystem studio", "code": "CH_060", "desc": "Systems Atlas treats organizations as evolving ecosystems rather than fixed org charts. It builds structured views of capabilities, culture, tensions, latent needs, and possible transformation paths."}, {"label": "Input materials", "code": "CH_061", "desc": "Typical sources include strategic documents, org charts, project descriptions, leadership interviews, and team narratives—materials that reveal how an organization thinks, relates, and changes."}, {"label": "Evolution Profiles", "code": "CH_062", "desc": "Evolution Profiles are the output of Systems Atlas. Across projects they expand Lia's memory of transformation patterns, helping the Organization Engine recognize recurring dynamics, blind spots, and possibility spaces."}, {"label": "Open Systems Atlas context", "code": "CH_063", "desc": "Gateway link through the current Lia environment.", "terminal": "LIA"}]}]};
+
+const SOURCE_PANEL_DESC = `ERA ORA is the conceptual source text at the center of this lattice. It frames a future-of-work thesis around augmented intelligence and human uniqueness, and it acts here as the fulcrum: each branch is a translational path that turns the book into a navigable design system, prototype, or experiential module.`;
+const TERMINALS = {
+  LIA: {label:"Open Lia 1.0", url:"./lia_1_0_simulation.html"},
+  FEAR: {label:"Open FEAR scene", url:"https://xd.enricopoli.com/projects/era_ora/", disabled:true},
+  AYA: {label:"Open AYA scene", url:"https://xd.enricopoli.com/projects/era_ora/rooms/aya.dev/", disabled:true}
+};
+
+const app = document.querySelector('#page_block_03 #app');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(app.clientWidth || window.innerWidth, app.clientHeight || window.innerHeight);
+renderer.setClearColor(0xffffff,1);
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+scene.fog = new THREE.Fog(0xffffff, 18, 85);
+scene.add(new THREE.AmbientLight(0xffffff, 1));
+
+const camera = new THREE.PerspectiveCamera(48, (app.clientWidth||window.innerWidth)/(app.clientHeight||window.innerHeight), 0.1, 200);
+camera.position.set(0,2.4,6.2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.screenSpacePanning = true;
+controls.minDistance = 5;
+controls.maxDistance = 110;
+controls.target.set(0,1.4,0);
+
+const V = (x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
+const root = new THREE.Group(); scene.add(root);
+
+function makeLine(points, op=0.08){
+  return new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({color:0x000000,transparent:true,opacity:op}));
+}
+function makeWire(w,h,d,op=0.08){
+  return new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w,h,d)), new THREE.LineBasicMaterial({color:0x000000,transparent:true,opacity:op}));
+}
+function makeFrame2(w,h,op=0.2){
+  return makeLine([V(-w/2,-h/2,0),V(w/2,-h/2,0),V(w/2,h/2,0),V(-w/2,h/2,0),V(-w/2,-h/2,0)], op);
+}
+function makeTextSprite(text, opt={}){
+  const fs = opt.fs || 16, pad = opt.pad ?? 4;
+  const bg = ('bg' in opt) ? opt.bg : null;
+  const bd = ('bd' in opt) ? opt.bd : null;
+  const col = opt.col || 'rgba(0,0,0,.95)';
+  const scale = opt.scale || 0.5;
+  const opacity = ('opacity' in opt) ? opt.opacity : 1;
+  const lines = String(text).split('\n');
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  ctx.font = `${fs}px ui-monospace, Menlo, Consolas, monospace`;
+  let w = 0; for (const l of lines) w = Math.max(w, ctx.measureText(l).width);
+  w += pad*2;
+  const h = lines.length * fs * 1.18 + pad*2;
+  c.width = Math.ceil(w*2); c.height = Math.ceil(h*2);
+  ctx.scale(2,2);
+  ctx.font = `${fs}px ui-monospace, Menlo, Consolas, monospace`;
+  ctx.textBaseline = 'top';
+  if (bg) { ctx.fillStyle = bg; ctx.fillRect(0,0,w,h); }
+  if (bd) { ctx.strokeStyle = bd; ctx.lineWidth = 1; ctx.strokeRect(0.5,0.5,w-1,h-1); }
+  ctx.fillStyle = col;
+  lines.forEach((l,i)=>ctx.fillText(l,pad,pad+i*fs*1.18));
+  const tex = new THREE.CanvasTexture(c);
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.premultiplyAlpha = true;
+  const sprMat = new THREE.SpriteMaterial({map:tex,transparent:true,depthWrite:false,depthTest:false,opacity,alphaTest:0.12});
+  const spr = new THREE.Sprite(sprMat);
+  spr.renderOrder = 10;
+  const ar = c.width / c.height;
+  spr.scale.set(1.7 * ar * scale, 1.7 * scale, 1);
+  return spr;
+}
+
+// Clean lattice shell
+const shell = new THREE.Group(); root.add(shell);
+shell.add(makeWire(34,18,34,0.14));
+shell.add(makeWire(24,12,24,0.12));
+shell.add(makeWire(14,7,14,0.11));
+shell.add(makeLine([V(-16,1.4,0),V(16,1.4,0)],0.075));
+shell.add(makeLine([V(0,-7.5,0),V(0,8.5,0)],0.075));
+shell.add(makeLine([V(0,1.4,-16),V(0,1.4,16)],0.075));
+const grid = new THREE.GridHelper(44,22,0x000000,0x000000);
+grid.material.transparent = true; grid.material.opacity = 0.04; grid.position.y = -5.2;
+shell.add(grid);
+
+// Source core
+const source = new THREE.Group(); root.add(source);
+const sourceText = makeTextSprite(DATA.source.title, {fs:34,pad:12,scale:1.03,bg:null,bd:null,col:'rgba(0,0,0,.92)'});
+sourceText.position.set(0,1.4,-0.15); source.add(sourceText);
+const sourceFrame = makeFrame2(4.6,2.45,0.22); sourceFrame.position.set(0,1.4,0.01); source.add(sourceFrame);
+const sourceSub = makeTextSprite(DATA.source.subtitle, {fs:12,pad:3,scale:0.55,bg:null,bd:null,col:'rgba(0,0,0,.62)'});
+sourceSub.position.set(0,-1.0,-0.15); source.add(sourceSub);
+const sourceHit = new THREE.Mesh(new THREE.PlaneGeometry(5.2,3.2), new THREE.MeshBasicMaterial({transparent:true,opacity:0,side:THREE.DoubleSide}));
+sourceHit.position.set(0,1.0,0.08);
+sourceHit.userData.sourceCore = true;
+source.add(sourceHit);
+
+// Branch districts (tidy, non-overlapping)
+const branchMap = new Map();
+const clickable = [];
+clickable.push(sourceHit);
+for (const b of DATA.branches){
+  const g = new THREE.Group();
+  const districtWire = makeWire(8.8,4.8,8.8,0.065); g.add(districtWire);
+  const districtGrid = new THREE.GridHelper(8,8,0x000000,0x000000);
+  districtGrid.material.transparent = true; districtGrid.material.opacity = 0.028; districtGrid.position.y = -1.5; g.add(districtGrid);
+
+  const anchor = new THREE.Group();
+  const frame = makeFrame2(4.2,1.35,0.2); anchor.add(frame);
+  const title = makeTextSprite(b.label, {fs:16,pad:4,scale:0.63,bg:null,bd:null,col:'rgba(0,0,0,.92)'});
+  title.position.set(0,0.14,0.03); anchor.add(title);
+  const code = makeTextSprite(b.code, {fs:10,pad:2,scale:0.34,bg:null,bd:null,col:'rgba(0,0,0,.75)'});
+  code.position.set(0,-0.28,0.03); anchor.add(code);
+
+  const hit = new THREE.Mesh(new THREE.PlaneGeometry(4.7,1.7), new THREE.MeshBasicMaterial({transparent:true,opacity:0,side:THREE.DoubleSide}));
+  hit.userData.branchId = b.id;
+  anchor.add(hit);
+  anchor.position.set(0,0.9,0);
+  g.add(anchor);
+
+  g.position.set(...b.pos);
+  root.add(g);
+
+  const conn = makeLine([V(0,1.4,0), g.position.clone()], 0.08);
+  root.add(conn);
+
+  branchMap.set(b.id, {data:b, g, districtWire, districtGrid, anchor, frame, title, code, conn, base:g.position.clone(), base0:g.position.clone(), orbitR:Math.hypot(g.position.x,g.position.z), orbitA:Math.atan2(g.position.z,g.position.x), phase:Math.random()*6.28, speed:0.4+Math.random()*0.5});
+  clickable.push(hit);
+}
+
+// Sparse ghost terms
+const ghosts = new THREE.Group(); root.add(ghosts);
+["CONTEXT","TOKEN","LATENT","ROUTE","MEMORY","PROMPT_STACK","SCENE_COMPILE","CH_MAP","TOPOLOGY"].forEach((t,i)=>{
+  const s = makeTextSprite(t, {fs:11,pad:1,scale:0.33,bg:null,bd:null,col:'rgba(0,0,0,.42)',opacity:0.22});
+  const a = (i/9)*Math.PI*2;
+  s.position.set(Math.cos(a)*15, (i%3)*2-1, Math.sin(a)*15);
+  ghosts.add(s);
+});
+
+// UI references
+const panel = document.getElementById('panel');
+const pTitle = document.getElementById('pTitle');
+const pPath = document.getElementById('pPath');
+const pDesc = document.getElementById('pDesc');
+const rows = document.getElementById('rows');
+const dTitle = document.getElementById('dTitle');
+const dDesc = document.getElementById('dDesc');
+const dMeta = document.getElementById('dMeta');
+const dBtns = document.getElementById('dBtns');
+const pDescToggle = document.getElementById('pDescToggle');
+let branchDescOpen = true;
+const hudPath = document.getElementById('hudPath');
+const hudNode = document.getElementById('hudNode');
+const hudMode = document.getElementById('hudMode');
+const panelCloseBtn = document.getElementById('panelClose');
+const intro = document.getElementById('intro');
+const introClose = document.getElementById('introClose');
+const mobileNotice = document.getElementById('mobileNotice');
+const mobileClose = document.getElementById('mobileClose');
+
+let activeBranch = null;
+let activeIndex = -1;
+let hoverBranch = null;
+let camTween = null;
+let introFlight = true;
+
+panelCloseBtn.onclick = closePanel;
+pDescToggle.onclick = ()=>{ branchDescOpen=!branchDescOpen; pDesc.style.display = branchDescOpen ? 'block' : 'none'; pDescToggle.textContent = branchDescOpen ? 'Collapse section note' : 'Expand section note'; };
+introClose.onclick = ()=> intro.style.display='none';
+mobileClose.onclick = ()=> mobileNotice.style.display='none';
+
+function updateWorldStyle(){
+  for (const [id, n] of branchMap){
+    const on = id === activeBranch;
+    const hov = id === hoverBranch;
+    const any = activeBranch !== null;
+    n.frame.material.opacity = any ? (on ? 0.3 : (hov ? 0.18 : 0.08)) : (hov ? 0.28 : 0.2);
+    n.code.material.opacity = any ? (on ? 0.85 : (hov ? 0.55 : 0.25)) : (hov ? 0.9 : 0.75);
+    n.title.material.opacity = any ? (on ? 1 : (hov ? 0.75 : 0.38)) : 1;
+    n.conn.material.opacity = any ? (on ? 0.18 : 0.05) : (hov ? 0.12 : 0.085);
+    n.districtWire.material.opacity = on ? 0.12 : (hov ? 0.085 : 0.05);
+    n.districtGrid.material.opacity = on ? 0.06 : (hov ? 0.04 : 0.028);
+    if (n.tag && n.tag.material) n.tag.material.opacity = on ? 0.75 : (hov ? 0.55 : 0.35);
+  }
+  const branchOpen = activeBranch !== null;
+  sourceText.material.opacity = branchOpen ? 0.06 : 1;
+  sourceSub.material.opacity = branchOpen ? 0.0 : 1;
+  sourceFrame.material.opacity = branchOpen ? 0.015 : (hoverBranch === "__SOURCE__" ? 0.32 : 0.22);
+  sourceText.material.opacity = branchOpen ? 0.06 : (hoverBranch === "__SOURCE__" ? 1 : 1);
+  renderer.domElement.style.cursor = hoverBranch ? 'pointer' : 'default';
+}
+
+function focusBranch(id){
+  const n = branchMap.get(id);
+  const p = n.g.position.clone();
+  const dir = p.clone().sub(V(0,1.4,0)).normalize();
+
+  // adaptive distance by label length (long labels need more room)
+  const len = (n.data && n.data.label ? n.data.label.length : id.length);
+  const dist = 12.8 + Math.min(4.0, Math.max(0, len - 14) * 0.23);
+
+  let camPos = p.clone().add(dir.multiplyScalar(dist)).add(V(0,1.8,0));
+  let target = p.clone().add(V(0,0.55,0));
+
+  // Panel-safe framing: compute projected screen x and shift until label anchor sits
+  // comfortably left of the panel. This avoids guessing sign/magnitude.
+  const panelOpen = panel && panel.classList && panel.classList.contains('active');
+  if (panelOpen){
+    const panelW = (panel.offsetWidth || 0);
+    const panelLeftPx = window.innerWidth - panelW;
+    const safeMargin = 120; // space between label anchor and panel edge
+    const desiredMaxPx = panelLeftPx - safeMargin;
+
+    const viewDir = target.clone().sub(camPos).normalize();
+    const right = new THREE.Vector3().crossVectors(viewDir, camera.up).normalize();
+
+    const projectX = (pt, cp, tg) => {
+      const fov = camera.fov * Math.PI / 180;
+      const aspect = window.innerWidth / window.innerHeight;
+      const zAxis = cp.clone().sub(tg).normalize();
+      const xAxis = new THREE.Vector3().crossVectors(camera.up, zAxis).normalize();
+      const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+      const d = pt.clone().sub(cp);
+      const x = d.dot(xAxis), y = d.dot(yAxis), zc = d.dot(zAxis);
+      const z = -zc; // camera forward
+      if (z <= 0.001) return window.innerWidth * 0.5;
+      const ndcX = x / (z * Math.tan(fov/2) * aspect);
+      return (ndcX * 0.5 + 0.5) * window.innerWidth;
+    };
+
+    // Start by favoring left placement a bit.
+    let shift = 0.9 + Math.min(1.4, panelW / 360);
+    let bestTarget = target.clone();
+    let bestCam = camPos.clone();
+
+    // Try both directions and pick the one that gets the anchor farther from panel.
+    const candidates = [1, -1];
+    let chosenSign = 1;
+    let bestPx = Infinity;
+    for (const sgn of candidates){
+      const t2 = target.clone().add(right.clone().multiplyScalar(shift * sgn));
+      const c2 = camPos.clone().add(right.clone().multiplyScalar(shift * 0.15 * sgn));
+      const px = projectX(p.clone().add(V(0,0.55,0)), c2, t2);
+      const overflow = px - desiredMaxPx;
+      if (overflow < bestPx){ bestPx = overflow; chosenSign = sgn; bestTarget = t2; bestCam = c2; }
+    }
+    target.copy(bestTarget); camPos.copy(bestCam);
+
+    // Iteratively increase shift if still too close to/under panel.
+    for (let i=0; i<8; i++){
+      const px = projectX(p.clone().add(V(0,0.55,0)), camPos, target);
+      if (px <= desiredMaxPx) break;
+      const extra = Math.min(0.9, (px - desiredMaxPx) / 220);
+      target.add(right.clone().multiplyScalar(extra * chosenSign));
+      camPos.add(right.clone().multiplyScalar(extra * 0.15 * chosenSign));
+    }
+
+    // Safety override for the long outlier.
+    if (id === 'THE_EXPERIENCE'){
+      target.add(right.clone().multiplyScalar(0.65 * chosenSign));
+      camPos.add(right.clone().multiplyScalar(0.10 * chosenSign));
+    }
+  }
+
+  camTween = {
+    t0: performance.now(),
+    dur: 420,
+    fromPos: camera.position.clone(),
+    toPos: camPos,
+    fromTarget: controls.target.clone(),
+    toTarget: target
+  };
+}
+
+function openSource(){
+  activeBranch = null; activeIndex = -1;
+  pTitle.textContent = 'SOURCE: ERA ORA';
+  pPath.textContent = 'SOURCE_TEXT';
+  pDesc.textContent = SOURCE_PANEL_DESC;
+  branchDescOpen = true; pDesc.style.display='block'; pDescToggle.textContent='Collapse section note';
+  rows.innerHTML = '';
+  DATA.branches.forEach((b,i)=>{
+    const el = document.createElement('div');
+    el.className = 'row';
+    el.innerHTML = `<div class="idx">${String(i+1).padStart(2,'0')}</div><div class="lab">${b.label}</div><div class="code">${b.items.length} nodes</div><div class="tag empty"></div>`;
+    el.onclick = () => openBranch(b.id);
+    rows.appendChild(el);
+  });
+  panel.classList.add('active');
+  dTitle.textContent = 'ERA ORA · Source text';
+  dDesc.textContent = 'Click a branch above to explore a translation path. The 3D lattice shows how sections relate spatially around the core. Selecting ERA ORA always recenters the map and reopens this source view.';
+  dMeta.textContent = 'PATH: SOURCE_TEXT';
+  dBtns.innerHTML = '';
+  hudPath.textContent = 'PATH: SOURCE_TEXT';
+  hudNode.textContent = 'NODE: ERA ORA';
+  hudMode.textContent = 'MODE: SOURCE OVERVIEW';
+  if (intro) intro.style.display = 'none';
+  recenter();
+  updateWorldStyle();
+}
+
+function openBranch(id){
+  activeBranch = id; activeIndex = -1;
+  const b = branchMap.get(id).data;
+  pTitle.textContent = `BRANCH: ${b.label} (${b.items.length} nodes)`;
+  pPath.textContent = `SOURCE_TEXT > ${b.label}`;
+  pDesc.textContent = b.desc;
+  branchDescOpen = true; pDesc.style.display='block'; pDescToggle.textContent='Collapse section note';
+  rows.innerHTML = '';
+  b.items.forEach((it, i) => {
+    const el = document.createElement('div');
+    el.className = 'row';
+    el.innerHTML = `<div class="idx">${String(i+1).padStart(2,'0')}</div><div class="lab">${it.label}</div><div class="code">${it.code}</div><div class="tag ${it.terminal ? '' : 'empty'}">${it.terminal ? 'LINK' : ''}</div>`;
+    el.onclick = () => selectItem(i, true);
+    rows.appendChild(el);
+  });
+  panel.classList.add('active');
+  hudPath.textContent = `PATH: SOURCE_TEXT > ${b.label}`;
+  hudNode.textContent = `NODE: ${b.label}`;
+  hudMode.textContent = 'MODE: BRANCH BROWSING';
+  if (intro) intro.style.display = 'none';
+  updateWorldStyle();
+  focusBranch(id);
+}
+
+function selectItem(i, scroll){
+  const b = branchMap.get(activeBranch).data;
+  const it = b.items[i];
+  activeIndex = i;
+  [...rows.children].forEach((r, idx) => r.classList.toggle('active', idx === i));
+  dTitle.textContent = `${it.code} · ${it.label}`;
+  dDesc.textContent = it.desc;
+  dMeta.textContent = `PATH: SOURCE_TEXT > ${b.label} > ${it.label}`;
+  dBtns.innerHTML = '';
+  if (it.terminal && TERMINALS[it.terminal]) {
+    const term = TERMINALS[it.terminal];
+    const a = document.createElement('a');
+    if (term.disabled) {
+      a.href = 'mailto:epoli.uk@gmail.com';
+      a.textContent = 'experience under construction - get in touch to test the room.';
+      a.title = 'Email epoli.uk@gmail.com';
+    } else {
+      a.href = term.url;
+      a.textContent = term.label;
+      if (it.terminal === 'LIA') {
+        a.addEventListener('click', function(ev){
+          ev.preventDefault();
+          if (typeof window.openLiaOverlay === 'function') window.openLiaOverlay();
+          else window.open(term.url, '_blank', 'noopener');
+        });
+      } else {
+        a.target = '_blank';
+        a.rel = 'noopener';
+      }
+    }
+    dBtns.appendChild(a);
+  }
+  hudPath.textContent = `PATH: SOURCE_TEXT > ${b.label} > ${it.label}`;
+  hudNode.textContent = `NODE: ${it.label}`;
+  hudMode.textContent = it.terminal ? 'MODE: LINK READY' : 'MODE: READING NODE';
+  if (scroll) rows.children[i]?.scrollIntoView({block:'nearest'});
+}
+
+function closePanel(){
+  panel.classList.remove('active');
+  activeBranch = null; activeIndex = -1;
+  dTitle.textContent = 'Select a node';
+  dDesc.textContent = 'Node descriptions will appear here.';
+  dMeta.textContent = '';
+  dBtns.innerHTML = '';
+  hudPath.textContent = 'PATH: SOURCE_TEXT';
+  hudNode.textContent = 'NODE: —';
+  hudMode.textContent = 'MODE: GLOBAL MAP';
+  updateWorldStyle();
+}
+
+function recenter(){
+  if (activeBranch) focusBranch(activeBranch);
+  else {
+    camTween = {
+      t0: performance.now(),
+      dur: 380,
+      fromPos: camera.position.clone(),
+      toPos: new THREE.Vector3(0,10,20),
+      fromTarget: controls.target.clone(),
+      toTarget: new THREE.Vector3(0,1.4,0)
+    };
+  }
+}
+
+// Picking
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let pd=false, moved=false, sx=0, sy=0;
+renderer.domElement.addEventListener('pointerdown', e=>{ pd=true; moved=false; sx=e.clientX; sy=e.clientY; });
+renderer.domElement.addEventListener('pointermove', e=>{
+  if (pd && (Math.abs(e.clientX-sx)>4 || Math.abs(e.clientY-sy)>4)) moved=true;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((e.clientX-r.left)/r.width)*2 - 1;
+  mouse.y = -((e.clientY-r.top)/r.height)*2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(clickable, false);
+  const nextHover = hits.length ? (hits[0].object.userData.sourceCore ? "__SOURCE__" : hits[0].object.userData.branchId) : null;
+  if (nextHover !== hoverBranch){ hoverBranch = nextHover; updateWorldStyle(); }
+});
+renderer.domElement.addEventListener('pointerup', e=>{
+  if (moved) { pd=false; return; }
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((e.clientX-r.left)/r.width)*2 - 1;
+  mouse.y = -((e.clientY-r.top)/r.height)*2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(clickable, false);
+  if (hits.length) { const h=hits[0].object; if (h.userData.sourceCore) openSource(); else openBranch(h.userData.branchId); }
+  pd=false;
+});
+
+// WASD translation + keyboard UI
+const keys = new Set();
+addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase(); keys.add(k);
+  if (['w','a','s','d','q','e'].includes(k)) e.preventDefault();
+  if (k === 'escape') closePanel();
+  if (k === 'r') recenter();
+  if (panel.classList.contains('active') && activeBranch) {
+    const b = branchMap.get(activeBranch).data;
+    if (k === 'arrowdown') { e.preventDefault(); selectItem(Math.min(b.items.length-1, activeIndex<0?0:activeIndex+1), true); }
+    if (k === 'arrowup') { e.preventDefault(); selectItem(Math.max(0, activeIndex<0?0:activeIndex-1), true); }
+    if (k === 'enter' && activeIndex >= 0) {
+      const it = b.items[activeIndex];
+      if (it.terminal && TERMINALS[it.terminal]) {
+        const term = TERMINALS[it.terminal];
+        if (term.disabled) window.location.href = 'mailto:epoli.uk@gmail.com';
+        else if (it.terminal === 'LIA' && typeof window.openLiaOverlay === 'function') window.openLiaOverlay();
+        else window.open(term.url, '_blank', 'noopener');
+      }
+    }
+  }
+}, {passive:false});
+addEventListener('keyup', e=>keys.delete(e.key.toLowerCase()));
+
+function freeMove(dt){
+  const speed = (keys.has('shift') ? 10 : 4.8) * dt;
+  const f = new THREE.Vector3(); camera.getWorldDirection(f); f.y = 0; if (f.lengthSq() < 1e-6) f.set(0,0,-1); f.normalize();
+  const r = new THREE.Vector3().crossVectors(f, V(0,1,0)).normalize();
+  const m = V();
+  if (keys.has('w')) m.add(f);
+  if (keys.has('s')) m.sub(f);
+  if (keys.has('d')) m.add(r);
+  if (keys.has('a')) m.sub(r);
+  if (keys.has('e')) m.y += 1;
+  if (keys.has('q')) m.y -= 1;
+  if (m.lengthSq() > 0) {
+    m.normalize().multiplyScalar(speed);
+    camera.position.add(m);
+    controls.target.add(m);
+  }
+}
+
+addEventListener('resize', ()=>{
+  camera.aspect = (app.clientWidth||window.innerWidth) / (app.clientHeight||window.innerHeight);
+  camera.updateProjectionMatrix();
+  renderer.setSize(app.clientWidth || window.innerWidth, app.clientHeight || window.innerHeight);
+});
+
+// Initial styling
+updateWorldStyle();
+camTween = { t0: performance.now()+220, dur: 1400, fromPos: camera.position.clone(), toPos: new THREE.Vector3(0,10,20), fromTarget: controls.target.clone(), toTarget: new THREE.Vector3(0,1.4,0) };
+
+// Animate
+const clock = new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const t = clock.getElapsedTime();
+  const dt = Math.min(clock.getDelta(), 0.05);
+  freeMove(dt);
+
+  if (camTween){
+    const raw = (performance.now()-camTween.t0)/camTween.dur;
+    if (raw < 0) { controls.update(); renderer.render(scene, camera); return; }
+    const u = Math.min(1, raw);
+    const e = 1 - Math.pow(1-u,3);
+    camera.position.lerpVectors(camTween.fromPos, camTween.toPos, e);
+    controls.target.lerpVectors(camTween.fromTarget, camTween.toTarget, e);
+    if (u >= 1) camTween = null;
+  }
+
+  const calm = panel.classList.contains('active') ? 0.35 : 1;
+  shell.rotation.y = Math.sin(t*0.08)*0.01*calm;
+  source.position.y = Math.sin(t*0.6)*0.03*calm;
+
+  for (const [id, n] of branchMap){
+    const orbitOn = !activeBranch;
+    if (orbitOn){
+      const a = n.orbitA + t*0.045; // slow counter-clockwise drift
+      n.g.position.x = Math.cos(a) * n.orbitR;
+      n.g.position.z = Math.sin(a) * n.orbitR;
+      n.g.position.y = n.base0.y + Math.sin(t*n.speed + n.phase)*0.05*calm;
+    } else {
+      n.g.position.x = n.base0.x;
+      n.g.position.z = n.base0.z;
+      n.g.position.y = n.base0.y + Math.sin(t*n.speed + n.phase)*0.05*calm;
+    }
+    n.anchor.lookAt(camera.position);
+    if (n.tag) n.tag.lookAt(camera.position);
+    const pos = n.conn.geometry.attributes.position;
+    pos.setXYZ(0, 0, 1.4 + source.position.y, 0);
+    pos.setXYZ(1, n.g.position.x, n.g.position.y, n.g.position.z);
+    pos.needsUpdate = true;
+  }
+  ghosts.children.forEach(s => s.lookAt(camera.position));
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+tick();
+
+(function(){
+  const pb04 = document.getElementById('page_block_03');
+  if(!pb04) return;
+
+  const upBtn = document.getElementById('pb04NavUp');
+  const downBtn = document.getElementById('pb04NavDown');
+  if(!upBtn || !downBtn) return;
+
+  const isSnapBlock = (el) => !!(el && el.classList && el.classList.contains('snap-block'));
+
+  let prev = pb04.previousElementSibling;
+  while(prev && !isSnapBlock(prev)) prev = prev.previousElementSibling;
+
+  let next = pb04.nextElementSibling;
+  while(next && !isSnapBlock(next)) next = next.nextElementSibling;
+
+  if(!prev) upBtn.classList.add('is-hidden');
+  if(!next) {
+    downBtn.classList.add('is-hidden');
+    // If PB04 is the last block, keep a subtle hint at the bottom about scrolling back.
+    downBtn.setAttribute('aria-hidden','true');
+  }
+
+  const scrollToBlock = (target) => {
+    if(!target) return;
+    target.scrollIntoView({ behavior:'smooth', block:'start' });
+  };
+
+  upBtn.addEventListener('click', (e) => { e.stopPropagation(); scrollToBlock(prev); });
+  downBtn.addEventListener('click', (e) => { e.stopPropagation(); scrollToBlock(next); });
+
+  // Show/hide cue based on PB04 visibility so it doesn't interfere visually outside the block.
+  const io = new IntersectionObserver((entries) => {
+    const on = entries[0] && entries[0].isIntersecting;
+    if(on){
+      upBtn.style.opacity = '1';
+      if(!downBtn.classList.contains('is-hidden')) downBtn.style.opacity = '1';
+    }else{
+      upBtn.style.opacity = '0';
+      downBtn.style.opacity = '0';
+    }
+  }, { threshold: 0.45 });
+
+  io.observe(pb04);
+})();
+
+
+/* PB04 + Lattice Lia overlay trigger (shared) */
+(function(){
+  const overlay = document.getElementById('liaOverlay');
+  const closeBtn = document.getElementById('liaOverlayClose');
+  const frame = document.getElementById('liaOverlayFrame');
+  const openBtn = document.getElementById('pb04TryLia');
+  if(!overlay || !closeBtn || !frame) return;
+
+  const LIA_URL = './lia_1_0_simulation.html';
+  let lastActive = null;
+
+  function getFreshLiaUrl(){
+    const sep = LIA_URL.includes('?') ? '&' : '?';
+    return LIA_URL + sep + 'embed=1&t=' + Date.now();
+  }
+
+  function openOverlay(){
+    lastActive = document.activeElement;
+    frame.src = getFreshLiaUrl();
+    overlay.classList.add('active');
+    overlay.setAttribute('aria-hidden','false');
+    document.body.style.overflow = 'hidden';
+    closeBtn.focus();
+  }
+
+  function closeOverlay(){
+    overlay.classList.remove('active');
+    overlay.setAttribute('aria-hidden','true');
+    document.body.style.overflow = '';
+    setTimeout(() => { try { frame.removeAttribute('src'); } catch(_){} }, 50);
+    if(lastActive && typeof lastActive.focus === 'function') lastActive.focus();
+  }
+
+  window.openLiaOverlay = openOverlay;
+  window.closeLiaOverlay = closeOverlay;
+
+  if (openBtn) openBtn.addEventListener('click', openOverlay);
+  closeBtn.addEventListener('click', closeOverlay);
+
+  overlay.addEventListener('click', (e) => {
+    if(e.target === overlay) closeOverlay();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if(e.key === 'Escape' && overlay.classList.contains('active')){
+      closeOverlay();
+    }
+  });
+
+  window.addEventListener('message', (e) => {
+    try{
+      const data = e && e.data;
+      if(!overlay.classList.contains('active')) return;
+
+      const isObj = data && typeof data === 'object';
+      const type = isObj && data.type ? String(data.type) : '';
+      const action = isObj && data.action ? String(data.action) : '';
+      const str = (typeof data === 'string') ? data : '';
+
+      const shouldClose =
+        str === 'lia-close-overlay' ||
+        str === 'LIA_EXIT' ||
+        str === 'CLOSE_LIA' ||
+        str === 'CLOSE_OVERLAY' ||
+        type === 'lia-close-overlay' ||
+        type === 'LIA_EXIT' ||
+        type === 'LIA_CLOSE' ||
+        type === 'CLOSE_LIA' ||
+        type === 'CLOSE_IFRAME' ||
+        type === 'CLOSE_OVERLAY' ||
+        action === 'closeLia' ||
+        action === 'closeOverlay';
+
+      if(shouldClose){
+        closeOverlay();
+      }
+    }catch(_){}
+  });
+})();
+
+
+
+/* Gradual media loading: only load media when near viewport */
+(function(){
+  const lazyNodes = Array.from(document.querySelectorAll('[data-lazy-media]'));
+  if(!lazyNodes.length) return;
+
+  function loadMedia(node){
+    if(node.dataset.loaded === '1') return;
+
+    if(node.tagName === 'IMG'){
+      const src = node.getAttribute('data-src');
+      if(src) node.src = src;
+      const srcset = node.getAttribute('data-srcset');
+      if(srcset) node.srcset = srcset;
+      node.dataset.loaded = '1';
+      return;
+    }
+
+    if(node.tagName === 'VIDEO'){
+      const sources = node.querySelectorAll('source[data-src]');
+      sources.forEach(srcEl => {
+        const src = srcEl.getAttribute('data-src');
+        if(src) srcEl.setAttribute('src', src);
+      });
+      const directSrc = node.getAttribute('data-src');
+      if(directSrc) node.setAttribute('src', directSrc);
+      node.dataset.loaded = '1';
+      try { node.load(); } catch(_) {}
+      const p = node.play && node.play();
+      if(p && typeof p.catch === 'function') p.catch(()=>{});
+    }
+  }
+
+  // Load the very first media immediately, delay the rest until near viewport.
+  loadMedia(lazyNodes[0]);
+
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(entry => {
+      if(entry.isIntersecting){
+        loadMedia(entry.target);
+        io.unobserve(entry.target);
+      }
+    });
+  }, { root: document.querySelector('.snap-container') || null, rootMargin: '120% 0px' });
+
+  lazyNodes.slice(1).forEach(node => io.observe(node));
+})();
+</script>
+
+<script>
+    (function(){
+      // Active state: XD
+      document.querySelectorAll('[data-key="xd"]').forEach(a => a.classList.add('is-active'));
+
+      // Mobile panel
+      const t = document.getElementById('navToggle');
+      const p = document.getElementById('navPanel');
+      const c = document.getElementById('navClose');
+
+      function open(){
+        p.classList.add('is-open');
+        p.setAttribute('aria-hidden','false');
+        t.setAttribute('aria-expanded','true');
+        // lock background scroll on small screens
+        if(window.matchMedia && window.matchMedia('(max-width: 860px)').matches){
+          document.body.classList.add('nav-open');
+        }
+      }
+      function close(){
+        p.classList.remove('is-open');
+        p.setAttribute('aria-hidden','true');
+        t.setAttribute('aria-expanded','false');
+        document.body.classList.remove('nav-open');
+      }
+      t && t.addEventListener('click', ()=> (p.classList.contains('is-open') ? close() : open()));
+      c && c.addEventListener('click', close);
+
+      // Close panel when selecting a destination (mobile UX)
+      p && p.querySelectorAll('a').forEach(a => a.addEventListener('click', close, { passive: true }));
+
+      document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') close(); });
+    })();
+  </script>
+
+
+<style id="mobile-fixes-v3">
+@media (max-width: 860px){
+  /* Keep desktop untouched; mobile only refinements */
+  .snap-block{
+    min-height:auto !important;
+    height:auto !important;
+    overflow:visible !important;
+  }
+
+  /* Keep the key immersive sections full-screen on mobile */
+  .snap-block:first-of-type,
+  #page_block_03{
+    min-height:100svh !important;
+    overflow:hidden !important;
+  }
+
+  /* Fullscreen-video sections become content-height on mobile once videos fit width */
+  #page_block_05, #page_block_09{
+    min-height:auto !important;
+    height:auto !important;
+    background:#000 !important;
+  }
+  #page_block_05 .pb05-video,
+  #page_block_09 .pb09-video{
+    position:relative !important;
+    inset:auto !important;
+    display:block !important;
+    width:100% !important;
+    height:auto !important;
+    max-height:none !important;
+    object-fit:contain !important;
+    background:#000 !important;
+    aspect-ratio:16/9;
+  }
+
+  /* PB07 width-fit video should not leave a tall empty block */
+  #page_block_07{
+    min-height:auto !important;
+    padding-top:18px !important;
+    padding-bottom:18px !important;
+  }
+  #page_block_07 .pb07-video-box{
+    height:auto !important;
+    aspect-ratio:16/9;
+    background:#000;
+  }
+  #page_block_07 .pb07-video-box .pb07-video-inner{
+    position:relative !important;
+    width:100% !important;
+    height:auto !important;
+    top:auto !important;
+    left:auto !important;
+    transform:none !important;
+    display:block !important;
+  }
+
+  /* PB08 collapse to content height (removes black gap) */
+  #page_block_08{
+    min-height:auto !important;
+    padding-top:18px !important;
+    padding-bottom:24px !important;
+  }
+  #page_block_08 .pb04-wrap,
+  #page_block_08 .pb04-grid{
+    min-height:auto !important;
+    height:auto !important;
+    align-content:start !important;
+  }
+
+  /* Safety for media sizing inside content blocks */
+  #page_block_05 video,
+  #page_block_07 video,
+  #page_block_08 img,
+  #page_block_09 video{
+    width:100% !important;
+    max-width:100% !important;
+    height:auto !important;
+  }
+}
+</style>
+
+<script id="mobile-fixes-v3-script">
+(function(){
+  if (!window.matchMedia || !window.matchMedia('(max-width: 860px)').matches) return;
+
+  /* 1) Fix lazy video loading/play on mobile (desktop logic used snap-container as IO root) */
+  function loadVideo(v){
+    if(!v || v.dataset.mobileLoaded === '1') return;
+    const sourceNodes = v.querySelectorAll('source[data-src]');
+    sourceNodes.forEach(s => {
+      const src = s.getAttribute('data-src');
+      if (src && !s.getAttribute('src')) s.setAttribute('src', src);
+    });
+    const ds = v.getAttribute('data-src');
+    if (ds && !v.getAttribute('src')) v.setAttribute('src', ds);
+    v.dataset.mobileLoaded = '1';
+    try { v.load(); } catch(_) {}
+  }
+  function tryPlay(v){
+    if(!v) return;
+    v.muted = true;
+    v.playsInline = true;
+    const p = v.play && v.play();
+    if (p && typeof p.catch === 'function') p.catch(()=>{});
+  }
+
+  const mobileVideos = Array.from(document.querySelectorAll('video[data-lazy-media], #page_block_07 video, #page_block_05 video, #page_block_09 video'));
+  mobileVideos.forEach(v => {
+    loadVideo(v);
+    v.setAttribute('preload','metadata');
+    v.setAttribute('muted','');
+    v.setAttribute('playsinline','');
+    v.setAttribute('autoplay','');
+    v.addEventListener('loadedmetadata', () => {
+      if (v.videoWidth && v.videoHeight) {
+        const ar = (v.videoWidth / v.videoHeight).toFixed(4);
+        v.style.aspectRatio = ar;
+      }
+    }, { once:true });
+    v.addEventListener('canplay', () => tryPlay(v), { once:true });
+  });
+
+  const vio = new IntersectionObserver((entries)=>{
+    entries.forEach(e => {
+      if (e.isIntersecting) tryPlay(e.target);
+      else if (!e.target.loop && e.target.pause) e.target.pause();
+    });
+  }, { root: null, threshold: 0.15 });
+  mobileVideos.forEach(v => vio.observe(v));
+
+  /* 2) Restore PB01 star interactivity for touch by mirroring touch to mousemove */
+  const starCanvas = document.getElementById('star-network-canvas');
+  if (starCanvas){
+    function emitMouseFromTouch(ev){
+      const t = ev.touches && ev.touches[0];
+      if(!t) return;
+      const me = new MouseEvent('mousemove', {
+        clientX: t.clientX,
+        clientY: t.clientY,
+        bubbles: true,
+        cancelable: true,
+        view: window
+      });
+      window.dispatchEvent(me);
+    }
+    window.addEventListener('touchstart', emitMouseFromTouch, { passive: true });
+    window.addEventListener('touchmove', emitMouseFromTouch, { passive: true });
+  }
+
+  /* 3) Recompute mobile section heights after media loads to avoid empty space */
+  function normalizeSectionHeights(){
+    ['page_block_05','page_block_07','page_block_08','page_block_09'].forEach(id=>{
+      const sec = document.getElementById(id);
+      if(!sec) return;
+      sec.style.height = 'auto';
+      sec.style.minHeight = 'auto';
+    });
+  }
+  window.addEventListener('load', normalizeSectionHeights);
+  window.addEventListener('resize', normalizeSectionHeights);
+  mobileVideos.forEach(v => {
+    v.addEventListener('loadedmetadata', normalizeSectionHeights);
+    v.addEventListener('loadeddata', normalizeSectionHeights);
+  });
+  setTimeout(normalizeSectionHeights, 300);
+})();
+</script>
+
+</body>
+</html>
