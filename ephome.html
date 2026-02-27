@@ -3056,7 +3056,7 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
   const mobileTitle = document.getElementById('mobileFieldsTitle');
   const mobileList = document.getElementById('mobileFieldsList');
   const trigger = document.getElementById('servicesTrigger');
-  if (!mobileView || !mobileTitle || !mobileList || !trigger) return;
+  if (!mobileView || !mobileTitle || !mobileList) return;
 
   // Detach from the transformed canvas so fixed positioning is true-viewport on iOS
   if (mobileView.parentElement && mobileView.parentElement !== document.body) {
@@ -3244,9 +3244,11 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
       introCopy.style.transition = 'opacity .35s ease';
       introCopy.style.opacity = '0';
     }
-    trigger.style.transition = 'opacity .35s ease';
-    trigger.style.opacity = '0';
-    setTimeout(()=>{ trigger.style.display='none'; }, 380);
+    if (trigger){
+      trigger.style.transition = 'opacity .35s ease';
+      trigger.style.opacity = '0';
+      setTimeout(()=>{ trigger.style.display='none'; }, 380);
+    }
 
     buildMobileFields();
     mobileView.style.display = 'flex';
@@ -3270,12 +3272,21 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
   });
 
   // On mobile, make the hub actionable when ready
-  trigger.addEventListener('click', (e)=>{
-    // If the desktop flow would run, we short-circuit into mobile stacked view.
-    e.preventDefault();
-    e.stopPropagation();
-    showMobileFields();
-  }, true);
+  if (trigger){
+    trigger.addEventListener('click', (e)=>{
+      // If the desktop flow would run, we short-circuit into mobile stacked view.
+      e.preventDefault();
+      e.stopPropagation();
+      showMobileFields();
+    }, true);
+  }
+
+  // Expose minimal hooks so other mobile-only scripts can rebuild/show without requiring the hub
+  try{
+    window.__ep_mobile_buildFields = buildMobileFields;
+    window.__ep_mobile_showFields  = showMobileFields;
+  }catch(_){}
+
 })();
 </script>
 
@@ -3351,7 +3362,10 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
     // If list is still empty, trigger the mobile flow by dispatching a click on the hidden trigger.
     if (mobileList && mobileList.children.length === 0){
       try{
-        if (trigger) trigger.dispatchEvent(new MouseEvent('click', { bubbles:true, cancelable:true }));
+        // Prefer direct mobile builder if available (doesn't require #servicesTrigger to exist)
+        if (window.__ep_mobile_buildFields) window.__ep_mobile_buildFields();
+        // Ensure view is fully shown (mirrors showMobileFields without relying on trigger)
+        if (window.__ep_mobile_showFields) window.__ep_mobile_showFields();
       }catch(_){}
     }
 
