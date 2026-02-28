@@ -149,7 +149,7 @@
   .drag-handle:hover{border-color:rgba(255,255,255,.65)}
   .node-index{display:none}
   .node-title{font-size:14px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;font-family:inherit;display:block;text-align:center;line-height:1.1}
-  .node-subtitle{font-size:9px;font-weight:400;letter-spacing:.06em;text-transform:none;color:var(--muted);display:block;text-align:center;line-height:1.15;max-width:95%}
+  .node-subtitle{font-size:9px;font-weight:400;letter-spacing:.06em;text-transform:none;color:var(--muted);display:block;text-align:center;line-height:1.15;white-space:nowrap;max-width:none}
   .node-arrow{display:none}
   .node.open .node-arrow{transform:rotate(90deg);color:var(--blue)}
 
@@ -1211,7 +1211,39 @@ function tickNodeField(){
 
 
 function applyTransform(){ state.scale = 1; canvas.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(1)`; }
-function setInitialView(){ state.tx=30; state.ty=8; state.scale=1; applyTransform(); }
+function setInitialView(){
+  // Desktop: keep the scattered layout, but center the *visible* node hit-areas as a group.
+  // (We measure actual rendered bounds, because the node container can be wider than the label.)
+  const isMobileView = window.matchMedia('(max-width: 600px), (pointer: coarse) and (max-width: 768px)').matches;
+  if (isMobileView){
+    state.tx=30; state.ty=8; state.scale=1; applyTransform();
+    return;
+  }
+
+  // Start from a neutral transform, then measure and recentre precisely.
+  state.tx=0; state.ty=8; state.scale=1; applyTransform();
+
+  requestAnimationFrame(()=>{
+    const buttons = Array.from(document.querySelectorAll('#nodes .node-button'));
+    if (!buttons.length) return;
+
+    let left=Infinity, right=-Infinity;
+    buttons.forEach(b=>{
+      const r = b.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      left = Math.min(left, r.left);
+      right = Math.max(right, r.right);
+    });
+    if (!isFinite(left) || !isFinite(right)) return;
+
+    const clusterCenter = (left + right) / 2;
+    const viewportCenter = window.innerWidth / 2;
+    const dx = Math.round(viewportCenter - clusterCenter);
+
+    state.tx += dx;
+    applyTransform();
+  });
+}
 
 function createList(items){ const arr = Array.isArray(items) ? items : []; return `<ul>${arr.map(x=>`<li>${x}</li>`).join('')}</ul>`; }
 function createChipRow(items){
@@ -1631,6 +1663,10 @@ function renderDetailCard(node){
     detailCta.innerHTML = `
       <a class="tag mono blue" href="https://films.enricopoli.com/">GO TO FILMS</a>
     `;
+  } else if (node.id === '01' || node.id === '05' || node.id === '07') {
+    detailCta.innerHTML = `
+      <a class="tag mono blue" href="mailto:epoli.uk@gmail.com">GET IN TOUCH</a>
+    `;
   } else {
     detailCta.innerHTML = '';
   }
@@ -1771,13 +1807,17 @@ function arrangeNodesAroundIntroCenter(){
   const vwCanvas = window.innerWidth - state.tx;
   const vhCanvas = window.innerHeight - state.ty;
 
+  // Use more of the horizontal space while keeping the scattered feel.
+  const spreadX = clamp(vwCanvas / 1200, 1.0, 1.55);
+  const spreadY = 1.0;
+
   nodes.forEach((n,i)=>{
     const off = offsets[i] || [
       (i % 2 === 0 ? -1 : 1) * (420 + (Math.floor(i/2)%2)*90),
       -180 + Math.floor(i/2) * 120
     ];
-    let x = Math.round(cx + off[0]);
-    let y = Math.round(cy + off[1]);
+    let x = Math.round(cx + off[0] * spreadX);
+    let y = Math.round(cy + off[1] * spreadY);
 
     x = clamp(x, margin, Math.max(margin, vwCanvas - nodeW - margin));
     y = clamp(y, margin, Math.max(margin, vhCanvas - nodeH - margin));
@@ -1796,6 +1836,37 @@ function arrangeNodesAroundIntroCenter(){
     state.freePositions[n.id] = {...p};
   });
   positionAllNodes();
+
+  // Ensure the scattered cluster is centered visually (based on rendered node-button bounds).
+  // This runs whenever we (re)arrange nodes, so future calls don't drift the cluster left.
+  if (!window.matchMedia('(max-width: 600px), (pointer: coarse) and (max-width: 768px)').matches){
+    requestAnimationFrame(()=>{
+      const buttons = Array.from(document.querySelectorAll('#nodes .node-button'));
+      if (!buttons.length) return;
+
+      let left=Infinity, right=-Infinity;
+      buttons.forEach(b=>{
+        const r = b.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      });
+      if (!isFinite(left) || !isFinite(right)) return;
+
+      const clusterCenter = (left + right) / 2;
+      const viewportCenter = window.innerWidth / 2;
+      const dx = Math.round(viewportCenter - clusterCenter);
+      if (!dx) return;
+
+      Object.keys(state.pos).forEach(id=>{
+        state.pos[id].x += dx;
+        state.targetPos[id].x += dx;
+        state.basePos[id].x += dx;
+        state.freePositions[id].x += dx;
+      });
+      positionAllNodes();
+    });
+  }
 }
 
 function startExperience(){
