@@ -12247,7 +12247,7 @@ AFRAME.registerComponent('merge-align', {
         return;
       }
 
-      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto gpu-warmup-aya>.
+      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto>.
       this.el.object3D.position.add(this._tmpD);
     }
   });
@@ -20978,6 +20978,7 @@ AFRAME.registerComponent('zone-manager', {
     this._ayaEl = document.getElementById('aya_dome');
     this._ayaAmbEl = document.getElementById('aya_dome_ambience');
     this._inJunction = false;
+    this._ayaWasPlaying = false;
 },
 
   _initializeZones: function () {
@@ -21066,14 +21067,20 @@ AFRAME.registerComponent('zone-manager', {
         // Hide Aya dome when inside Junction (removes GPU render cost).
         this._ayaEl.object3D.visible = !inside;
 
-        // Pause/resume Aya ambience to avoid any audio work.
+                // Pause Aya ambience while inside Junction. Resume only if it was playing before.
         if (this._ayaAmbEl && this._ayaAmbEl.components && this._ayaAmbEl.components.sound) {
           try {
-            if (inside) this._ayaAmbEl.components.sound.pauseSound();
-            else this._ayaAmbEl.components.sound.playSound();
+            const s = this._ayaAmbEl.components.sound;
+            if (inside) {
+              this._ayaWasPlaying = !!s.isPlaying;
+              if (s.isPlaying) s.pauseSound();
+            } else {
+              if (this._ayaWasPlaying && !s.isPlaying) s.playSound();
+              this._ayaWasPlaying = false;
+            }
           } catch (e) {}
         }
-      }
+}
     }
 // Check each zone
     this.zones.forEach((zone, id) => {
@@ -22317,36 +22324,7 @@ AFRAME.registerComponent('racer-controller', {
 })();
 
 
-AFRAME.registerComponent('gpu-warmup-aya', {
-  init() {
-    const sceneEl = this.el;
-    const ayaEl = document.getElementById('aya_dome');
-
-    const warm = () => {
-      const renderer = sceneEl.renderer;
-      const camera = sceneEl.camera;
-      if (!renderer || !camera || !ayaEl || !ayaEl.object3D) return;
-
-      // Keep Aya hidden (no visual change)
-      const prevVisible = ayaEl.object3D.visible;
-      ayaEl.object3D.visible = false;
-
-      // Force shader/program compilation for currently loaded objects/lights
-      try {
-        renderer.compile(sceneEl.object3D, camera);
-      } catch (e) {}
-
-      // Restore exact previous state
-      ayaEl.object3D.visible = prevVisible;
-    };
-
-    // Run once after everything is settled
-    sceneEl.addEventListener('loaded', () => {
-      setTimeout(warm, 300);
-      // optional second pass (some assets finish a beat later)
-      setTimeout(warm, 1200);
-    });
-  }
+}
 });
 
 </script>
