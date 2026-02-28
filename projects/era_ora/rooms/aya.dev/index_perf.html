@@ -12247,7 +12247,7 @@ AFRAME.registerComponent('merge-align', {
         return;
       }
 
-      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto>.
+      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto gpu-warmup-aya>.
       this.el.object3D.position.add(this._tmpD);
     }
   });
@@ -21052,7 +21052,30 @@ AFRAME.registerComponent('zone-manager', {
     const playerPos = new THREE.Vector3();
     this.data.playerRig.object3D.getWorldPosition(playerPos);
     
-    // Check each zone
+    
+    // --- Aya render gate while inside Junction Dome (surgical) ---
+    // Use the same distance logic as the zone manager (avoids transform/local-space edge cases).
+    const junctionZone = (this.zones && this.zones.get) ? this.zones.get('junction_dome') : null;
+    if (junctionZone && this._ayaEl && this._ayaEl.object3D) {
+      // Junction inner radius is 8.0 (see junction_dome_inner geometry). Use a small margin.
+      const inside = (playerPos.distanceTo(junctionZone.position) < (8.0 * 0.98));
+
+      if (inside !== this._inJunction) {
+        this._inJunction = inside;
+
+        // Hide Aya dome when inside Junction (removes GPU render cost).
+        this._ayaEl.object3D.visible = !inside;
+
+        // Pause/resume Aya ambience to avoid any audio work.
+        if (this._ayaAmbEl && this._ayaAmbEl.components && this._ayaAmbEl.components.sound) {
+          try {
+            if (inside) this._ayaAmbEl.components.sound.pauseSound();
+            else this._ayaAmbEl.components.sound.playSound();
+          } catch (e) {}
+        }
+      }
+    }
+// Check each zone
     this.zones.forEach((zone, id) => {
       const dist = playerPos.distanceTo(zone.position);
       
@@ -22280,6 +22303,40 @@ AFRAME.registerComponent('racer-controller', {
   });
 
 })();
+
+
+AFRAME.registerComponent('gpu-warmup-aya', {
+  init() {
+    const sceneEl = this.el;
+    const ayaEl = document.getElementById('aya_dome');
+
+    const warm = () => {
+      const renderer = sceneEl.renderer;
+      const camera = sceneEl.camera;
+      if (!renderer || !camera || !ayaEl || !ayaEl.object3D) return;
+
+      // Keep Aya hidden (no visual change)
+      const prevVisible = ayaEl.object3D.visible;
+      ayaEl.object3D.visible = false;
+
+      // Force shader/program compilation for currently loaded objects/lights
+      try {
+        renderer.compile(sceneEl.object3D, camera);
+      } catch (e) {}
+
+      // Restore exact previous state
+      ayaEl.object3D.visible = prevVisible;
+    };
+
+    // Run once after everything is settled
+    sceneEl.addEventListener('loaded', () => {
+      setTimeout(warm, 300);
+      // optional second pass (some assets finish a beat later)
+      setTimeout(warm, 1200);
+    });
+  }
+});
+
 </script>
 
 </body>
