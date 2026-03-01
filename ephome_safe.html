@@ -118,9 +118,26 @@
   .node .hint{display:none}
 
   .node-button{
-    width:420px;min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
-    padding:8px 12px;border:0;background:transparent;
-    color:var(--fg);cursor:pointer;text-transform:uppercase;border-radius:0;font-family:inherit;font-weight:400;
+    /* Desktop hover hit-area should match the visible label, not the full node width */
+    display:inline-flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:3px;
+
+    width:fit-content;
+    max-width:100%;
+
+    padding:8px 12px;
+    border:0;
+    background:transparent;
+
+    color:var(--fg);
+    cursor:pointer;
+    text-transform:uppercase;
+    border-radius:0;
+    font-family:inherit;
+    font-weight:400;
     box-shadow:none;
   }
   .node-button:hover{border-color:transparent; color:var(--fg)}
@@ -131,8 +148,8 @@
   .drag-handle{display:none}
   .drag-handle:hover{border-color:rgba(255,255,255,.65)}
   .node-index{display:none}
-  .node-title{font-size:14px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;font-family:inherit;display:block;text-align:center;line-height:1.1}
-  .node-subtitle{font-size:9px;font-weight:400;letter-spacing:.06em;text-transform:none;color:var(--muted);display:block;text-align:center;line-height:1.15;max-width:95%}
+  .node-title{font-size:10px;font-weight:500;letter-spacing: 3px;text-transform:uppercase;font-family:inherit;display:block;text-align:center;line-height:1.1}
+  .node-subtitle{font-size:9px;font-weight:400;letter-spacing:.06em;text-transform:none;color:var(--muted);display:block;text-align:center;line-height:1.15;white-space:nowrap;max-width:none}
   .node-arrow{display:none}
   .node.open .node-arrow{transform:rotate(90deg);color:var(--blue)}
 
@@ -287,7 +304,7 @@
     transition:opacity .2s ease, transform .22s var(--easeSoft);
   }
   .detail-close:hover,.detail-close:focus-visible{color:#fff; transform:rotate(90deg) scale(1.02)}
-  .detail-mode-hint{margin:14px 0 22px; font-size:11px; letter-spacing:.12em; color:rgba(140,255,176,.82); text-transform:uppercase; display:none;}
+  .detail-mode-hint{margin:14px 0 22px; font-size:11px; letter-spacing:2000px; color:rgba(140,255,176,.82); text-transform:uppercase; display:none;}
 .detail-desc{
     margin:0 auto 34px auto;
     font-size:14px;
@@ -561,7 +578,13 @@
 
   /* Field items: NO BOXES — just text, centered */
   .mobile-field{
-    width:100%;
+    /* Make the hover/click hit-area match the visible text block (not the full row width) */
+    display:inline-flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    width:fit-content;
+    max-width:100%;
     background:transparent;
     border:0;
     padding:0;
@@ -763,7 +786,13 @@
 
   /* Button reset to avoid browser default padding/offsets */
   .mobile-field{
-    width:100%;
+    /* Keep the hit-area tight to the content (avoid full-width hover/press zones) */
+    display:inline-flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    width:fit-content;
+    max-width:100%;
     margin:0;
     padding:0;
     text-align:center;
@@ -885,6 +914,33 @@
       justify-content:center;
     }
 
+
+  /* --- Center line + keep-center-clear experiment (desktop only) --- */
+  .center-line{
+    position:fixed;
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%);
+    z-index:50;
+    pointer-events:none;
+    font-size:10px;
+    /* "2000" tracking request interpreted as "extremely wide" but kept on-screen.
+       Use a responsive clamp so the line remains visible across desktop widths. */
+    letter-spacing:clamp(18px, 3.2vw, 96px);
+    text-transform:uppercase;
+    color:#b4ffcb;
+    opacity:0;
+    transition:opacity .34s var(--easeSoft);
+    white-space:nowrap;
+    max-width:92vw;
+    overflow:hidden;
+    mix-blend-mode:screen;
+  }
+  .center-line.show{ opacity:1; }
+  @media (max-width: 600px), (pointer: coarse) and (max-width: 768px){
+    .center-line{ display:none !important; }
+  }
+
 </style>
 </head>
 <body>
@@ -929,6 +985,7 @@
 
 <canvas id="liquid" aria-hidden="true"></canvas>
 <div class="ui-noise" aria-hidden="true"></div>
+<div id="centerLine" class="center-line" aria-hidden="true">EXPERIENCE IS EVERYTHING</div>
 <div class="viewport" id="viewport">
   
 
@@ -991,7 +1048,8 @@
 <script>
 const nodes = [
   {
-    id:'01', title:'concept development', hint:'framing + narrative systems', x:70,y:220,
+    /* Lowered so it sits below the top menu on desktop */
+    id:'01', title:'concept development', hint:'framing + narrative systems', x:70,y:300,
     desc:'I define the starting point of a project — turning a vague brief, opportunity, or complex problem into a clear concept teams can understand, pitch, and produce. I shape what the project is, why it matters, and how it can work across film, experiences, events, culture, innovation, and business.',
     subtypes:[' problem framing ',' concept architecture ',' narrative angle ',' audience value ',' cultural + business positioning '],
     selectedClientsWorks:[' Deutsche Bank ',' Pro-Gest ',' Natuzzi Italia ',' Foresta Maestra Festival ',' dinova.one '],
@@ -1089,6 +1147,13 @@ const overlayTitle = document.getElementById('overlayTitle');
 const overlaySub = document.getElementById('overlaySub');
 const overlayList = document.getElementById('overlayList');
 
+// Center line experiment (desktop only)
+const centerLine = document.getElementById('centerLine');
+function setCenterLineVisible(v){
+  if (!centerLine) return;
+  centerLine.classList.toggle('show', !!v);
+}
+
 const state = {
   tx:0, ty:0, scale:1, mapVisible:false, mode:'free', openId:null, focusId:null,
   pointerId:null, draggingMap:false, mapStart:null, draggingNodeId:null, nodeStart:null,
@@ -1182,7 +1247,39 @@ function tickNodeField(){
 
 
 function applyTransform(){ state.scale = 1; canvas.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(1)`; }
-function setInitialView(){ state.tx=30; state.ty=8; state.scale=1; applyTransform(); }
+function setInitialView(){
+  // Desktop: keep the scattered layout, but center the *visible* node hit-areas as a group.
+  // (We measure actual rendered bounds, because the node container can be wider than the label.)
+  const isMobileView = window.matchMedia('(max-width: 600px), (pointer: coarse) and (max-width: 768px)').matches;
+  if (isMobileView){
+    state.tx=30; state.ty=8; state.scale=1; applyTransform();
+    return;
+  }
+
+  // Start from a neutral transform, then measure and recentre precisely.
+  state.tx=0; state.ty=8; state.scale=1; applyTransform();
+
+  requestAnimationFrame(()=>{
+    const buttons = Array.from(document.querySelectorAll('#nodes .node-button'));
+    if (!buttons.length) return;
+
+    let left=Infinity, right=-Infinity;
+    buttons.forEach(b=>{
+      const r = b.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      left = Math.min(left, r.left);
+      right = Math.max(right, r.right);
+    });
+    if (!isFinite(left) || !isFinite(right)) return;
+
+    const clusterCenter = (left + right) / 2;
+    const viewportCenter = window.innerWidth / 2;
+    const dx = Math.round(viewportCenter - clusterCenter);
+
+    state.tx += dx;
+    applyTransform();
+  });
+}
 
 function createList(items){ const arr = Array.isArray(items) ? items : []; return `<ul>${arr.map(x=>`<li>${x}</li>`).join('')}</ul>`; }
 function createChipRow(items){
@@ -1602,11 +1699,16 @@ function renderDetailCard(node){
     detailCta.innerHTML = `
       <a class="tag mono blue" href="https://films.enricopoli.com/">GO TO FILMS</a>
     `;
+  } else if (node.id === '01' || node.id === '05' || node.id === '07') {
+    detailCta.innerHTML = `
+      <a class="tag mono blue" href="mailto:epoli.uk@gmail.com">GET IN TOUCH</a>
+    `;
   } else {
     detailCta.innerHTML = '';
   }
 }
 async function openDetail(id){
+  setCenterLineVisible(false);
   const node = nodes.find(n => n.id === id);
   if (!node) return;
   if (!state.preOpenPositions) snapshotPositions();
@@ -1697,6 +1799,7 @@ async function closeDetail(){
 
   state.openId = null;
   setLiquidPerfMode('normal');
+  if (state.mapVisible) setCenterLineVisible(true);
 }
 async function toggleDetail(id){
   if (state.openId === id) { closeDetail(); return; }
@@ -1728,11 +1831,17 @@ function arrangeNodesAroundIntroCenter(){
   const nodeW = 420;
   const nodeH = 56;
   const margin = 24;
-  const minGapFromHub = 120;
+  const minGapFromHub = 180;
+
+  // Keep the center of the screen visually clean (for the center line).
+  // This is an exclusion rectangle around the viewport center, in *canvas* coordinates.
+  const clearW = 1600;
+  const clearH = 520;
+  const clearRect = { x: cx - clearW*0.5, y: cy - clearH*0.5, w: clearW, h: clearH };
 
   // Intentionally scattered, not grid-aligned.
   const offsets = [
-    [-260, -290], // concept development (top-left)
+    [-260, -190], // concept development (top-left) — lowered below menu
     [ 190, -300], // experience design (top-right)
     [-560,  -15], // film direction (left-mid)
     [ 300,   60], // gen-ai systems (right-mid)
@@ -1742,22 +1851,52 @@ function arrangeNodesAroundIntroCenter(){
   const vwCanvas = window.innerWidth - state.tx;
   const vhCanvas = window.innerHeight - state.ty;
 
+  // Use more of the horizontal space while keeping the scattered feel.
+  const spreadX = clamp(vwCanvas / 1200, 1.0, 1.55);
+  const spreadY = 1.0;
+
+  const headerEl = document.querySelector('.site-header');
+  const headerH = headerEl ? Math.ceil(headerEl.getBoundingClientRect().height) : 0;
+
   nodes.forEach((n,i)=>{
     const off = offsets[i] || [
       (i % 2 === 0 ? -1 : 1) * (420 + (Math.floor(i/2)%2)*90),
       -180 + Math.floor(i/2) * 120
     ];
-    let x = Math.round(cx + off[0]);
-    let y = Math.round(cy + off[1]);
+    let x = Math.round(cx + off[0] * spreadX);
+    let y = Math.round(cy + off[1] * spreadY);
 
     x = clamp(x, margin, Math.max(margin, vwCanvas - nodeW - margin));
     y = clamp(y, margin, Math.max(margin, vhCanvas - nodeH - margin));
+    y = Math.max(y, headerH + 18);
 
     const nearHubX = Math.abs((x + nodeW * 0.5) - cx) < (nodeW * 0.5 + minGapFromHub);
     const nearHubY = Math.abs((y + nodeH * 0.5) - cy) < 58;
     if (nearHubX && nearHubY) {
       y += (y < cy ? -70 : 70);
       y = clamp(y, margin, Math.max(margin, vhCanvas - nodeH - margin));
+    y = Math.max(y, headerH + 18);
+    }
+
+
+    // Avoid the center-clear rectangle.
+    // We push the node away along the shortest axis until it no longer overlaps.
+    // (This keeps the "scattered" feel, but guarantees the center stays readable.)
+    const nodeRect = { x, y, w: nodeW, h: nodeH };
+    if (rectsOverlap(nodeRect, clearRect, 12)){
+      const cpx = nodeRect.x + nodeRect.w*0.5;
+      const cpy = nodeRect.y + nodeRect.h*0.5;
+      const dx = cpx - cx;
+      const dy = cpy - cy;
+      // Prefer pushing along the dominant direction.
+      if (Math.abs(dx) >= Math.abs(dy)){
+        x += (dx >= 0 ? 1 : -1) * (clearRect.w*0.5 + nodeW*0.5 + 22);
+      } else {
+        y += (dy >= 0 ? 1 : -1) * (clearRect.h*0.5 + nodeH*0.5 + 22);
+      }
+      x = clamp(x, margin, Math.max(margin, vwCanvas - nodeW - margin));
+      y = clamp(y, margin, Math.max(margin, vhCanvas - nodeH - margin));
+    y = Math.max(y, headerH + 18);
     }
 
     const p = {x, y};
@@ -1767,6 +1906,37 @@ function arrangeNodesAroundIntroCenter(){
     state.freePositions[n.id] = {...p};
   });
   positionAllNodes();
+
+  // Ensure the scattered cluster is centered visually (based on rendered node-button bounds).
+  // This runs whenever we (re)arrange nodes, so future calls don't drift the cluster left.
+  if (!window.matchMedia('(max-width: 600px), (pointer: coarse) and (max-width: 768px)').matches){
+    requestAnimationFrame(()=>{
+      const buttons = Array.from(document.querySelectorAll('#nodes .node-button'));
+      if (!buttons.length) return;
+
+      let left=Infinity, right=-Infinity;
+      buttons.forEach(b=>{
+        const r = b.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      });
+      if (!isFinite(left) || !isFinite(right)) return;
+
+      const clusterCenter = (left + right) / 2;
+      const viewportCenter = window.innerWidth / 2;
+      const dx = Math.round(viewportCenter - clusterCenter);
+      if (!dx) return;
+
+      Object.keys(state.pos).forEach(id=>{
+        state.pos[id].x += dx;
+        state.targetPos[id].x += dx;
+        state.basePos[id].x += dx;
+        state.freePositions[id].x += dx;
+      });
+      positionAllNodes();
+    });
+  }
 }
 
 function startExperience(){
@@ -1861,7 +2031,9 @@ function showMap(){
   document.querySelectorAll('.node').forEach(el=> el.classList.remove('disappearing'));
   legend.classList.add('visible');
   if (servicesTrigger) servicesTrigger.setAttribute('aria-expanded','true');
-  animateNodesIn();
+  setCenterLineVisible(true);
+  // Delay node reveal so the centered line reads alone first.
+  setTimeout(()=>{ if (state.mapVisible) animateNodesIn(); }, 1000);
 }
 function hideMap(){
   if (!state.mapVisible) return;
@@ -1873,6 +2045,7 @@ function hideMap(){
   if (servicesTrigger) servicesTrigger.setAttribute('aria-expanded','false');
   const ids = nodes.map(n=>n.id);
   disappearNodes(ids, {stagger:35, baseDelay:0, pulse:true});
+  setCenterLineVisible(false);
   setTimeout(()=> {
     if (!state.mapVisible) nodeLayer.classList.remove('visible');
   }, 420);
@@ -2689,6 +2862,7 @@ renderNodes();
 setupFilmDirectionRandomHoverDesktop();
 setupExperienceDesignHoverDesktop();
 setInitialView();
+setCenterLineVisible(false);
 setTargetsFromCurrent();
 window.addEventListener('resize', ()=>{ if (state.openId) { alignDetailCloseToTitle(); } });
 state.mode = 'free';
