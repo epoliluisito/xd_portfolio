@@ -1831,6 +1831,28 @@ async function openDetail(id){
   });
 
 }
+
+function waitOpacityTransition(el, fallbackMs = 650){
+  return new Promise((resolve)=>{
+    if (!el) return resolve();
+    let done = false;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      el.removeEventListener('transitionend', onEnd);
+      resolve();
+    };
+
+    const onEnd = (e) => {
+      if (e.target === el && e.propertyName === 'opacity') finish();
+    };
+
+    el.addEventListener('transitionend', onEnd);
+    setTimeout(finish, fallbackMs);
+  });
+}
+
 async function closeDetail(){
   closeClientVideoFullscreen();
   if (!state.openId) return;
@@ -1861,6 +1883,8 @@ async function closeDetail(){
   detailOverlay.classList.remove('show');
   if (servicesTrigger) servicesTrigger.style.opacity = '';
 
+  await waitOpacityTransition(detailOverlay, 700);
+
   document.querySelectorAll('.node').forEach(el=>{
     el.style.transitionDelay = '';
     el.classList.remove('open');
@@ -1873,15 +1897,13 @@ async function closeDetail(){
   if (state.mapVisible) setCenterLineVisible(true);
 }
 async function toggleDetail(id){
-  if (state.openId === id) { closeDetail(); return; }
+  if (state.openId === id) { await closeDetail(); return; }
 
   if (state.openId){
     await closeDetail();
-    // Let the close fade finish before opening the next field.
-    await new Promise(r=>setTimeout(r, (__isDesktopFinePointer && __isDesktopFinePointer()) ? 120 : 60));
   }
 
-  openDetail(id);
+  await openDetail(id);
 }
 function setFocus(id){
   state.focusId = id;
