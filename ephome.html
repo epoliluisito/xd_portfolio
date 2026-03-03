@@ -651,7 +651,7 @@
     padding:0 2px;
     font-size:13.5px;
     line-height:1.55;
-    color:rgba(238,241,247,.92);
+    color:rgba(180,255,203,.85);
     text-align:center;
     text-transform:uppercase;
   }
@@ -982,7 +982,7 @@
 #mobileLanding.is-exiting{opacity:0;}
 @media (max-width: 600px), (pointer: coarse) and (max-width: 768px){
   #mobileLanding{
-    display:flex;
+    display:none;
     position:fixed;
     inset:0;
     z-index:9999;
@@ -992,12 +992,13 @@
     text-align:center;
     padding:0 18px; /* keep horizontal safe padding without shifting vertical centering */
     background:transparent;
-    opacity:1;
+    opacity:0;
     animation: mobileLandingFadeIn .9s ease forwards;
   }
+  body.mobile-landing-active #mobileLanding{ display:flex; }
   @keyframes mobileLandingFadeIn{from{opacity:0}to{opacity:1}}
   #mobileLanding .mobile-landing-title{
-    color:var(--accent);
+    color:#b4ffcb;
     letter-spacing:.14em;
     font-size:16px;
     line-height:1.2;
@@ -1046,7 +1047,7 @@
 <div class="hdr-container">
 <div class="site-header__row">
 <nav aria-label="Primary navigation" class="nav">
-<a data-key="whatdoido" href="https://xd.enricopoli.com/ephome.html" class="is-active">WHAT DO I ACTUALLY DO</a>
+<a data-key="whatdoido" href="https://www.enricopoli.com/what-do-i-actually-do" class="is-active">WHAT DO I ACTUALLY DO</a>
 <a data-key="xd" href="https://xd.enricopoli.com/">XD</a>
 <a data-key="films" href="https://films.enricopoli.com/" rel="noopener">FILMS</a>
 <a data-key="dreamlog" href="http://dreamlog.enricopoli.com/">_ DREAM LOG</a>
@@ -1065,7 +1066,7 @@
 
 <aside class="nav-panel" aria-label="Mobile menu">
   <label class="nav-panel__close" for="navState" aria-label="Close menu" role="button">CLOSE</label>
-  <a href="https://xd.enricopoli.com/ephome.html" class="is-active">WHAT DO I ACTUALLY DO</a>
+  <a href="https://www.enricopoli.com/what-do-i-actually-do" class="is-active">WHAT DO I ACTUALLY DO</a>
   <a href="https://xd.enricopoli.com/">XD</a>
   <a href="https://films.enricopoli.com/" rel="noopener">FILMS</a>
   <a href="http://dreamlog.enricopoli.com/">_ DREAM LOG</a>
@@ -3692,24 +3693,34 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
     const trigger = document.getElementById('servicesTrigger');
     const introCopy = document.querySelector('.intro-copy');
 
-    // Keep existing centering/constraints untouched: we only hide the underlying viewport while landing is active.
-    document.body.classList.add('mobile-landing-active');
+    // Keep existing centering/constraints untouched: we only hide the underlying viewport while the landing overlay is active.
+    const landingDismissed = (()=>{ try{ return localStorage.getItem('ep_mobileLandingDismissed') === '1'; }catch(_){ return false; } })();
+
+    if (!landingDismissed){
+      document.body.classList.add('mobile-landing-active');
+    }
 
     // Hide desktop-ish entry points that are irrelevant on mobile
     if (introCopy) { introCopy.style.display = 'none'; introCopy.style.opacity = '0'; }
     if (trigger) { trigger.style.display = 'none'; trigger.style.opacity = '0'; }
 
-    // Ensure the stacked fields view stays hidden until swipe
-    if (mobileView){
+
+    // Ensure the stacked fields view stays hidden while landing is active
+    if (!landingDismissed && mobileView){
       mobileView.style.display = 'none';
       mobileView.setAttribute('aria-hidden','true');
     }
 
-    // Landing overlay: fade in
+    // Landing overlay: show only if not dismissed
     if (landing){
-      landing.setAttribute('aria-hidden','false');
-      // allow layout before transition
-      requestAnimationFrame(()=> landing.classList.add('is-visible'));
+      if (landingDismissed){
+        landing.setAttribute('aria-hidden','true');
+        landing.style.display = 'none';
+      }else{
+        landing.setAttribute('aria-hidden','false');
+        // allow layout before transition
+        requestAnimationFrame(()=> landing.classList.add('is-visible'));
+      }
     }
 
     function startMobileFields(){
@@ -3744,8 +3755,34 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
       });
     }
 
-    // One-time swipe (any direction)
-    let sx=0, sy=0, swiped=false;
+
+    // Dismiss on first tap or swipe (any direction) — mobile only, one-time, persisted.
+    if (landingDismissed){
+      startMobileFields();
+      return;
+    }
+
+    let sx=0, sy=0;
+    let landingGone = false;
+
+    function dismissLanding(){
+      if (landingGone) return;
+      landingGone = true;
+
+      try{ localStorage.setItem('ep_mobileLandingDismissed','1'); }catch(_){}
+
+      if (landing){
+        landing.classList.remove('is-visible');
+        landing.classList.add('is-exiting');
+        setTimeout(()=>{
+          landing.setAttribute('aria-hidden','true');
+          landing.style.display = 'none';
+          startMobileFields();
+        }, 420);
+      }else{
+        startMobileFields();
+      }
+    }
 
     function onStart(e){
       const t = (e.touches && e.touches[0]) ? e.touches[0] : e;
@@ -3753,34 +3790,24 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
     }
 
     function onMove(e){
-      if (swiped) return;
+      if (landingGone) return;
       const t = (e.touches && e.touches[0]) ? e.touches[0] : e;
       const dx = t.clientX - sx;
       const dy = t.clientY - sy;
       const dist = Math.hypot(dx, dy);
-      if (dist > 18){
-        swiped = true;
-
-        if (landing){
-          landing.classList.remove('is-visible');
-          landing.classList.add('is-exiting');
-          // After fade-out, hide landing and start fields
-          setTimeout(()=>{
-            landing.setAttribute('aria-hidden','true');
-            landing.style.display = 'none';
-            startMobileFields();
-          }, 420);
-        }else{
-          startMobileFields();
-        }
+      if (dist > 14){ // light threshold so any intentional swipe works
+        dismissLanding();
       }
     }
 
+    // Tap anywhere dismisses (covers "first tap")
+    window.addEventListener('pointerdown', dismissLanding, {passive:true, once:true});
     window.addEventListener('touchstart', onStart, {passive:true});
     window.addEventListener('touchmove', onMove, {passive:true});
 
     return;
   }
+
 
   // DESKTOP: hub trigger removed — start directly in the fields map state.
   const introBlock = document.getElementById('introBlock');
