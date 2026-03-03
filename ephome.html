@@ -410,6 +410,7 @@
   
   /* Hide mobile-only stacked view by default (enabled via JS on small screens) */
   #mobileFieldsView{display:none;}
+  #mobileSwipeIntro{display:none;}
 @media (max-width: 900px){
     .detail-grid{grid-template-columns:1fr; gap:14px}
   }
@@ -751,6 +752,59 @@
    - Prevents accidental left offsets caused by absolute positioning / max-height scroll containers
 */
 @media (max-width: 600px), (pointer: coarse) and (max-width: 768px){
+  /* Mobile swipe intro overlay (mobile only) */
+  #mobileSwipeIntro{
+    position:fixed;
+    inset:0;
+    z-index:80;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    text-align:center;
+    pointer-events:auto;
+    padding-top: calc(max(16px, env(safe-area-inset-top)) + 56px);
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    padding-left: max(16px, env(safe-area-inset-left));
+    box-sizing:border-box;
+    background:transparent;
+  }
+  #mobileSwipeIntro[aria-hidden="true"]{ display:none; }
+  #mobileSwipeIntro .msi-inner{ max-width:min(92vw, 560px); }
+  #mobileSwipeIntro .msi-title{
+    color:#b4ffcb;
+    font-size: clamp(18px, 3.1vh, 26px);
+    letter-spacing:.22em;
+    text-transform:uppercase;
+    opacity:0;
+    transform: translateY(10px);
+    animation: msiFadeIn .72s var(--easeSmooth) .08s forwards;
+  }
+  #mobileSwipeIntro .msi-sub{
+    margin-top: 14px;
+    color: rgba(238,241,247,.78);
+    font-size: clamp(11px, 1.9vh, 14px);
+    letter-spacing:.08em;
+    text-transform:lowercase;
+    opacity:0;
+    transform: translateY(10px);
+    animation: msiFadeIn .72s var(--easeSmooth) .32s forwards;
+  }
+  #mobileSwipeIntro.exiting{
+    animation: msiFadeOut .38s var(--easeSmooth) forwards;
+  }
+  @keyframes msiFadeIn{
+    to{ opacity:1; transform: translateY(0); }
+  }
+  @keyframes msiFadeOut{
+    to{ opacity:0; }
+  }
+
+  /* Re-enable the desktop velvet/mercury background layers on mobile */
+  html, body{ background: var(--bg) !important; }
+  #liquid, .ui-noise{ display:block !important; }
+
   /* The stacked fields view is a full-viewport, centered flex stage */
   #mobileFieldsView{
     position:fixed !important;
@@ -1034,7 +1088,15 @@
 </div>
     
     <!-- Mobile-only fields list (enabled via JS on small screens) -->
-    <div id="mobileFieldsView" aria-hidden="true">
+        <!-- Mobile-only swipe intro (mobile only; desktop untouched) -->
+    <div id="mobileSwipeIntro" aria-hidden="true">
+      <div class="msi-inner">
+        <div class="msi-title mono">EVERYTHING IS EXPERIENCE</div>
+        <div class="msi-sub mono">swipe to find out what I actually do.</div>
+      </div>
+    </div>
+
+<div id="mobileFieldsView" aria-hidden="true">
       <h2 class="mono" id="mobileFieldsTitle">WHAT DO I ACTUALLY DO?</h2>
       <div id="mobileFieldsList"></div>
     </div>
@@ -3622,44 +3684,98 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
   if (overlay) { try{ overlay.remove(); }catch(_){ overlay.style.display='none'; } }
 
   if (isMobile){
-    // MOBILE: start directly in the stacked fields view (same as "BACK TO FIELDS")
+    // MOBILE: show swipe intro first, then transition into the stacked fields view on first swipe.
     const mobileView = document.getElementById('mobileFieldsView');
     const mobileList = document.getElementById('mobileFieldsList');
     const trigger = document.getElementById('servicesTrigger');
     const introCopy = document.querySelector('.intro-copy');
+    const swipeIntro = document.getElementById('mobileSwipeIntro');
 
+    // Keep other landing UI out of the way (mobile-only behavior)
     if (introCopy) { introCopy.style.display = 'none'; introCopy.style.opacity = '0'; }
     if (trigger) { trigger.style.display = 'none'; trigger.style.opacity = '0'; }
 
+    // Ensure fields are hidden initially
     if (mobileView){
-      mobileView.style.display = 'flex';
-      mobileView.setAttribute('aria-hidden','false');
+      mobileView.style.display = 'none';
+      mobileView.setAttribute('aria-hidden','true');
     }
 
-    // If the mobile builder exists (from the mobile IIFE), call it via a click simulation fallback.
-    // We rely on the mobile IIFE having run and attached the list builder.
-    // If list is still empty, trigger the mobile flow by dispatching a click on the hidden trigger.
-    if (mobileList && mobileList.children.length === 0){
+    // Show swipe intro
+    if (swipeIntro){
+      swipeIntro.setAttribute('aria-hidden','false');
+      swipeIntro.classList.remove('exiting');
+    }
+
+    function showMobileFieldsWithExistingFade(){
+      if (swipeIntro){
+        swipeIntro.classList.add('exiting');
+        // allow fade-out to complete before removing from layout
+        setTimeout(()=>{
+          swipeIntro.setAttribute('aria-hidden','true');
+        }, 420);
+      }
+
+      if (mobileView){
+        mobileView.style.display = 'flex';
+        mobileView.setAttribute('aria-hidden','false');
+      }
+
+      // Build fields list if needed (reuse existing mobile builders)
       try{
-        // Prefer direct mobile builder if available (doesn't require #servicesTrigger to exist)
-        if (window.__ep_mobile_buildFields) window.__ep_mobile_buildFields();
-        // Ensure view is fully shown (mirrors showMobileFields without relying on trigger)
+        if (mobileList && mobileList.children.length === 0){
+          if (window.__ep_mobile_buildFields) window.__ep_mobile_buildFields();
+        }
         if (window.__ep_mobile_showFields) window.__ep_mobile_showFields();
       }catch(_){}
+
+      // Preserve the current per-item fade/slide-in behavior
+      requestAnimationFrame(()=>{
+        if (!mobileView) return;
+        if (mobileList && mobileList.style.display !== 'flex') mobileList.style.display = 'flex';
+        const items = mobileList ? [...mobileList.querySelectorAll('.mobile-field')] : [];
+        items.forEach((el, i)=>{
+          el.style.opacity = '0';
+          el.style.transform = 'translateY(8px)';
+          el.style.transition = 'opacity .28s ease, transform .28s ease';
+          setTimeout(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; }, 40 + i*60);
+        });
+      });
     }
 
-    // Ensure list becomes visible even if the click path was bypassed
-    requestAnimationFrame(()=>{
-      if (!mobileView) return;
-      if (mobileList && mobileList.style.display !== 'flex') mobileList.style.display = 'flex';
-      const items = mobileList ? [...mobileList.querySelectorAll('.mobile-field')] : [];
-      items.forEach((el, i)=>{
-        el.style.opacity = '0';
-        el.style.transform = 'translateY(8px)';
-        el.style.transition = 'opacity .28s ease, transform .28s ease';
-        setTimeout(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; }, 40 + i*60);
-      });
-    });
+    // One-time swipe detection (any direction)
+    let startX = null, startY = null, armed = true;
+    const threshold = 18;
+
+    function onStart(e){
+      if (!armed) return;
+      const t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      startX = t.clientX;
+      startY = t.clientY;
+    }
+    function onMove(e){
+      if (!armed || startX === null || startY === null) return;
+      const t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dx) >= threshold || Math.abs(dy) >= threshold){
+        armed = false;
+        cleanup();
+        showMobileFieldsWithExistingFade();
+      }
+    }
+    function cleanup(){
+      window.removeEventListener('touchstart', onStart, {passive:true});
+      window.removeEventListener('touchmove', onMove, {passive:true});
+      window.removeEventListener('pointerdown', onStart, {passive:true});
+      window.removeEventListener('pointermove', onMove, {passive:true});
+    }
+
+    // Listen on window so any swipe across the screen works
+    window.addEventListener('touchstart', onStart, {passive:true});
+    window.addEventListener('touchmove', onMove, {passive:true});
+    window.addEventListener('pointerdown', onStart, {passive:true});
+    window.addEventListener('pointermove', onMove, {passive:true});
 
     return;
   }
