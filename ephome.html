@@ -215,7 +215,7 @@
   
   .ui-noise{
     position:fixed; inset:0; pointer-events:none;
-    max-width: calc(100% - 90px); z-index:1;
+    z-index:1;
     background:
       radial-gradient(1200px 800px at 50% 45%, rgba(142,162,255,.012), transparent 72%),
       radial-gradient(1400px 1000px at 50% 50%, transparent 58%, rgba(0,0,0,.36) 100%);
@@ -627,14 +627,19 @@
 
   /* Mobile field open (detail) state */
   #mobileFieldsView.field-open{
-    justify-content:flex-start;
-    align-items:stretch;
+    justify-content:center;
+    align-items:center;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
   }
   #mobileFieldDetail{
     width:100%;
+    max-width:min(92vw, 520px);
+    margin:0 auto;
     opacity:0;
     transform:translateY(6px);
     transition:opacity .35s ease, transform .35s ease;
+    text-align:center;
   }
   #mobileFieldsView.field-open #mobileFieldDetail{
     opacity:1;
@@ -655,7 +660,7 @@
     padding:0 2px;
     font-size:13.5px;
     line-height:1.55;
-    color:rgba(180,255,203,.85);
+    color:rgba(238,241,247,.9);
     text-align:center;
     text-transform:uppercase;
   }
@@ -727,7 +732,7 @@
     padding:0;
     border:0;
     background:transparent;
-    color: var(--fg);
+    color: #b4ffcb;
     font-size:10px;
     font-weight:500;
     letter-spacing:3px;
@@ -735,7 +740,7 @@
     text-decoration:none;
     cursor:pointer;
   }
-  #mobileFieldCta:hover{color: var(--fg);} 
+  #mobileFieldCta:hover{color: #b4ffcb;} 
   /* Subtle tap highlight removal */
   .mobile-field{-webkit-tap-highlight-color: transparent;}
   .mobile-field{opacity:0; transform:translateY(6px); transition:opacity .35s ease, transform .35s ease;}
@@ -780,7 +785,7 @@
 
     overflow:hidden;
   }
-\n  /* When a field is open, allow vertical scrolling within the stage */\n  #mobileFieldsView.field-open{\n    overflow-y:auto !important;\n    -webkit-overflow-scrolling:touch;\n  }\n  #mobileFieldDetail{ padding-bottom: 28px; }\n  /* Safety: if aria-hidden was flipped but display wasn't */
+  #mobileFieldDetail{ padding-bottom: 28px; }\n  /* Safety: if aria-hidden was flipped but display wasn't */
   #mobileFieldsView[aria-hidden="false"]{ display:flex; }
 
   #mobileFieldsList{
@@ -1015,10 +1020,12 @@
   @keyframes mobileLandingTitleIn{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:translateY(0)}}
   #mobileLanding .mobile-landing-sub{
     margin-top:10px;
-    color:rgba(238,241,247,.82);
-    letter-spacing:.06em;
-    font-size:12px;
+    color:rgba(238,241,247,.6);
+    letter-spacing:.12em;
+    font-size:10px;
+    font-weight:300;
     line-height:1.35;
+    text-transform:uppercase;
   
     opacity:0;
     animation: mobileLandingSubIn 1.0s ease forwards;
@@ -1331,7 +1338,8 @@ function setTargetPos(id, x, y){
   state.targetPos[id] = { x: Math.round(x), y: Math.round(y) };
   state.basePos[id] = { x: Math.round(x), y: Math.round(y) };
 }
-let __fieldRectFrame = 0, __fieldRectCache = null;
+let __lastMouseX = -1, __lastMouseY = -1;
+let __hoverCheckFrame = 0;
 function tickNodeField(){
   const t = performance.now() * 0.001;
   const active = state.activeField;
@@ -1361,6 +1369,18 @@ function tickNodeField(){
 
     positionNodeEl(id);
   });
+
+  // Every 6 frames, validate that .hovered buttons still have the pointer over them.
+  // This catches stuck hover when a node moves away from a stationary cursor.
+  __hoverCheckFrame = (__hoverCheckFrame + 1) % 6;
+  if (__hoverCheckFrame === 0 && __lastMouseX >= 0){
+    document.querySelectorAll('.node-button.hovered').forEach(btn => {
+      const r = btn.getBoundingClientRect();
+      const inside = __lastMouseX >= r.left && __lastMouseX <= r.right &&
+                     __lastMouseY >= r.top  && __lastMouseY <= r.bottom;
+      if (!inside) btn.classList.remove('hovered');
+    });
+  }
 
   // active field decay
   if (state.activeField) {
@@ -3047,6 +3067,8 @@ renderNodes();
 (function(){
   let _hoverRaf = 0;
   window.addEventListener('mousemove', (e)=>{
+    __lastMouseX = e.clientX;
+    __lastMouseY = e.clientY;
     if (_hoverRaf) return;
     _hoverRaf = requestAnimationFrame(()=>{
       _hoverRaf = 0;
@@ -3544,6 +3566,11 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
       cta.setAttribute('href', 'https://xd.enricopoli.com/');
       cta.setAttribute('target', '_blank');
       cta.setAttribute('rel', 'noopener');
+    } else {
+      const subject = encodeURIComponent('Samples request — ' + (node.title || ''));
+      cta.style.display = 'inline-flex';
+      cta.textContent = 'GET IN TOUCH';
+      cta.setAttribute('href', `mailto:epoli.uk@gmail.com?subject=${subject}`);
     }
   }
 
@@ -3739,46 +3766,33 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
     const introCopy = document.querySelector('.intro-copy');
 
     // Keep existing centering/constraints untouched: we only hide the underlying viewport while the landing overlay is active.
-    const landingDismissed = (()=>{ try{ return localStorage.getItem('ep_mobileLandingDismissed') === '1'; }catch(_){ return false; } })();
-
-    if (!landingDismissed){
-      document.body.classList.add('mobile-landing-active');
-    }
+    // Landing shows every page load — dismissed by tap/swipe for this session only (no localStorage)
+    document.body.classList.add('mobile-landing-active');
 
     // Hide desktop-ish entry points that are irrelevant on mobile
     if (introCopy) { introCopy.style.display = 'none'; introCopy.style.opacity = '0'; }
     if (trigger) { trigger.style.display = 'none'; trigger.style.opacity = '0'; }
 
-
-    // Ensure the stacked fields view stays hidden while landing is active
-    if (!landingDismissed && mobileView){
+    // Keep fields hidden while landing is visible
+    if (mobileView){
       mobileView.style.display = 'none';
       mobileView.setAttribute('aria-hidden','true');
     }
 
-    // Landing overlay: show only if not dismissed
+    // Show the landing overlay
     if (landing){
-      if (landingDismissed){
-        landing.setAttribute('aria-hidden','true');
-        landing.style.display = 'none';
-      }else{
-        landing.setAttribute('aria-hidden','false');
-        // allow layout before transition
-        requestAnimationFrame(()=> landing.classList.add('is-visible'));
-      }
+      landing.setAttribute('aria-hidden','false');
+      requestAnimationFrame(()=> landing.classList.add('is-visible'));
     }
 
     function startMobileFields(){
-      // Unhide underlying UI
       document.body.classList.remove('mobile-landing-active');
 
-      // Show mobile fields view
       if (mobileView){
         mobileView.style.display = 'flex';
         mobileView.setAttribute('aria-hidden','false');
       }
 
-      // Build/populate list if needed
       if (mobileList && mobileList.children.length === 0){
         try{
           if (window.__ep_mobile_buildFields) window.__ep_mobile_buildFields();
@@ -3786,7 +3800,6 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
         }catch(_){}
       }
 
-      // Preserve existing fade-in behavior for list items
       requestAnimationFrame(()=>{
         if (!mobileView) return;
         if (mobileList && mobileList.style.display !== 'flex') mobileList.style.display = 'flex';
@@ -3800,21 +3813,12 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
       });
     }
 
-
-    // Dismiss on first tap or swipe (any direction) — mobile only, one-time, persisted.
-    if (landingDismissed){
-      startMobileFields();
-      return;
-    }
-
     let sx=0, sy=0;
     let landingGone = false;
 
     function dismissLanding(){
       if (landingGone) return;
       landingGone = true;
-
-      try{ localStorage.setItem('ep_mobileLandingDismissed','1'); }catch(_){}
 
       if (landing){
         landing.classList.remove('is-visible');
@@ -3840,12 +3844,11 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
       const dx = t.clientX - sx;
       const dy = t.clientY - sy;
       const dist = Math.hypot(dx, dy);
-      if (dist > 14){ // light threshold so any intentional swipe works
+      if (dist > 14){
         dismissLanding();
       }
     }
 
-    // Tap anywhere dismisses (covers "first tap")
     window.addEventListener('pointerdown', dismissLanding, {passive:true, once:true});
     window.addEventListener('touchstart', onStart, {passive:true});
     window.addEventListener('touchmove', onMove, {passive:true});
@@ -3883,7 +3886,7 @@ window.__startIntroTyping = (servicesTrigger ? typeSequence : function(){});
 <div id="mobileLanding" aria-hidden="true">
   <div class="mobile-landing-inner">
     <div class="mobile-landing-title mono">EVERYTHING IS EXPERIENCE</div>
-    <div class="mobile-landing-sub mono">Swipe to find out what I actually do.</div>
+    <div class="mobile-landing-sub mono">SWIPE TO FIND OUT WHAT I ACTUALLY DO.</div>
   </div>
 </div>
 
