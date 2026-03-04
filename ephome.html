@@ -141,6 +141,10 @@
     box-shadow:none;
   }
   .node-button:hover{border-color:transparent; color:var(--fg)}
+  /* JS-managed hover class — avoids CSS :hover getting stuck on animated/moved elements */
+  .node-button.hovered .node-title{color:#ffffff;font-weight:700;}
+  .node-button.hovered .node-subtitle{color:rgba(255,255,255,.9);}
+  /* Keep CSS :hover as fallback for non-animated states */
   .node-button:hover .node-title{color:#ffffff;font-weight:700;}
   .node-button:hover .node-subtitle{color:rgba(255,255,255,.9);}
   .node.open .node-button,.node.focused .node-button{border-color:transparent;background:transparent}
@@ -347,7 +351,7 @@
     padding:0;
     border:0;
     background:none;
-    color: var(--fg);
+    color: #b4ffcb;
     text-decoration:none;
     font-family:inherit;
     display:inline-flex;
@@ -361,9 +365,9 @@
     transform:translateX(0);
     transition:transform .22s var(--easeSoft), opacity .22s var(--easeSoft);
   }
-  .detail-cta .tag:hover{opacity:1; color: var(--fg)}
+  .detail-cta .tag:hover{opacity:1; color: #b4ffcb}
   .detail-cta .tag:hover::after{transform:translateX(3px)}
-  .detail-cta .tag.blue{border:0;color: var(--fg)}
+  .detail-cta .tag.blue{border:0;color: #b4ffcb}
   .detail-top-chip{display:inline-block; margin:0; font-size:10px; font-weight:500; letter-spacing:3px; text-transform:uppercase; font-family:inherit; line-height:1.1; text-align:center; color:#fff; white-space:nowrap; max-width:min(92ch, 100%); order:1;}
 
   
@@ -814,7 +818,7 @@
 
 
 :root{
-      --nav: #fff;
+      --nav: #b4ffcb;
       --nav-active: #fff;
       --hdr-pad-top: 27.5px;
       --hdr-pad-x: 24px;
@@ -1489,6 +1493,10 @@ function createNode(n){
   const handle = el.querySelector('.drag-handle');
   const overlayBtn = el.querySelector('.js-open-overlay');
 
+  // JS-managed hover: prevents CSS :hover from getting stuck when nodes move/animate
+  btn.addEventListener('mouseenter', ()=>{ btn.classList.add('hovered'); });
+  btn.addEventListener('mouseleave', ()=>{ btn.classList.remove('hovered'); });
+
   btn.addEventListener('click', (e)=>{
     if (e.target.closest('.drag-handle')) return;
     e.stopPropagation();
@@ -1847,6 +1855,8 @@ function renderDetailCard(node){
   }
 }
 async function openDetail(id){
+  // Clear any stuck hover states
+  document.querySelectorAll('.node-button.hovered').forEach(b => b.classList.remove('hovered'));
   setCenterLineVisible(false);
   const node = nodes.find(n => n.id === id);
   if (!node) return;
@@ -1882,9 +1892,14 @@ async function openDetail(id){
     const others = Array.from(document.querySelectorAll('.node')).filter(el => el.dataset.id !== id);
     others.sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top);
     others.forEach((el, i)=>{
-      el.style.transitionDelay = `${i*45}ms`;
+      el.style.transitionDelay = `${i*30}ms`;
       el.classList.add('in-detail-hidden');
     });
+    // Clean up delays after the fade completes so they don't interfere with restore
+    const maxDelay = others.length * 30 + 500;
+    setTimeout(()=>{
+      others.forEach(el => { el.style.transitionDelay = ''; });
+    }, maxDelay);
 
     // Hide the source host after the crossfade is complete (avoids snap).
     const activeEl = nodesRoot.querySelector(`.node[data-id="${id}"]`);
@@ -1923,6 +1938,8 @@ function waitOpacityTransition(el, fallbackMs = 650){
 
 async function closeDetail(){
   closeClientVideoFullscreen();
+  // Clear any stuck hover states before restore
+  document.querySelectorAll('.node-button.hovered').forEach(b => b.classList.remove('hovered'));
   if (!state.openId) return;
   const closingId = state.openId;
 
@@ -1942,9 +1959,13 @@ async function closeDetail(){
   const others = Array.from(document.querySelectorAll('.node')).filter(el => el.dataset.id !== closingId);
   others.sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top);
   others.forEach((el, i)=>{
-    el.style.transitionDelay = `${i*40}ms`;
+    el.style.transitionDelay = `${i*25}ms`;
     el.classList.remove('in-detail-hidden');
   });
+  // Reset delays quickly — they only need to exist for the initial re-appear
+  setTimeout(()=>{
+    others.forEach(el => { el.style.transitionDelay = ''; });
+  }, others.length * 25 + 400);
 
   try { await animateTitleFlight(closingId,'to-node'); } catch(e) {}
 
@@ -3020,6 +3041,30 @@ function typeSequence(){
 }
 
 renderNodes();
+
+// Global safety: clear .hovered from any node-button the pointer is no longer over.
+// This catches cases where mouseleave didn't fire (animated nodes, pointer-events toggles, etc.)
+(function(){
+  let _hoverRaf = 0;
+  window.addEventListener('mousemove', (e)=>{
+    if (_hoverRaf) return;
+    _hoverRaf = requestAnimationFrame(()=>{
+      _hoverRaf = 0;
+      document.querySelectorAll('.node-button.hovered').forEach(btn=>{
+        const r = btn.getBoundingClientRect();
+        const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        if (!inside) btn.classList.remove('hovered');
+      });
+    });
+  }, { passive: true });
+  // Also clear on window blur/leave
+  window.addEventListener('mouseleave', ()=>{
+    document.querySelectorAll('.node-button.hovered').forEach(b => b.classList.remove('hovered'));
+  });
+  window.addEventListener('blur', ()=>{
+    document.querySelectorAll('.node-button.hovered').forEach(b => b.classList.remove('hovered'));
+  });
+})();
 setupFilmDirectionRandomHoverDesktop();
 setupExperienceDesignHoverDesktop();
 setInitialView();
