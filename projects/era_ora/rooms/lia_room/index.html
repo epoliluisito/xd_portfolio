@@ -732,7 +732,7 @@ AFRAME.registerComponent('rig-walk', {
 
         const RADIUS = 130;
         const SEG = 500;
-        const GROUND_Y = 0.012;
+        const GROUND_Y = 0.09; // must be above lia_lunar_ground ring (y=0.07) to prevent bleed-through
         const HIDDEN_Y = -0.20;
 
         // ── Interior volumes ──
@@ -1041,6 +1041,16 @@ AFRAME.registerComponent('rig-walk', {
               const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
               drift+=0.22*berm*pathLen;
             }
+          }
+
+          // ── Wall-edge drift taper ──
+          // Taper all drift to zero within ~1.2m of the indoor boundary (outdoor side).
+          // This ensures the vertex just outside the exclusion zone has near-zero height,
+          // so the HIDDEN_Y→outdoor step is tiny and the cliff artifact disappears.
+          if(!isIndoor(x,z)){
+            const dIn = distToAnyInterior(x,z);
+            const edgeTaper = smoothstep(0.0, 1.2, dIn);
+            drift *= edgeTaper;
           }
 
           drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
