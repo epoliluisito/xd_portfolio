@@ -865,13 +865,24 @@ AFRAME.registerComponent('rig-walk', {
           const inner=10+sn(wx*0.05-5,wz*0.05+14)*4;
           let m=1-smootherstep(inner,outer,r);
 
-          // Spawn side suppression
+          // Spawn side suppression — wider fade so outer edge is never a hard line
           const spawnR=Math.sqrt(x*x+z*z);
-          m*=smootherstep(16,42,spawnR);
+          m*=smootherstep(16,48,spawnR);
           const frontBias=Math.max(0,Math.min(1,(z+75)/75));
           m*=(1-0.18*frontBias*(0.8+0.2*(sn(x*0.04+60,z*0.04-10)*0.5+0.5)));
 
           m*=platFade*indoorTaper;
+
+          // ── Force full coverage near building exterior ──
+          // The domain-warped radial falloff and doorway indoorTaper can push m < 1
+          // right outside the indoor boundary, which with HIDDEN_Y creates a seam line.
+          // Clamp m toward 1.0 within 2.5m of the indoor boundary so all wall-adjacent
+          // vertices are fully covered regardless of what the radial shape does.
+          if(!isIndoor(x,z)){
+            const dIn = distToAnyInterior(x,z);
+            const nearBldg = smootherstep(2.5, 0.3, dIn);
+            m = Math.max(m, nearBldg);
+          }
 
           // Organic edge breakup
           const en=sn(x*0.1+100,z*0.1-100)*0.5+0.5;
