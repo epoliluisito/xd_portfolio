@@ -48,6 +48,7 @@
       transition: opacity 180ms ease;
       z-index: 9999;
       user-select: none;
+      -webkit-user-select: none;
     }
     #userGuide.visible { opacity: 1; }
     #userGuide .title {
@@ -92,6 +93,7 @@
     line-height: 1.55;
     color: rgba(255,255,255,0.78);
     user-select: none;
+    -webkit-user-select: none;
     pointer-events: auto;
     opacity: 1;
     transition: opacity 1.2s ease;
@@ -185,6 +187,7 @@
       -webkit-backdrop-filter: blur(10px);
       box-shadow: 0 18px 40px rgba(0,0,0,0.55);
       user-select: none;
+      -webkit-user-select: none;
     }
     #loadingTitle{
       font-size: 12px;
@@ -1442,6 +1445,7 @@ AFRAME.registerComponent('end-chamber-audio', {
   }
   #quitBtn{
     appearance:none;
+    -webkit-appearance: none;
     border: 1px solid rgba(255,255,255,0.16);
     background: rgba(0,0,0,0.35);
     color: rgba(255,255,255,0.85);
@@ -1452,6 +1456,7 @@ AFRAME.registerComponent('end-chamber-audio', {
     text-transform: uppercase;
     cursor: pointer;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
   #quitBtn:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
 
@@ -1492,6 +1497,7 @@ AFRAME.registerComponent('end-chamber-audio', {
   }
   .qbtn{
     appearance:none;
+    -webkit-appearance: none;
     border: 1px solid rgba(255,255,255,0.18);
     background: rgba(255,255,255,0.10);
     color: rgba(255,255,255,0.92);
@@ -1529,6 +1535,7 @@ AFRAME.registerComponent('end-chamber-audio', {
   #cameraViewShell.show{ display: flex; }
   #cameraViewChevron{
     appearance: none;
+    -webkit-appearance: none;
     border: 1px solid rgba(255,255,255,0.16);
     background: rgba(0,0,0,0.35);
     color: rgba(255,255,255,0.85);
@@ -1537,6 +1544,7 @@ AFRAME.registerComponent('end-chamber-audio', {
     font-size: 14px;
     cursor: pointer;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     transition: all 200ms ease;
     line-height: 1;
   }
@@ -1547,6 +1555,7 @@ AFRAME.registerComponent('end-chamber-audio', {
   #cameraViewChevron.expanded{ transform: rotate(180deg); }
   #cameraViewBtn{
     appearance: none;
+    -webkit-appearance: none;
     border: 1px solid rgba(255,255,255,0.16);
     background: rgba(0,0,0,0.35);
     color: rgba(255,255,255,0.85);
@@ -1557,6 +1566,7 @@ AFRAME.registerComponent('end-chamber-audio', {
     text-transform: uppercase;
     cursor: pointer;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     display: none;
     transition: opacity 200ms ease;
   }
@@ -10358,6 +10368,23 @@ AFRAME.registerComponent('aya-seat-experience', {
       if (isF && this.state.step === 2 && !this.state.autopilot && !this.state.standAnim) {
         e.preventDefault();
         if (this._isFacingPool()) {
+          // ---- SAFARI AUTOPLAY FIX ----------------------------------------
+          // Safari revokes gesture trust if .load() is called before .play()
+          // (which happens in _startExperience when src changes).
+          // Pre-play the video NOW, synchronously inside this keydown handler,
+          // while the gesture token is still valid. Start muted (always allowed),
+          // then _showOverlay() unmutes it once the overlay is visible.
+          if (this.overlayVideo) {
+            try {
+              this.overlayVideo.muted = true;
+              const _pp = this.overlayVideo.play();
+              if (_pp && typeof _pp.catch === 'function') _pp.catch(() => {});
+              this.overlayVideo.__safariPrePlayed = true;
+            } catch(e2) {
+              this.overlayVideo.__safariPrePlayed = false;
+            }
+          }
+          // -----------------------------------------------------------------
           this._startExperience();
         } else {
           this._updateSeatedGuide(true);
@@ -10962,16 +10989,32 @@ return chosen * 180 / Math.PI;
   _showOverlay: function () {
     if (!this.overlay || !this.overlayVideo) return;
     
-    // Critical: Start video playback FIRST while still invisible
-    // This ensures video is running when we fade it in
-    try {
+    // Safari pre-play path: video.play() was already called synchronously in the
+    // keydown handler (before any .load() could revoke gesture trust). Just unmute
+    // and verify it's still running.
+    // Standard path (Chrome/Firefox): call play() normally here.
+    if (this.overlayVideo.__safariPrePlayed) {
+      this.overlayVideo.__safariPrePlayed = false;
       this.overlayVideo.currentTime = 0;
       this.overlayVideo.style.opacity = '0';
-      const playPromise = this.overlayVideo.play();
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(() => {});
+      this.overlayVideo.muted = false;
+      if (this.overlayVideo.paused) {
+        const _pp = this.overlayVideo.play();
+        if (_pp && typeof _pp.catch === 'function') {
+          _pp.catch(() => { this.overlayVideo.muted = true; this.overlayVideo.play().catch(() => {}); });
+        }
       }
-    } catch(err) {}
+    } else {
+      // Standard path (Chrome / Firefox / fallback)
+      try {
+        this.overlayVideo.currentTime = 0;
+        this.overlayVideo.style.opacity = '0';
+        const playPromise = this.overlayVideo.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {});
+        }
+      } catch(err) {}
+    }
     
     // Step 1: Fade overlay background (game → black, 1.5s)
     this.overlay.classList.add('visible');
@@ -11024,11 +11067,17 @@ return chosen * 180 / Math.PI;
     if (!this.guide || !this.guideBody) return;
     this.guideBody.innerHTML = html;
     this.guide.classList.add('visible');
+    // JS fallback for browsers that don't support body:has() (Firefox < 121, older Safari)
+    var shell = document.getElementById('cameraViewShell');
+    if (shell) { shell.style.opacity = '0'; shell.style.pointerEvents = 'none'; }
   },
 
   _hideGuide: function () {
     if (!this.guide) return;
     this.guide.classList.remove('visible');
+    // JS fallback: restore camera shell visibility
+    var shell = document.getElementById('cameraViewShell');
+    if (shell) { shell.style.opacity = ''; shell.style.pointerEvents = ''; }
   }
 });
 
