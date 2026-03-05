@@ -40,7 +40,8 @@
       const o = document.createElement('canvas');
       o.width = o.height = size;
       const octx = o.getContext('2d');
-      octx.filter = 'blur(12px)';
+      // ctx.filter is not supported in all Safari versions; fall back gracefully.
+      try { octx.filter = 'blur(12px)'; } catch(e) {}
       octx.drawImage(c, 0, 0);
 
       ctx.clearRect(0, 0, size, size);
@@ -623,6 +624,7 @@ AFRAME.registerComponent('light-beam', {
     padding: 22px 22px 18px 22px;
     box-shadow: 0 22px 70px rgba(0,0,0,0.62);
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     color: rgba(255,255,255,0.92);
   }
   #introPanel.fade{
@@ -767,6 +769,7 @@ AFRAME.registerComponent('light-beam', {
     text-transform: uppercase;
     cursor: pointer;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
   #quitBtn:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
 
@@ -848,6 +851,7 @@ AFRAME.registerComponent('light-beam', {
     font-size: 14px;
     cursor: pointer;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     transition: all 200ms ease;
     line-height: 1;
   }
@@ -870,6 +874,7 @@ AFRAME.registerComponent('light-beam', {
     text-transform: uppercase;
     cursor: pointer;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     display: none; /* Hidden by default, shown when chevron clicked */
     transition: opacity 200ms ease;
   }
@@ -1189,6 +1194,7 @@ AFRAME.registerComponent('light-beam', {
     max-width: 44vw;
     pointer-events: none;
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
   }
   #npcHud .title{
     font-weight: 700;
@@ -3598,7 +3604,7 @@ const far = this.data.avoidDist;
                 const c = Math.max(0.0, this.data.contrast);
                 const b = Math.max(0.0, this.data.brightness);
                 const s = Math.max(0.0, this.data.saturation);
-                this._ctx.filter = `contrast(${c}) brightness(${b}) saturate(${s})`;
+                try { this._ctx.filter = `contrast(${c}) brightness(${b}) saturate(${s})`; } catch(e) {}
 
                 try {
                   this._ctx.drawImage(v, 0, 0, this._canvas.width, this._canvas.height);
@@ -7056,19 +7062,29 @@ function startOverlayVideo(){
     // Pause fear_room rendering while the elevator video runs (prevents double-GPU when AYA preloads).
     pauseSceneRendering();
 
-    // Ensure the browser sees this play() as a direct result of key press (gesture-safe).
-    // NOTE: Do not reset rideVideo.src here; the <source> is already set and resetting src can cause a cold-start stutter.
-    if (!rideVideo.__warmed) { try { rideVideo.load(); } catch(e){} rideVideo.__warmed = true; }
-    rideVideo.currentTime = 0;
-    rideVideo.muted = false;
-
-    const playPromise = rideVideo.play();
-    if (playPromise && typeof playPromise.catch === 'function') {
-      playPromise.catch(() => {
-        // If autoplay policy blocks, try muted as fallback (still shows video).
-        rideVideo.muted = true;
-        rideVideo.play().catch(()=>{});
-      });
+    // Safari pre-play path: video was already started (muted) inside the gesture
+    // handler in onSecondF(). Just unmute it and ensure it is still running.
+    // Chrome/Firefox path: call play() normally (they are lenient about setTimeout).
+    if (rideVideo.__safarPrePlayed) {
+      rideVideo.__safarPrePlayed = false;
+      rideVideo.muted = false;
+      if (rideVideo.paused) {
+        // Unexpectedly paused (e.g. browser interrupted it); attempt to resume.
+        rideVideo.play().catch(() => { rideVideo.muted = true; rideVideo.play().catch(()=>{}); });
+      }
+    } else {
+      // Standard path (Chrome / Firefox / legacy fallback)
+      if (!rideVideo.__warmed) { try { rideVideo.load(); } catch(e){} rideVideo.__warmed = true; }
+      rideVideo.currentTime = 0;
+      rideVideo.muted = false;
+      const playPromise = rideVideo.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          // If autoplay policy blocks, try muted as fallback (still shows video).
+          rideVideo.muted = true;
+          rideVideo.play().catch(()=>{});
+        });
+      }
     }
     // Preload next room while the video plays (cache warmup + READY handshake).
     // Delay slightly to avoid competing with initial video decode/startup (reduces first-seconds hitch).
@@ -7124,6 +7140,25 @@ function startOverlayVideo(){
 
     // Close doors only on confirm (your desired UX).
     toggleDoorsClose();
+
+    // ---- SAFARI AUTOPLAY FIX ------------------------------------------------
+    // Safari revokes gesture trust after any async gap (setTimeout, Promise, etc.).
+    // video.play() called inside setTimeout will silently fail on Safari.
+    // Solution: call play() NOW, synchronously within this keydown handler,
+    // while the gesture token is still valid. We start muted (guaranteed to work),
+    // then unmute in startOverlayVideo() once the overlay is visible.
+    rideVideo.__safarPrePlayed = false;
+    try {
+      if (!rideVideo.__warmed) { rideVideo.load(); rideVideo.__warmed = true; }
+      rideVideo.currentTime = 0;
+      rideVideo.muted = true;
+      const _pp = rideVideo.play();
+      if (_pp && typeof _pp.catch === 'function') _pp.catch(() => {});
+      rideVideo.__safarPrePlayed = true;
+    } catch(e) {
+      rideVideo.__safarPrePlayed = false;
+    }
+    // -------------------------------------------------------------------------
 
     setTimeout(()=>{
       startOverlayVideo();
