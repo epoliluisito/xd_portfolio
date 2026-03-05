@@ -608,32 +608,29 @@ AFRAME.registerComponent('rig-walk', {
 
         const nA=sn(x*0.05,z*0.05)*3.5;
         const nB=sn(x*0.11+22,z*0.11-9)*1.5;
-        const outerR=43+nA+nB;
+        // Extended to cover full snow footprint — office at z=-75, monolith at z=-30 is 45 units away
+        const outerR=50+nA+nB;
         const innerFull=8+sn(x*0.08-30,z*0.08+17)*1.5;
 
         let m=(outerR-r)/Math.max(0.001,(outerR-innerFull));
         m=Math.max(0,Math.min(1,m)); m=m*m*(3-2*m);
 
-        // Fade from office centre — extended to match ground snow footprint
+        // Distance fade — reaches zero at ~58 units from office, past the monolith
         const dOff=Math.sqrt((x-this._officeCX)*(x-this._officeCX)+(z-this._officeCZ)*(z-this._officeCZ));
-        let sf=1-(dOff-40)/14; sf=Math.max(0,Math.min(1,sf)); sf=sf*sf*(3-2*sf);
+        let sf=1-(dOff-42)/16; sf=Math.max(0,Math.min(1,sf)); sf=sf*sf*(3-2*sf);
         m*=sf;
 
-        const fb=Math.max(0,(z+75)/75);
-        m*=(1-0.55*fb);
+        // fb north-bias removed — hard cutoff at z=-32 handles the limit now
         m*=pf;
 
         // ── Corridor approach lane suppression ──
-        // Suppress particles in the clear path zones approaching each entrance
         {
           const smst=(a,b,t)=>{let k=(t-a)/(b-a);k=Math.max(0,Math.min(1,k));return k*k*(3-2*k);};
-          // North corridor approach (center x=4.5, entrance z=-56.5, extends 12m outward)
           const ndx=Math.abs(x-4.5), ndz=z-(-56.5);
           if(ndx<4.5 && ndz>-2 && ndz<13){
             const f=smst(4.5,1.8,ndx)*smst(-2,0,ndz)*smst(13,9,ndz);
             m*=(1-f);
           }
-          // South exit approach (center x=-4.5, exit z=-81.5, extends 12m southward)
           const sdx=Math.abs(x+4.5), sdz=(-81.5)-z;
           if(sdx<3.5 && sdz>-2 && sdz<13){
             const f=smst(3.5,1.4,sdx)*smst(-2,0,sdz)*smst(13,9,sdz);
@@ -648,12 +645,13 @@ AFRAME.registerComponent('rig-walk', {
         const d=this.data, arr=this._posAttr.array;
         let x,z,tries=0;
         do{
-          x=this._officeCX+(Math.random()-0.5)*80;
-          z=this._officeCZ+(Math.random()-0.5)*80;
+          // Expanded spawn range to cover full snowy area up to the monolith
+          x=this._officeCX+(Math.random()-0.5)*110;
+          z=this._officeCZ+(Math.random()-0.5)*110;
           tries++;
           var mask=this._zoneMask(x,z);
           if(mask>0.02 && !this._isIndoor(x,z) && !this._nearPlatform(x,z) && Math.random()<mask) break;
-        }while(tries<25);
+        }while(tries<40);
 
         if(tries>=25||this._isIndoor(x,z)||this._nearPlatform(x,z)||mask<=0.02||this._isClearApproach(x,z)){
           arr[i*3]=arr[i*3+1]=arr[i*3+2]=9999; return;
@@ -928,10 +926,6 @@ AFRAME.registerComponent('rig-walk', {
           const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
           m+=(en-0.5)*0.08*eb;
 
-          // North extent cutoff: snow fades to zero well before the platform.
-          // z=-50 → full weight, z=-35 → zero. Office/corridor area (z<-56) is completely untouched.
-          m *= smootherstep(-35, -50, z);
-
           // North extent cutoff: z=-45 full, z=-32 zero (just before monolith at z=-30).
           m *= smootherstep(-32, -45, z);
 
@@ -971,7 +965,7 @@ AFRAME.registerComponent('rig-walk', {
           m*=smootherstep(40,30,dOff);
           m*=(1-0.15*Math.max(0,Math.min(1,(z+75)/75)));
           m*=platFade*indoorTaper;
-          // North extent cutoff: z=-45 full, z=-32 zero.
+          // North extent cutoff: matches snowMask — z=-45 full, z=-32 zero.
           m *= smootherstep(-32, -45, z);
           return Math.max(0,Math.min(1,m));
         }
@@ -1229,8 +1223,7 @@ AFRAME.registerComponent('rig-walk', {
   }
   #terminalGuide .tg-main {
     font-size: 12px; letter-spacing: 0.12em;
-    text-transform: uppercase; opacity: 0.85;
-    margin-bottom: 6px;
+    text-transform: uppercase; opacity: 0.85; margin-bottom: 6px;
   }
   #terminalGuide .tg-sub {
     margin-top: 4px; font-size: 14px;
