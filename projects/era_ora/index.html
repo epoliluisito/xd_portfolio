@@ -7062,35 +7062,37 @@ function startOverlayVideo(){
     // Pause fear_room rendering while the elevator video runs (prevents double-GPU when AYA preloads).
     pauseSceneRendering();
 
-    // Safari pre-play path: video was already started (muted) inside the gesture
-    // handler in onSecondF(). Just unmute it and ensure it is still running.
-    // Chrome/Firefox path: call play() normally (they are lenient about setTimeout).
-    if (rideVideo.__safarPrePlayed) {
-      rideVideo.__safarPrePlayed = false;
+    // Video play logic:
+    // The video was pre-played (muted) synchronously in onSecondF to preserve
+    // Safari's gesture trust. By now it has been running ~680ms (door close anim).
+    // We just need to unmute it. If it somehow paused (browser interruption),
+    // we fall back to a fresh play().
+    // We do NOT call load() here — video is preloaded and must not be re-decoded.
+    const alreadyPlaying = !rideVideo.paused;
+
+    if (alreadyPlaying) {
+      // Pre-play succeeded — just unmute.
       rideVideo.muted = false;
-      if (rideVideo.paused) {
-        // Unexpectedly paused (e.g. browser interrupted it); attempt to resume.
-        rideVideo.play().catch(() => { rideVideo.muted = true; rideVideo.play().catch(()=>{}); });
-      }
+      // The 'playing' event already fired 680ms ago, so we trigger preload directly
+      // now that the scene is paused (safe to load without competing with 3D rendering).
+      setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
     } else {
-      // Standard path (Chrome / Firefox / legacy fallback)
+      // Fallback: pre-play was blocked (e.g. very strict autoplay policy).
       if (!rideVideo.__warmed) { try { rideVideo.load(); } catch(e){} rideVideo.__warmed = true; }
       rideVideo.currentTime = 0;
       rideVideo.muted = false;
       const playPromise = rideVideo.play();
       if (playPromise && typeof playPromise.catch === 'function') {
         playPromise.catch(() => {
-          // If autoplay policy blocks, try muted as fallback (still shows video).
           rideVideo.muted = true;
           rideVideo.play().catch(()=>{});
         });
       }
+      // Preload next room once video is confirmed running (scene is already paused above).
+      rideVideo.addEventListener('playing', () => {
+        setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
+      }, { once: true });
     }
-    // Preload next room while the video plays (cache warmup + READY handshake).
-    // Delay slightly to avoid competing with initial video decode/startup (reduces first-seconds hitch).
-    rideVideo.addEventListener('playing', () => {
-      setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
-    }, { once: true });
 
     // Skip becomes available only once the next room reports READY.
     setSkipUI('hidden');
@@ -7143,21 +7145,16 @@ function startOverlayVideo(){
 
     // ---- SAFARI AUTOPLAY FIX ------------------------------------------------
     // Safari revokes gesture trust after any async gap (setTimeout, Promise, etc.).
-    // video.play() called inside setTimeout will silently fail on Safari.
-    // Solution: call play() NOW, synchronously within this keydown handler,
-    // while the gesture token is still valid. We start muted (guaranteed to work),
-    // then unmute in startOverlayVideo() once the overlay is visible.
-    rideVideo.__safarPrePlayed = false;
+    // Solution: call play() NOW, synchronously within this keydown handler, while
+    // the gesture token is still valid. Start MUTED (guaranteed to work on all browsers).
+    // IMPORTANT: do NOT call rideVideo.load() here — video has preload="auto" and is
+    // already buffered. Calling load() flushes that buffer and causes stutter/stall.
+    // startOverlayVideo() will unmute once the overlay is visible.
     try {
-      if (!rideVideo.__warmed) { rideVideo.load(); rideVideo.__warmed = true; }
       rideVideo.currentTime = 0;
       rideVideo.muted = true;
-      const _pp = rideVideo.play();
-      if (_pp && typeof _pp.catch === 'function') _pp.catch(() => {});
-      rideVideo.__safarPrePlayed = true;
-    } catch(e) {
-      rideVideo.__safarPrePlayed = false;
-    }
+      rideVideo.play().catch(() => {});
+    } catch(e) {}
     // -------------------------------------------------------------------------
 
     setTimeout(()=>{
