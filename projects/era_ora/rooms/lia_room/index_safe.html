@@ -533,19 +533,32 @@ AFRAME.registerComponent('rig-walk', {
       },
 
       _isIndoor: function(x,z){
-        // Outer shells — no particles inside walls or rooms
-        if(x>-7.15 && x<7.15 && z>-81.65 && z<-68.35) return true;
-        if(x>2.25 && x<6.75 && z>-68.5 && z<-56.5) return true;
-        if(x>-6.75 && x<-2.25 && z>-96.5 && z<-84.5) return true;
-        // Doorway bridge zones
-        if(x>3.15 && x<5.85 && z>-69.2 && z<-67.8) return true;
-        if(x>-5.85 && x<-3.15 && z>-82.2 && z<-80.8) return true;
+        // Office interior — aligned with snow-ground officeIn
+        if(x>-7.15 && x<7.15 && z>-81.90 && z<-68.10) return true;
+        // North corridor (transition_corridor) — aligned with snow-ground transIn
+        if(x>2.20 && x<6.80 && z>-68.80 && z<-56.20) return true;
+        // South exit corridor zone — corrected bounds (was shifted ~3m south, fixed to match exitIn)
+        if(x>-6.70 && x<-2.30 && z>-94.10 && z<-81.40) return true;
+        // Doorway bridge zones — expanded buffers
+        if(x>2.80 && x<6.20 && z>-69.40 && z<-67.60) return true;
+        if(x>-6.20 && x<-2.80 && z>-82.40 && z<-80.60) return true;
+        return false;
+      },
+
+      // Approach lanes outside corridor mouths — should be clear of particles
+      _isClearApproach: function(x,z){
+        // North corridor approach (entrance at z=-56.5, lane extends 12m outward)
+        if(Math.abs(x-4.5)<2.2 && z>-56.5 && z<-44.5) return true;
+        // South exit approach (exit at z=-81.5, lane extends 12m southward)
+        if(Math.abs(x+4.5)<1.6 && z>-93.5 && z<-81.5) return true;
         return false;
       },
 
       _nearPlatform: function(x,z){ return Math.sqrt(x*x+z*z)<this._platClearR; },
 
       _zoneMask: function(x,z){
+        // Hard north cutoff: no particles beyond the monolith (z=-30).
+        if (z > -32) return 0;
         const sn=this._sn;
         const dx=x-this._officeCX, dz=z-this._officeCZ;
         const r=Math.sqrt(dx*dx+dz*dz);
@@ -559,21 +572,41 @@ AFRAME.registerComponent('rig-walk', {
           pf=Math.max(0,Math.min(1,pf)); pf=pf*pf*(3-2*pf);
         }
 
-        const nA=sn(x*0.05,z*0.05)*6.5;
-        const nB=sn(x*0.11+22,z*0.11-9)*2.5;
-        const outerR=36+nA+nB;
-        const innerFull=12+sn(x*0.08-30,z*0.08+17)*1.5;
+        const nA=sn(x*0.05,z*0.05)*3.5;
+        const nB=sn(x*0.11+22,z*0.11-9)*1.5;
+        const outerR=28+nA+nB;
+        const innerFull=8+sn(x*0.08-30,z*0.08+17)*1.5;
 
         let m=(outerR-r)/Math.max(0.001,(outerR-innerFull));
         m=Math.max(0,Math.min(1,m)); m=m*m*(3-2*m);
 
-        const sr=Math.sqrt(x*x+z*z);
-        let sf=(sr-18)/30; sf=Math.max(0,Math.min(1,sf)); sf=sf*sf*(3-2*sf);
+        // Fade from office centre
+        const dOff=Math.sqrt((x-this._officeCX)*(x-this._officeCX)+(z-this._officeCZ)*(z-this._officeCZ));
+        let sf=1-(dOff-28)/10; sf=Math.max(0,Math.min(1,sf)); sf=sf*sf*(3-2*sf);
         m*=sf;
 
         const fb=Math.max(0,(z+75)/75);
         m*=(1-0.55*fb);
         m*=pf;
+
+        // ── Corridor approach lane suppression ──
+        // Suppress particles in the clear path zones approaching each entrance
+        {
+          const smst=(a,b,t)=>{let k=(t-a)/(b-a);k=Math.max(0,Math.min(1,k));return k*k*(3-2*k);};
+          // North corridor approach (center x=4.5, entrance z=-56.5, extends 12m outward)
+          const ndx=Math.abs(x-4.5), ndz=z-(-56.5);
+          if(ndx<4.5 && ndz>-2 && ndz<13){
+            const f=smst(4.5,1.8,ndx)*smst(-2,0,ndz)*smst(13,9,ndz);
+            m*=(1-f);
+          }
+          // South exit approach (center x=-4.5, exit z=-81.5, extends 12m southward)
+          const sdx=Math.abs(x+4.5), sdz=(-81.5)-z;
+          if(sdx<3.5 && sdz>-2 && sdz<13){
+            const f=smst(3.5,1.4,sdx)*smst(-2,0,sdz)*smst(13,9,sdz);
+            m*=(1-f);
+          }
+        }
+
         return Math.max(0,Math.min(1,m));
       },
 
@@ -588,7 +621,7 @@ AFRAME.registerComponent('rig-walk', {
           if(mask>0.02 && !this._isIndoor(x,z) && !this._nearPlatform(x,z) && Math.random()<mask) break;
         }while(tries<25);
 
-        if(tries>=25||this._isIndoor(x,z)||this._nearPlatform(x,z)||mask<=0.02){
+        if(tries>=25||this._isIndoor(x,z)||this._nearPlatform(x,z)||mask<=0.02||this._isClearApproach(x,z)){
           arr[i*3]=arr[i*3+1]=arr[i*3+2]=9999; return;
         }
         arr[i*3]=x; arr[i*3+1]=d.ceiling+Math.random()*10; arr[i*3+2]=z;
@@ -642,7 +675,7 @@ AFRAME.registerComponent('rig-walk', {
           arr[i*3+2]+=(gwz*hf+this._driftZ[i]+turbZ+swZ)*dtS;
 
           const nx=arr[i*3],nz=arr[i*3+2];
-          if(arr[i*3+1]<d.floor||this._isIndoor(nx,nz)||this._nearPlatform(nx,nz)||this._zoneMask(nx,nz)<0.02){
+          if(arr[i*3+1]<d.floor||this._isIndoor(nx,nz)||this._nearPlatform(nx,nz)||this._zoneMask(nx,nz)<0.02||this._isClearApproach(nx,nz)){
             this._respawn(i);
           }
         }
@@ -702,15 +735,16 @@ AFRAME.registerComponent('rig-walk', {
 
         const RADIUS = 130;
         const SEG = 500;
-        const GROUND_Y = 0.012;
-        const HIDDEN_Y = -0.25;
+        const GROUND_Y = 0.09;
+        const HIDDEN_Y = 0.084;
 
-        // ── Interior volumes (snow must NEVER appear here) ──
-        // Tuned to the ACTUAL inner faces of the corridor/office walls.
-        // Goal: zero snow inside, while still letting snow visually kiss the exterior faces.
-        const officeIn  = { x1:-7.10, x2:7.10, z1:-81.90, z2:-68.10 };
-        const transIn   = { x1:2.35,  x2:6.65, z1:-68.80, z2:-56.20 };
-        const exitIn    = { x1:-6.65, x2:-2.35,z1:-94.00, z2:-81.40 };
+        // ── Interior volumes ──
+        // Extended to 0.15–0.20m BEYOND the outer wall face so that vertices inside the
+        // wall thickness are fully masked (m=0 → y=HIDDEN_Y), eliminating mesh bleed-through.
+        // North transition corridor outer wall faces: x ≈ 2.25 and 6.75 → add 0.15m margin
+        const officeIn  = { x1:-7.20, x2:7.20,  z1:-81.80, z2:-68.20 };
+        const transIn   = { x1:2.10,  x2:6.90,  z1:-68.90, z2:-56.10 };
+        const exitIn    = { x1:-6.90, x2:-2.10, z1:-94.10, z2:-81.30 };
         // Doorway bridge zones (tight to the actual opening)
         const doorN     = { x1:2.95,  x2:6.05, z1:-69.25, z2:-67.75 };
         const doorS     = { x1:-6.05, x2:-2.95,z1:-82.25, z2:-80.75 };
@@ -760,11 +794,40 @@ AFRAME.registerComponent('rig-walk', {
 
         // Is point inside any outer shell (i.e. inside the wall volume)?
         function inWallVolume(x,z){
-          // Inside outer shell but NOT inside interior = inside a wall
           if(inBox(x,z,officeOut)&&!inBox(x,z,officeIn)) return true;
           if(inBox(x,z,transOut)&&!inBox(x,z,transIn)) return true;
           if(inBox(x,z,exitOut)&&!inBox(x,z,exitIn)) return true;
           return false;
+        }
+
+        // ── Channel drift suppression ──
+        // Returns 0 at the carved channel centre (drift → 0, snow flat at GROUND_Y),
+        // 1 everywhere outside. Coverage (m) is NOT touched, so snow stays present —
+        // the channel floor is flat snow. Snow walls form naturally on both sides from
+        // organic drift + wall accumulation against the corridor side walls.
+        function channelDriftSuppress(x,z){
+          const sm=(a,b,t)=>{let k=(t-a)/(b-a);k=Math.max(0,Math.min(1,k));return k*k*(3-2*k);};
+          let s=0;
+          // North corridor: entrance at z=-56.5, centre x=4.5, door gap half-width ≈1.55m
+          // Channel carved 9m outward, tight to door width so walls can flank it naturally
+          {
+            const dz=z-(-56.5); // positive = away from building, northward
+            if(dz>-1.0 && dz<9.5){
+              const xf=sm(2.4,1.4,Math.abs(x-4.5)); // 1 inside ~1.4m of centre, 0 beyond ~2.4m
+              const zf=sm(-1.0,0.3,dz)*sm(9.5,7.0,dz);
+              s=Math.max(s,xf*zf);
+            }
+          }
+          // South exit: exit at z=-81.5, centre x=-4.5
+          {
+            const dz=(-81.5)-z; // positive = away from building, southward
+            if(dz>-1.0 && dz<9.5){
+              const xf=sm(2.4,1.4,Math.abs(x+4.5));
+              const zf=sm(-1.0,0.3,dz)*sm(9.5,7.0,dz);
+              s=Math.max(s,xf*zf);
+            }
+          }
+          return 1.0-s;
         }
 
         // ── Snow coverage mask ──
@@ -793,30 +856,47 @@ AFRAME.registerComponent('rig-walk', {
           const platFade=smootherstep(platClearR-2,platClearR+5,pd);
 
           // Domain-warped radial falloff
-          const wx=x+sn(x*0.025+41,z*0.025-17)*10+sn(x*0.065,z*0.065)*4;
-          const wz=z+sn(x*0.025-13,z*0.025+23)*10+sn(x*0.065+7,z*0.065-9)*4;
+          const wx=x+sn(x*0.025+41,z*0.025-17)*4+sn(x*0.065,z*0.065)*2;
+          const wz=z+sn(x*0.025-13,z*0.025+23)*4+sn(x*0.065+7,z*0.065-9)*2;
           const dx=wx-officeCX,dz=wz-officeCZ;
           const r=Math.sqrt(dx*dx+dz*dz);
 
-          const n1=sn(wx*0.035,wz*0.035)*9;
-          const n2=sn(wx*0.08+13,wz*0.08-8)*4.5;
-          const n3=sn(wx*0.15-3,wz*0.15+6)*2;
-          const outer=88+n1+n2+n3;
-          const inner=10+sn(wx*0.05-5,wz*0.05+14)*4;
+          const n1=sn(wx*0.035,wz*0.035)*4;
+          const n2=sn(wx*0.08+13,wz*0.08-8)*2;
+          const n3=sn(wx*0.15-3,wz*0.15+6)*1;
+          const outer=28+n1+n2+n3;
+          const inner=8+sn(wx*0.05-5,wz*0.05+14)*2;
           let m=1-smootherstep(inner,outer,r);
 
-          // Spawn side suppression
-          const spawnR=Math.sqrt(x*x+z*z);
-          m*=smootherstep(16,42,spawnR);
+          // Fade from office centre — asymmetric: tighter toward platform, wider behind
+          const dOff=Math.sqrt((x-officeCX)*(x-officeCX)+(z-officeCZ)*(z-officeCZ));
+          const platformBias=Math.max(0,Math.min(1,(z-officeCZ)/75));
+          const effOuter=38-10*platformBias;
+          m*=smootherstep(effOuter,effOuter-8,dOff);
           const frontBias=Math.max(0,Math.min(1,(z+75)/75));
           m*=(1-0.18*frontBias*(0.8+0.2*(sn(x*0.04+60,z*0.04-10)*0.5+0.5)));
 
           m*=platFade*indoorTaper;
 
+          // ── Force full coverage near building exterior ──
+          // The domain-warped radial falloff and doorway indoorTaper can push m < 1
+          // right outside the indoor boundary, which with HIDDEN_Y creates a seam line.
+          // Clamp m toward 1.0 within 2.5m of the indoor boundary so all wall-adjacent
+          // vertices are fully covered regardless of what the radial shape does.
+          if(!isIndoor(x,z)){
+            const dIn = distToAnyInterior(x,z);
+            const nearBldg = smootherstep(2.5, 0.3, dIn);
+            m = Math.max(m, nearBldg);
+          }
+
           // Organic edge breakup
           const en=sn(x*0.1+100,z*0.1-100)*0.5+0.5;
           const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
           m+=(en-0.5)*0.08*eb;
+
+          // North extent cutoff: snow fades to zero just before the monolith (z=-30).
+          // z=-45 → full, z=-32 → zero.
+          m *= smootherstep(-32, -45, z);
 
           return Math.max(0,Math.min(1,m));
         }
@@ -840,20 +920,22 @@ AFRAME.registerComponent('rig-walk', {
           if(pd<platClearR-1) return 0;
           const platFade=smootherstep(platClearR-1,platClearR+10,pd);
 
-          const wx=x+sn(x*0.02+41,z*0.02-17)*14+sn(x*0.05,z*0.05)*6;
-          const wz=z+sn(x*0.02-13,z*0.02+23)*14+sn(x*0.05+7,z*0.05-9)*6;
+          const wx=x+sn(x*0.02+41,z*0.02-17)*4+sn(x*0.05,z*0.05)*2;
+          const wz=z+sn(x*0.02-13,z*0.02+23)*4+sn(x*0.05+7,z*0.05-9)*2;
           const dx=wx-officeCX,dz=wz-officeCZ;
           const r=Math.sqrt(dx*dx+dz*dz);
-          const n1=sn(wx*0.025,wz*0.025)*12;
-          const n2=sn(wx*0.06+13,wz*0.06-8)*6;
-          const outer=118+n1+n2;
-          const inner=8+sn(wx*0.04-5,wz*0.04+14)*4;
+          const n1=sn(wx*0.025,wz*0.025)*4;
+          const n2=sn(wx*0.06+13,wz*0.06-8)*2;
+          const outer=30+n1+n2;
+          const inner=6+sn(wx*0.04-5,wz*0.04+14)*2;
           let m=1-smootherstep(inner,outer,r);
 
-          const spawnR=Math.sqrt(x*x+z*z);
-          m*=smootherstep(10,48,spawnR);
+          const dOff=Math.sqrt((x-officeCX)*(x-officeCX)+(z-officeCZ)*(z-officeCZ));
+          m*=smootherstep(40,30,dOff);
           m*=(1-0.15*Math.max(0,Math.min(1,(z+75)/75)));
           m*=platFade*indoorTaper;
+          // North extent cutoff: matches snowMask — z=-45 full, z=-32 zero.
+          m *= smootherstep(-32, -45, z);
           return Math.max(0,Math.min(1,m));
         }
 
@@ -958,55 +1040,59 @@ AFRAME.registerComponent('rig-walk', {
             drift+=baseDrift*0.28;
           }
 
-          // ── Entrance snow corridors: lower center path, higher side berms ──
-          // North corridor opening (transition_corridor), extends outward toward +Z
+          // ── Corridor approach berms: natural snow banks flanking each entrance lane ──
+          // ── Corridor approach berms: natural snow banks flanking each entrance lane ──
           {
-            const cx=4.5, z0=-56.25;
-            const dz=z-z0;
-            if(dz> -0.6 && dz< 12.0){
-              const pathLen = smootherstep(12.0,-0.4,dz); // strongest at threshold, fades outward
-              const xAbs = Math.abs(x-cx);
-
-              // Carve a clear-ish center lane + build two side banks (≈1m scale),
-              // without creating a solid "plug" right at the threshold.
-              const core = Math.exp(-(xAbs*xAbs)/(2*1.25*1.25));
-              const berm = Math.exp(-((xAbs-1.75)*(xAbs-1.75))/(2*0.55*0.55));
-
-              // Lower the whole surface in the middle (not just the drift detail).
-              // This prevents the tall mound that can form from the base mask + wall drift.
-              const lane = 1 - 0.58 * core * pathLen;
-
-              drift -= 0.38 * core * pathLen;
-              drift += 0.26 * berm * pathLen;
-
-              // Apply lane shaping to the mask by scaling the final drift blend later (see below).
-              // We do it by storing on a local var; injected as a multiplier via drift itself:
-              drift *= lane;
+            // North corridor: berm peaks at ±(hw+1.0) from lane centre, fades inward & outward
+            const cx=4.5, hw=1.8, zEntry=-56.5;
+            const dz=z-zEntry;
+            if(dz>0 && dz<10.0){
+              const pathLen=smootherstep(10.0,0.0,dz);
+              const xAbs=Math.abs(x-cx);
+              const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
+              drift+=0.22*berm*pathLen;
             }
           }
-          // South corridor opening (corridor), extends outward toward -Z
           {
-            const cx=-4.5, z0=-93.75;
-            const dz=z0-z;
-            if(dz> -0.6 && dz< 12.0){
-              const pathLen = smootherstep(12.0,-0.4,dz);
-              const xAbs = Math.abs(x-cx);
-
-              const core = Math.exp(-(xAbs*xAbs)/(2*1.25*1.25));
-              const berm = Math.exp(-((xAbs-1.75)*(xAbs-1.75))/(2*0.55*0.55));
-              const lane = 1 - 0.58 * core * pathLen;
-
-              drift -= 0.38 * core * pathLen;
-              drift += 0.26 * berm * pathLen;
-              drift *= lane;
+            // South exit: same logic, lane grows southward
+            const cx=-4.5, hw=1.1, zEntry=-81.5;
+            const dz=zEntry-z;
+            if(dz>0 && dz<10.0){
+              const pathLen=smootherstep(10.0,0.0,dz);
+              const xAbs=Math.abs(x-cx);
+              const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
+              drift+=0.22*berm*pathLen;
             }
+          }
+
+          // ── Wall-edge drift taper ──
+          // Taper all drift to zero within ~1.2m of the indoor boundary (outdoor side).
+          // This ensures the vertex just outside the exclusion zone has near-zero height,
+          // so the HIDDEN_Y→outdoor step is tiny and the cliff artifact disappears.
+          if(!isIndoor(x,z)){
+            const dIn = distToAnyInterior(x,z);
+            const edgeTaper = smoothstep(0.0, 1.2, dIn);
+            drift *= edgeTaper;
           }
 
           drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
 
+          // ── Canyon channel: carve a slot at ground level through the snow field ──
+          // chSup = 0 in the channel centre (drift zeroed → flat snow floor at GROUND_Y)
+          //       = 1 everywhere else (full drift, natural walls)
+          // mFinal boosted to 1.0 in channel ONLY for outdoor points — indoor vertices
+          // must stay at HIDDEN_Y or the corridor floor z-fights at GROUND_Y.
+          const chSup=channelDriftSuppress(x,z);
+          drift*=chSup;
+          const mFinal = isIndoor(x,z) ? m : Math.max(m, 1.0-chSup);
+
           // ── Continuous blend: hidden → ground → snow ──
-          const snowSurface=GROUND_Y+drift;
-          const y=HIDDEN_Y+(snowSurface-HIDDEN_Y)*m;
+          const snowSurface=GROUND_Y+Math.max(0,drift);
+          // North of the office corridor, sink hidden vertices below the lunar ground so
+          // they don't show through. z=-45 → HIDDEN_Y unchanged, z=-32 → underground.
+          const northSink = smootherstep(-45, -32, z);
+          const effectiveHiddenY = HIDDEN_Y - northSink * 0.2;
+          const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
           pos.setY(i,y);
         }
 
@@ -1180,7 +1266,7 @@ AFRAME.registerComponent('rig-walk', {
 <!-- Black cap so shaft doesn't show void -->
 <a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.43 0" radius="1.60" rotation="-90 0 0"></a-circle>
 <!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
-<a-box depth="0.3" height="5" id="test_concrete_wall" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
+<a-box depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
 <!-- ── Player rig ────────────────────────────────────────────────── -->
 <!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
 <!-- ── Imported office + corridors from index.html ─────────────────────── --><a-entity id="transition_corridor" position="4.5 0.07 -62.5">
