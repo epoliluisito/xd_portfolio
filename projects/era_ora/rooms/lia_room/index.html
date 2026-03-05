@@ -557,9 +557,8 @@ AFRAME.registerComponent('rig-walk', {
       _nearPlatform: function(x,z){ return Math.sqrt(x*x+z*z)<this._platClearR; },
 
       _zoneMask: function(x,z){
-        // Hard north cutoff: kill any particle that drifts within 38 units of platform.
-        // This also prevents spawning here. Office is at z=-75, so this is completely safe.
-        if (z > -38) return 0;
+        // Hard north cutoff: no particles north of z=-40, matching the mesh boundary.
+        if (z > -40) return 0;
         const sn=this._sn;
         const dx=x-this._officeCX, dz=z-this._officeCZ;
         const r=Math.sqrt(dx*dx+dz*dz);
@@ -895,9 +894,8 @@ AFRAME.registerComponent('rig-walk', {
           const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
           m+=(en-0.5)*0.08*eb;
 
-          // North extent cutoff: snow fades to zero well before the platform.
-          // z=-50 → full weight, z=-35 → zero. Office/corridor area (z<-56) is completely untouched.
-          m *= smootherstep(-35, -50, z);
+          // North extent cutoff: matches northSink range — z=-55 full, z=-40 zero.
+          m *= smootherstep(-40, -55, z);
 
           return Math.max(0,Math.min(1,m));
         }
@@ -936,7 +934,7 @@ AFRAME.registerComponent('rig-walk', {
           m*=(1-0.15*Math.max(0,Math.min(1,(z+75)/75)));
           m*=platFade*indoorTaper;
           // North extent cutoff: matches snowMask — frost also fades out before platform
-          m *= smootherstep(-35, -50, z);
+          m *= smootherstep(-40, -55, z);
           return Math.max(0,Math.min(1,m));
         }
 
@@ -1089,7 +1087,12 @@ AFRAME.registerComponent('rig-walk', {
 
           // ── Continuous blend: hidden → ground → snow ──
           const snowSurface=GROUND_Y+Math.max(0,drift);
-          const y=HIDDEN_Y+(snowSurface-HIDDEN_Y)*mFinal;
+          // North of the office area, sink hidden vertices below the lunar ground so they
+          // don't show through. Near the office HIDDEN_Y stays at 0.084 for seamless
+          // indoor/outdoor merging. z=-55 → 0.084 (unchanged), z=-40 → -0.116 (underground).
+          const northSink = smootherstep(-55, -40, z);
+          const effectiveHiddenY = HIDDEN_Y - northSink * 0.2;
+          const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
           pos.setY(i,y);
         }
 
