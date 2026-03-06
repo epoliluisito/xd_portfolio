@@ -1,1514 +1,818 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Alignment Sprint Simulator — Stage 1 Intake (v0.1)</title>
-  <style>
-    :root{
-      --bg:#0b0c0f; --panel:#12141a; --panel2:#0f1116; --text:#e8e9ee; --muted:#a7adbb;
-      --line:#222635; --accent:#7aa2ff; --ok:#6ee7b7; --warn:#fbbf24; --bad:#fb7185;
-      --shadow: 0 18px 50px rgba(0,0,0,.45);
-      --r:14px;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-    }
-    *{box-sizing:border-box}
-    body{margin:0;background:radial-gradient(1200px 800px at 20% 10%, rgba(122,162,255,.16), transparent 55%),
-                         radial-gradient(900px 700px at 80% 0%, rgba(110,231,183,.10), transparent 50%),
-                         var(--bg);
-         color:var(--text); font-family:var(--sans);}
-    a{color:var(--accent)}
-    .wrap{max-width:1100px;margin:0 auto;padding:26px 18px 60px}
-    .top{
-      display:flex; gap:14px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap;
-      margin-bottom:14px;
-    }
-    .brand{display:flex; flex-direction:column; gap:6px;}
-    .kicker{font: 12px/1.2 var(--mono); color:var(--muted); letter-spacing:.08em; text-transform:uppercase}
-    h1{margin:0;font-size:20px; font-weight:650; letter-spacing:.2px}
-    .sub{color:var(--muted); max-width:720px; font-size:13px; line-height:1.45}
-    .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end;}
-    button{
-      border:1px solid var(--line); background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
-      color:var(--text); padding:10px 12px; border-radius:12px; cursor:pointer; font-size:13px;
-      box-shadow:0 2px 0 rgba(0,0,0,.35);
-    }
-    button:hover{border-color:#2b3146}
-    button.primary{border-color:rgba(122,162,255,.55); background:linear-gradient(180deg, rgba(122,162,255,.22), rgba(122,162,255,.10))}
-    button.danger{border-color:rgba(251,113,133,.55); background:linear-gradient(180deg, rgba(251,113,133,.18), rgba(251,113,133,.08))}
-    button.ghost{background:transparent}
-    .grid{display:grid; grid-template-columns: 1.3fr .7fr; gap:14px; margin-top:14px;}
-    @media (max-width: 980px){ .grid{grid-template-columns:1fr} }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R&D Alignment Diagnostic · Enrico Poli</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c0f;
+    --surface: #111418;
+    --border: rgba(255,255,255,0.08);
+    --text: #e8eaed;
+    --muted: rgba(232,234,237,0.45);
+    --accent: #ff9500;
+    --accent-dim: rgba(255,149,0,0.08);
+    --danger: #ff453a;
+    --success: #30d158;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
 
-    .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-      border:1px solid var(--line);
-      border-radius:var(--r);
-      box-shadow:var(--shadow);
-      overflow:hidden;
-    }
-    .card h2{
-      margin:0; font-size:14px; font-weight:650; padding:14px 14px 10px;
-      border-bottom:1px solid rgba(255,255,255,.04);
-      background:linear-gradient(180deg, rgba(255,255,255,.03), transparent);
-    }
-    .card .body{padding:14px}
-    .stepper{
-      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-      padding:12px 14px; border-bottom:1px solid rgba(255,255,255,.04);
-      background:linear-gradient(180deg, rgba(255,255,255,.02), transparent);
-    }
-    .pill{
-      font: 12px/1 var(--mono);
-      padding:7px 10px; border-radius:999px;
-      border:1px solid var(--line); color:var(--muted);
-      display:flex; gap:8px; align-items:center;
-    }
-    .pill b{color:var(--text); font-weight:650}
-    .pill.on{border-color:rgba(122,162,255,.55); color:rgba(122,162,255,.9)}
-    .pill.done{border-color:rgba(110,231,183,.55); color:rgba(110,231,183,.9)}
-    .row{display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px}
-    @media (max-width: 720px){ .row{grid-template-columns:1fr} }
-    label{display:block; font-size:12px; color:var(--muted); margin:0 0 6px}
-    input[type="text"], textarea, select{
-      width:100%; border-radius:12px; border:1px solid #2a2f43;
-      background:rgba(8,9,12,.65); color:var(--text);
-      padding:10px 11px; font-size:13px; outline:none;
-    }
-    textarea{min-height:90px; resize:vertical; line-height:1.45}
-    .hint{font-size:12px;color:var(--muted); margin-top:6px}
-    .checkgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
-    @media (max-width: 720px){ .checkgrid{grid-template-columns:1fr} }
-    .check{
-      display:flex; align-items:flex-start; gap:8px; padding:10px 10px;
-      border:1px solid #232840; border-radius:12px; background:rgba(8,9,12,.35);
-    }
-    .check input{margin-top:2px}
-    .check span{font-size:13px}
-    .mini{font: 11px/1.3 var(--mono); color:var(--muted)}
-    .actions{
-      display:flex; gap:10px; justify-content:space-between; align-items:center; margin-top:10px; flex-wrap:wrap;
-      padding:12px 14px; border-top:1px solid rgba(255,255,255,.04);
-      background:linear-gradient(180deg, transparent, rgba(0,0,0,.25));
-    }
-    .right{display:flex; gap:10px; flex-wrap:wrap}
-    .badge{
-      font: 11px/1 var(--mono); padding:7px 10px; border-radius:999px; border:1px solid var(--line);
-      color:var(--muted);
-    }
-    .badge.ok{border-color:rgba(110,231,183,.55); color:rgba(110,231,183,.95)}
-    .badge.warn{border-color:rgba(251,191,36,.55); color:rgba(251,191,36,.95)}
-    .side .body{padding:12px 14px}
-    .side h3{margin:0 0 10px; font-size:13px}
-    .kv{display:grid; grid-template-columns: 115px 1fr; gap:8px 10px; font-size:12.5px}
-    .kv .k{color:var(--muted); font-family:var(--mono); font-size:11px}
-    .kv .v{color:var(--text)}
-    .sep{height:1px;background:rgba(255,255,255,.06); margin:12px 0}
-    .commentbox{
-      margin-top:10px;
-      border:1px dashed rgba(122,162,255,.35);
-      border-radius:12px;
-      background:rgba(122,162,255,.06);
-      padding:10px;
-    }
-    .commentbox label{color:rgba(122,162,255,.9)}
-    .smallbtn{padding:8px 10px; border-radius:10px; font-size:12px}
-    .toast{
-      position:fixed; bottom:18px; right:18px; max-width:420px;
-      background:rgba(18,20,26,.92); border:1px solid rgba(255,255,255,.08);
-      border-radius:14px; padding:12px 12px; box-shadow:var(--shadow);
-      color:var(--text); display:none;
-    }
-    .toast .t{font-size:13px; margin:0}
-    .toast .s{font-size:12px; color:var(--muted); margin-top:4px}
-    .mono{font-family:var(--mono)}
-    .foot{margin-top:10px;font-size:12px;color:var(--muted)}
-    .inline{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-    .toggle{
-      display:flex; gap:10px; align-items:center;
-      border:1px solid var(--line); border-radius:999px; padding:6px 8px;
-      background:rgba(255,255,255,.03);
-    }
-    .toggle input{accent-color: var(--accent)}
-  
-    .projHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-    .projHeader h3{margin:0;font-size:14px}
-    .projHeader .muted{font-size:12px}
-    .projList{display:flex;flex-direction:column;gap:10px}
-    .projItem{border:1px solid #232840;border-radius:14px;background:rgba(8,9,12,.35);padding:12px}
-    .projTop{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
-    .projName{font-weight:650}
-    .projMeta{font:11px/1.35 var(--mono); color:var(--muted)}
-    .projActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-    .tag{font:11px/1 var(--mono); padding:6px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
-    .tag.ok{border-color:rgba(110,231,183,.55); color:rgba(110,231,183,.95)}
-    .tag.warn{border-color:rgba(251,191,36,.55); color:rgba(251,191,36,.95)}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  
-    #appShell.hidden{display:none;}
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 24px;
+  }
 
-    /* Print: export only the Final Review card */
-    @media print{
-      body.print-review *{ visibility:hidden !important; }
-      body.print-review #finalReviewOverlay,
-      body.print-review #finalReviewOverlay *{ visibility:visible !important; }
-      body.print-review #finalReviewOverlay{ position:static !important; inset:auto !important; background:transparent !important; padding:0 !important; }
-      body.print-review #finalReviewCard{ box-shadow:none !important; border:1px solid #ddd !important; border-radius:0 !important; max-height:none !important; }
-      body.print-review .toast{ display:none !important; }
-      body.print-review button{ display:none !important; }
-      body.print-review a{ color:#000 !important; text-decoration:none !important; }
-    }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: 
+      linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
 
-  </style>
+  .container {
+    width: 100%;
+    max-width: 620px;
+    position: relative;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    margin-bottom: 40px;
+    opacity: 0;
+    animation: fadeUp 0.6s ease forwards;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .eyebrow::before {
+    content: '';
+    display: block;
+    width: 24px;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  h1 {
+    font-size: clamp(22px, 4vw, 28px);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.25;
+    margin-bottom: 12px;
+  }
+
+  .subtitle {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+
+  /* ── PROGRESS ── */
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    opacity: 0;
+    animation: fadeUp 0.6s ease 0.1s forwards;
+  }
+
+  .progress-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+
+  .progress-bar {
+    height: 2px;
+    background: var(--border);
+    margin-bottom: 28px;
+    border-radius: 2px;
+    overflow: hidden;
+    opacity: 0;
+    animation: fadeUp 0.6s ease 0.1s forwards;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.45s cubic-bezier(0.4,0,0.2,1);
+  }
+
+  /* ── QUESTION CARD ── */
+  .question-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 32px;
+    margin-bottom: 16px;
+    opacity: 0;
+    animation: fadeUp 0.5s ease 0.2s forwards;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .question-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    opacity: 0.4;
+  }
+
+  .q-number {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.15em;
+    margin-bottom: 16px;
+  }
+
+  .q-text {
+    font-size: 17px;
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: -0.015em;
+    margin-bottom: 6px;
+  }
+
+  .q-hint {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.55;
+    margin-bottom: 24px;
+  }
+
+  .options { display: grid; gap: 8px; }
+
+  .option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.4;
+    width: 100%;
+  }
+
+  .option:hover { border-color: rgba(255,149,0,0.35); background: var(--accent-dim); }
+  .option.selected { border-color: var(--accent); background: var(--accent-dim); }
+
+  .opt-key {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    padding-top: 2px;
+    min-width: 18px;
+    transition: color 0.15s;
+  }
+
+  .option.selected .opt-key { color: var(--accent); }
+
+  .opt-label { font-weight: 500; margin-bottom: 2px; }
+  .opt-sub { font-size: 12px; color: var(--muted); }
+
+  /* ── NAV ── */
+  .nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    opacity: 0;
+    animation: fadeUp 0.5s ease 0.3s forwards;
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 11px 22px;
+    border-radius: 3px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: transparent;
+  }
+
+  .btn-primary { border-color: var(--accent); color: var(--accent); }
+  .btn-primary:hover:not(:disabled) { background: var(--accent); color: #000; }
+  .btn-primary:disabled { opacity: 0.25; cursor: not-allowed; }
+
+  .btn-ghost { border-color: var(--border); color: var(--muted); }
+  .btn-ghost:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
+
+  /* ── RESULT ── */
+  .result { opacity: 0; animation: fadeUp 0.7s ease forwards; }
+
+  .result-eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--danger);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .result-eyebrow::before {
+    content: '';
+    display: block;
+    width: 24px;
+    height: 1px;
+    background: var(--danger);
+  }
+
+  .result h1 { margin-bottom: 32px; }
+
+  /* Cost card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 28px 32px;
+    margin-bottom: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-accent::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--danger), transparent);
+    opacity: 0.6;
+  }
+
+  .card-green::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--success), transparent);
+    opacity: 0.5;
+  }
+
+  .card-orange::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    opacity: 0.5;
+  }
+
+  .card-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .cost-number {
+    font-family: var(--mono);
+    font-size: clamp(38px, 9vw, 54px);
+    font-weight: 500;
+    color: var(--danger);
+    letter-spacing: -0.02em;
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+
+  .cost-note {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    font-style: italic;
+  }
+
+  /* Comparison rows */
+  .comp-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .comp-row:first-child { padding-top: 0; }
+  .comp-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+  .comp-desc { flex: 1; padding-right: 24px; }
+  .comp-title { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+  .comp-sub { font-size: 11px; color: var(--muted); }
+  .comp-val { font-family: var(--mono); font-size: 16px; font-weight: 500; white-space: nowrap; }
+  .comp-val.red { color: var(--danger); }
+  .comp-val.green { color: var(--success); }
+
+  /* The key insight — this is the pivot */
+  .insight-card {
+    background: rgba(255,149,0,0.04);
+    border: 1px solid rgba(255,149,0,0.18);
+    border-radius: 4px;
+    padding: 28px 32px;
+    margin-bottom: 12px;
+  }
+
+  .insight-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+  }
+
+  .insight-text {
+    font-size: 15px;
+    line-height: 1.75;
+    color: rgba(232,234,237,0.85);
+  }
+
+  .insight-text strong { color: var(--accent); font-weight: 600; }
+
+  /* The demonstration moment */
+  .demo-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 28px 32px;
+    margin-bottom: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .demo-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.3), transparent);
+    opacity: 0.4;
+  }
+
+  .demo-intro {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .demo-statement {
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  .demo-sub {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.65;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    margin-top: 4px;
+  }
+
+  .demo-sub strong { color: var(--text); font-weight: 500; }
+
+  /* Who is Enrico */
+  .who-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 28px 32px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+  }
+
+  .who-initial {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--accent);
+    line-height: 1;
+    min-width: 36px;
+    padding-top: 2px;
+  }
+
+  .who-text { flex: 1; }
+
+  .who-name {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+  }
+
+  .who-role {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .who-bio {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+
+  .who-bio strong { color: var(--text); font-weight: 500; }
+
+  /* CTA */
+  .cta-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,149,0,0.25);
+    border-radius: 4px;
+    padding: 28px 32px;
+    margin-bottom: 24px;
+  }
+
+  .cta-text {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+
+  .cta-sub {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.55;
+    margin-bottom: 20px;
+  }
+
+  .btn-cta {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 13px 28px;
+    border-radius: 3px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #000;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+    text-decoration: none;
+  }
+
+  .btn-cta:hover { background: transparent; color: var(--accent); }
+
+  .restart {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    text-transform: uppercase;
+    cursor: pointer;
+    background: none;
+    border: none;
+    display: block;
+    text-align: center;
+    width: 100%;
+    padding: 12px;
+    transition: color 0.15s;
+  }
+
+  .restart:hover { color: var(--text); }
+
+  /* ── ANIMATIONS ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .hidden { display: none; }
+
+  @media (max-width: 480px) {
+    body { padding: 32px 16px; }
+    .card, .insight-card, .demo-card, .who-card, .cta-card { padding: 22px 20px; }
+    .who-card { flex-direction: column; gap: 12px; }
+  }
+</style>
 </head>
 <body>
+<div class="container">
 
-  
-  <!-- Landing gate: name + choose action -->
-  <div id="landingOverlay" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-       background:var(--bg);z-index:9999;padding:18px;">
-    <div style="max-width:520px;width:100%;border:1px solid rgba(255,255,255,.10);border-radius:18px;
-         background:rgba(18,20,26,.96);box-shadow:0 18px 50px rgba(0,0,0,.55);padding:18px;">
-      <div class="kicker">Alignment Sprint Simulator — Stage 1</div>
-      <div style="margin-top:10px;">
-        <label>Your name</label>
-        <input id="userNameInput" type="text" placeholder="e.g., Giovanni" style="width:100%;margin-bottom:12px;" />
-      </div>
+  <!-- QUIZ -->
+  <div id="quizScreen">
+    <div class="header">
+      <div class="eyebrow">R&D Alignment Diagnostic</div>
+      <h1>How much is misalignment costing your R&D?</h1>
+      <p class="subtitle">5 questions. 3 minutes. A number that puts the problem in perspective.</p>
+    </div>
 
-      <div>
-        <label>Choose</label>
-        <select id="landingChoice" style="width:100%;margin-bottom:14px;">
-          <option value="projects">Use existing project</option>
-          <option value="new">Create new project</option>
-        </select>
-      </div>
+    <div class="progress-meta">
+      <span class="progress-label" id="progressLabel">Question 1 of 5</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width:20%"></div>
+    </div>
 
-      <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
-        <button class="primary" id="btnLandingContinue">Continue</button>
-      </div>
+    <div class="question-card" id="questionCard">
+      <div class="q-number" id="qNum">01 / 05</div>
+      <div class="q-text" id="qText"></div>
+      <div class="q-hint" id="qHint"></div>
+      <div class="options" id="qOptions"></div>
+    </div>
+
+    <div class="nav">
+      <button class="btn btn-ghost" id="btnBack" onclick="goBack()">← Back</button>
+      <button class="btn btn-primary" id="btnNext" onclick="goNext()" disabled>Continue →</button>
     </div>
   </div>
 
-  <div class="wrap" id="appShell">
-    <div class="top">
-      <div class="brand">
-        <div class="kicker">Alignment Sprint Simulator — Stage 1</div>
-        <h1>Start Intake (before problem framing)</h1>
-        <div class="sub">
-          Captures day‑0 reality: trigger, context, existing artifacts, people, constraints. Auto‑saves locally in the browser. Export a one‑page <span class="mono">Initiative Snapshot v0.1</span> + JSON.
-        </div>
-      </div>
-      <div class="toolbar">
-        <div class="toggle" title="When enabled, a comment box appears under each screen to collect feedback.">
-          <input id="commentMode" type="checkbox" />
-          <label for="commentMode" style="margin:0;color:var(--muted);font-size:12px;cursor:pointer">Comment mode</label>
-        </div>
+  <!-- RESULT -->
+  <div id="resultScreen" class="hidden result"></div>
 
-        <button class="ghost" id="btnProjects">Projects</button>
-        <button class="ghost" id="btnNewProject">New project</button>
-        <button class="ghost" id="btnExportSnapshot">Export Snapshot (TXT)</button>
-        <button class="ghost" id="btnExportJSON">Export JSON</button>
-
-        <button class="primary" id="btnFinishBackup">Finish & Backup</button>
-        <button class="ghost" id="btnEmailSubmission">Email submission</button>
-
-        <button class="danger" id="btnReset">Reset</button>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="stepper" id="stepper"></div>
-        <div class="body" id="screen"></div>
-        <div class="actions">
-          <div class="inline">
-            <span class="badge" id="saveBadge">Saved locally</span>
-            <span class="badge" id="completeBadge">Stage 1 incomplete</span>
-          </div>
-          <div class="right">
-            <button id="btnPrev">Back</button>
-            <button class="primary" id="btnNext">Next</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="card side">
-        <h2>Initiative Snapshot v0.1 (live)</h2>
-        <div class="body">
-          <div class="kv" id="liveKV"></div>
-          <div class="sep"></div>
-
-          <h3>Notes (free)</h3>
-          <textarea id="globalNotes" placeholder="Any extra context Giovanni wants to add at start…"></textarea>
-
-          <div class="commentbox" id="globalCommentBox" style="display:none">
-            <label for="globalComments">Comments on the intake stage (meta)</label>
-            <textarea id="globalComments" placeholder="What’s missing? What’s unclear? What would make this useful internally?"></textarea>
-          </div>
-
-          
-          <div class="sep"></div>
-          <h3>Backups</h3>
-          <div class="kv">
-            <div class="k">Last backup</div><div class="v" id="lastBackup">—</div>
-            <div class="k">Backup mode</div><div class="v">Auto local + downloadable on finish</div>
-          </div>
-
-          <div class="inline">
-            <button class="smallbtn" id="btnCopyShare">Copy shareable summary</button>
-            <span class="mini">Copy a short summary to paste in chat/email.</span>
-          </div>
-
-          <div class="foot">
-            Storage: <span class="mono">localStorage</span> only. If you publish on GitHub Pages, entries remain on the user's device unless exported.
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- Final Review / Confirmation -->
-  <div id="finalReviewOverlay" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-       background:rgba(0,0,0,.55);z-index:9998;padding:18px;">
-    <div id="finalReviewCard" style="max-width:920px;width:100%;max-height:90vh;overflow:auto;border:1px solid rgba(255,255,255,.10);
-         border-radius:18px;background:rgba(18,20,26,.98);box-shadow:0 18px 50px rgba(0,0,0,.55);">
-      <div style="padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;">
-        <div>
-          <div class="kicker">Final review</div>
-          <div style="font-size:16px;font-weight:650;margin-top:4px;">Confirm before exporting</div>
-          <div class="sub" style="margin-top:6px;max-width:720px;">
-            Review the intake summary. You can go back to edit, or export a PDF via your browser’s print dialog.
-          </div>
-        </div>
-        <div class="inline" style="justify-content:flex-end;">
-          <span class="badge" id="finalReviewStatus">—</span>
-        </div>
-      </div>
-
-      <div id="finalReviewBody" style="padding:16px 18px;"></div>
-
-      <div style="padding:14px 18px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap;">
-        <div class="inline">
-          <button class="ghost" id="btnFinalEdit">Edit</button>
-          <button class="primary" id="btnFinalConfirm">Confirm</button>
-        </div>
-        <div class="inline" style="justify-content:flex-end;">
-          <button id="btnFinalExportPDF" class="primary">Export as PDF…</button>
-          <button id="btnFinalDownloadTXT">Download TXT</button>
-          <button id="btnFinalDownloadJSON">Download JSON</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-
-  <div class="toast" id="toast">
-    <p class="t" id="toastTitle">Saved</p>
-    <div class="s" id="toastSub">Auto-saved locally.</div>
-  </div>
-
+</div>
 <script>
-(() => {
-  const INDEX_KEY = "alignment_intake_projects_index";
-  const PROJECT_KEY_PREFIX = "alignment_intake_project_";
-  const BACKUP_KEY_PREFIX = "alignment_intake_backups_";
-  const CURRENT_PROJECT_KEY = "alignment_intake_current_project";
-  const USER_KEY = "alignment_intake_user_name";
-  const STEPS = [
-    { id: "s1", title: "Create initiative" },
-    { id: "s2", title: "Trigger" },
-    { id: "s3", title: "Existing artifacts" },
-    { id: "s4", title: "People involved" },
-    { id: "s5", title: "Known constraints" },
-  ];
+const questions = [
+  {
+    text: "How many stakeholders needed to align on requirements for this R&D project?",
+    hint: "Count internal teams, external clients, and decision-makers whose sign-off was needed at any point.",
+    options: [
+      { label: "2–3 stakeholders", sub: "Small, focused group", sm: 1.0 },
+      { label: "4–6 stakeholders", sub: "Multiple internal and external parties", sm: 1.7 },
+      { label: "7 or more", sub: "Complex multi-client or cross-divisional project", sm: 2.6 }
+    ]
+  },
+  {
+    text: "How many times did the core requirements change after development began?",
+    hint: "Each change that forced your team to revise direction, rebuild prototypes, or restart testing.",
+    options: [
+      { label: "1–2 times", sub: "Mostly stable brief", rm: 1.0 },
+      { label: "3–5 times", sub: "Significant course corrections", rm: 1.9 },
+      { label: "6 or more", sub: "Requirements were never truly fixed", rm: 3.2 }
+    ]
+  },
+  {
+    text: "For how many months was your team working with undefined or shifting requirements?",
+    hint: "The period before alignment was reached and real development could begin.",
+    options: [
+      { label: "1–3 months", sub: "Short pre-development phase", months: 2 },
+      { label: "4–8 months", sub: "Extended uncertainty period", months: 6 },
+      { label: "9 months or more", sub: "Multi-year requirements phase", months: 13 }
+    ]
+  },
+  {
+    text: "How many engineers or specialists were active during this phase?",
+    hint: "People consuming time and budget while requirements were still being defined.",
+    options: [
+      { label: "1–5 people", sub: "Small team", eng: 3 },
+      { label: "6–15 people", sub: "Mid-size R&D team", eng: 10 },
+      { label: "16 or more", sub: "Large dedicated team", eng: 22 }
+    ]
+  },
+  {
+    text: "Estimated fully-loaded monthly cost per person (salary + overhead)?",
+    hint: "Include benefits, tools, space, and management overhead. €8–12K is standard for European industrial R&D.",
+    options: [
+      { label: "Under €8,000 / month", sub: "Per person", cost: 6000 },
+      { label: "€8,000–€12,000 / month", sub: "Per person — typical industrial R&D", cost: 10000 },
+      { label: "Over €12,000 / month", sub: "Per person — senior specialists", cost: 15000 }
+    ]
+  }
+];
 
-  const defaults = {
-    project: { id: "", name: "", status: "incomplete", createdAt: "", updatedAt: "" },
-    meta: { version: "0.1", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    ui: { mode: "dashboard", stepIndex: 0, commentMode: false },
-    data: {
-      initiativeName: "",
-      orgContext: "Advanced Engineering",
-      maturity: "Idea",
-      deadlinePressure: "None",
+let answers = [], current = 0;
 
-      triggerTypes: [],
-      triggerDescription: "",
-      requestSource: "Internal function",
+function render() {
+  const q = questions[current];
+  document.getElementById('qNum').textContent = `0${current+1} / 05`;
+  document.getElementById('qText').textContent = q.text;
+  document.getElementById('qHint').textContent = q.hint;
+  document.getElementById('progressLabel').textContent = `Question ${current+1} of 5`;
+  document.getElementById('progressFill').style.width = `${((current+1)/5)*100}%`;
 
-      artifactsAvailable: [],
-      artifactLinksNotes: "",
+  const wrap = document.getElementById('qOptions');
+  wrap.innerHTML = '';
+  q.options.forEach((opt, i) => {
+    const b = document.createElement('button');
+    b.className = 'option' + (answers[current]===i ? ' selected' : '');
+    b.innerHTML = `<span class="opt-key">${String.fromCharCode(65+i)}</span>
+      <span><div class="opt-label">${opt.label}</div><div class="opt-sub">${opt.sub}</div></span>`;
+    b.onclick = () => pick(i);
+    wrap.appendChild(b);
+  });
 
-      sponsorNameRole: "",
-      ownerPMNameRole: "",
-      functionsInLoop: [],
-      missingLikelyNeeded: "",
+  document.getElementById('btnNext').disabled = answers[current] === undefined;
+  document.getElementById('btnBack').style.visibility = current===0 ? 'hidden' : 'visible';
 
-      fixedConstraints: [],
-      fixedConstraintValues: "",
-      unknownConstraints: "",
+  const card = document.getElementById('questionCard');
+  card.style.animation = 'none';
+  void card.offsetHeight;
+  card.style.animation = 'fadeUp 0.4s ease forwards';
+  card.style.opacity = '0';
+}
 
-      globalNotes: "",
-      globalComments: "",
-      stepComments: { s1:"", s2:"", s3:"", s4:"", s5:"" }
-    }
-  };
+function pick(i) {
+  answers[current] = i;
+  document.querySelectorAll('.option').forEach((el,idx) => el.classList.toggle('selected', idx===i));
+  document.getElementById('btnNext').disabled = false;
+}
 
-  let state = load();
-  let saveCount = 0;
+function goNext() {
+  if (answers[current]===undefined) return;
+  if (current < 4) { current++; render(); }
+  else showResult();
+}
 
-  const el = (id) => document.getElementById(id);
-  const screen = el("screen");
-  const stepper = el("stepper");
-  const liveKV = el("liveKV");
-  const saveBadge = el("saveBadge");
-  const completeBadge = el("completeBadge");
-  const commentMode = el("commentMode");
-  const globalNotes = el("globalNotes");
-  const globalCommentBox = el("globalCommentBox");
-  const globalComments = el("globalComments");
+function goBack() { if (current>0) { current--; render(); } }
 
-  const btnPrev = el("btnPrev");
-  const btnNext = el("btnNext");
-  const btnReset = el("btnReset");
-  const btnExportJSON = el("btnExportJSON");
-  const btnExportSnapshot = el("btnExportSnapshot");
-  const btnCopyShare = el("btnCopyShare");
+function fmt(n) {
+  if (n>=1000000) return '€'+(n/1000000).toFixed(1)+'M';
+  if (n>=1000)    return '€'+Math.round(n/1000)+'K';
+  return '€'+n;
+}
 
-  const toast = el("toast");
-  const toastTitle = el("toastTitle");
-  const toastSub = el("toastSub");
-  let toastTimer = null;
+function showResult() {
+  const sm    = questions[0].options[answers[0]].sm;
+  const rm    = questions[1].options[answers[1]].rm;
+  const months= questions[2].options[answers[2]].months;
+  const eng   = questions[3].options[answers[3]].eng;
+  const cost  = questions[4].options[answers[4]].cost;
 
-  function showToast(title, sub){
-    toastTitle.textContent = title;
-    toastSub.textContent = sub || "";
-    toast.style.display = "block";
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.style.display = "none", 2200);
+  // Total burn during misaligned phase
+  const totalBurn = eng * months * cost;
+
+  // Misalignment overhead — conservative 35% of burn, scaled by complexity
+  const wastedCost = Math.round(totalBurn * 0.35 * sm * rm * 0.4);
+
+  // Concept validation = ~8–10% of wasted cost (front-loaded, fast)
+  const validationCost = Math.round(wastedCost * 0.09);
+  const saving = wastedCost - validationCost;
+  const roi = Math.round(saving / validationCost);
+
+  // Severity text
+  let severity, headline;
+  if (wastedCost < 80000) {
+    severity = "Moderate misalignment risk";
+    headline = "The numbers are manageable — but they compound.";
+  } else if (wastedCost < 400000) {
+    severity = "Significant misalignment risk";
+    headline = "This is a structural problem, not a one-off.";
+  } else {
+    severity = "Critical misalignment risk";
+    headline = "This is the pattern that kills R&D projects.";
   }
 
-  
-  function getIndex(){
-    try{ const raw = localStorage.getItem(INDEX_KEY); return raw ? JSON.parse(raw) : []; }
-    catch(e){ return []; }
-  }
-  function setIndex(arr){ localStorage.setItem(INDEX_KEY, JSON.stringify(arr)); }
-  function nowIso(){ return new Date().toISOString(); }
+  document.getElementById('quizScreen').classList.add('hidden');
+  const rs = document.getElementById('resultScreen');
+  rs.classList.remove('hidden');
 
-  function getUserName(){
-    try{ return localStorage.getItem(USER_KEY) || ""; }catch(e){ return ""; }
-  }
-  function setUserName(name){
-    try{ localStorage.setItem(USER_KEY, name || ""); }catch(e){}
-  }
+  rs.innerHTML = `
+    <div style="margin-bottom:40px;">
+      <div class="result-eyebrow">${severity}</div>
+      <h1>${headline}</h1>
+    </div>
 
+    <div class="card card-accent">
+      <div class="card-label">Estimated R&D budget consumed by misalignment</div>
+      <div class="cost-number">${fmt(wastedCost)}</div>
+      <div class="cost-note">Order-of-magnitude estimate based on your inputs. The real number may be higher or lower — but the structure of the problem is consistent regardless of scale.</div>
+    </div>
 
-  function newProject(name){
-    const id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2);
-    const p = { id, name: name || "Untitled initiative", status: "incomplete", createdAt: nowIso(), updatedAt: nowIso(), createdBy: getUserName() || "" };
-    const idx = getIndex(); idx.unshift(p); setIndex(idx);
-    localStorage.setItem(CURRENT_PROJECT_KEY, id);
-
-    const s = structuredClone(defaults);
-    s.project = p;
-    s.meta.createdAt = p.createdAt;
-    s.meta.updatedAt = p.updatedAt;
-    localStorage.setItem(PROJECT_KEY_PREFIX + id, JSON.stringify(s));
-    return s;
-  }
-
-  function loadProject(projectId){
-    try{
-      const raw = localStorage.getItem(PROJECT_KEY_PREFIX + projectId);
-      if(!raw) return null;
-      const parsed = JSON.parse(raw);
-      return deepMerge(structuredClone(defaults), parsed);
-    }catch(e){ return null; }
-  }
-
-  function load(){
-    const currentId = localStorage.getItem(CURRENT_PROJECT_KEY);
-    if(currentId){
-      const loaded = loadProject(currentId);
-      if(loaded) return loaded;
-    }
-    const idx = getIndex();
-    if(idx.length){
-      localStorage.setItem(CURRENT_PROJECT_KEY, idx[0].id);
-      const loaded = loadProject(idx[0].id);
-      if(loaded) return loaded;
-    }
-    return newProject("Untitled initiative");
-  }
-
-
-  function deepMerge(target, source){
-    if(typeof source !== "object" || source === null) return target;
-    for(const k of Object.keys(source)){
-      if(Array.isArray(source[k])){
-        target[k] = source[k].slice();
-      }else if(typeof source[k] === "object" && source[k] !== null){
-        target[k] = deepMerge(target[k] ?? {}, source[k]);
-      }else{
-        target[k] = source[k];
-      }
-    }
-    return target;
-  }
-
-  function save(reason){
-    state.meta.updatedAt = new Date().toISOString();
-    const pid = state.project.id;
-    state.project.updatedAt = state.meta.updatedAt;
-    localStorage.setItem(PROJECT_KEY_PREFIX + pid, JSON.stringify(state));
-    localStorage.setItem(CURRENT_PROJECT_KEY, pid);
-    try{
-      const idx = getIndex();
-      const i = idx.findIndex(x => x.id === pid);
-      if(i >= 0){ idx[i] = { ...idx[i], name: state.project.name, status: state.project.status, updatedAt: state.project.updatedAt }; }
-      else { idx.unshift({ id: pid, name: state.project.name, status: state.project.status, createdAt: state.project.createdAt, updatedAt: state.project.updatedAt }); }
-      setIndex(idx);
-    }catch(e){}
-
-    saveCount += 1;
-    if(saveCount % 12 === 0){
-      // Rolling history backup
-      try{ pushBackup('auto'); }catch(e){}
-    }
-    saveBadge.className = "badge ok";
-    saveBadge.textContent = "Saved locally";
-    showToast("Saved", reason || "Auto-saved locally.");
-  }
-
-  function setStep(i){
-    state.ui.stepIndex = Math.max(0, Math.min(STEPS.length - 1, i));
-    render();
-    save("Navigation saved.");
-  }
-
-  function isComplete(){
-    const d = state.data;
-    const hasAnchor = (d.initiativeName.trim().length > 0) || (d.triggerDescription.trim().length > 0);
-    const hasPeople = (d.sponsorNameRole.trim().length > 0) || (d.ownerPMNameRole.trim().length > 0) || (d.functionsInLoop.length > 0);
-    const hasContext = (d.orgContext && d.maturity && d.deadlinePressure);
-    return hasAnchor && hasPeople && hasContext;
-  }
-
-  function updateCompleteBadge(){
-    if(isComplete()){
-      completeBadge.className = "badge ok";
-      completeBadge.textContent = "Stage 1 complete";
-      state.project.status = "complete";
-    }else{
-      completeBadge.className = "badge warn";
-      completeBadge.textContent = "Stage 1 incomplete";
-      state.project.status = "incomplete";
-    }
-  }
-
-  function renderStepper(){
-    stepper.innerHTML = "";
-    STEPS.forEach((s, idx) => {
-      const div = document.createElement("div");
-      div.className = "pill" + (idx === state.ui.stepIndex ? " on" : "") + (idx < state.ui.stepIndex ? " done" : "");
-      div.innerHTML = `<b>${idx+1}</b> ${escapeHtml(s.title)}`;
-      div.style.cursor = "pointer";
-      div.addEventListener("click", () => setStep(idx));
-      stepper.appendChild(div);
-    });
-  }
-
-  function renderLiveKV(){
-    const d = state.data;
-    const items = [
-      ["Project", state.project.name || "—"],
-      ["Status", state.project.status || "—"],
-      ["Initiative", d.initiativeName || "—"],
-      ["Org context", d.orgContext || "—"],
-      ["Maturity", d.maturity || "—"],
-      ["Deadline", d.deadlinePressure || "—"],
-      ["Trigger(s)", d.triggerTypes.length ? d.triggerTypes.join(", ") : "—"],
-      ["Request source", d.requestSource || "—"],
-      ["Artifacts", d.artifactsAvailable.length ? d.artifactsAvailable.join(", ") : "—"],
-      ["Sponsor", d.sponsorNameRole || "—"],
-      ["Owner / PM", d.ownerPMNameRole || "—"],
-      ["Functions in loop", d.functionsInLoop.length ? d.functionsInLoop.join(", ") : "—"],
-      ["Fixed constraints", d.fixedConstraints.length ? d.fixedConstraints.join(", ") : "—"],
-    ];
-    liveKV.innerHTML = items.map(([k,v]) => `<div class="k">${escapeHtml(k)}</div><div class="v">${escapeHtml(v)}</div>`).join("");
-    globalNotes.value = d.globalNotes || "";
-    globalComments.value = d.globalComments || "";
-    globalCommentBox.style.display = state.ui.commentMode ? "block" : "none";
-  }
-
-  function sanitizeFilename(name){
-    return String(name || 'project').replace(/[^a-z0-9\-_.]+/gi, '_').slice(0, 60);
-  }
-
-  function escapeHtml(str){
-    return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
-  }
-
-  function checkboxGrid(options, selected, onChange){
-    const wrapper = document.createElement("div");
-    wrapper.className = "checkgrid";
-    options.forEach(opt => {
-      const row = document.createElement("label");
-      row.className = "check";
-      row.innerHTML = `
-        <input type="checkbox" ${selected.includes(opt) ? "checked" : ""} />
-        <div><span>${escapeHtml(opt)}</span></div>
-      `;
-      const input = row.querySelector("input");
-      input.addEventListener("change", () => {
-        const next = new Set(selected);
-        if(input.checked) next.add(opt); else next.delete(opt);
-        onChange(Array.from(next));
-      });
-      wrapper.appendChild(row);
-    });
-    return wrapper;
-  }
-
-  function renderCommentBox(stepId){
-    const box = document.createElement("div");
-    box.className = "commentbox";
-    box.style.display = state.ui.commentMode ? "block" : "none";
-    box.innerHTML = `
-      <label>Comments on this screen (optional)</label>
-      <textarea placeholder="What feels wrong, missing, or unclear for real projects?"></textarea>
-    `;
-    const ta = box.querySelector("textarea");
-    ta.value = state.data.stepComments[stepId] || "";
-    ta.addEventListener("input", () => {
-      state.data.stepComments[stepId] = ta.value;
-      save("Comment saved.");
-      renderLiveKV();
-    });
-    return box;
-  }
-
-  function elBind(domId, key){
-    const node = document.getElementById(domId);
-    if(!node) return;
-    node.value = state.data[key] || "";
-    const evt = node.tagName === "SELECT" ? "change" : "input";
-    node.addEventListener(evt, () => {
-      state.data[key] = node.value;
-      save("Field saved.");
-      renderLiveKV();
-      updateCompleteBadge();
-    });
-  }
-
-
-  function renderDashboard(){
-    stepper.innerHTML = "";
-    screen.innerHTML = "";
-
-    const header = document.createElement("div");
-    header.className = "projHeader";
-    header.innerHTML = `
-      <div>
-        <h3>Projects</h3>
-        <div class="muted">This list is local to this browser/device. Open one to continue, or create a new one.</div>
+    <div class="card card-green">
+      <div class="comp-row">
+        <div class="comp-desc">
+          <div class="comp-title">Cost of misaligned R&D phase</div>
+          <div class="comp-sub">Engineers working before requirements were stable</div>
+        </div>
+        <div class="comp-val red">${fmt(wastedCost)}</div>
       </div>
-    `;
-    screen.appendChild(header);
-
-    const list = document.createElement("div");
-    list.className = "projList";
-    const idx = getIndex();
-
-    if(!idx.length){
-      const empty = document.createElement("div");
-      empty.className = "projItem";
-      empty.innerHTML = `<div class="muted">No projects yet.</div>`;
-      list.appendChild(empty);
-    }else{
-      idx.forEach(p => {
-        const item = document.createElement("div");
-        item.className = "projItem";
-        const tagClass = p.status === "complete" ? "tag ok" : "tag warn";
-        const updated = p.updatedAt ? new Date(p.updatedAt).toLocaleString() : "—";
-        const created = p.createdAt ? new Date(p.createdAt).toLocaleString() : "—";
-        item.innerHTML = `
-          <div class="projTop">
-            <div>
-              <div class="projName">${escapeHtml(p.name || "Untitled initiative")}</div>
-              <div class="projMeta">created: ${escapeHtml(created)} • updated: ${escapeHtml(updated)}</div>
-            </div>
-            <div class="${tagClass}">${escapeHtml(p.status || "incomplete")}</div>
-          </div>
-          <div class="projActions">
-            <button class="smallbtn primary" data-act="open" data-id="${escapeHtml(p.id)}">Open</button>
-            <button class="smallbtn" data-act="rename" data-id="${escapeHtml(p.id)}">Rename</button>
-            <button class="smallbtn" data-act="duplicate" data-id="${escapeHtml(p.id)}">Duplicate</button>
-            <button class="smallbtn danger" data-act="delete" data-id="${escapeHtml(p.id)}">Delete</button>
-          </div>
-        `;
-        list.appendChild(item);
-      });
-    }
-
-    screen.appendChild(list);
-
-    btnPrev.disabled = true;
-    btnNext.textContent = "Back to wizard";
-    btnNext.onclick = () => {
-      state.ui.mode = "wizard";
-      render();
-      save("Back to wizard.");
-    };
-
-    screen.querySelectorAll("button[data-act]").forEach(b => {
-      b.addEventListener("click", () => {
-        const act = b.getAttribute("data-act");
-        const id = b.getAttribute("data-id");
-
-        if(act === "open"){
-          const loaded = loadProject(id);
-          if(!loaded){ showToast("Open failed", "Project data missing."); return; }
-          state = loaded;
-          state.ui.mode = "wizard";
-          state.ui.stepIndex = 0;
-          localStorage.setItem(CURRENT_PROJECT_KEY, id);
-          render();
-          save("Project opened.");
-          return;
-        }
-
-        if(act === "rename"){
-          const current = getIndex().find(x=>x.id===id);
-          const name = prompt("Project name:", current?.name || "Untitled initiative");
-          if(name === null) return;
-          const nm = name.trim() || "Untitled initiative";
-
-          const idx2 = getIndex();
-          const i = idx2.findIndex(x=>x.id===id);
-          if(i>=0){ idx2[i].name = nm; idx2[i].updatedAt = nowIso(); setIndex(idx2); }
-
-          const loaded = loadProject(id);
-          if(loaded){
-            loaded.project.name = nm;
-            loaded.project.updatedAt = nowIso();
-            localStorage.setItem(PROJECT_KEY_PREFIX + id, JSON.stringify(loaded));
-            if(state.project.id === id){ state.project.name = nm; }
-          }
-          render();
-          showToast("Renamed", "Project name updated.");
-          return;
-        }
-
-        if(act === "duplicate"){
-          const loaded = loadProject(id);
-          if(!loaded){ showToast("Duplicate failed", "Project data missing."); return; }
-          const newName = (loaded.project.name || "Untitled initiative") + " (copy)";
-          const newState = newProject(newName);
-          newState.data = JSON.parse(JSON.stringify(loaded.data));
-          newState.ui = { ...newState.ui, mode: "wizard", stepIndex: loaded.ui?.stepIndex || 0, commentMode: loaded.ui?.commentMode || false };
-          newState.project.status = loaded.project.status || "incomplete";
-          newState.meta.updatedAt = nowIso();
-          localStorage.setItem(PROJECT_KEY_PREFIX + newState.project.id, JSON.stringify(newState));
-          state = newState;
-          render();
-          save("Duplicated project.");
-          showToast("Duplicated", "Created a copy and opened it.");
-          return;
-        }
-
-        if(act === "delete"){
-          const ok = confirm("Delete this project from this browser? Export JSON first if you need it later.");
-          if(!ok) return;
-          const idx2 = getIndex().filter(x => x.id !== id);
-          setIndex(idx2);
-          localStorage.removeItem(PROJECT_KEY_PREFIX + id);
-          localStorage.removeItem(BACKUP_KEY_PREFIX + id);
-          if(state.project.id === id){ state = load(); }
-          render();
-          save("Deleted project.");
-          showToast("Deleted", "Project removed from this device.");
-          return;
-        }
-      });
-    });
-  }
-
-  function renderScreen(){
-    const idx = state.ui.stepIndex;
-    const step = STEPS[idx];
-    const d = state.data;
-
-    btnPrev.disabled = idx === 0;
-    btnNext.textContent = idx === STEPS.length - 1 ? "Finish" : "Next";
-
-    screen.innerHTML = "";
-
-    if(step.id === "s1"){
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `
-        <div class="row">
-          <div>
-            <label>Initiative name</label>
-            <input id="initiativeName" type="text" placeholder="e.g., Water injection concept / Supplier change / Feature X" />
-            <div class="hint">Can be rough. This is just a handle for the initiative.</div>
-          </div>
-          <div>
-            <label>Org context</label>
-            <select id="orgContext">
-              <option>Advanced Engineering</option>
-              <option>Program</option>
-              <option>Quality issue</option>
-              <option>Supplier topic</option>
-              <option>Internal KPI / Cost-down</option>
-              <option>Regulatory / Compliance</option>
-            </select>
-          </div>
+      <div class="comp-row">
+        <div class="comp-desc">
+          <div class="comp-title">Cost of upfront concept validation</div>
+          <div class="comp-sub">Forcing stakeholder alignment before engineering begins</div>
         </div>
-
-        <div class="row">
-          <div>
-            <label>Maturity</label>
-            <select id="maturity">
-              <option>Idea</option>
-              <option>Rumor</option>
-              <option>Request</option>
-              <option>Mandate</option>
-            </select>
-          </div>
-          <div>
-            <label>Deadline pressure</label>
-            <select id="deadlinePressure">
-              <option>None</option>
-              <option>Soft</option>
-              <option>Hard date</option>
-            </select>
-          </div>
+        <div class="comp-val green">${fmt(validationCost)}</div>
+      </div>
+      <div class="comp-row">
+        <div class="comp-desc">
+          <div class="comp-title">Estimated saving</div>
+          <div class="comp-sub">${roi}× return on the concept validation investment</div>
         </div>
-      `;
-      screen.appendChild(wrap);
+        <div class="comp-val green">${fmt(saving)}</div>
+      </div>
+    </div>
 
-      elBind("initiativeName", "initiativeName");
-      elBind("orgContext", "orgContext");
-      elBind("maturity", "maturity");
-      elBind("deadlinePressure", "deadlinePressure");
+    <div class="insight-card">
+      <div class="insight-label">What this actually means</div>
+      <div class="insight-text">
+        The problem is rarely technical. Engineers know how to build things. 
+        What they can't do alone is force a room full of clients with incompatible requirements 
+        to make a decision before the project starts.<br><br>
+        <strong>That's a sensemaking problem.</strong> Someone needs to translate the complexity 
+        into a form stakeholders can actually respond to — before the engineering clock starts running.
+      </div>
+    </div>
 
-      screen.appendChild(renderCommentBox("s1"));
-    }
+    <div class="demo-card">
+      <div class="demo-intro">What just happened in this diagnostic</div>
+      <div class="demo-statement">
+        You answered 5 questions. A diffuse, expensive problem became a structure you can act on.
+      </div>
+      <div class="demo-sub">
+        That is the work. Not this tool specifically — but <strong>the thinking behind it</strong>: 
+        taking a complex situation with too many variables and too many stakeholders, 
+        and reducing it to a form where a decision becomes possible.<br><br>
+        This is what I do for R&D teams before engineering begins. 
+        Not as a consultant who writes reports. As a <strong>thinking partner 
+        who builds the conditions for alignment</strong> — through concept prototypes, 
+        scenario frameworks, and structured facilitation that forces the hard decisions early, 
+        when they're still cheap.
+      </div>
+    </div>
 
-    if(step.id === "s2"){
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `<div><label>Trigger type (choose 1–2)</label></div>`;
-      screen.appendChild(wrap);
-
-      const triggerOptions = [
-        "Customer request", "Internal KPI", "Failure in field", "Cost-down",
-        "Regulation", "Competitor move", "Tech opportunity", "Supplier issue"
-      ];
-      screen.appendChild(checkboxGrid(triggerOptions, d.triggerTypes, (arr) => {
-        state.data.triggerTypes = arr;
-        save("Trigger updated.");
-        renderLiveKV();
-      }));
-
-      const rest = document.createElement("div");
-      rest.style.marginTop = "12px";
-      rest.innerHTML = `
-        <div class="row">
-          <div>
-            <label>Trigger description (messy allowed)</label>
-            <textarea id="triggerDescription" placeholder="Paste the raw request, observation, email excerpt, etc."></textarea>
-          </div>
-          <div>
-            <label>Source of request</label>
-            <select id="requestSource">
-              <option>Internal function</option>
-              <option>OEM / Customer</option>
-              <option>Supplier</option>
-              <option>Leadership</option>
-              <option>Quality / Field data</option>
-            </select>
-          </div>
+    <div class="who-card">
+      <div class="who-initial">EP</div>
+      <div class="who-text">
+        <div class="who-name">Enrico Poli</div>
+        <div class="who-role">Sensemaker · Concept Developer · Strategic Facilitator</div>
+        <div class="who-bio">
+          I work at the boundary between complex systems and the people who need to make 
+          decisions about them. My background spans <strong>Google, Deutsche Bank, Alphabet, 
+          Nike, and P&G</strong> — not in a delivery capacity, but as the person who holds 
+          the conceptual architecture of a project together while specialists build it.<br><br>
+          The water injection problem — misaligned clients, shifting requirements, budget burned 
+          on technically correct but commercially impossible solutions — is a pattern I recognise 
+          across every industry I've worked in. <strong>The answer is always the same: 
+          alignment before engineering.</strong>
         </div>
-      `;
-      screen.appendChild(rest);
+      </div>
+    </div>
 
-      elBind("triggerDescription", "triggerDescription");
-      elBind("requestSource", "requestSource");
+    <div class="cta-card">
+      <div class="cta-text">Want to map where your project is losing alignment?</div>
+      <div class="cta-sub">A 45-minute conversation is usually enough to identify the two or three points where the problem is actually occurring — and what a concept validation phase would look like for your specific context.</div>
+      <a href="mailto:epoli.uk@gmail.com?subject=R%26D%20Alignment%20%E2%80%94%20let%27s%20talk" class="btn-cta">Start the conversation →</a>
+    </div>
 
-      screen.appendChild(renderCommentBox("s2"));
-    }
+    <button class="restart" onclick="restart()">Run diagnostic again</button>
+  `;
+}
 
-    if(step.id === "s3"){
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `<div><label>Artifacts available right now</label></div>`;
-      screen.appendChild(wrap);
-
-      const opts = [
-        "Email thread", "PPT / deck", "Requirement snippet", "Ticket / backlog item",
-        "Test report", "CAD / packaging constraint", "Supplier doc", "None"
-      ];
-      screen.appendChild(checkboxGrid(opts, d.artifactsAvailable, (arr) => {
-        state.data.artifactsAvailable = arr;
-        save("Artifacts updated.");
-        renderLiveKV();
-      }));
-
-      const rest = document.createElement("div");
-      rest.style.marginTop = "12px";
-      rest.innerHTML = `
-        <label>Links / notes</label>
-        <textarea id="artifactLinksNotes" placeholder="Paste links, filenames, or short notes."></textarea>
-        <div class="hint">If you publish this page, links here remain local unless exported.</div>
-      `;
-      screen.appendChild(rest);
-
-      elBind("artifactLinksNotes", "artifactLinksNotes");
-      screen.appendChild(renderCommentBox("s3"));
-    }
-
-    if(step.id === "s4"){
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `
-        <div class="row">
-          <div>
-            <label>Sponsor (name + role)</label>
-            <input id="sponsorNameRole" type="text" placeholder="e.g., Rossi — Head of AE" />
-          </div>
-          <div>
-            <label>Owner / PM (name + role) — if known</label>
-            <input id="ownerPMNameRole" type="text" placeholder="e.g., Bianchi — Program Manager" />
-          </div>
-        </div>
-        <div><label>Functions currently in the loop</label></div>
-      `;
-      screen.appendChild(wrap);
-
-      const fnOpts = [
-        "Systems", "Software", "Hardware", "Calibration", "Validation/Test",
-        "Manufacturing", "Purchasing", "Supplier", "Quality", "HMI/UX", "Legal/Compliance"
-      ];
-      screen.appendChild(checkboxGrid(fnOpts, d.functionsInLoop, (arr) => {
-        state.data.functionsInLoop = arr;
-        save("Functions updated.");
-        renderLiveKV();
-      }));
-
-      const rest = document.createElement("div");
-      rest.style.marginTop = "12px";
-      rest.innerHTML = `
-        <label>Missing but probably needed (optional)</label>
-        <textarea id="missingLikelyNeeded" placeholder="Who is not in the loop but will matter later?"></textarea>
-      `;
-      screen.appendChild(rest);
-
-      elBind("sponsorNameRole", "sponsorNameRole");
-      elBind("ownerPMNameRole", "ownerPMNameRole");
-      elBind("missingLikelyNeeded", "missingLikelyNeeded");
-      screen.appendChild(renderCommentBox("s4"));
-    }
-
-    if(step.id === "s5"){
-      const wrap = document.createElement("div");
-      wrap.innerHTML = `<div><label>Fixed constraints already known (check what applies)</label></div>`;
-      screen.appendChild(wrap);
-
-      const cOpts = [
-        "Budget cap", "SOP date", "Packaging envelope", "Supplier locked",
-        "Platform locked", "Compliance constraint", "Tooling freeze", "Headcount cap"
-      ];
-      screen.appendChild(checkboxGrid(cOpts, d.fixedConstraints, (arr) => {
-        state.data.fixedConstraints = arr;
-        save("Constraints updated.");
-        renderLiveKV();
-      }));
-
-      const rest = document.createElement("div");
-      rest.style.marginTop = "12px";
-      rest.innerHTML = `
-        <div class="row">
-          <div>
-            <label>Constraint values / details (optional)</label>
-            <textarea id="fixedConstraintValues" placeholder="e.g., SOP Q4 2027; budget €150k; packaging 120×80×60mm…"></textarea>
-          </div>
-          <div>
-            <label>Unknown constraints (free text)</label>
-            <textarea id="unknownConstraints" placeholder="What might be constrained but isn’t confirmed yet?"></textarea>
-          </div>
-        </div>
-      `;
-      screen.appendChild(rest);
-
-      elBind("fixedConstraintValues", "fixedConstraintValues");
-      elBind("unknownConstraints", "unknownConstraints");
-      screen.appendChild(renderCommentBox("s5"));
-    }
-  }
-
-  
-  function render(){
-    if(!state.project.id){
-      state = newProject(state.project.name || "Untitled initiative");
-    }
-    // Auto-sync project name from initiativeName if project name is still default
-    if(state.data.initiativeName && state.data.initiativeName.trim().length > 0){
-      if(!state.project.name || state.project.name === "Untitled initiative"){
-        state.project.name = state.data.initiativeName.trim();
-      }
-    }
-
-    if(state.ui.mode === "dashboard"){
-      renderDashboard();
-      renderLiveKV();
-      updateCompleteBadge();
-      commentMode.checked = !!state.ui.commentMode;
-      return;
-    }
-
-    renderStepper();
-    renderScreen();
-    renderLiveKV();
-    updateCompleteBadge();
-    commentMode.checked = !!state.ui.commentMode;
-  }
-
-
-  commentMode.addEventListener("change", () => {
-    state.ui.commentMode = commentMode.checked;
-    save("Comment mode updated.");
-    render();
-  });
-
-  globalNotes.addEventListener("input", () => {
-    state.data.globalNotes = globalNotes.value;
-    save("Notes saved.");
-  });
-  globalComments.addEventListener("input", () => {
-    state.data.globalComments = globalComments.value;
-    save("Global comments saved.");
-  });
-
-  btnPrev.addEventListener("click", () => setStep(state.ui.stepIndex - 1));
-  btnNext.addEventListener("click", () => {
-    if(state.ui.stepIndex < STEPS.length - 1){
-      setStep(state.ui.stepIndex + 1);
-    }else{
-      // Finish: open Final Review (confirmation + explicit export)
-      updateCompleteBadge();
-      pushBackup("finish (open review)");
-      openFinalReview();
-      save("Opened final review.");
-    }
-  });
-
-  btnExportJSON.addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
-    downloadBlob(blob, `intake_stage1_${sanitizeFilename(state.project.name)}_${state.project.id}_v${state.meta.version}.json`);
-  });
-
-  btnExportSnapshot.addEventListener("click", () => {
-    const txt = buildSnapshotText();
-    const blob = new Blob([txt], {type:"text/plain"});
-    downloadBlob(blob, `initiative_snapshot_${sanitizeFilename(state.project.name)}_${state.project.id}_v${state.meta.version}.txt`);
-  });
-
-
-  // Finish & Backup: force a snapshot backup + download files
-  const btnFinishBackup = document.getElementById("btnFinishBackup");
-  if(btnFinishBackup){
-    btnFinishBackup.addEventListener("click", () => {
-      updateCompleteBadge();
-      pushBackup("finish (toolbar)");
-      openFinalReview();
-    });
-  }
-
-  // Email submission: opens default mail client with summary + JSON embedded
-  const btnEmailSubmission = document.getElementById("btnEmailSubmission");
-  if(btnEmailSubmission){
-    btnEmailSubmission.addEventListener("click", () => {
-      pushBackup("email draft");
-      const subject = encodeURIComponent("Stage 1 Intake Submission");
-      const body = encodeURIComponent(buildEmailBody());
-      // mailto size limits vary by client; this is a convenience, not the only path
-      window.location.href = `mailto:?subject=${subject}&body=${body}`;
-    });
-  }
-
-  // Extra safety: warn if navigating away with incomplete stage (data is still saved, but reduces anxiety)
-  window.addEventListener("beforeunload", (e) => {
-    // Always saved; only warn if incomplete and some data exists
-    const d = state.data;
-    const hasAnything = Object.values(d).some(v => {
-      if(typeof v === "string") return v.trim().length > 0;
-      if(Array.isArray(v)) return v.length > 0;
-      if(typeof v === "object" && v) return Object.values(v).some(x => (typeof x === "string" ? x.trim().length > 0 : false));
-      return false;
-    });
-    if(hasAnything && !isComplete()){
-      e.preventDefault();
-      e.returnValue = "";
-      return "";
-    }
-  });
-
-
-  btnCopyShare.addEventListener("click", async () => {
-    const t = buildShareSummary();
-    try{
-      await navigator.clipboard.writeText(t);
-      showToast("Copied", "Summary copied to clipboard.");
-    }catch(e){
-      prompt("Copy this:", t);
-    }
-  });
-
-  // Projects dashboard
-  const btnProjects = document.getElementById("btnProjects");
-  if(btnProjects){
-    btnProjects.addEventListener("click", () => {
-      state.ui.mode = "dashboard";
-      render();
-      save("Opened projects dashboard.");
-    });
-  }
-  const btnNewProject = document.getElementById("btnNewProject");
-  if(btnNewProject){
-    btnNewProject.addEventListener("click", () => {
-      const name = prompt("New project name:", "Untitled initiative");
-      if(name === null) return;
-      state = newProject(name.trim() || "Untitled initiative");
-      state.ui.mode = "wizard";
-      state.ui.stepIndex = 0;
-      render();
-      save("Created new project.");
-      showToast("New project", "Created and opened.");
-    });
-  }
-
-  btnReset.addEventListener("click", () => {
-    const ok = confirm("Reset THIS project’s form data on this device? (Project stays in the list.)");
-    if(!ok) return;
-    const pid = state.project.id;
-    const keepProject = { ...state.project, status: "incomplete", updatedAt: nowIso() };
-    const fresh = structuredClone(defaults);
-    fresh.project = keepProject;
-    fresh.meta.createdAt = keepProject.createdAt || nowIso();
-    fresh.meta.updatedAt = keepProject.updatedAt;
-    state = fresh;
-    localStorage.setItem(PROJECT_KEY_PREFIX + pid, JSON.stringify(state));
-    try{
-      const idx = getIndex();
-      const i = idx.findIndex(x=>x.id===pid);
-      if(i>=0){ idx[i] = { ...idx[i], name: keepProject.name, status: keepProject.status, updatedAt: keepProject.updatedAt, createdAt: keepProject.createdAt }; setIndex(idx); }
-    }catch(e){}
-    save("Project reset.");
-    render();
-  });
-
-function buildSnapshotText(){
-    const d = state.data;
-    const lines = [];
-    lines.push("INITIATIVE SNAPSHOT v0.0");
-    lines.push("========================================");
-    lines.push(`Initiative: ${d.initiativeName || "—"}`);
-    lines.push(`Org context: ${d.orgContext || "—"}`);
-    lines.push(`Maturity: ${d.maturity || "—"}`);
-    lines.push(`Deadline pressure: ${d.deadlinePressure || "—"}`);
-    lines.push("");
-    lines.push("TRIGGER");
-    lines.push("----------------------------------------");
-    lines.push(`Trigger types: ${d.triggerTypes.length ? d.triggerTypes.join(", ") : "—"}`);
-    lines.push(`Request source: ${d.requestSource || "—"}`);
-    lines.push(`Trigger description:\n${d.triggerDescription || "—"}`);
-    lines.push("");
-    lines.push("EXISTING ARTIFACTS");
-    lines.push("----------------------------------------");
-    lines.push(`Available: ${d.artifactsAvailable.length ? d.artifactsAvailable.join(", ") : "—"}`);
-    lines.push(`Links/notes:\n${d.artifactLinksNotes || "—"}`);
-    lines.push("");
-    lines.push("PEOPLE");
-    lines.push("----------------------------------------");
-    lines.push(`Sponsor: ${d.sponsorNameRole || "—"}`);
-    lines.push(`Owner/PM: ${d.ownerPMNameRole || "—"}`);
-    lines.push(`Functions in loop: ${d.functionsInLoop.length ? d.functionsInLoop.join(", ") : "—"}`);
-    lines.push(`Missing but likely needed:\n${d.missingLikelyNeeded || "—"}`);
-    lines.push("");
-    lines.push("CONSTRAINTS");
-    lines.push("----------------------------------------");
-    lines.push(`Fixed constraints: ${d.fixedConstraints.length ? d.fixedConstraints.join(", ") : "—"}`);
-    lines.push(`Details:\n${d.fixedConstraintValues || "—"}`);
-    lines.push(`Unknown constraints:\n${d.unknownConstraints || "—"}`);
-    lines.push("");
-    lines.push("NOTES");
-    lines.push("----------------------------------------");
-    lines.push(d.globalNotes || "—");
-
-    if(state.ui.commentMode){
-      lines.push("");
-      lines.push("COMMENTS (meta)");
-      lines.push("----------------------------------------");
-      lines.push(d.globalComments || "—");
-      lines.push("");
-      lines.push("COMMENTS (by screen)");
-      lines.push("----------------------------------------");
-      STEPS.forEach(s => {
-        const c = d.stepComments[s.id] || "";
-        lines.push(`${s.title}: ${c ? "\\n" + c : "—"}`);
-        lines.push("");
-      });
-    }
-
-    lines.push("");
-    lines.push(`Created: ${state.meta.createdAt}`);
-    lines.push(`Updated: ${state.meta.updatedAt}`);
-    return lines.join("\\n");
-  }
-
-  function buildShareSummary(){
-    const d = state.data;
-    const s = [];
-    s.push(`Project: ${state.project.name || "Untitled"} (${state.project.id})`);
-    s.push(`Initiative: ${d.initiativeName || "(unnamed)"}`);
-    s.push(`Context: ${d.orgContext} | ${d.maturity} | deadline: ${d.deadlinePressure}`);
-    if(d.triggerTypes.length) s.push(`Trigger: ${d.triggerTypes.join(", ")}`);
-    if(d.requestSource) s.push(`Source: ${d.requestSource}`);
-    if(d.artifactsAvailable.length) s.push(`Artifacts: ${d.artifactsAvailable.join(", ")}`);
-    if(d.sponsorNameRole) s.push(`Sponsor: ${d.sponsorNameRole}`);
-    if(d.ownerPMNameRole) s.push(`Owner/PM: ${d.ownerPMNameRole}`);
-    if(d.functionsInLoop.length) s.push(`In loop: ${d.functionsInLoop.join(", ")}`);
-    if(d.fixedConstraints.length) s.push(`Constraints: ${d.fixedConstraints.join(", ")}`);
-    s.push(`(Saved locally — export JSON/TXT to share)`);
-    return s.join("\\n");
-  }
-
-  function downloadBlob(blob, filename){
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 500);
-  }
-
-
-  // --- Backup strategy (no backend) ---
-  // 1) Auto-save to localStorage (already)
-  // 2) Keep a small rolling history of snapshots in localStorage (so a bad edit can be recovered)
-  // 3) On "Finish & Backup", download JSON + TXT immediately (two files)
-  // 4) Optional: one-click email draft with the JSON embedded (manual send)
-
-  function backupKey(){ return BACKUP_KEY_PREFIX + (state?.project?.id || "unknown"); }
-  const MAX_BACKUPS = 20;
-
-  function setLastBackupLabel(iso){
-    const node = document.getElementById("lastBackup");
-    if(!node) return;
-    node.textContent = iso ? new Date(iso).toLocaleString() : "—";
-  }
-
-  function pushBackup(reason){
-    try{
-      const backupsRaw = localStorage.getItem(backupKey());
-      const backups = backupsRaw ? JSON.parse(backupsRaw) : [];
-      const entry = {
-        at: new Date().toISOString(),
-        reason: reason || "auto",
-        state: state
-      };
-      backups.unshift(entry);
-      while(backups.length > MAX_BACKUPS) backups.pop();
-      localStorage.setItem(backupKey(), JSON.stringify(backups));
-      setLastBackupLabel(entry.at);
-      return entry.at;
-    }catch(e){
-      // If backup fails, surface it. Still keep local save.
-      saveBadge.className = "badge warn";
-      saveBadge.textContent = "Save ok, backup failed";
-      showToast("Backup failed", "Local save still OK. Consider exporting JSON now.");
-      return null;
-    }
-  }
-
-  function downloadBackupPair(){
-    // Download JSON
-    const jsonBlob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
-    downloadBlob(jsonBlob, `intake_stage1_${sanitizeFilename(state.project.name)}_${state.project.id}_v${state.meta.version}_${Date.now()}.json`);
-    // Download TXT snapshot
-    const txt = buildSnapshotText();
-    const txtBlob = new Blob([txt], {type:"text/plain"});
-    downloadBlob(txtBlob, `initiative_snapshot_${sanitizeFilename(state.project.name)}_${state.project.id}_v${state.meta.version}_${Date.now()}.txt`);
-  }
-
-  function buildEmailBody(){
-    // Keep email body readable; JSON at the bottom for copy/paste
-    const summary = buildShareSummary();
-    const json = JSON.stringify(state, null, 2);
-    return [
-      "Hi Enrico,",
-      "",
-      "Here is my Stage 1 intake submission.",
-      "",
-      "— Summary —",
-      summary,
-      "",
-      "— Comments (meta) —",
-      state.data.globalComments || "—",
-      "",
-      "— JSON (paste/save) —",
-      json
-    ].join("\n");
-  }
-
-  // --- Final Review / Confirmation + PDF export ---
-  const finalReviewOverlay = document.getElementById("finalReviewOverlay");
-  const finalReviewBody = document.getElementById("finalReviewBody");
-  const finalReviewStatus = document.getElementById("finalReviewStatus");
-  const btnFinalEdit = document.getElementById("btnFinalEdit");
-  const btnFinalConfirm = document.getElementById("btnFinalConfirm");
-  const btnFinalExportPDF = document.getElementById("btnFinalExportPDF");
-  const btnFinalDownloadTXT = document.getElementById("btnFinalDownloadTXT");
-  const btnFinalDownloadJSON = document.getElementById("btnFinalDownloadJSON");
-
-  function buildFinalReviewHTML(){
-    const d = state.data;
-    const section = (title, rows, stepIndex) => {
-      const editBtn = (typeof stepIndex === "number")
-        ? `<button class="smallbtn" data-jump="${stepIndex}" style="float:right;margin-top:-2px;">Edit</button>`
-        : "";
-      const body = rows.map(r => `<div style="margin:6px 0;"><div class="mini">${escapeHtml(r[0])}</div><div style="font-size:13px;line-height:1.45;white-space:pre-wrap;">${escapeHtml(r[1] || "—")}</div></div>`).join("");
-      return `
-        <div class="card" style="box-shadow:none;margin-bottom:12px;">
-          <h2 style="display:flex;justify-content:space-between;align-items:center;">
-            <span>${escapeHtml(title)}</span>
-            <span>${editBtn}</span>
-          </h2>
-          <div class="body">${body}</div>
-        </div>
-      `;
-    };
-
-    const html = [];
-    html.push(section("Create initiative", [
-      ["Initiative name", d.initiativeName],
-      ["Org context", d.orgContext],
-      ["Maturity", d.maturity],
-      ["Deadline pressure", d.deadlinePressure],
-    ], 0));
-
-    html.push(section("Trigger", [
-      ["Trigger types", d.triggerTypes?.length ? d.triggerTypes.join(", ") : "—"],
-      ["Source of request", d.requestSource],
-      ["Trigger description", d.triggerDescription],
-    ], 1));
-
-    html.push(section("Existing artifacts", [
-      ["Artifacts available", d.artifactsAvailable?.length ? d.artifactsAvailable.join(", ") : "—"],
-      ["Links / notes", d.artifactLinksNotes],
-    ], 2));
-
-    html.push(section("People involved", [
-      ["Sponsor (name + role)", d.sponsorNameRole],
-      ["Owner / PM (name + role)", d.ownerPMNameRole],
-      ["Functions in loop", d.functionsInLoop?.length ? d.functionsInLoop.join(", ") : "—"],
-      ["Missing but likely needed", d.missingLikelyNeeded],
-    ], 3));
-
-    html.push(section("Known constraints", [
-      ["Fixed constraints", d.fixedConstraints?.length ? d.fixedConstraints.join(", ") : "—"],
-      ["Constraint values / details", d.fixedConstraintValues],
-      ["Unknown constraints", d.unknownConstraints],
-    ], 4));
-
-    html.push(section("Notes", [
-      ["Notes (free)", d.globalNotes],
-      ...(state.ui.commentMode ? [["Comments (meta)", d.globalComments || "—"]] : [])
-    ], null));
-
-    return html.join("");
-  }
-
-  function openFinalReview(){
-    if(!finalReviewOverlay || !finalReviewBody) return;
-    finalReviewBody.innerHTML = buildFinalReviewHTML();
-    const complete = isComplete();
-    if(finalReviewStatus){
-      finalReviewStatus.className = "badge " + (complete ? "ok" : "warn");
-      finalReviewStatus.textContent = complete ? "Stage 1 complete" : "Stage 1 incomplete";
-    }
-    finalReviewOverlay.style.display = "flex";
-
-    // Wire section edit buttons (jump to step)
-    finalReviewBody.querySelectorAll("button[data-jump]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const i = Number(btn.getAttribute("data-jump"));
-        closeFinalReview();
-        state.ui.mode = "wizard";
-        setStep(i);
-      });
-    });
-  }
-
-  function closeFinalReview(){
-    if(finalReviewOverlay) finalReviewOverlay.style.display = "none";
-    document.body.classList.remove("print-review");
-  }
-
-  if(btnFinalEdit){
-    btnFinalEdit.addEventListener("click", () => {
-      closeFinalReview();
-      state.ui.mode = "wizard";
-      render();
-      save("Returned to edit.");
-    });
-  }
-
-  if(btnFinalConfirm){
-    btnFinalConfirm.addEventListener("click", () => {
-      updateCompleteBadge();
-      pushBackup("confirmed");
-      showToast("Confirmed", "You can now export as PDF.");
-      if(finalReviewStatus){
-        finalReviewStatus.className = "badge ok";
-        finalReviewStatus.textContent = "Confirmed";
-      }
-      save("Confirmed final review.");
-    });
-  }
-
-  function exportReviewAsPDF(){
-    if(!finalReviewOverlay) return;
-    // Ensure review is visible, then print only the review card
-    finalReviewOverlay.style.display = "flex";
-    document.body.classList.add("print-review");
-    // Give the browser a tick to apply print CSS
-    setTimeout(() => {
-      window.print();
-      // Clean up after the print dialog closes (some browsers don't fire afterprint reliably)
-      setTimeout(() => document.body.classList.remove("print-review"), 500);
-    }, 50);
-  }
-
-  if(btnFinalExportPDF){
-    btnFinalExportPDF.addEventListener("click", () => {
-      pushBackup("export pdf");
-      exportReviewAsPDF();
-    });
-  }
-
-  if(btnFinalDownloadTXT){
-    btnFinalDownloadTXT.addEventListener("click", () => {
-      const txt = buildSnapshotText();
-      const blob = new Blob([txt], {type:"text/plain"});
-      downloadBlob(blob, `initiative_snapshot_${sanitizeFilename(state.project.name)}_${state.project.id}_v${state.meta.version}.txt`);
-      showToast("Downloaded", "TXT snapshot saved.");
-    });
-  }
-
-  if(btnFinalDownloadJSON){
-    btnFinalDownloadJSON.addEventListener("click", () => {
-      const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
-      downloadBlob(blob, `intake_stage1_${sanitizeFilename(state.project.name)}_${state.project.id}_v${state.meta.version}.json`);
-      showToast("Downloaded", "JSON saved.");
-    });
-  }
-
-
+function restart() {
+  answers = []; current = 0;
+  document.getElementById('resultScreen').classList.add('hidden');
+  document.getElementById('quizScreen').classList.remove('hidden');
   render();
-  // Prime backup label from last backup entry if available
-  try{
-    const bRaw = localStorage.getItem(backupKey());
-    if(bRaw){
-      const arr = JSON.parse(bRaw);
-      if(arr && arr[0] && arr[0].at) setLastBackupLabel(arr[0].at);
-    }
-  }catch(e){}
-  pushBackup("initial load");
-// --- Landing gate wiring (robust) ---
-  (function(){
-    const appShell = document.getElementById("appShell");
-    const landingOverlay = document.getElementById("landingOverlay");
-    const userNameInput = document.getElementById("userNameInput");
-    const landingChoice = document.getElementById("landingChoice");
-    const btnLandingContinue = document.getElementById("btnLandingContinue");
+}
 
-    function persistName(){
-      try{
-        const name = (userNameInput?.value || "").trim();
-        // USER_KEY helpers may or may not exist; fall back to direct localStorage
-        if(typeof setUserName === "function") setUserName(name);
-        else localStorage.setItem("alignment_intake_user_name", name);
-      }catch(e){}
-    }
-
-    function showLanding(){
-      try{ if(appShell) appShell.classList.add("hidden"); }catch(e){}
-      try{ if(landingOverlay) landingOverlay.style.display = "flex"; }catch(e){}
-      try{
-        const existing = (typeof getUserName === "function") ? getUserName() : (localStorage.getItem("alignment_intake_user_name") || "");
-        if(userNameInput) userNameInput.value = existing;
-      }catch(e){}
-      try{ userNameInput?.focus(); }catch(e){}
-    }
-
-    function hideLanding(){
-      try{ if(landingOverlay) landingOverlay.style.display = "none"; }catch(e){}
-      try{ if(appShell) appShell.classList.remove("hidden"); }catch(e){}
-    }
-
-    function enterProjects(){
-      persistName();
-      hideLanding();
-      try{ state.ui.mode = "dashboard"; }catch(e){}
-      try{ render(); }catch(e){}
-      try{ save("Entered: projects."); }catch(e){}
-    }
-
-    function enterNewProject(){
-      persistName();
-      // Ask for project name (minimal, still keeps landing gate at 2 fields)
-      let pname = "";
-      try{
-        pname = prompt("Project name:", "Untitled initiative") || "";
-      }catch(e){ pname = ""; }
-      pname = (pname || "").trim() || "Untitled initiative";
-
-      hideLanding();
-      try{
-        // newProject should exist in multiproject build
-        state = newProject(pname);
-        state.ui.mode = "wizard";
-        state.ui.stepIndex = 0;
-      }catch(e){}
-      try{ render(); }catch(e){}
-      try{ save("Entered: new project."); }catch(e){}
-      try{ showToast("New project", "Created and opened."); }catch(e){}
-    }
-
-    if(userNameInput){
-      userNameInput.addEventListener("input", persistName);
-      userNameInput.addEventListener("keydown", (e) => {
-        if(e.key === "Enter"){ e.preventDefault(); btnLandingContinue?.click(); }
-      });
-    }
-    if(btnLandingContinue){
-      btnLandingContinue.addEventListener("click", () => {
-        const choice = landingChoice?.value || "projects";
-        if(choice === "new") enterNewProject();
-        else enterProjects();
-      });
-    }
-
-    // Always show landing on initial load
-    window.addEventListener("DOMContentLoaded", () => showLanding());
-  })();
-
-})();
+render();
 </script>
 </body>
 </html>
