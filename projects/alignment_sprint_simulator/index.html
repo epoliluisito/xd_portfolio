@@ -860,7 +860,7 @@ function calculate(){
   S.resourceWaste=Math.round(en*mo*cp*0.40*sm*rm*0.28);
   S.initiativeWaste=Math.round(ic*p.pf*rm*0.35*sm*0.3);
   S.totalWaste=S.resourceWaste+S.initiativeWaste;
-  S.validationCost=Math.min(Math.round(S.totalWaste*0.09),85000);
+  S.validationCost=Math.min(Math.max(Math.round(S.totalWaste*0.05),8500),18000);
   S.saving=S.totalWaste-S.validationCost;
   S.roi=Math.round(S.saving/S.validationCost);
 }
@@ -1126,71 +1126,138 @@ function buildPS(){
 // ════════════════════════════════════════════
 function buildBranching(){
   const p=PT[S.pt];
-  const userCentered=S.userCenteredScore>=2;
+  const uc=S.userCenteredScore>=2;
+  const yourPath=uc?p.psB:p.psA;
+  const altPath=uc?p.psA:p.psB;
+  const yourKey=uc?'path-b':'path-a';
+  const altKey=uc?'path-a':'path-b';
 
-  function pathHTML(path, pathKey){
-    const d=p[pathKey];
-    const maxWeeks=Math.max(p.psA.ideate.weeks,p.psA.proto.weeks,p.psA.test.weeks,p.psB.ideate.weeks,p.psB.proto.weeks,p.psB.test.weeks);
-    const barW=(w)=>Math.round((w/maxWeeks)*100);
+  // Summarise what they actually selected
+  const selected=S.empSelections.map(i=>p.empCards[i]);
+  const ucSelected=selected.filter(c=>c.uc);
+  const techSelected=selected.filter(c=>!c.uc);
+  const researchSummary=selected.slice(0,3).map(c=>`<span style="display:inline-block;padding:3px 8px;border-radius:2px;font-size:11px;font-family:var(--mono);letter-spacing:.08em;margin:2px;background:${c.uc?'rgba(100,210,255,.08)':'rgba(255,214,10,.06)'};border:1px solid ${c.uc?'rgba(100,210,255,.2)':'rgba(255,214,10,.15)'};color:${c.uc?'rgba(100,210,255,.8)':'rgba(255,214,10,.7)'};">${c.title}</span>`).join('')+(selected.length>3?`<span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:4px;">+${selected.length-3} more</span>`:'');
 
+  const maxWeeks=Math.max(p.psA.ideate.weeks,p.psA.proto.weeks,p.psA.test.weeks,p.psB.ideate.weeks,p.psB.proto.weeks,p.psB.test.weeks);
+  const barW=(w)=>Math.round((w/maxWeeks)*100);
+
+  function timelineHTML(d, isYours){
+    const col=isYours?(uc?'rgba(48,209,88,.55)':'rgba(255,69,58,.5)'):(uc?'rgba(255,69,58,.5)':'rgba(48,209,88,.55)');
     return `
-      <div class="branch-path ${path}">
-        <div class="branch-path-header">
-          <div>
-            <div class="branch-path-label">${path==='path-a'?'PATH A — WITHOUT EMPATHIZE / DEFINE':'PATH B — WITH EMPATHIZE / DEFINE'}</div>
-            <div class="branch-path-title">${d.label}</div>
-          </div>
-          ${(path==='path-b'&&userCentered)||(path==='path-a'&&!userCentered)?'<div style="font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:4px 8px;border-radius:2px;background:rgba(255,255,255,.07);color:rgba(255,255,255,.5);">YOUR PATH</div>':''}
+      <div class="branch-phase">
+        <div class="branch-phase-name">IDEATE</div>
+        <div class="branch-bar-wrap">
+          <div class="branch-bar" style="width:${barW(d.ideate.weeks)}%;background:${col}"></div>
+          <div class="branch-bar-meta">${d.ideate.weeks}w · ${fmt(d.ideate.cost)} · ${d.ideate.team} people</div>
         </div>
-        <div class="branch-timeline">
-          <div class="branch-phase">
-            <div class="branch-phase-name">IDEATE</div>
-            <div class="branch-bar-wrap">
-              <div class="branch-bar" style="width:${barW(d.ideate.weeks)}%"></div>
-              <div class="branch-bar-meta">${d.ideate.weeks}w · ${fmt(d.ideate.cost)} · ${d.ideate.team} people</div>
-            </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4;">${d.ideate.desc}</div>
-          </div>
-          <div class="branch-phase">
-            <div class="branch-phase-name">PROTOTYPE</div>
-            <div class="branch-bar-wrap">
-              <div class="branch-bar" style="width:${barW(d.proto.weeks)}%"></div>
-              <div class="branch-bar-meta">${d.proto.weeks}w · ${fmt(d.proto.cost)} · ${d.proto.team} people</div>
-            </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4;">${d.proto.desc}</div>
-          </div>
-          <div class="branch-phase">
-            <div class="branch-phase-name">TEST</div>
-            <div class="branch-bar-wrap">
-              <div class="branch-bar" style="width:${barW(d.test.weeks)}%"></div>
-              <div class="branch-bar-meta">${d.test.weeks}w · ${fmt(d.test.cost)} · ${d.test.team} people</div>
-            </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4;">${d.test.desc}</div>
-          </div>
-          <div class="branch-total">${fmt(d.total)} total</div>
-          <div class="branch-outcome">${d.outcome}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4;">${d.ideate.desc}</div>
+      </div>
+      <div class="branch-phase">
+        <div class="branch-phase-name">PROTOTYPE</div>
+        <div class="branch-bar-wrap">
+          <div class="branch-bar" style="width:${barW(d.proto.weeks)}%;background:${col}"></div>
+          <div class="branch-bar-meta">${d.proto.weeks}w · ${fmt(d.proto.cost)} · ${d.proto.team} people</div>
         </div>
-      </div>`;
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4;">${d.proto.desc}</div>
+      </div>
+      <div class="branch-phase">
+        <div class="branch-phase-name">TEST</div>
+        <div class="branch-bar-wrap">
+          <div class="branch-bar" style="width:${barW(d.test.weeks)}%;background:${col}"></div>
+          <div class="branch-bar-meta">${d.test.weeks}w · ${fmt(d.test.cost)} · ${d.test.team} people</div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4;">${d.test.desc}</div>
+      </div>
+      <div class="branch-total" style="color:${isYours?(uc?'var(--success)':'var(--danger)'):(uc?'var(--danger)':'var(--success)')}">${fmt(d.total)} total</div>
+      <div class="branch-outcome">${d.outcome}</div>`;
   }
 
-  const saving=p.psA.total-p.psB.total;
+  const saving=Math.abs(p.psA.total-p.psB.total);
+  const yourTotal=yourPath.total;
+  const altTotal=altPath.total;
 
   document.getElementById('branching-content').innerHTML=`
-    <div class="branch-intro">
+    <div style="margin-bottom:28px;">
       <div class="eyebrow" style="color:#a78bfa">
         <span style="display:block;width:22px;height:1px;background:#a78bfa"></span>
         Phase 05 — Branching Paths
       </div>
-      <h1>The same project. Two different problem definitions. Two entirely different outcomes.</h1>
-      <p class="lead" style="margin-top:8px;">The bars show weeks, team size, and cost per phase. The difference is not in engineering quality — it is in <strong style="color:var(--text);">what the engineers were asked to build.</strong></p>
+      <h1>Your research choices created this fork.</h1>
+      <p class="lead" style="margin-top:8px;">The bars show what each Problem Statement costs downstream — in weeks, team size, and budget. The difference is not engineering quality. It is <strong style="color:var(--text);">what the engineers were asked to solve.</strong></p>
     </div>
-    <div class="branch-paths">
-      ${pathHTML('path-a','psA')}
-      ${pathHTML('path-b','psB')}
+
+    <!-- CAUSE: what they chose -->
+    <div style="background:rgba(100,210,255,.04);border:1px solid rgba(100,210,255,.15);border-radius:4px;padding:18px 22px;margin-bottom:8px;">
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:rgba(100,210,255,.5);margin-bottom:10px;">YOUR EMPATHIZE SELECTIONS</div>
+      <div style="margin-bottom:8px;">${researchSummary}</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.5;">
+        ${ucSelected.length>0?`${ucSelected.length} user-context area${ucSelected.length>1?'s':''} selected — `:'No user-context areas selected — '}
+        ${techSelected.length>0?`${techSelected.length} technical/regulatory area${techSelected.length>1?'s':''}.`:'.'}
+        ${uc?'<strong style="color:rgba(100,210,255,.7);">Research weighted toward real-world usage.</strong>':'<strong style="color:rgba(255,214,10,.7);">Research weighted toward technical specification.</strong>'}
+      </div>
     </div>
+
+    <!-- ARROW DOWN -->
+    <div style="text-align:center;padding:8px 0;font-family:var(--mono);font-size:16px;color:var(--muted);">↓</div>
+
+    <!-- EFFECT: problem statement they got -->
+    <div style="background:${uc?'rgba(48,209,88,.04)':'rgba(255,214,10,.04)'};border:1px solid ${uc?'rgba(48,209,88,.2)':'rgba(255,214,10,.2)'};border-radius:4px;padding:18px 22px;margin-bottom:8px;">
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:${uc?'rgba(48,209,88,.5)':'rgba(255,214,10,.5)'};margin-bottom:8px;">PROBLEM STATEMENT YOUR CHOICES PRODUCED</div>
+      <div style="font-size:14px;font-weight:500;line-height:1.6;color:var(--text);font-style:italic;">"${yourPath.text}"</div>
+    </div>
+
+    <!-- ARROW DOWN -->
+    <div style="text-align:center;padding:8px 0;font-family:var(--mono);font-size:16px;color:var(--muted);">↓</div>
+
+    <!-- YOUR DOWNSTREAM PATH -->
+    <div style="border-radius:4px;overflow:hidden;margin-bottom:24px;">
+      <div style="padding:12px 18px;display:flex;align-items:center;justify-content:space-between;background:${uc?'rgba(48,209,88,.07)':'rgba(255,214,10,.07)'};border:1px solid ${uc?'rgba(48,209,88,.2)':'rgba(255,214,10,.2)'};border-bottom:none;">
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:${uc?'rgba(48,209,88,.6)':'rgba(255,214,10,.6)'};">YOUR DOWNSTREAM PATH</div>
+          <div style="font-size:13px;font-weight:500;margin-top:3px;">${yourPath.label}</div>
+        </div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);">Total: ${fmt(yourTotal)}</div>
+      </div>
+      <div style="padding:16px 18px;border:1px solid ${uc?'rgba(48,209,88,.2)':'rgba(255,214,10,.2)'};border-top:none;border-radius:0 0 4px 4px;background:rgba(0,0,0,.15);">
+        ${timelineHTML(yourPath, true)}
+      </div>
+    </div>
+
+    <!-- DIVIDER: the fork -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);white-space:nowrap;">If research had been prioritised differently</div>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+
+    <!-- ALTERNATIVE PROBLEM STATEMENT -->
+    <div style="background:${uc?'rgba(255,214,10,.04)':'rgba(48,209,88,.04)'};border:1px solid ${uc?'rgba(255,214,10,.15)':'rgba(48,209,88,.15)'};border-radius:4px;padding:18px 22px;margin-bottom:8px;">
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:${uc?'rgba(255,214,10,.5)':'rgba(48,209,88,.5)'};margin-bottom:8px;">ALTERNATIVE — IF ${uc?'TECHNICAL SPEC':'USER CONTEXT'} HAD BEEN PRIORITISED</div>
+      <div style="font-size:14px;font-weight:500;line-height:1.6;color:rgba(232,234,237,.65);font-style:italic;">"${altPath.text}"</div>
+    </div>
+
+    <!-- ARROW DOWN -->
+    <div style="text-align:center;padding:8px 0;font-family:var(--mono);font-size:16px;color:var(--muted);">↓</div>
+
+    <!-- ALTERNATIVE DOWNSTREAM PATH -->
+    <div style="border-radius:4px;overflow:hidden;margin-bottom:16px;">
+      <div style="padding:12px 18px;display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,.03);border:1px solid var(--border);border-bottom:none;">
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);">ALTERNATIVE DOWNSTREAM PATH</div>
+          <div style="font-size:13px;font-weight:500;margin-top:3px;color:var(--muted);">${altPath.label}</div>
+        </div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--muted);">Total: ${fmt(altTotal)}</div>
+      </div>
+      <div style="padding:16px 18px;border:1px solid var(--border);border-top:none;border-radius:0 0 4px 4px;background:rgba(0,0,0,.1);opacity:.75;">
+        ${timelineHTML(altPath, false)}
+      </div>
+    </div>
+
+    <!-- COST DELTA -->
     <div class="branch-highlight" style="margin-bottom:20px;">
-      Difference in downstream R&D cost between the two paths: <strong>${fmt(saving)}</strong>. This is separate from the misalignment cost already calculated — it represents the efficiency gain from having a clearer brief before engineering begins.
+      The cost difference between these two paths — driven entirely by how the problem was framed — is <strong>${fmt(saving)}</strong>. Same project. Same engineering team. Different question asked at the start.
     </div>
+
     <div class="nav" style="justify-content:flex-end;">
       <button class="btn btn-primary" onclick="goTo('s-t6')" style="--accent:var(--success);">See the proposal →</button>
     </div>`;
@@ -1201,33 +1268,50 @@ function buildBranching(){
 // ════════════════════════════════════════════
 function buildFinancial(){
   const p=PT[S.pt];
+  const uc=S.userCenteredScore>=2;
+  const betterPath=uc?p.psB:p.psA; // path they're already on
+  const worsePath=uc?p.psA:p.psB;  // the costly alternative
+  const potentialSaving=Math.abs(p.psA.total-p.psB.total);
+
   document.getElementById('financial-content').innerHTML=`
     <div style="margin-bottom:24px;">
       <div class="eyebrow" style="color:var(--success)">
         <span style="display:block;width:22px;height:1px;background:var(--success)"></span>
         Phase 06 — The Proposal
       </div>
-      <h1>The number that makes the decision obvious.</h1>
+      <h1>One question before we finish.</h1>
     </div>
-    <div class="fin-vs">
-      <div class="fin-box waste">
-        <div class="fin-box-lbl">Misalignment cost</div>
-        <div class="fin-box-val">${fmt(S.totalWaste)}</div>
-        <div class="fin-box-desc">Estimated budget consumed before alignment on ${S.project}</div>
+
+    <!-- The anchor: their misalignment cost -->
+    <div class="card" style="background:rgba(255,69,58,.05);border-color:rgba(255,69,58,.18);margin-bottom:10px;text-align:center;padding:28px;">
+      <div class="card-label">Estimated misalignment cost on ${S.project}</div>
+      <div style="font-family:var(--mono);font-size:clamp(36px,7vw,52px);font-weight:500;color:var(--danger);letter-spacing:-.02em;line-height:1;margin:8px 0;">${fmt(S.totalWaste)}</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.5;">Resource overhead + initiative overhead · order-of-magnitude estimate</div>
+    </div>
+
+    <!-- The question -->
+    <div class="card" style="margin-bottom:10px;background:rgba(255,149,0,.04);border-color:rgba(255,149,0,.18);">
+      <div style="font-size:16px;font-weight:500;line-height:1.5;margin-bottom:18px;">On your <em style="font-style:italic;">next</em> project — how much of that would be worth protecting?</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;" id="save-options">
+        <button onclick="selectSave(this,'€50K+','A focused sprint on requirement alignment. Covers the highest-risk stakeholder junctions before engineering begins.')" style="padding:16px 12px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--text);cursor:pointer;text-align:center;transition:all .15s;font-family:var(--sans);">
+          <div style="font-family:var(--mono);font-size:16px;font-weight:500;color:var(--success);margin-bottom:4px;">€50K+</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;">One project, one sprint</div>
+        </button>
+        <button onclick="selectSave(this,'€150K+','A validation sprint plus a facilitated Problem Statement workshop with all OEM stakeholders present.')" style="padding:16px 12px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--text);cursor:pointer;text-align:center;transition:all .15s;font-family:var(--sans);">
+          <div style="font-family:var(--mono);font-size:16px;font-weight:500;color:var(--success);margin-bottom:4px;">€150K+</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;">One project, full sprint + workshop</div>
+        </button>
+        <button onclick="selectSave(this,'€300K+','Embedding the alignment process across your pipeline — making this the default before any new project begins engineering.')" style="padding:16px 12px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--text);cursor:pointer;text-align:center;transition:all .15s;font-family:var(--sans);">
+          <div style="font-family:var(--mono);font-size:16px;font-weight:500;color:var(--success);margin-bottom:4px;">€300K+</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;">Across multiple projects</div>
+        </button>
       </div>
-      <div class="fin-sep">vs</div>
-      <div class="fin-box invest">
-        <div class="fin-box-lbl">Concept Validation Sprint</div>
-        <div class="fin-box-val">${fmt(S.validationCost)}</div>
-        <div class="fin-box-desc">Fixed-price · 3 weeks · to reach an agreed Problem Statement</div>
-      </div>
+      <div id="save-detail" style="margin-top:14px;display:none;padding:14px;background:rgba(0,0,0,.2);border-radius:3px;font-size:13px;color:var(--muted);line-height:1.6;"></div>
     </div>
-    <div class="fin-roi">
-      <div class="fin-roi-val">${S.roi}×</div>
-      <div class="fin-roi-lbl">estimated return · potential saving of ${fmt(S.saving)}</div>
-    </div>
+
+    <!-- What the sprint covers -->
     <div class="card" style="margin-bottom:10px;background:rgba(48,209,88,.04);border-color:rgba(48,209,88,.15);">
-      <div class="card-label">What the sprint includes</div>
+      <div class="card-label">Concept Validation Sprint — what it covers</div>
       <div class="sprint-weeks">
         <div class="sprint-week">
           <div class="sprint-wk-lbl">Week 1</div>
@@ -1237,36 +1321,55 @@ function buildFinancial(){
         <div class="sprint-week">
           <div class="sprint-wk-lbl">Week 2</div>
           <div class="sprint-wk-task">Constraint mapping + scenario prototypes</div>
-          <div class="sprint-wk-desc">Visual scenarios that make incompatible requirements immediately visible to all stakeholders</div>
+          <div class="sprint-wk-desc">Visual scenarios that make incompatible requirements visible to all stakeholders before hardware is committed</div>
         </div>
         <div class="sprint-week">
           <div class="sprint-wk-lbl">Week 3</div>
           <div class="sprint-wk-task">Facilitated alignment session</div>
-          <div class="sprint-wk-desc">One agreed Problem Statement document — signed off before engineering begins</div>
+          <div class="sprint-wk-desc">One agreed Problem Statement — signed off before engineering begins</div>
         </div>
       </div>
     </div>
-    <div class="card" style="margin-bottom:10px;background:rgba(255,149,0,.03);border-color:rgba(255,149,0,.12);">
+
+    <div class="card" style="margin-bottom:10px;background:rgba(255,149,0,.03);border-color:rgba(255,149,0,.1);">
       <div style="font-size:14px;line-height:1.75;color:rgba(232,234,237,.85);">
-        This engagement works <strong style="color:var(--text);">with your engineering team</strong>, not instead of them. I hold the conceptual framework and the facilitation. Your engineers hold the technical knowledge. The sprint ends when the Problem Statement is agreed — at which point your team proceeds with a clear, aligned brief.
+        This engagement works <strong style="color:var(--text);">with your engineering team</strong>, not instead of them. I hold the conceptual framework and the facilitation. Your engineers hold the technical knowledge. The sprint ends when the Problem Statement is agreed.
       </div>
     </div>
+
     <div class="who-wrap" style="margin-bottom:10px;">
       <div class="who-ep">EP</div>
       <div class="who-t">
         <div class="who-name">Enrico Poli</div>
         <div class="who-role">Sensemaker · Concept Developer · Strategic Facilitator</div>
-        <div class="who-bio">I work at the boundary between complex systems and the people who make decisions about them. My background spans <strong>Google, Deutsche Bank, Alphabet, Nike, and P&G</strong> — holding the conceptual architecture of complex projects together while specialists build them.<br><br>The pattern in this diagnostic — too many stakeholders, requirements that keep moving, engineering committed before the problem is agreed — is something I have worked on across multiple industries. <strong>Alignment before engineering is the most expensive line item you are currently not accounting for.</strong></div>
+        <div class="who-bio">I work at the boundary between complex systems and the people who make decisions about them. My background spans <strong>Google, Deutsche Bank, Alphabet, Nike, and P&G</strong> — holding the conceptual architecture of complex projects together while specialists build them.<br><br>The pattern in this diagnostic — too many stakeholders, requirements that keep shifting, engineering committed before the problem is clear — is something I have worked on across multiple industries. <strong>Alignment before engineering is the most expensive line item you are currently not accounting for.</strong></div>
       </div>
     </div>
+
     <div class="cta-wrap">
-      <div class="cta-title">Ready to map where your next project is losing alignment?</div>
-      <div class="cta-sub">A 45-minute conversation is usually enough to identify the key points — and what a concept validation sprint would look like for your specific project.</div>
-      <a href="mailto:epoli.uk@gmail.com?subject=R%26D%20Alignment%20Sprint%20%E2%80%94%20${encodeURIComponent(S.project)}" class="btn-cta">Contact Enrico →</a>
+      <div class="cta-title">Let's talk about your next project.</div>
+      <div class="cta-sub">A 45-minute conversation is usually enough to identify where the highest alignment risk sits — and what the right scope looks like.</div>
+      <a href="mailto:epoli.uk@gmail.com?subject=R%26D%20Alignment%20%E2%80%94%20${encodeURIComponent(S.project)}" class="btn-cta">Contact Enrico →</a>
     </div>
+
     <div class="nav" style="justify-content:flex-end;">
       <button class="btn btn-primary" onclick="buildOnepager(); goTo('s-onepager');" style="--accent:#ffffff;">Generate the one-pager →</button>
     </div>`;
+}
+
+// ════════════════════════════════════════════
+// SAVE OPTION SELECTOR
+// ════════════════════════════════════════════
+function selectSave(el, val, detail){
+  document.querySelectorAll('#save-options button').forEach(b=>{
+    b.style.borderColor='var(--border)';
+    b.style.background='transparent';
+  });
+  el.style.borderColor='rgba(48,209,88,.5)';
+  el.style.background='rgba(48,209,88,.06)';
+  const d=document.getElementById('save-detail');
+  d.style.display='block';
+  d.innerHTML=`<strong style="color:var(--text);">${val} worth protecting.</strong> ${detail}`;
 }
 
 // ════════════════════════════════════════════
