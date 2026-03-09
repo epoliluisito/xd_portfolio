@@ -1144,9 +1144,27 @@ AFRAME.registerComponent('rig-walk', {
         const sceneObj = this.el.sceneEl.object3D;
         const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
         this._meshes = [];
+        this._materials = [];
+        this._textures = [];
 
         const CX = 25, CZ = 0;
         const GY = 0.07;
+
+        const smoothstep = (a, b, x) => {
+          const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+          return t * t * (3 - 2 * t);
+        };
+        const angleDelta = (a, b) => {
+          let d = a - b;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          return d;
+        };
+        const ridged = (x, y) => {
+          const n = sn(x, y);
+          const r = 1 - Math.abs(n);
+          return r * r;
+        };
 
         const tl = new THREE.TextureLoader();
         const mkTex = (path, repeat, isColor) => {
@@ -1155,21 +1173,25 @@ AFRAME.registerComponent('rig-walk', {
           t.repeat.set(repeat, repeat);
           t.anisotropy = 4;
           if (isColor) t.colorSpace = THREE.SRGBColorSpace;
+          this._textures.push(t);
           return t;
         };
 
-        const tDiff  = mkTex('./assets/moon_ground/moon_ground_diffuse%20.webp', 6, true);
-        const tNorm  = mkTex('./assets/moon_ground/moon_ground_normal.webp', 6, false);
-        const tRough = mkTex('./assets/moon_ground/moon_ground_rough.png', 6, false);
-        const tAO    = mkTex('./assets/moon_ground/moon_ground_ao.png', 6, false);
-        const bDiff  = mkTex('./assets/moon_ground/moon_ground_diffuse%20.webp', 1.5, true);
-        const bNorm  = mkTex('./assets/moon_ground/moon_ground_normal.webp', 1.5, false);
-        const bRough = mkTex('./assets/moon_ground/moon_ground_rough.png', 1.5, false);
-        const mDiff  = mkTex('./assets/moon_ground/moon_ground_diffuse%20.webp', 20, true);
-        const mNorm  = mkTex('./assets/moon_ground/moon_ground_normal.webp', 20, false);
-        const mRough = mkTex('./assets/moon_ground/moon_ground_rough.png', 20, false);
+        const groundPath = './assets/moon_ground/';
+        const tDiff  = mkTex(groundPath + 'moon_ground_diffuse%20.webp', 6, true);
+        const tNorm  = mkTex(groundPath + 'moon_ground_normal.webp', 6, false);
+        const tRough = mkTex(groundPath + 'moon_ground_rough.png', 6, false);
+        const tAO    = mkTex(groundPath + 'moon_ground_ao.png', 6, false);
+        const bDiff  = mkTex(groundPath + 'moon_ground_diffuse%20.webp', 1.35, true);
+        const bNorm  = mkTex(groundPath + 'moon_ground_normal.webp', 1.35, false);
+        const bRough = mkTex(groundPath + 'moon_ground_rough.png', 1.35, false);
+        const bAO    = mkTex(groundPath + 'moon_ground_ao.png', 1.35, false);
+        const mDiff  = mkTex(groundPath + 'moon_ground_diffuse%20.webp', 18, true);
+        const mNorm  = mkTex(groundPath + 'moon_ground_normal.webp', 18, false);
+        const mRough = mkTex(groundPath + 'moon_ground_rough.png', 18, false);
+        const mAO    = mkTex(groundPath + 'moon_ground_ao.png', 18, false);
 
-        // ── Terrain patch ──────────────────────────────────────────
+        // ── Terrain patch (kept local and subtle; additive only) ───────────────
         const TW = 20, TD = 16, SEG = 100;
         const terrGeom = new THREE.PlaneGeometry(TW, TD, SEG, SEG);
         terrGeom.rotateX(-Math.PI / 2);
@@ -1187,113 +1209,104 @@ AFRAME.registerComponent('rig-walk', {
         }
         tp.needsUpdate = true;
         terrGeom.computeVertexNormals();
-        const uv = terrGeom.getAttribute('uv');
-        terrGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
-        const terrMesh = new THREE.Mesh(terrGeom, new THREE.MeshStandardMaterial({
+        const tuv = terrGeom.getAttribute('uv');
+        terrGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(tuv.array), 2));
+        const terrMat = new THREE.MeshStandardMaterial({
           map: tDiff, normalMap: tNorm, roughnessMap: tRough, aoMap: tAO,
           roughness: 1, metalness: 0, normalScale: new THREE.Vector2(1.3, 1.3), aoMapIntensity: 0.55,
-        }));
+        });
+        this._materials.push(terrMat);
+        const terrMesh = new THREE.Mesh(terrGeom, terrMat);
         terrMesh.position.set(CX, 0, CZ);
         sceneObj.add(terrMesh); this._meshes.push(terrMesh);
 
-        // ── Rocky berm around the pool: emergent terrain, not separate props ───
+        // ── Rocky berm around the pool: emergent terrain, not object-boulders ──
         const boulderMat = new THREE.MeshStandardMaterial({
-          map: bDiff, normalMap: bNorm, roughnessMap: bRough, aoMap: tAO,
-          roughness: 1, metalness: 0, normalScale: new THREE.Vector2(1.55, 1.55), aoMapIntensity: 0.6,
+          map: bDiff, normalMap: bNorm, roughnessMap: bRough, aoMap: bAO,
+          roughness: 1, metalness: 0, aoMapIntensity: 0.72,
+          normalScale: new THREE.Vector2(1.25, 1.25),
         });
-        const poolCX = CX + 1.5, poolCZ = CZ;
+        this._materials.push(boulderMat);
 
-        const bermGeom = new THREE.PlaneGeometry(12.5, 11.0, 150, 132);
+        const bermW = 16.0, bermD = 14.0, bermSeg = 164;
+        const bermGeom = new THREE.PlaneGeometry(bermW, bermD, bermSeg, bermSeg);
         bermGeom.rotateX(-Math.PI / 2);
         const bp = bermGeom.getAttribute('position');
+        const poolLX = 1.5, poolLZ = 0.0;
+
         for (let i = 0; i < bp.count; i++) {
           const lx = bp.getX(i), lz = bp.getZ(i);
-          const wx = poolCX + lx, wz = poolCZ + lz;
-          const dx = lx / 1.05;
-          const dz = lz / 0.9;
-          const ang = Math.atan2(dz, dx);
-          const rr = Math.sqrt(dx*dx + dz*dz);
-          const ringBase = 3.4
-            + sn(Math.cos(ang)*1.7 + 11.0, Math.sin(ang)*1.7 - 6.0) * 0.55
-            + sn(Math.cos(ang)*3.8 - 2.0, Math.sin(ang)*3.8 + 4.0) * 0.24;
-          const width = 0.9
-            + (sn(Math.cos(ang)*2.4 + 7.0, Math.sin(ang)*2.4 - 8.0) * 0.5 + 0.5) * 0.9;
-          const openFront = Math.exp(-Math.pow((ang - Math.PI), 2) / (2 * 0.62 * 0.62));
-          const ring = Math.exp(-Math.pow((rr - ringBase), 2) / (2 * width * width));
-          const asym = 0.55 + (sn(wx*0.12 - 5.0, wz*0.12 + 3.0) * 0.5 + 0.5) * 0.95;
-          const cliff = Math.pow(Math.max(0, ring), 1.5) * (1.0 - openFront * 0.92);
-          const breakup = Math.max(0,
-            sn(wx*0.55 + 9.0, wz*0.55 - 4.0) * 0.22 +
-            sn(wx*1.1 - 3.0, wz*1.1 + 5.0) * 0.12 +
-            0.78
-          );
-          const ridges = Math.pow(Math.max(0, sn(wx*1.7 + 4.0, wz*1.7 - 8.0) * 0.5 + 0.5), 2.2) * 0.18;
-          const basinFade = Math.max(0, 1.0 - Math.pow(Math.min(rr / 2.55, 1.0), 2.0));
-          const outerFade = Math.max(0, 1.0 - Math.pow(Math.max(rr - 5.6, 0) / 1.2, 2.0));
-          const h = cliff * asym * breakup * 1.45 + ridges;
-          const baseUndulation = ((sn(wx*0.23 + 2.0, wz*0.23 - 1.0) * 0.5 + 0.5) * 0.08
-                               + (sn(wx*0.75 - 5.0, wz*0.75 + 2.0) * 0.5 + 0.5) * 0.03);
-          bp.setY(i, GY + baseUndulation + h * outerFade * (1.0 - basinFade * 0.96));
+          const px = lx - poolLX;
+          const pz = lz - poolLZ;
+
+          const ex = px / 4.2;
+          const ez = pz / 2.65;
+          const er = Math.sqrt(ex * ex + ez * ez);
+          const ang = Math.atan2(pz, px);
+
+          const ringNoiseA = (sn(px*0.22 + 4.0, pz*0.22 - 9.0) * 0.5 + 0.5);
+          const ringNoiseB = ridged(px*0.34 - 8.0, pz*0.34 + 3.0);
+          const ringNoiseC = (sn(px*0.60 + 1.0, pz*0.60 - 6.0) * 0.5 + 0.5);
+          const angularBias = 0.68 + 0.32 * Math.cos(ang - 0.22) + 0.18 * Math.cos(ang * 2.0 + 1.4);
+          const ringCenter = 1.10 + angularBias * 0.16 + (ringNoiseA - 0.5) * 0.18;
+          const ringWidth = 0.24 + ringNoiseC * 0.08;
+
+          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
+          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.24 + ringNoiseB * 0.10)) / (0.34 + ringNoiseA * 0.08), 2.0));
+          const poolLip = Math.exp(-Math.pow((er - 0.93) / 0.09, 2.0));
+          const innerShelf = Math.exp(-Math.pow((er - 1.32) / 0.22, 2.0));
+
+          let h = 0;
+          h += bermCore * (0.70 + ringNoiseB * 0.42);
+          h += bermOuter * (0.24 + ringNoiseA * 0.14);
+          h += innerShelf * (0.08 + ringNoiseC * 0.06);
+
+          const cragA = ridged(px*0.74 + 11.0, pz*0.74 - 2.0) * 0.22;
+          const cragB = ridged(px*1.18 - 7.0, pz*1.18 + 5.0) * 0.12;
+          const facets = Math.max(0, sn(px*0.90 + 2.0, pz*0.90 - 4.0)) * 0.11;
+          h += bermCore * (cragA + cragB + facets);
+
+          // stronger emergent shoulders on two sides so it reads as rocky terrain
+          const shoulderN = Math.exp(-(((px + 0.8) / 2.0) ** 2 + ((pz - 3.6) / 1.2) ** 2));
+          const shoulderS = Math.exp(-(((px - 0.4) / 2.2) ** 2 + ((pz + 3.4) / 1.35) ** 2));
+          const shoulderE = Math.exp(-(((px - 3.6) / 1.5) ** 2 + ((pz + 0.3) / 2.0) ** 2));
+          h += shoulderN * 0.46 + shoulderS * 0.38 + shoulderE * 0.28;
+
+          // slight depression toward the pool so the water feels nested
+          h -= Math.exp(-Math.pow(er / 0.84, 2.2)) * 0.16;
+          h += poolLip * 0.08;
+
+          // terrain fade out so it emerges from the flat patch instead of ending as a platform
+          const fadeX = smoothstep(7.7, 5.9, Math.abs(lx));
+          const fadeZ = smoothstep(6.8, 5.0, Math.abs(lz));
+          const terrainFade = Math.min(fadeX, fadeZ);
+          h *= terrainFade;
+
+          // keep the very center flatter for the water sheet
+          const waterMask = smoothstep(0.58, 0.84, er);
+          h *= waterMask;
+
+          bp.setY(i, GY + h);
         }
+
         bp.needsUpdate = true;
         bermGeom.computeVertexNormals();
-        const bermUV = bermGeom.getAttribute('uv');
-        bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(bermUV.array), 2));
+        const buv = bermGeom.getAttribute('uv');
+        bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(buv.array), 2));
         const bermMesh = new THREE.Mesh(bermGeom, boulderMat);
-        bermMesh.position.set(poolCX, 0, poolCZ);
+        bermMesh.position.set(CX, 0, CZ);
         sceneObj.add(bermMesh); this._meshes.push(bermMesh);
 
-        const addOutcrop = (lx, lz, sx, sy, sz, ry, bury=0.5) => {
-          const geom = new THREE.SphereGeometry(1, 26, 20);
-          const p = geom.getAttribute('position');
-          const seed = lx*17.1 + lz*9.7;
-          for (let i = 0; i < p.count; i++) {
-            let px = p.getX(i), py = p.getY(i), pz = p.getZ(i);
-            const theta = Math.atan2(pz, px);
-            const ridge = Math.max(0, sn(theta*3.0 + seed*0.03, py*2.3 - seed*0.02) * 0.5 + 0.5);
-            const fracture = sn(px*2.0 + seed, pz*2.4 - seed*0.3) * 0.18 + sn(py*4.4 - seed*0.5, px*3.6 + 7.0) * 0.10;
-            const flatten = py < -0.12 ? 0.72 : 1.0;
-            const squeezeX = 1.0 + ridge * 0.14;
-            const squeezeZ = 1.0 - ridge * 0.08;
-            const n = 1.0 + fracture + ridge * 0.14;
-            px *= n * squeezeX;
-            py *= n * flatten * (py > 0.18 ? 1.08 : 0.92);
-            pz *= n * squeezeZ;
-            if (py < -0.28) py *= 1.45;
-            p.setXYZ(i, px, py, pz);
-          }
-          p.needsUpdate = true; geom.computeVertexNormals();
-          const mesh = new THREE.Mesh(geom, boulderMat);
-          mesh.scale.set(sx, sy, sz);
-          mesh.position.set(CX + lx, GY + sy*(0.18-bury), CZ + lz);
-          mesh.rotation.set(sn(seed,1)*0.16, ry, sn(1,seed)*0.12);
-          sceneObj.add(mesh); this._meshes.push(mesh);
-        };
-        [
-          [ 5.1,-3.4, 1.45,0.92,1.35, 0.45,0.56],
-          [ 6.1,-1.8, 1.75,1.05,1.30, 0.82,0.62],
-          [ 5.8, 2.2, 1.55,0.95,1.45, 1.25,0.58],
-          [ 2.4, 3.2, 1.35,0.86,1.10, 2.35,0.60],
-          [-0.2, 2.4, 1.05,0.72,0.92, 2.85,0.66],
-          [ 0.1,-2.8, 1.10,0.76,0.96, 3.05,0.68],
-          [ 2.8,-3.6, 1.00,0.66,0.90, 1.75,0.70],
-          [ 7.2, 0.5, 1.08,0.70,0.86, 0.15,0.70]
-        ].forEach(args => addOutcrop(...args));
-
-        // ── Water pool ─────────────────────────────────────────────
-        // Simple flat plane, high emissive so it reads even without env lighting.
-        // Placed at y=GY+0.05, renderOrder=5, no depthTest fighting with terrain.
+        // ── Water pool ─────────────────────────────────────────────────────────
         const poolGeom = new THREE.PlaneGeometry(5.5, 2.6);
         poolGeom.rotateX(-Math.PI / 2);
-        const poolMat = new THREE.MeshBasicMaterial({
-          color: 0x0d2535,
-        });
+        const poolMat = new THREE.MeshBasicMaterial({ color: 0x0d2535 });
+        this._materials.push(poolMat);
         const poolMesh = new THREE.Mesh(poolGeom, poolMat);
         poolMesh.position.set(CX + 1.5, GY + 0.05, CZ);
         poolMesh.renderOrder = 5;
         sceneObj.add(poolMesh); this._meshes.push(poolMesh);
 
-        // Reflective sheen layer on top
         const sheenGeom = new THREE.PlaneGeometry(5.5, 2.6);
         sheenGeom.rotateX(-Math.PI / 2);
         const sheenMat = new THREE.MeshStandardMaterial({
@@ -1306,13 +1319,15 @@ AFRAME.registerComponent('rig-walk', {
           opacity: 0.85,
           depthWrite: false,
         });
+        this._materials.push(sheenMat);
         const sheenMesh = new THREE.Mesh(sheenGeom, sheenMat);
         sheenMesh.position.set(CX + 1.5, GY + 0.06, CZ);
         sheenMesh.renderOrder = 6;
         sceneObj.add(sheenMesh); this._meshes.push(sheenMesh);
 
-        // ── Bones ──────────────────────────────────────────────────
+        // ── Bones ──────────────────────────────────────────────────────────────
         const boneMat = new THREE.MeshStandardMaterial({ color:0xb2aa92, roughness:0.88, metalness:0 });
+        this._materials.push(boneMat);
         const addBone = (lx,lz,len,ry,tx,tz) => {
           const m = new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.034,len,6), boneMat);
           m.position.set(CX+lx, GY+0.04, CZ+lz);
@@ -1333,1049 +1348,81 @@ AFRAME.registerComponent('rig-walk', {
         addFrag( 0.5,-2.5,0.32,0.7); addFrag( 2.8, 1.8,0.28,3.1);
         addFrag(-1.5,-0.5,0.35,1.6); addFrag(-0.8, 1.8,0.27,2.8);
 
-        // ── Distant mountains: broken territorial perimeter, not a neat ring ───
+        // ── Distant mountain terrain: more irregular, less ring-like ─────────
         const mtnMat = new THREE.MeshStandardMaterial({
-          map: mDiff, normalMap: mNorm, roughnessMap: mRough, aoMap: tAO,
-          roughness: 1, metalness: 0,
-          normalScale: new THREE.Vector2(1.0, 1.0),
-          aoMapIntensity: 0.5,
+          map: mDiff, normalMap: mNorm, roughnessMap: mRough, aoMap: mAO,
+          roughness: 1, metalness: 0, aoMapIntensity: 0.6,
+          normalScale: new THREE.Vector2(1.15, 1.15),
           side: THREE.DoubleSide,
         });
+        this._materials.push(mtnMat);
 
-        const FRONT_ANGLE = Math.PI * 0.5;
-        const FRONT_EXCLUSION = 1.12;
-        const ANGLE_COUNT = 19;
-        const deltaAngle = (Math.PI * 2) / ANGLE_COUNT;
-        const angleDist = (a,b) => {
-          let d = Math.abs(a - b) % (Math.PI * 2);
-          return d > Math.PI ? Math.PI * 2 - d : d;
-        };
+        const GAP_CENTER = Math.PI * 0.5;   // keep landing view open
+        const GAP_SIZE = 1.08;              // ~62° clear sector
+        const OVERLAP = 0.09;
+        const TOTAL_START = GAP_CENTER + GAP_SIZE * 0.5;
+        const TOTAL_END = GAP_CENTER + Math.PI * 2 - GAP_SIZE * 0.5;
+        const TOTAL_SPAN = TOTAL_END - TOTAL_START;
+        const NUM_SECTORS = 8;
 
-        for (let s = 0; s < ANGLE_COUNT; s++) {
-          const centerAngle = s * deltaAngle + deltaAngle * 0.5;
-          if (angleDist(centerAngle, FRONT_ANGLE) < FRONT_EXCLUSION) continue;
-
-          const angleNoise = sn(Math.cos(centerAngle)*3.2 + 5.0, Math.sin(centerAngle)*3.2 - 4.0);
-          const radiusBase = 192 + (sn(Math.cos(centerAngle)*1.1 + 2.0, Math.sin(centerAngle)*1.1 - 9.0)*0.5 + 0.5) * 42;
-          const width = 34 + (sn(Math.cos(centerAngle)*2.1 - 6.0, Math.sin(centerAngle)*2.1 + 3.0)*0.5 + 0.5) * 34;
-          const maxH = 14 + (sn(Math.cos(centerAngle)*1.7 + 9.0, Math.sin(centerAngle)*1.7 + 1.0)*0.5 + 0.5) * 24;
-          const segW = 70;
-          const segH = 14;
-          const geom = new THREE.PlaneGeometry(width, maxH + 10, segW, segH);
+        for (let s = 0; s < NUM_SECTORS; s++) {
+          const segA0 = TOTAL_START + (TOTAL_SPAN / NUM_SECTORS) * s - OVERLAP;
+          const segA1 = TOTAL_START + (TOTAL_SPAN / NUM_SECTORS) * (s + 1) + OVERLAP;
+          const segSpan = segA1 - segA0;
+          const arcLen = 265 * segSpan;
+          const radialDepth = 126;
+          const geom = new THREE.PlaneGeometry(arcLen, radialDepth, 144, 38);
+          geom.rotateX(-Math.PI / 2);
           const p = geom.getAttribute('position');
-          const localSpread = width / radiusBase;
-          const sectorSeed = s * 19.37 + angleNoise * 7.0;
 
           for (let i = 0; i < p.count; i++) {
             const lx = p.getX(i);
-            const ly = p.getY(i);
-            const t = (lx + width * 0.5) / width;
-            const ang = centerAngle + (t - 0.5) * localSpread;
-            const normalizedY = (ly + (maxH + 10) * 0.5) / (maxH + 10);
+            const lz = p.getZ(i);
+            const u = (lx / arcLen) + 0.5;
+            const v = (lz / radialDepth) + 0.5;
+            const angle = segA0 + u * segSpan;
 
-            const alongLow = sn(Math.cos(ang)*1.25 + sectorSeed, Math.sin(ang)*1.25 - sectorSeed*0.2) * 0.5 + 0.5;
-            const alongMid = sn(Math.cos(ang)*4.6 - sectorSeed*0.1, Math.sin(ang)*4.6 + sectorSeed*0.3) * 0.5 + 0.5;
-            const alongHi = sn(Math.cos(ang)*10.5 + sectorSeed*0.25, Math.sin(ang)*10.5 - sectorSeed*0.18) * 0.5 + 0.5;
-            const inward = (alongLow - 0.5) * 24 + (alongMid - 0.5) * 11;
-            const radius = radiusBase + inward - normalizedY * 2.2;
+            const angleX = Math.cos(angle);
+            const angleZ = Math.sin(angle);
+            const gapFade = smoothstep(GAP_SIZE * 0.5 + 0.03, GAP_SIZE * 0.5 + 0.34, Math.abs(angleDelta(angle, GAP_CENTER)));
+            const sideFade = smoothstep(0.0, 0.09, u) * smoothstep(0.0, 0.09, 1 - u);
 
-            const skyline = 8 + alongLow * maxH * 0.8 + Math.pow(alongMid, 1.35) * maxH * 0.34 + Math.pow(alongHi, 2.8) * 5.8;
-            const toe = 2.3 + alongLow * 1.6;
-            const rockiness = Math.pow(Math.max(0, alongHi), 2.0) * 1.6 + Math.pow(Math.max(0, alongMid - 0.3), 1.7) * 1.8;
-            const y = -toe + normalizedY * (skyline + rockiness);
+            // irregular inward advance so the basin no longer reads as a neat ring
+            const angleFieldA = sn(angleX * 1.8 + 1.7, angleZ * 1.8 - 2.4) * 0.5 + 0.5;
+            const angleFieldB = sn(angleX * 3.7 - 8.0, angleZ * 3.7 + 5.0) * 0.5 + 0.5;
+            const inwardAdvance = (angleFieldA * 34.0 + angleFieldB * 18.0) * gapFade;
+            const retreat = (sn(angleX * 2.5 + 11.0, angleZ * 2.5 - 6.0) * 0.5 + 0.5) * 11.0;
+            const localInner = 232 - inwardAdvance + retreat;
+            const localOuter = localInner + 94 + angleFieldB * 30.0 + (1 - angleFieldA) * 8.0;
+            const radius = localInner + v * (localOuter - localInner);
+            const wx = Math.cos(angle) * radius;
+            const wz = Math.sin(angle) * radius;
 
-            const wx = Math.cos(ang) * radius;
-            const wz = Math.sin(ang) * radius;
-            p.setXYZ(i, wx, y, wz);
+            const radialRise = smoothstep(0.10, 0.34, v);
+            const innerHold = 0.12 + 0.88 * smoothstep(0.18, 0.58, v);
+            const skylineBias = 0.64 + angleFieldA * 0.78 + Math.max(0, sn(angleX * 5.8 + 3.0, angleZ * 5.8 - 1.0)) * 0.42;
+
+            const broad = (sn(wx*0.009, wz*0.009) * 0.5 + 0.5) * 9.2;
+            const broad2 = (sn(wx*0.015 + 20.0, wz*0.015 - 13.0) * 0.5 + 0.5) * 7.6;
+            const ridgeA = ridged(wx*0.029 - 5.0, wz*0.029 + 8.0) * 11.8;
+            const ridgeB = ridged(wx*0.046 + 11.0, wz*0.046 - 7.0) * 8.0;
+            const ridgeC = ridged(wx*0.072 - 9.0, wz*0.072 + 4.0) * 4.4;
+            const cliffs = Math.max(0, sn(wx*0.090 - 3.0, wz*0.090 + 2.0)) * 4.0;
+            const saddles = Math.max(0, sn(wx*0.022 + 4.0, wz*0.022 - 6.0)) * 3.2;
+
+            let h = 1.0 + radialRise * innerHold * skylineBias * (broad + broad2 + ridgeA + ridgeB + ridgeC + cliffs);
+            h -= saddles * radialRise * (0.65 + angleFieldB * 0.35);
+            h *= gapFade * sideFade;
+
+            p.setXYZ(i, wx, -2.7 + h, wz);
           }
+
           p.needsUpdate = true;
           geom.computeVertexNormals();
           const uv = geom.getAttribute('uv');
           geom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
-
           const mesh = new THREE.Mesh(geom, mtnMat);
           sceneObj.add(mesh); this._meshes.push(mesh);
-        }
-      },
-
-      remove: function () {
-        window.removeEventListener('keydown', this._onKeyDown);
-        window.removeEventListener('keyup',   this._onKeyUp);
-        window.removeEventListener('blur', this._clearKeys);
-      }
-    });
-
-
-    AFRAME.registerComponent('starry-sky', {
-      init: function () {
-        const size = 2048;
-        const cv = document.createElement('canvas');
-        cv.width = size; cv.height = size;
-        const ctx = cv.getContext('2d');
-
-        // Pure black base
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, size, size);
-
-        // Generate star positions
-        const stars = [];
-        const layers = [
-          { count: 2000, minR: 0.2, maxR: 0.45, minA: 0.15, maxA: 0.4  },
-          { count: 450,  minR: 0.3, maxR: 0.6,  minA: 0.3,  maxA: 0.6  },
-          { count: 70,   minR: 0.5, maxR: 0.8,  minA: 0.5,  maxA: 0.8  },
-          { count: 12,   minR: 0.7, maxR: 1.0,  minA: 0.7,  maxA: 0.95 }
-        ];
-
-        for (const layer of layers) {
-          for (let i = 0; i < layer.count; i++) {
-            const x = Math.random() * size;
-            const y = Math.random() * size;
-            const r = layer.minR + Math.random() * (layer.maxR - layer.minR);
-            const a = layer.minA + Math.random() * (layer.maxA - layer.minA);
-            const hue = Math.random();
-            let cr = 255, cg = 255, cb = 255;
-            if (hue > 0.85 && hue < 0.92) { cr = 210; cg = 220; cb = 255; }
-            else if (hue > 0.92) { cr = 255; cg = 245; cb = 220; }
-            stars.push({ x: x, y: y, r: r, a: a, cr: cr, cg: cg, cb: cb });
-          }
-        }
-
-        // Draw constellation lines FIRST (behind stars)
-        // Only connect brighter stars, very thin, very faint
-        const brightStars = stars.filter(function(s) { return s.a > 0.35; });
-        const maxDist = 90;
-        ctx.lineWidth = 0.3;
-        for (let i = 0; i < brightStars.length; i++) {
-          let connections = 0;
-          for (let j = i + 1; j < brightStars.length; j++) {
-            if (connections >= 2) break;
-            const dx = brightStars[i].x - brightStars[j].x;
-            const dy = brightStars[i].y - brightStars[j].y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < maxDist) {
-              const t = 1 - dist / maxDist;
-              const lineAlpha = t * 0.06 * (brightStars[i].a + brightStars[j].a) * 0.5;
-              if (lineAlpha > 0.005) {
-                ctx.beginPath();
-                ctx.moveTo(brightStars[i].x, brightStars[i].y);
-                ctx.lineTo(brightStars[j].x, brightStars[j].y);
-                ctx.strokeStyle = 'rgba(180,210,255,' + lineAlpha + ')';
-                ctx.stroke();
-                connections++;
-              }
-            }
-          }
-        }
-
-        // Draw stars on top
-        for (let i = 0; i < stars.length; i++) {
-          const s = stars[i];
-          ctx.fillStyle = 'rgba(' + s.cr + ',' + s.cg + ',' + s.cb + ',' + s.a + ')';
-          ctx.fillRect(Math.floor(s.x), Math.floor(s.y), Math.ceil(s.r), Math.ceil(s.r));
-        }
-
-        const tex = new THREE.CanvasTexture(cv);
-        tex.magFilter = THREE.NearestFilter;
-        tex.minFilter = THREE.NearestFilter;
-        tex.needsUpdate = true;
-        const apply = () => {
-          const mesh = this.el.getObject3D('mesh');
-          if (!mesh) return;
-          mesh.traverse((n) => {
-            if (n.material) {
-              n.material.map = tex;
-              n.material.color = new THREE.Color(0xffffff);
-              n.material.needsUpdate = true;
-            }
-          });
-        };
-        apply();
-        this.el.addEventListener('object3dset', apply);
-      }
-    });
-
-
-    // ── Snow: cinematic wind-driven particles ──────────────────────────────────
-    AFRAME.registerComponent('snow', {
-      schema: {
-        count:       { type: 'number', default: 4000 },
-        areaWidth:   { type: 'number', default: 80 },
-        areaDepth:   { type: 'number', default: 80 },
-        ceiling:     { type: 'number', default: 25 },
-        floor:       { type: 'number', default: 0.1 },
-        fallSpeed:   { type: 'number', default: 1.2 },
-        fallVar:     { type: 'number', default: 0.6 },
-        windX:       { type: 'number', default: 0.8 },
-        windZ:       { type: 'number', default: 0.3 },
-        gustStr:     { type: 'number', default: 0.4 },
-        gustFreq:    { type: 'number', default: 0.15 },
-        rampTime:    { type: 'number', default: 30 },
-        size:        { type: 'number', default: 0.06 }
-      },
-      init: function () {
-        const d = this.data;
-        const N = d.count;
-        this._officeCX = 0; this._officeCZ = -75;
-        this._platClearR = 8.0;
-        this._sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : function(){ return 0; };
-
-        this._fallSpeeds = new Float32Array(N);
-        this._driftX = new Float32Array(N);
-        this._driftZ = new Float32Array(N);
-        this._spawnDelay = new Float32Array(N);
-        this._phase = new Float32Array(N);
-        this._swirlR = new Float32Array(N);
-        this._swirlSpd = new Float32Array(N);
-        this._turbScale = new Float32Array(N);
-        const positions = new Float32Array(N * 3);
-
-        for (let i = 0; i < N; i++) {
-          this._spawnDelay[i] = Math.pow(Math.random(), 1.6) * d.rampTime;
-          positions[i*3] = positions[i*3+1] = positions[i*3+2] = 9999;
-          this._fallSpeeds[i] = d.fallSpeed * (0.3 + Math.random()*1.0);
-          this._driftX[i] = (Math.random()-0.5)*0.5;
-          this._driftZ[i] = (Math.random()-0.5)*0.5;
-          this._phase[i] = Math.random()*Math.PI*2;
-          this._swirlR[i] = 0.015+Math.random()*0.12;
-          this._swirlSpd[i] = (0.7+Math.random()*2.5)*(Math.random()<0.5?1:-1);
-          this._turbScale[i] = 0.4+Math.random()*1.0;
-        }
-
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-        // Soft glowing flake sprite
-        const cv = document.createElement('canvas');
-        cv.width=64; cv.height=64;
-        const ctx = cv.getContext('2d');
-        const grad = ctx.createRadialGradient(32,32,0,32,32,32);
-        grad.addColorStop(0,'rgba(255,255,255,1.0)');
-        grad.addColorStop(0.12,'rgba(255,255,255,0.85)');
-        grad.addColorStop(0.4,'rgba(240,248,255,0.35)');
-        grad.addColorStop(0.7,'rgba(220,238,255,0.10)');
-        grad.addColorStop(1,'rgba(200,225,255,0)');
-        ctx.fillStyle=grad; ctx.fillRect(0,0,64,64);
-        const spriteTex = new THREE.CanvasTexture(cv);
-
-        const mat = new THREE.PointsMaterial({
-          map:spriteTex, size:d.size, transparent:true, opacity:0.9,
-          depthWrite:false, blending:THREE.NormalBlending, sizeAttenuation:true, color:0xffffff
-        });
-
-        this._points = new THREE.Points(geom, mat);
-        this._points.frustumCulled = false;
-        this.el.sceneEl.object3D.add(this._points);
-
-        this._elapsed = 0;
-        this._posAttr = geom.getAttribute('position');
-        this._spawned = new Uint8Array(N);
-        this._ws = { x:d.windX, z:d.windZ, tx:d.windX, tz:d.windZ, timer:0 };
-      },
-
-      _isIndoor: function(x,z){
-        // Office interior — aligned with snow-ground officeIn
-        if(x>-7.15 && x<7.15 && z>-81.90 && z<-68.10) return true;
-        // North corridor (transition_corridor) — aligned with snow-ground transIn
-        if(x>2.20 && x<6.80 && z>-68.80 && z<-56.20) return true;
-        // South exit corridor zone — corrected bounds (was shifted ~3m south, fixed to match exitIn)
-        if(x>-6.70 && x<-2.30 && z>-94.10 && z<-81.40) return true;
-        // Doorway bridge zones — expanded buffers
-        if(x>2.80 && x<6.20 && z>-69.40 && z<-67.60) return true;
-        if(x>-6.20 && x<-2.80 && z>-82.40 && z<-80.60) return true;
-        return false;
-      },
-
-      // Approach lanes outside corridor mouths — should be clear of particles
-      _isClearApproach: function(x,z){
-        // North corridor approach (entrance at z=-56.5, lane extends 12m outward)
-        if(Math.abs(x-4.5)<2.2 && z>-56.5 && z<-44.5) return true;
-        // South exit approach (exit at z=-81.5, lane extends 12m southward)
-        if(Math.abs(x+4.5)<1.6 && z>-93.5 && z<-81.5) return true;
-        return false;
-      },
-
-      _nearPlatform: function(x,z){ return Math.sqrt(x*x+z*z)<this._platClearR; },
-
-      _zoneMask: function(x,z){
-        // Hard north cutoff: kill any particle that drifts within 38 units of platform.
-        // This also prevents spawning here. Office is at z=-75, so this is completely safe.
-        if (z > -38) return 0;
-        if (z > -32) return 0;
-        const sn=this._sn;
-        const dx=x-this._officeCX, dz=z-this._officeCZ;
-        const r=Math.sqrt(dx*dx+dz*dz);
-        const pd=Math.sqrt(x*x+z*z);
-        if(pd<this._platClearR-1) return 0;
-        let pf=1;
-        if(pd<this._platClearR+2){ pf=(pd-this._platClearR+1)/3; pf=Math.max(0,Math.min(1,pf)); pf=pf*pf*(3-2*pf); }
-        const nA=sn(x*0.05,z*0.05)*3.5; const nB=sn(x*0.11+22,z*0.11-9)*1.5;
-        const outerR=50+nA+nB;
-        const innerFull=8+sn(x*0.08-30,z*0.08+17)*1.5;
-        let m=(outerR-r)/Math.max(0.001,(outerR-innerFull));
-        m=Math.max(0,Math.min(1,m)); m=m*m*(3-2*m);
-        const dOff=Math.sqrt((x-this._officeCX)*(x-this._officeCX)+(z-this._officeCZ)*(z-this._officeCZ));
-        let sf=1-(dOff-42)/16; sf=Math.max(0,Math.min(1,sf)); sf=sf*sf*(3-2*sf);
-        m*=sf; m*=pf;
-
-        // ── Corridor approach lane suppression ──
-        // Suppress particles in the clear path zones approaching each entrance
-        {
-          const smst=(a,b,t)=>{let k=(t-a)/(b-a);k=Math.max(0,Math.min(1,k));return k*k*(3-2*k);};
-          // North corridor approach (center x=4.5, entrance z=-56.5, extends 12m outward)
-          const ndx=Math.abs(x-4.5), ndz=z-(-56.5);
-          if(ndx<4.5 && ndz>-2 && ndz<13){
-            const f=smst(4.5,1.8,ndx)*smst(-2,0,ndz)*smst(13,9,ndz);
-            m*=(1-f);
-          }
-          // South exit approach (center x=-4.5, exit z=-81.5, extends 12m southward)
-          const sdx=Math.abs(x+4.5), sdz=(-81.5)-z;
-          if(sdx<3.5 && sdz>-2 && sdz<13){
-            const f=smst(3.5,1.4,sdx)*smst(-2,0,sdz)*smst(13,9,sdz);
-            m*=(1-f);
-          }
-        }
-
-        return Math.max(0,Math.min(1,m));
-      },
-
-      _respawn: function(i){
-        const d=this.data, arr=this._posAttr.array;
-        let x,z,tries=0;
-        do{
-          x=this._officeCX+(Math.random()-0.5)*110;
-          z=this._officeCZ+(Math.random()-0.5)*110;
-          tries++;
-          var mask=this._zoneMask(x,z);
-          if(mask>0.02 && !this._isIndoor(x,z) && !this._nearPlatform(x,z) && Math.random()<mask) break;
-        }while(tries<40);
-
-        if(tries>=25||this._isIndoor(x,z)||this._nearPlatform(x,z)||mask<=0.02||this._isClearApproach(x,z)){
-          arr[i*3]=arr[i*3+1]=arr[i*3+2]=9999; return;
-        }
-        arr[i*3]=x; arr[i*3+1]=d.ceiling+Math.random()*10; arr[i*3+2]=z;
-        this._phase[i]=Math.random()*Math.PI*2;
-      },
-
-      tick: function(t,dt){
-        if(!dt) return;
-        const dtS=Math.min(dt/1000,0.05);
-        this._elapsed+=dtS;
-        const d=this.data,N=d.count,arr=this._posAttr.array,el=this._elapsed,sn=this._sn;
-
-        // Evolving wind
-        const ws=this._ws;
-        ws.timer-=dtS;
-        if(ws.timer<=0){
-          ws.tx=d.windX+(Math.random()-0.4)*d.gustStr*2.5;
-          ws.tz=d.windZ+(Math.random()-0.5)*d.gustStr*2;
-          ws.timer=1.5+Math.random()*4;
-        }
-        const wl=1-Math.exp(-1.2*dtS);
-        ws.x+=(ws.tx-ws.x)*wl; ws.z+=(ws.tz-ws.z)*wl;
-
-        // Layered gust oscillation
-        const gwx=ws.x+Math.sin(el*0.47)*0.35+Math.sin(el*1.13+2)*0.18;
-        const gwz=ws.z+Math.sin(el*0.19+5)*0.2+Math.cos(el*0.31)*0.18;
-
-        for(let i=0;i<N;i++){
-          if(!this._spawned[i]){
-            if(el>=this._spawnDelay[i]){this._spawned[i]=1;this._respawn(i);}
-            continue;
-          }
-          const px=arr[i*3],py=arr[i*3+1],pz=arr[i*3+2];
-
-          // Spatial turbulence
-          const tt=el*0.3;
-          const turbX=sn(px*0.055+tt,pz*0.055-tt*0.7)*this._turbScale[i]*0.75;
-          const turbZ=sn(px*0.055-11+tt*0.5,pz*0.055+7+tt)*this._turbScale[i]*0.55;
-          const turbY=sn(px*0.04+50,pz*0.04+el*0.25)*0.35;
-
-          // Swirl
-          this._phase[i]+=this._swirlSpd[i]*dtS;
-          const swX=Math.cos(this._phase[i])*this._swirlR[i];
-          const swZ=Math.sin(this._phase[i])*this._swirlR[i];
-
-          // Height-dependent wind
-          const hf=Math.min(1,Math.max(0.2,py/d.ceiling));
-
-          arr[i*3]+=(gwx*hf+this._driftX[i]+turbX+swX)*dtS;
-          arr[i*3+1]-=(this._fallSpeeds[i]-turbY*0.25)*dtS;
-          arr[i*3+2]+=(gwz*hf+this._driftZ[i]+turbZ+swZ)*dtS;
-
-          const nx=arr[i*3],nz=arr[i*3+2];
-          if(arr[i*3+1]<d.floor||this._isIndoor(nx,nz)||this._nearPlatform(nx,nz)||this._zoneMask(nx,nz)<0.02||this._isClearApproach(nx,nz)){
-            this._respawn(i);
-          }
-        }
-        this._posAttr.needsUpdate=true;
-      },
-
-      remove: function(){
-        if(this._points){
-          this.el.sceneEl.object3D.remove(this._points);
-          this._points.geometry.dispose();
-          this._points.material.dispose();
-        }
-      }
-    });
-
-
-// ── Compact 2D Simplex noise ──────────────────────────────────────────────
-    (function(G){
-      var F2=0.5*(Math.sqrt(3)-1),G2=(3-Math.sqrt(3))/6;
-      var p=[151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,
-        30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,
-        252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,
-        168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,
-        211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,
-        80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,
-        109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,
-        85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,
-        152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,
-        110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,
-        144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,
-        106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,
-        67,29,24,72,243,141,128,195,78,66,215,61,156,180];
-      var perm=new Array(512),permMod12=new Array(512);
-      for(var i=0;i<512;i++){perm[i]=p[i&255];permMod12[i]=perm[i]%12;}
-      var grad3=[[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],
-        [1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
-      G.simplex2=function(x,y){
-        var s=(x+y)*F2,i=Math.floor(x+s),j=Math.floor(y+s);
-        var t=(i+j)*G2,X0=i-t,Y0=j-t,x0=x-X0,y0=y-Y0;
-        var i1,j1;if(x0>y0){i1=1;j1=0;}else{i1=0;j1=1;}
-        var x1=x0-i1+G2,y1=y0-j1+G2,x2=x0-1+2*G2,y2=y0-1+2*G2;
-        var ii=i&255,jj=j&255;
-        var gi0=permMod12[ii+perm[jj]],gi1=permMod12[ii+i1+perm[jj+j1]],gi2=permMod12[ii+1+perm[jj+1]];
-        var n0=0,n1=0,n2=0;
-        var t0=0.5-x0*x0-y0*y0;if(t0>=0){t0*=t0;n0=t0*t0*(grad3[gi0][0]*x0+grad3[gi0][1]*y0);}
-        var t1=0.5-x1*x1-y1*y1;if(t1>=0){t1*=t1;n1=t1*t1*(grad3[gi1][0]*x1+grad3[gi1][1]*y1);}
-        var t2=0.5-x2*x2-y2*y2;if(t2>=0){t2*=t2;n2=t2*t2*(grad3[gi2][0]*x2+grad3[gi2][1]*y2);}
-        return 70*(n0+n1+n2);
-      };
-    })(window._snoise={});
-
-    // ── Snow ground: frost underlayer + cinematic snow drifts against architecture ─
-    AFRAME.registerComponent('snow-ground', {
-      init: function () {
-        const sn = window._snoise.simplex2;
-        this._meshes = [];
-
-        const RADIUS = 130;
-        const SEG = 500;
-        const GROUND_Y = 0.09;
-        const HIDDEN_Y = 0.084;
-
-        // ── Interior volumes ──
-        // Extended to 0.15–0.20m BEYOND the outer wall face so that vertices inside the
-        // wall thickness are fully masked (m=0 → y=HIDDEN_Y), eliminating mesh bleed-through.
-        // North transition corridor outer wall faces: x ≈ 2.25 and 6.75 → add 0.15m margin
-        const officeIn  = { x1:-7.20, x2:7.20,  z1:-81.80, z2:-68.20 };
-        const transIn   = { x1:2.10,  x2:6.90,  z1:-68.90, z2:-56.10 };
-        const exitIn    = { x1:-6.90, x2:-2.10, z1:-94.10, z2:-81.30 };
-        // Doorway bridge zones (tight to the actual opening)
-        const doorN     = { x1:2.95,  x2:6.05, z1:-69.25, z2:-67.75 };
-        const doorS     = { x1:-6.05, x2:-2.95,z1:-82.25, z2:-80.75 };
-
-        // ── Outer shells (for wall-accumulation distance) ──
-        // These include the wall thickness — snow piles against these outer faces
-        const officeOut = { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 };
-        const transOut  = { x1:2.18,  x2:6.82, z1:-68.68, z2:-56.32 };
-        const exitOut   = { x1:-6.82, x2:-2.18,z1:-94.00, z2:-81.30 };
-
-        const officeCX=0, officeCZ=-75;
-        const platCX=0, platCZ=0, platClearR=8.0;
-
-        function smoothstep(a,b,x){let t=(x-a)/(b-a);t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);}
-        function smootherstep(a,b,x){let t=(x-a)/(b-a);t=Math.max(0,Math.min(1,t));return t*t*t*(t*(t*6-15)+10);}
-        function inBox(x,z,b){return x>=b.x1&&x<=b.x2&&z>=b.z1&&z<=b.z2;}
-        function distToBoxOuter(x,z,b){
-          // Distance from point to nearest edge of box (0 if inside)
-          const dx=Math.max(b.x1-x,0,x-b.x2),dz=Math.max(b.z1-z,0,z-b.z2);
-          return Math.sqrt(dx*dx+dz*dz);
-        }
-        function distFromPlat(x,z){return Math.sqrt((x-platCX)*(x-platCX)+(z-platCZ)*(z-platCZ));}
-
-        function isIndoor(x,z){
-          return inBox(x,z,officeIn)||inBox(x,z,transIn)||inBox(x,z,exitIn)||inBox(x,z,doorN)||inBox(x,z,doorS);
-        }
-
-        // Shortest distance to any interior zone (0 if inside, positive if outside)
-        function distToAnyInterior(x,z){
-          return Math.min(
-            distToBoxOuter(x,z,officeIn),
-            distToBoxOuter(x,z,transIn),
-            distToBoxOuter(x,z,exitIn),
-            distToBoxOuter(x,z,doorN),
-            distToBoxOuter(x,z,doorS)
-          );
-        }
-
-        // Distance to nearest outer shell surface (for accumulation)
-        function distToWalls(x,z){
-          return Math.min(
-            distToBoxOuter(x,z,officeOut),
-            distToBoxOuter(x,z,transOut),
-            distToBoxOuter(x,z,exitOut)
-          );
-        }
-
-        // Is point inside any outer shell (i.e. inside the wall volume)?
-        function inWallVolume(x,z){
-          if(inBox(x,z,officeOut)&&!inBox(x,z,officeIn)) return true;
-          if(inBox(x,z,transOut)&&!inBox(x,z,transIn)) return true;
-          if(inBox(x,z,exitOut)&&!inBox(x,z,exitIn)) return true;
-          return false;
-        }
-
-        // ── Channel drift suppression ──
-        // Returns 0 at the carved channel centre (drift → 0, snow flat at GROUND_Y),
-        // 1 everywhere outside. Coverage (m) is NOT touched, so snow stays present —
-        // the channel floor is flat snow. Snow walls form naturally on both sides from
-        // organic drift + wall accumulation against the corridor side walls.
-        function channelDriftSuppress(x,z){
-          const sm=(a,b,t)=>{let k=(t-a)/(b-a);k=Math.max(0,Math.min(1,k));return k*k*(3-2*k);};
-          let s=0;
-          // North corridor: entrance at z=-56.5, centre x=4.5, door gap half-width ≈1.55m
-          // Channel carved 9m outward, tight to door width so walls can flank it naturally
-          {
-            const dz=z-(-56.5); // positive = away from building, northward
-            if(dz>-1.0 && dz<9.5){
-              const xf=sm(2.4,1.4,Math.abs(x-4.5)); // 1 inside ~1.4m of centre, 0 beyond ~2.4m
-              const zf=sm(-1.0,0.3,dz)*sm(9.5,7.0,dz);
-              s=Math.max(s,xf*zf);
-            }
-          }
-          // South exit: exit at z=-81.5, centre x=-4.5
-          {
-            const dz=(-81.5)-z; // positive = away from building, southward
-            if(dz>-1.0 && dz<9.5){
-              const xf=sm(2.4,1.4,Math.abs(x+4.5));
-              const zf=sm(-1.0,0.3,dz)*sm(9.5,7.0,dz);
-              s=Math.max(s,xf*zf);
-            }
-          }
-          return 1.0-s;
-        }
-
-        // ── Snow coverage mask ──
-        function snowMask(x,z){
-          if(isIndoor(x,z)) return 0;
-
-          // Taper near interior edges (smooth falloff over 1.2m so no hard line at doorways)
-          const dIn = distToAnyInterior(x,z);
-          // But DON'T taper along solid walls — only near doorways
-          // Check if we're near a doorway
-          const nearDoorN = distToBoxOuter(x,z,doorN) < 2.5;
-          const nearDoorS = distToBoxOuter(x,z,doorS) < 2.5;
-          let indoorTaper = 1;
-          if(nearDoorN || nearDoorS){
-            const dDoor = Math.min(
-              nearDoorN ? distToBoxOuter(x,z,doorN) : 999,
-              nearDoorS ? distToBoxOuter(x,z,doorS) : 999
-            );
-            indoorTaper = smoothstep(0.25, 1.8, dDoor);
-          }
-          // allow overlap into wall thickness so snow visually kisses exterior walls
-
-          // Platform exclusion
-          const pd=distFromPlat(x,z);
-          if(pd<platClearR-2) return 0;
-          const platFade=smootherstep(platClearR-2,platClearR+5,pd);
-
-          // Domain-warped radial falloff
-          const wx=x+sn(x*0.025+41,z*0.025-17)*4+sn(x*0.065,z*0.065)*2;
-          const wz=z+sn(x*0.025-13,z*0.025+23)*4+sn(x*0.065+7,z*0.065-9)*2;
-          const dx=wx-officeCX,dz=wz-officeCZ;
-          const r=Math.sqrt(dx*dx+dz*dz);
-
-          const n1=sn(wx*0.035,wz*0.035)*4;
-          const n2=sn(wx*0.08+13,wz*0.08-8)*2;
-          const n3=sn(wx*0.15-3,wz*0.15+6)*1;
-          const outer=28+n1+n2+n3;
-          const inner=8+sn(wx*0.05-5,wz*0.05+14)*2;
-          let m=1-smootherstep(inner,outer,r);
-
-          // Fade from office centre — asymmetric: tighter toward platform, wider behind
-          const dOff=Math.sqrt((x-officeCX)*(x-officeCX)+(z-officeCZ)*(z-officeCZ));
-          const platformBias=Math.max(0,Math.min(1,(z-officeCZ)/75));
-          const effOuter=38-10*platformBias;
-          m*=smootherstep(effOuter,effOuter-8,dOff);
-          const frontBias=Math.max(0,Math.min(1,(z+75)/75));
-          m*=(1-0.18*frontBias*(0.8+0.2*(sn(x*0.04+60,z*0.04-10)*0.5+0.5)));
-
-          m*=platFade*indoorTaper;
-
-          // ── Force full coverage near building exterior ──
-          // The domain-warped radial falloff and doorway indoorTaper can push m < 1
-          // right outside the indoor boundary, which with HIDDEN_Y creates a seam line.
-          // Clamp m toward 1.0 within 2.5m of the indoor boundary so all wall-adjacent
-          // vertices are fully covered regardless of what the radial shape does.
-          if(!isIndoor(x,z)){
-            const dIn = distToAnyInterior(x,z);
-            const nearBldg = smootherstep(2.5, 0.3, dIn);
-            m = Math.max(m, nearBldg);
-          }
-
-          // Organic edge breakup
-          const en=sn(x*0.1+100,z*0.1-100)*0.5+0.5;
-          const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
-          m+=(en-0.5)*0.08*eb;
-
-          // North extent cutoff: snow fades to zero well before the platform.
-          // z=-50 → full weight, z=-35 → zero. Office/corridor area (z<-56) is completely untouched.
-          m *= smootherstep(-35, -50, z);
-
-          m *= smootherstep(-32, -45, z);
-          return Math.max(0,Math.min(1,m));
-        }
-
-        // ── Frost mask (wider) ──
-        function frostMask(x,z){
-          if(isIndoor(x,z)) return 0;
-          const dIn=distToAnyInterior(x,z);
-          const nearDoorN=distToBoxOuter(x,z,doorN)<1.5;
-          const nearDoorS=distToBoxOuter(x,z,doorS)<1.5;
-          let indoorTaper=1;
-          if(nearDoorN||nearDoorS){
-            indoorTaper=smoothstep(0,1.0,Math.min(
-              nearDoorN?distToBoxOuter(x,z,doorN):999,
-              nearDoorS?distToBoxOuter(x,z,doorS):999
-            ));
-          }
-          // allow overlap into wall thickness so snow visually kisses exterior walls
-
-          const pd=distFromPlat(x,z);
-          if(pd<platClearR-1) return 0;
-          const platFade=smootherstep(platClearR-1,platClearR+10,pd);
-
-          const wx=x+sn(x*0.02+41,z*0.02-17)*4+sn(x*0.05,z*0.05)*2;
-          const wz=z+sn(x*0.02-13,z*0.02+23)*4+sn(x*0.05+7,z*0.05-9)*2;
-          const dx=wx-officeCX,dz=wz-officeCZ;
-          const r=Math.sqrt(dx*dx+dz*dz);
-          const n1=sn(wx*0.025,wz*0.025)*4;
-          const n2=sn(wx*0.06+13,wz*0.06-8)*2;
-          const outer=30+n1+n2;
-          const inner=6+sn(wx*0.04-5,wz*0.04+14)*2;
-          let m=1-smootherstep(inner,outer,r);
-
-          const dOff=Math.sqrt((x-officeCX)*(x-officeCX)+(z-officeCZ)*(z-officeCZ));
-          m*=smootherstep(40,30,dOff);
-          m*=(1-0.15*Math.max(0,Math.min(1,(z+75)/75)));
-          m*=platFade*indoorTaper;
-          m *= smootherstep(-32, -45, z);
-          return Math.max(0,Math.min(1,m));
-        }
-
-        // ══════════════════════════════════════════════════════════════
-        //  LAYER 1 — FROST
-        // ══════════════════════════════════════════════════════════════
-        const FROST_EXT=200;
-        const ftS=512;
-        const fCv=document.createElement('canvas');fCv.width=ftS;fCv.height=ftS;
-        const fCtx=fCv.getContext('2d');
-        const fid=fCtx.createImageData(ftS,ftS);const fp=fid.data;
-        for(let py=0;py<ftS;py++){
-          for(let px=0;px<ftS;px++){
-            const idx=(py*ftS+px)*4;
-            const wx=(px/ftS-0.5)*FROST_EXT*2;
-            const wz=(py/ftS-0.5)*FROST_EXT*2;
-            let fm=frostMask(wx,wz);
-            fm*=0.6+0.4*(sn(wx*0.08+50,wz*0.08-50)*0.5+0.5);
-            fm*=0.85+0.15*(sn(wx*0.5+200,wz*0.5-200)*0.5+0.5);
-            const alpha=Math.max(0,Math.min(255,fm*130));
-            fp[idx]=248;fp[idx+1]=252;fp[idx+2]=255;fp[idx+3]=Math.floor(alpha);
-          }
-        }
-        fCtx.putImageData(fid,0,0);
-        const frostTex=new THREE.CanvasTexture(fCv);
-        frostTex.magFilter=THREE.LinearFilter;
-        frostTex.minFilter=THREE.LinearMipmapLinearFilter;
-
-        const fnS=256;
-        const fnCv=document.createElement('canvas');fnCv.width=fnS;fnCv.height=fnS;
-        const fnCtx=fnCv.getContext('2d');
-        const fnd=fnCtx.createImageData(fnS,fnS);const fnp=fnd.data;
-        for(let py=0;py<fnS;py++){
-          for(let px=0;px<fnS;px++){
-            const idx=(py*fnS+px)*4;
-            const nx=px/fnS*30,ny=py/fnS*30;
-            const dx2=sn(nx*4+10,ny*4)*0.28+sn(nx*12+5,ny*12)*0.18+sn(nx*25,ny*25+3)*0.12;
-            const dy2=sn(nx*4,ny*4+20)*0.28+sn(nx*12,ny*12+8)*0.18+sn(nx*25+7,ny*25)*0.12;
-            fnp[idx]=Math.floor((dx2*0.5+0.5)*255);
-            fnp[idx+1]=Math.floor((dy2*0.5+0.5)*255);
-            fnp[idx+2]=220;fnp[idx+3]=255;
-          }
-        }
-        fnCtx.putImageData(fnd,0,0);
-        const frostNorm=new THREE.CanvasTexture(fnCv);
-        frostNorm.wrapS=frostNorm.wrapT=THREE.RepeatWrapping;
-        frostNorm.repeat.set(40,40);
-
-        const frostMat=new THREE.MeshStandardMaterial({
-          color:0xd0dde8,transparent:true,map:frostTex,
-          normalMap:frostNorm,normalScale:new THREE.Vector2(0.22,0.22),
-          roughness:0.35,metalness:0.08,depthWrite:false,side:THREE.FrontSide,
-          envMapIntensity:0.2,blending:THREE.NormalBlending,
-          polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-2
-        });
-        const frostGeom=new THREE.PlaneGeometry(FROST_EXT*2,FROST_EXT*2,1,1);
-        frostGeom.rotateX(-Math.PI/2);
-        const frostMesh=new THREE.Mesh(frostGeom,frostMat);
-        frostMesh.position.y=GROUND_Y+0.004;
-        frostMesh.frustumCulled=false;
-        this.el.sceneEl.object3D.add(frostMesh);
-        this._meshes.push(frostMesh);
-
-        // ══════════════════════════════════════════════════════════════
-        //  LAYER 2 — SNOW (smooth displaced mesh)
-        // ══════════════════════════════════════════════════════════════
-        const snowGeom=new THREE.PlaneGeometry(RADIUS*2,RADIUS*2,SEG,SEG);
-        snowGeom.rotateX(-Math.PI/2);
-        const pos=snowGeom.getAttribute('position');
-
-        const wAng=Math.atan2(0.45,1.05),wdX=Math.cos(wAng),wdZ=Math.sin(wAng);
-
-        for(let i=0;i<pos.count;i++){
-          const x=pos.getX(i),z=pos.getZ(i);
-          const edgeR=Math.sqrt(x*x+z*z);
-          if(edgeR>RADIUS*0.985){pos.setY(i,-1.5);continue;}
-
-          const m=snowMask(x,z);
-
-          // ── Drift height: gentle rolling (visual detail via normal map) ──
-          let drift=0;
-          // Very large gentle terrain rolls
-          drift+=(sn(x*0.012+3,z*0.012-5)*0.5+0.5)*0.25;
-          // Medium undulations
-          drift+=(sn(x*0.032+20,z*0.032-8)*0.5+0.5)*0.14;
-          // Gentle sastrugi
-          const saX=x*wdX+z*wdZ,saZ=-x*wdZ+z*wdX;
-          drift+=(sn(saX*0.07,saZ*0.025)*0.5+0.5)*0.07;
-          // Subtle fine variation (won't cause visible faceting)
-          drift+=(sn(x*0.1+3,z*0.1-2)*0.5+0.5)*0.03;
-
-          // ── Wall accumulation: snow banks against outer building surfaces ──
-          if(!isIndoor(x,z)){
-            const dw=distToWalls(x,z);
-            // Drift tapering over 12m, thickest right at wall
-            const wallDrift=smootherstep(12,0,dw);
-            // Organic variation along wall face
-            const wallNoise=0.5+0.5*(sn(x*0.15+4,z*0.15-6)*0.5+0.5);
-            drift+=wallDrift*0.78*wallNoise;
-            // Extra bank right at base (0-1.2m)
-            const baseDrift=smootherstep(1.2,0,dw);
-            drift+=baseDrift*0.28;
-          }
-
-          // ── Corridor approach berms: natural snow banks flanking each entrance lane ──
-          // ── Corridor approach berms: natural snow banks flanking each entrance lane ──
-          {
-            // North corridor: berm peaks at ±(hw+1.0) from lane centre, fades inward & outward
-            const cx=4.5, hw=1.8, zEntry=-56.5;
-            const dz=z-zEntry;
-            if(dz>0 && dz<10.0){
-              const pathLen=smootherstep(10.0,0.0,dz);
-              const xAbs=Math.abs(x-cx);
-              const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
-              drift+=0.22*berm*pathLen;
-            }
-          }
-          {
-            // South exit: same logic, lane grows southward
-            const cx=-4.5, hw=1.1, zEntry=-81.5;
-            const dz=zEntry-z;
-            if(dz>0 && dz<10.0){
-              const pathLen=smootherstep(10.0,0.0,dz);
-              const xAbs=Math.abs(x-cx);
-              const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
-              drift+=0.22*berm*pathLen;
-            }
-          }
-
-          // ── Wall-edge drift taper ──
-          // Taper all drift to zero within ~1.2m of the indoor boundary (outdoor side).
-          // This ensures the vertex just outside the exclusion zone has near-zero height,
-          // so the HIDDEN_Y→outdoor step is tiny and the cliff artifact disappears.
-          if(!isIndoor(x,z)){
-            const dIn = distToAnyInterior(x,z);
-            const edgeTaper = smoothstep(0.0, 1.2, dIn);
-            drift *= edgeTaper;
-          }
-
-          drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
-
-          // ── Canyon channel: carve a slot at ground level through the snow field ──
-          // chSup = 0 in the channel centre (drift zeroed → flat snow floor at GROUND_Y)
-          //       = 1 everywhere else (full drift, natural walls)
-          // mFinal boosted to 1.0 in channel ONLY for outdoor points — indoor vertices
-          // must stay at HIDDEN_Y or the corridor floor z-fights at GROUND_Y.
-          const chSup=channelDriftSuppress(x,z);
-          drift*=chSup;
-          const mFinal = isIndoor(x,z) ? m : Math.max(m, 1.0-chSup);
-
-          // ── Continuous blend: hidden → ground → snow ──
-          const snowSurface=GROUND_Y+Math.max(0,drift);
-          const northSink=smootherstep(-45,-32,z);
-          const effectiveHiddenY=HIDDEN_Y-northSink*0.2;
-          const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
-          pos.setY(i,y);
-        }
-
-        pos.needsUpdate=true;
-        snowGeom.computeVertexNormals();
-        // ── PBR textures (repo'd in ./assets/textures) ──
-        // AO requires uv2 in Three.js
-        if (snowGeom.getAttribute('uv') && !snowGeom.getAttribute('uv2')) {
-          const uv = snowGeom.getAttribute('uv');
-          snowGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
-        }
-
-        const texLoader = new THREE.TextureLoader();
-        const texAniso = 4;
-        const snowColorTex = texLoader.load('./assets/textures/snow_basecolor.webp');
-        const snowNormalTex = texLoader.load('./assets/textures/snow_normal_gl.webp');
-        const snowRoughTex = texLoader.load('./assets/textures/snow_roughness.jpg');
-        const snowAoTex = texLoader.load('./assets/textures/snow_ao.jpg');
-
-        [snowColorTex, snowNormalTex, snowRoughTex, snowAoTex].forEach((t) => {
-          t.wrapS = t.wrapT = THREE.RepeatWrapping;
-          t.repeat.set(12, 12);
-          t.anisotropy = texAniso;
-        });
-
-        snowColorTex.colorSpace = THREE.SRGBColorSpace;
-
-        const snowMat=new THREE.MeshStandardMaterial({
-          color:0xffffff,
-          map:snowColorTex,
-          normalMap:snowNormalTex,
-          roughnessMap:snowRoughTex,
-          aoMap:snowAoTex,
-          normalScale:new THREE.Vector2(0.45,0.45),
-          roughness:0.95,
-          metalness:0.0,
-          aoMapIntensity:0.35,
-          envMapIntensity:0.07,
-          side:THREE.FrontSide,
-          depthWrite:true
-        });
-        const snowMesh=new THREE.Mesh(snowGeom,snowMat);
-        snowMesh.receiveShadow=true;snowMesh.frustumCulled=false;
-        this.el.sceneEl.object3D.add(snowMesh);
-        this._meshes.push(snowMesh);
-      },
-      remove: function(){
-        this._meshes.forEach(function(m){
-          if(m.parent)m.parent.remove(m);
-          m.geometry.dispose();
-          if(m.material.map)m.material.map.dispose();
-          if(m.material.normalMap)m.material.normalMap.dispose();
-          if(m.material.roughnessMap)m.material.roughnessMap.dispose();
-          if(m.material.aoMap)m.material.aoMap.dispose();
-          m.material.dispose();
-        });
-      }
-    });
-
-    // ── Primal Scene ─────────────────────────────────────────────────────────
-    AFRAME.registerComponent('primal-scene', {
-      init: function () {
-        const sceneObj = this.el.sceneEl.object3D;
-        const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
-        this._meshes = [];
-
-        const CX = 25, CZ = 0;
-        const GY = 0.07;
-
-        const tl = new THREE.TextureLoader();
-        const mkTex = (path, repeat, isColor) => {
-          const t = tl.load(path);
-          t.wrapS = t.wrapT = THREE.RepeatWrapping;
-          t.repeat.set(repeat, repeat);
-          t.anisotropy = 4;
-          if (isColor) t.colorSpace = THREE.SRGBColorSpace;
-          return t;
-        };
-
-        const tDiff  = mkTex('./assets/moon_ground/moon_ground_diffuse%20.webp', 6, true);
-        const tNorm  = mkTex('./assets/moon_ground/moon_ground_normal.webp', 6, false);
-        const tRough = mkTex('./assets/moon_ground/moon_ground_rough.png', 6, false);
-        const tAO    = mkTex('./assets/moon_ground/moon_ground_ao.png', 6, false);
-        const bDiff  = mkTex('./assets/moon_ground/moon_ground_diffuse%20.webp', 1.5, true);
-        const bNorm  = mkTex('./assets/moon_ground/moon_ground_normal.webp', 1.5, false);
-        const bRough = mkTex('./assets/moon_ground/moon_ground_rough.png', 1.5, false);
-        const mDiff  = mkTex('./assets/moon_ground/moon_ground_diffuse%20.webp', 20, true);
-        const mNorm  = mkTex('./assets/moon_ground/moon_ground_normal.webp', 20, false);
-        const mRough = mkTex('./assets/moon_ground/moon_ground_rough.png', 20, false);
-
-        // ── Terrain patch ──────────────────────────────────────────
-        const TW = 20, TD = 16, SEG = 100;
-        const terrGeom = new THREE.PlaneGeometry(TW, TD, SEG, SEG);
-        terrGeom.rotateX(-Math.PI / 2);
-        const tp = terrGeom.getAttribute('position');
-        for (let i = 0; i < tp.count; i++) {
-          const lx = tp.getX(i), lz = tp.getZ(i);
-          const wx = CX + lx, wz = CZ + lz;
-          let h = (sn(wx*0.22, wz*0.22)*0.5+0.5)*0.18
-                + (sn(wx*0.55+7, wz*0.55-3)*0.5+0.5)*0.09
-                + (sn(wx*1.30+2, wz*1.30+9)*0.5+0.5)*0.045
-                + (sn(wx*3.00-5, wz*3.00+1)*0.5+0.5)*0.02;
-          const ex = Math.abs(lx)/(TW*0.5), ez = Math.abs(lz)/(TD*0.5);
-          const edge = Math.max(0, 1-Math.pow(Math.max(ex,ez)/0.82, 3));
-          tp.setY(i, GY + h * edge);
-        }
-        tp.needsUpdate = true;
-        terrGeom.computeVertexNormals();
-        const uv = terrGeom.getAttribute('uv');
-        terrGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
-        const terrMesh = new THREE.Mesh(terrGeom, new THREE.MeshStandardMaterial({
-          map: tDiff, normalMap: tNorm, roughnessMap: tRough, aoMap: tAO,
-          roughness: 1, metalness: 0, normalScale: new THREE.Vector2(1.3, 1.3), aoMapIntensity: 0.55,
-        }));
-        terrMesh.position.set(CX, 0, CZ);
-        sceneObj.add(terrMesh); this._meshes.push(terrMesh);
-
-        // ── Boulders ───────────────────────────────────────────────
-        const boulderMat = new THREE.MeshStandardMaterial({
-          map: bDiff, normalMap: bNorm, roughnessMap: bRough,
-          roughness: 1, metalness: 0, normalScale: new THREE.Vector2(2.0, 2.0),
-        });
-        const addBoulder = (lx, lz, sx, sy, sz, ry) => {
-          const geom = new THREE.IcosahedronGeometry(1, 2);
-          const p = geom.getAttribute('position');
-          const seed = lx*13.7 + lz*7.3;
-          for (let i = 0; i < p.count; i++) {
-            const px=p.getX(i), py=p.getY(i), pz=p.getZ(i);
-            const n = 1
-              + sn(px*2.4+seed,     pz*2.4-seed*0.5)*0.22
-              + sn(py*4.1-seed*0.3, px*4.1+seed*0.2)*0.11
-              + sn(pz*6.0+seed*0.1, py*6.0-seed*0.4)*0.06;
-            p.setXYZ(i, px*n, py*n, pz*n);
-          }
-          p.needsUpdate = true; geom.computeVertexNormals();
-          const mesh = new THREE.Mesh(geom, boulderMat);
-          mesh.scale.set(sx, sy, sz);
-          mesh.position.set(CX+lx, GY+sy*0.52, CZ+lz);
-          mesh.rotation.set((sn(seed,1)*0.5)*0.25, ry, (sn(1,seed)*0.5)*0.2);
-          sceneObj.add(mesh); this._meshes.push(mesh);
-        };
-        addBoulder( 2.0,-6.5, 2.6,1.6,2.4, 0.5); addBoulder( 4.0,-8.0, 2.0,1.3,2.1, 1.2);
-        addBoulder( 0.5,-7.2, 1.5,1.0,1.4, 2.4); addBoulder( 5.5,-7.0, 2.2,1.5,2.0, 0.9);
-        addBoulder( 2.5,-5.2, 1.1,0.7,1.0, 2.0); addBoulder( 6.0,-9.0, 1.3,0.8,1.2, 3.1);
-        addBoulder( 2.0, 6.5, 2.8,1.7,2.6, 2.2); addBoulder( 4.0, 8.0, 2.1,1.4,2.2, 0.6);
-        addBoulder( 0.5, 7.2, 1.6,1.1,1.5, 3.6); addBoulder( 5.5, 7.0, 1.9,1.2,1.8, 1.8);
-        addBoulder( 2.5, 5.2, 1.0,0.6,0.9, 2.9); addBoulder( 6.0, 9.0, 1.4,0.9,1.5, 0.3);
-        [[-1.5,-2.2],[-0.8,2.5],[1.2,-1.8],[1.8,1.5],
-         [-2.0,0.5],[0.3,-3.5],[0.8,3.2],[-1.0,-0.5],
-         [3.0,-2.0],[3.5,2.0],[4.5,-0.5],[4.5,0.8]
-        ].forEach(([rx,rz],i) => {
-          const rs=0.18+(i%4)*0.06; addBoulder(rx,rz,rs,rs*0.6,rs*0.85,i*0.9);
-        });
-
-        // ── Water pool ─────────────────────────────────────────────
-        // Simple flat plane, high emissive so it reads even without env lighting.
-        // Placed at y=GY+0.05, renderOrder=5, no depthTest fighting with terrain.
-        const poolGeom = new THREE.PlaneGeometry(5.5, 2.6);
-        poolGeom.rotateX(-Math.PI / 2);
-        const poolMat = new THREE.MeshBasicMaterial({
-          color: 0x0d2535,
-        });
-        const poolMesh = new THREE.Mesh(poolGeom, poolMat);
-        poolMesh.position.set(CX + 1.5, GY + 0.05, CZ);
-        poolMesh.renderOrder = 5;
-        sceneObj.add(poolMesh); this._meshes.push(poolMesh);
-
-        // Reflective sheen layer on top
-        const sheenGeom = new THREE.PlaneGeometry(5.5, 2.6);
-        sheenGeom.rotateX(-Math.PI / 2);
-        const sheenMat = new THREE.MeshStandardMaterial({
-          color: 0x0a1820,
-          emissive: new THREE.Color(0x1a3a50),
-          emissiveIntensity: 0.45,
-          roughness: 0.02,
-          metalness: 0.95,
-          transparent: true,
-          opacity: 0.85,
-          depthWrite: false,
-        });
-        const sheenMesh = new THREE.Mesh(sheenGeom, sheenMat);
-        sheenMesh.position.set(CX + 1.5, GY + 0.06, CZ);
-        sheenMesh.renderOrder = 6;
-        sceneObj.add(sheenMesh); this._meshes.push(sheenMesh);
-
-        // ── Bones ──────────────────────────────────────────────────
-        const boneMat = new THREE.MeshStandardMaterial({ color:0xb2aa92, roughness:0.88, metalness:0 });
-        const addBone = (lx,lz,len,ry,tx,tz) => {
-          const m = new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.034,len,6), boneMat);
-          m.position.set(CX+lx, GY+0.04, CZ+lz);
-          m.rotation.set(tx||0.08, ry, tz||0.05);
-          sceneObj.add(m); this._meshes.push(m);
-        };
-        const addFrag = (lx,lz,len,ry) => {
-          const m = new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.020,len,5), boneMat);
-          m.position.set(CX+lx, GY+0.025, CZ+lz);
-          m.rotation.set(0.12, ry, 0.07);
-          sceneObj.add(m); this._meshes.push(m);
-        };
-        addBone( 1.5,-1.5,0.75,0.8,0.10,0.05); addBone( 1.2, 1.2,0.85,2.1,0.08,0.12);
-        addBone( 0.3,-2.8,0.65,1.5,0.12,0.06); addBone( 2.2, 2.2,0.70,3.3,0.09,0.07);
-        addBone(-0.8,-2.0,0.80,0.3,0.11,0.09); addBone(-1.5, 0.8,0.60,2.7,0.07,0.11);
-        addBone( 3.0,-0.5,0.90,1.2,0.13,0.05); addBone(-0.3, 3.0,0.55,0.6,0.10,0.08);
-        addFrag( 2.0,-1.0,0.30,1.1); addFrag( 1.5, 0.8,0.25,2.4);
-        addFrag( 0.5,-2.5,0.32,0.7); addFrag( 2.8, 1.8,0.28,3.1);
-        addFrag(-1.5,-0.5,0.35,1.6); addFrag(-0.8, 1.8,0.27,2.8);
-
-        // ── Distant mountains ring ──────────────────────────────────
-        // A low ring of mountain ridges built from displaced plane strips,
-        // each strip a separate arc segment so they feel organic and varied.
-        // Radius 160m, height 6–18m above ground, subtle and far away.
-        const mtnMat = new THREE.MeshStandardMaterial({
-          map: mDiff, normalMap: mNorm, roughnessMap: mRough,
-          roughness: 1, metalness: 0,
-          normalScale: new THREE.Vector2(1.2, 1.2),
-          side: THREE.DoubleSide,
-        });
-
-        const MTN_R = 160;
-        const NUM_STRIPS = 24;      // strips around the ring
-        const STRIP_W = 28;         // arc width (overlap slightly for no gaps)
-        const STRIP_SEGS = 48;      // segments along strip length
-        const H_SEGS = 6;           // height segments
-
-        for (let s = 0; s < NUM_STRIPS; s++) {
-          const baseAngle = (s / NUM_STRIPS) * Math.PI * 2;
-          const stripGeom = new THREE.PlaneGeometry(STRIP_W, 20, STRIP_SEGS, H_SEGS);
-          const sp = stripGeom.getAttribute('position');
-          const seed = s * 31.7;
-
-          for (let i = 0; i < sp.count; i++) {
-            const lx = sp.getX(i);  // along strip
-            const ly = sp.getY(i);  // height (0=bottom, 1=top before displacement)
-            const t = (lx + STRIP_W * 0.5) / STRIP_W;  // 0..1 along strip
-            const angle = baseAngle + (t - 0.5) * (STRIP_W / MTN_R);
-
-            // World position on cylinder
-            const wx = Math.cos(angle) * MTN_R;
-            const wz = Math.sin(angle) * MTN_R;
-
-            // Mountain profile: low undulating ridge
-            const profile =
-              (sn(angle * 6 + seed, 0) * 0.5 + 0.5) * 10
-            + (sn(angle * 14 + seed * 0.3, 1) * 0.5 + 0.5) * 5
-            + (sn(angle * 28 - seed * 0.7, 2) * 0.5 + 0.5) * 2.5;
-
-            // Vertical: bottom vertices sink below ground, top get height
-            const normalizedY = (ly + 10) / 20; // 0=bottom, 1=top
-            const wy = -1.5 + normalizedY * (2.0 + profile);
-
-            sp.setXYZ(i, wx, wy, wz);
-          }
-          sp.needsUpdate = true;
-          stripGeom.computeVertexNormals();
-
-          const stripMesh = new THREE.Mesh(stripGeom, mtnMat);
-          sceneObj.add(stripMesh); this._meshes.push(stripMesh);
         }
       },
 
@@ -2383,13 +1430,9 @@ AFRAME.registerComponent('rig-walk', {
         this._meshes.forEach(m => {
           if (m.parent) m.parent.remove(m);
           if (m.geometry) m.geometry.dispose();
-          if (m.material) {
-            ['map','normalMap','roughnessMap','aoMap'].forEach(k => {
-              if (m.material[k]) m.material[k].dispose();
-            });
-            m.material.dispose();
-          }
         });
+        (this._materials || []).forEach(m => m && m.dispose && m.dispose());
+        (this._textures || []).forEach(t => t && t.dispose && t.dispose());
       }
     });
 </script>
