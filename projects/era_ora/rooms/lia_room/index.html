@@ -1228,62 +1228,80 @@ AFRAME.registerComponent('rig-walk', {
         });
         this._materials.push(boulderMat);
 
-        const bermW = 16.0, bermD = 14.0, bermSeg = 164;
+        const bermW = 42.0, bermD = 32.0, bermSeg = 220;
         const bermGeom = new THREE.PlaneGeometry(bermW, bermD, bermSeg, bermSeg);
         bermGeom.rotateX(-Math.PI / 2);
         const bp = bermGeom.getAttribute('position');
         const poolLX = 1.5, poolLZ = 0.0;
+        const bermRadiusX = 14.8, bermRadiusZ = 9.4;
+        const poolRadiusX = 4.3, poolRadiusZ = 2.25;
+        const gapCenter = Math.PI;
+        const gapHalf = 0.42;
 
         for (let i = 0; i < bp.count; i++) {
           const lx = bp.getX(i), lz = bp.getZ(i);
           const px = lx - poolLX;
           const pz = lz - poolLZ;
 
-          const ex = px / 4.2;
-          const ez = pz / 2.65;
+          const ex = px / bermRadiusX;
+          const ez = pz / bermRadiusZ;
           const er = Math.sqrt(ex * ex + ez * ez);
           const ang = Math.atan2(pz, px);
+          const gapDelta = Math.abs(angleDelta(ang, gapCenter));
+          const gapMask = smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
+          const sideBoost = smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
 
-          const ringNoiseA = (sn(px*0.22 + 4.0, pz*0.22 - 9.0) * 0.5 + 0.5);
-          const ringNoiseB = ridged(px*0.34 - 8.0, pz*0.34 + 3.0);
-          const ringNoiseC = (sn(px*0.60 + 1.0, pz*0.60 - 6.0) * 0.5 + 0.5);
-          const angularBias = 0.68 + 0.32 * Math.cos(ang - 0.22) + 0.18 * Math.cos(ang * 2.0 + 1.4);
-          const ringCenter = 1.10 + angularBias * 0.16 + (ringNoiseA - 0.5) * 0.18;
-          const ringWidth = 0.24 + ringNoiseC * 0.08;
+          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
+          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
+          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
+          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
+          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
+          const ringWidth = 0.12 + ringNoiseC * 0.035;
 
           const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
-          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.24 + ringNoiseB * 0.10)) / (0.34 + ringNoiseA * 0.08), 2.0));
-          const poolLip = Math.exp(-Math.pow((er - 0.93) / 0.09, 2.0));
-          const innerShelf = Math.exp(-Math.pow((er - 1.32) / 0.22, 2.0));
+          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
+          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
+          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
 
           let h = 0;
-          h += bermCore * (0.70 + ringNoiseB * 0.42);
-          h += bermOuter * (0.24 + ringNoiseA * 0.14);
-          h += innerShelf * (0.08 + ringNoiseC * 0.06);
+          h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
+          h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
+          h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
 
-          const cragA = ridged(px*0.74 + 11.0, pz*0.74 - 2.0) * 0.22;
-          const cragB = ridged(px*1.18 - 7.0, pz*1.18 + 5.0) * 0.12;
-          const facets = Math.max(0, sn(px*0.90 + 2.0, pz*0.90 - 4.0)) * 0.11;
-          h += bermCore * (cragA + cragB + facets);
+          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
+          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
+          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
+          h += bermCore * (cragA + cragB + facets) * gapMask;
 
-          // stronger emergent shoulders on two sides so it reads as rocky terrain
-          const shoulderN = Math.exp(-(((px + 0.8) / 2.0) ** 2 + ((pz - 3.6) / 1.2) ** 2));
-          const shoulderS = Math.exp(-(((px - 0.4) / 2.2) ** 2 + ((pz + 3.4) / 1.35) ** 2));
-          const shoulderE = Math.exp(-(((px - 3.6) / 1.5) ** 2 + ((pz + 0.3) / 2.0) ** 2));
-          h += shoulderN * 0.46 + shoulderS * 0.38 + shoulderE * 0.28;
+          // lift the two sides of the opening so the berm feels terrain-formed, not cut out
+          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
+          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
+          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
+          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
+          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
+          h += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
+          h += sideBoost * bermCore * 0.22;
 
-          // slight depression toward the pool so the water feels nested
-          h -= Math.exp(-Math.pow(er / 0.84, 2.2)) * 0.16;
-          h += poolLip * 0.08;
+          // basin shaping: broad walkable floor with a distinct central water depression
+          h -= basinFalloff * 0.10;
 
-          // terrain fade out so it emerges from the flat patch instead of ending as a platform
-          const fadeX = smoothstep(7.7, 5.9, Math.abs(lx));
-          const fadeZ = smoothstep(6.8, 5.0, Math.abs(lz));
+          const poolEx = px / poolRadiusX;
+          const poolEz = pz / poolRadiusZ;
+          const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
+          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
+          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
+          h += walkShelf * 0.06;
+          h += poolLip * 0.05;
+          h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
+
+          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
+          const fadeX = smoothstep(20.6, 15.4, Math.abs(lx));
+          const fadeZ = smoothstep(15.4, 11.2, Math.abs(lz));
           const terrainFade = Math.min(fadeX, fadeZ);
           h *= terrainFade;
 
-          // keep the very center flatter for the water sheet
-          const waterMask = smoothstep(0.58, 0.84, er);
+          // keep only the actual water footprint flat
+          const waterMask = smoothstep(0.86, 1.02, poolEr);
           h *= waterMask;
 
           bp.setY(i, GY + h);
@@ -1298,16 +1316,16 @@ AFRAME.registerComponent('rig-walk', {
         sceneObj.add(bermMesh); this._meshes.push(bermMesh);
 
         // ── Water pool ─────────────────────────────────────────────────────────
-        const poolGeom = new THREE.PlaneGeometry(5.5, 2.6);
+        const poolGeom = new THREE.PlaneGeometry(8.6, 4.5);
         poolGeom.rotateX(-Math.PI / 2);
         const poolMat = new THREE.MeshBasicMaterial({ color: 0x0d2535 });
         this._materials.push(poolMat);
         const poolMesh = new THREE.Mesh(poolGeom, poolMat);
-        poolMesh.position.set(CX + 1.5, GY + 0.05, CZ);
+        poolMesh.position.set(CX + poolLX, GY + 0.05, CZ + poolLZ);
         poolMesh.renderOrder = 5;
         sceneObj.add(poolMesh); this._meshes.push(poolMesh);
 
-        const sheenGeom = new THREE.PlaneGeometry(5.5, 2.6);
+        const sheenGeom = new THREE.PlaneGeometry(8.6, 4.5);
         sheenGeom.rotateX(-Math.PI / 2);
         const sheenMat = new THREE.MeshStandardMaterial({
           color: 0x0a1820,
@@ -1321,7 +1339,7 @@ AFRAME.registerComponent('rig-walk', {
         });
         this._materials.push(sheenMat);
         const sheenMesh = new THREE.Mesh(sheenGeom, sheenMat);
-        sheenMesh.position.set(CX + 1.5, GY + 0.06, CZ);
+        sheenMesh.position.set(CX + poolLX, GY + 0.06, CZ + poolLZ);
         sheenMesh.renderOrder = 6;
         sceneObj.add(sheenMesh); this._meshes.push(sheenMesh);
 
