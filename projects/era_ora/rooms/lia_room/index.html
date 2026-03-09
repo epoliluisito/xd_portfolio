@@ -1197,41 +1197,74 @@ AFRAME.registerComponent('rig-walk', {
         sceneObj.add(terrMesh); this._meshes.push(terrMesh);
 
         // ── Boulders ───────────────────────────────────────────────
+        // Rebuilt as fewer, larger rock masses with buried bases and broader
+        // geological planes so they stop reading like noisy game props.
         const boulderMat = new THREE.MeshStandardMaterial({
           map: bDiff, normalMap: bNorm, roughnessMap: bRough,
-          roughness: 1, metalness: 0, normalScale: new THREE.Vector2(2.0, 2.0),
+          roughness: 1, metalness: 0, normalScale: new THREE.Vector2(0.85, 0.85),
         });
-        const addBoulder = (lx, lz, sx, sy, sz, ry) => {
-          const geom = new THREE.IcosahedronGeometry(1, 2);
+        const addBoulder = (lx, lz, sx, sy, sz, ry, opts = {}) => {
+          const geom = new THREE.IcosahedronGeometry(1, 4);
           const p = geom.getAttribute('position');
-          const seed = lx*13.7 + lz*7.3;
+          const seed = (opts.seed != null) ? opts.seed : (lx * 17.31 + lz * 9.17 + ry * 3.1);
+          const flat = (opts.flat != null) ? opts.flat : 0.16;
+          const shear = (opts.shear != null) ? opts.shear : 0.18;
+          const split = (opts.split != null) ? opts.split : 0.14;
+          const bury = (opts.bury != null) ? opts.bury : 0.24;
+          const ledge = (opts.ledge != null) ? opts.ledge : 0.12;
           for (let i = 0; i < p.count; i++) {
-            const px=p.getX(i), py=p.getY(i), pz=p.getZ(i);
-            const n = 1
-              + sn(px*2.4+seed,     pz*2.4-seed*0.5)*0.22
-              + sn(py*4.1-seed*0.3, px*4.1+seed*0.2)*0.11
-              + sn(pz*6.0+seed*0.1, py*6.0-seed*0.4)*0.06;
-            p.setXYZ(i, px*n, py*n, pz*n);
+            let px = p.getX(i), py = p.getY(i), pz = p.getZ(i);
+            const az = Math.atan2(pz, px);
+            const ridgeBias = Math.cos(az - ry) * 0.5 + 0.5;
+            const sideBias = Math.sin(az - ry * 0.7);
+            const upper = Math.max(py, 0);
+            const lower = Math.max(-py, 0);
+            const macro =
+              1.0
+              + sn(px * 1.15 + seed * 0.13, pz * 1.15 - seed * 0.11) * 0.16
+              + sn(px * 2.35 - seed * 0.07, py * 2.1 + seed * 0.19) * 0.09;
+            const strata = sn((py + 0.35) * 4.4 + seed * 0.23, px * 0.9 - pz * 0.7) * 0.055;
+            const cleft = Math.max(0, sn(px * 1.45 + seed * 0.31, pz * 1.45 - seed * 0.21)) * split * ridgeBias;
+            const shoulder = ridgeBias * 0.18 - lower * flat;
+            const shelf = Math.max(0, sn(px * 0.8 + seed * 0.17, pz * 0.8 - seed * 0.27)) * ledge * upper;
+            const dirX = Math.cos(ry), dirZ = Math.sin(ry);
+            const stretch = 1 + ridgeBias * 0.22 - (1 - ridgeBias) * 0.08;
+            px *= stretch;
+            pz *= 1 + ridgeBias * 0.12;
+            px += dirX * shoulder + sideBias * shear * 0.12;
+            pz += dirZ * shoulder - sideBias * shear * 0.10;
+            py *= 0.92 - lower * flat * 0.22;
+            py += strata + shelf - lower * bury * 0.16;
+            const scale = macro + cleft;
+            p.setXYZ(i, px * scale, py * (1 - flat * 0.18), pz * scale);
           }
           p.needsUpdate = true; geom.computeVertexNormals();
           const mesh = new THREE.Mesh(geom, boulderMat);
           mesh.scale.set(sx, sy, sz);
-          mesh.position.set(CX+lx, GY+sy*0.52, CZ+lz);
-          mesh.rotation.set((sn(seed,1)*0.5)*0.25, ry, (sn(1,seed)*0.5)*0.2);
+          mesh.position.set(CX + lx, GY + sy * (0.34 - bury * 0.22), CZ + lz);
+          mesh.rotation.set((sn(seed, 1) * 0.5) * 0.16, ry, (sn(1, seed) * 0.5) * 0.12);
           sceneObj.add(mesh); this._meshes.push(mesh);
+          return mesh;
         };
-        addBoulder( 2.0,-6.5, 2.6,1.6,2.4, 0.5); addBoulder( 4.0,-8.0, 2.0,1.3,2.1, 1.2);
-        addBoulder( 0.5,-7.2, 1.5,1.0,1.4, 2.4); addBoulder( 5.5,-7.0, 2.2,1.5,2.0, 0.9);
-        addBoulder( 2.5,-5.2, 1.1,0.7,1.0, 2.0); addBoulder( 6.0,-9.0, 1.3,0.8,1.2, 3.1);
-        addBoulder( 2.0, 6.5, 2.8,1.7,2.6, 2.2); addBoulder( 4.0, 8.0, 2.1,1.4,2.2, 0.6);
-        addBoulder( 0.5, 7.2, 1.6,1.1,1.5, 3.6); addBoulder( 5.5, 7.0, 1.9,1.2,1.8, 1.8);
-        addBoulder( 2.5, 5.2, 1.0,0.6,0.9, 2.9); addBoulder( 6.0, 9.0, 1.4,0.9,1.5, 0.3);
-        [[-1.5,-2.2],[-0.8,2.5],[1.2,-1.8],[1.8,1.5],
-         [-2.0,0.5],[0.3,-3.5],[0.8,3.2],[-1.0,-0.5],
-         [3.0,-2.0],[3.5,2.0],[4.5,-0.5],[4.5,0.8]
-        ].forEach(([rx,rz],i) => {
-          const rs=0.18+(i%4)*0.06; addBoulder(rx,rz,rs,rs*0.6,rs*0.85,i*0.9);
-        });
+        [
+          // south side
+          { lx: 2.15, lz: -6.95, sx: 3.35, sy: 1.95, sz: 2.35, ry: 0.42, flat: 0.22, shear: 0.24, split: 0.16, bury: 0.30, ledge: 0.15 },
+          { lx: 4.85, lz: -8.15, sx: 2.65, sy: 1.45, sz: 2.15, ry: 0.98, flat: 0.18, shear: 0.17, split: 0.12, bury: 0.24, ledge: 0.10 },
+          { lx: 0.45, lz: -7.55, sx: 2.05, sy: 1.20, sz: 1.55, ry: 2.26, flat: 0.20, shear: 0.14, split: 0.10, bury: 0.28, ledge: 0.08 },
+          { lx: 5.95, lz: -6.55, sx: 1.85, sy: 1.00, sz: 1.45, ry: 1.44, flat: 0.15, shear: 0.12, split: 0.08, bury: 0.20, ledge: 0.07 },
+          // north side
+          { lx: 2.05, lz: 6.85, sx: 3.55, sy: 2.05, sz: 2.45, ry: 2.38, flat: 0.23, shear: 0.25, split: 0.17, bury: 0.31, ledge: 0.16 },
+          { lx: 4.75, lz: 8.05, sx: 2.75, sy: 1.50, sz: 2.20, ry: 0.68, flat: 0.18, shear: 0.16, split: 0.12, bury: 0.24, ledge: 0.10 },
+          { lx: 0.35, lz: 7.45, sx: 2.10, sy: 1.18, sz: 1.58, ry: 3.45, flat: 0.20, shear: 0.14, split: 0.10, bury: 0.28, ledge: 0.08 },
+          { lx: 5.70, lz: 6.45, sx: 1.90, sy: 1.02, sz: 1.50, ry: 1.82, flat: 0.15, shear: 0.12, split: 0.08, bury: 0.21, ledge: 0.07 },
+          // near pool / small companions
+          { lx: -1.55, lz: -2.30, sx: 0.55, sy: 0.34, sz: 0.42, ry: 0.92, flat: 0.14, shear: 0.08, split: 0.05, bury: 0.22, ledge: 0.03 },
+          { lx: -0.85, lz: 2.42, sx: 0.68, sy: 0.40, sz: 0.48, ry: 2.25, flat: 0.14, shear: 0.08, split: 0.05, bury: 0.24, ledge: 0.03 },
+          { lx: 1.05, lz: -1.85, sx: 0.46, sy: 0.28, sz: 0.38, ry: 1.64, flat: 0.12, shear: 0.06, split: 0.04, bury: 0.20, ledge: 0.03 },
+          { lx: 1.95, lz: 1.42, sx: 0.62, sy: 0.36, sz: 0.50, ry: 0.34, flat: 0.13, shear: 0.07, split: 0.05, bury: 0.22, ledge: 0.03 },
+          { lx: 4.25, lz: -0.55, sx: 0.74, sy: 0.44, sz: 0.58, ry: 1.12, flat: 0.13, shear: 0.08, split: 0.05, bury: 0.24, ledge: 0.03 },
+          { lx: 4.38, lz: 0.92, sx: 0.58, sy: 0.34, sz: 0.46, ry: 2.88, flat: 0.13, shear: 0.08, split: 0.05, bury: 0.24, ledge: 0.03 }
+        ].forEach(cfg => addBoulder(cfg.lx, cfg.lz, cfg.sx, cfg.sy, cfg.sz, cfg.ry, cfg));
 
         // ── Water pool ─────────────────────────────────────────────
         // Simple flat plane, high emissive so it reads even without env lighting.
@@ -1286,57 +1319,147 @@ AFRAME.registerComponent('rig-walk', {
         addFrag( 0.5,-2.5,0.32,0.7); addFrag( 2.8, 1.8,0.28,3.1);
         addFrag(-1.5,-0.5,0.35,1.6); addFrag(-0.8, 1.8,0.27,2.8);
 
-        // ── Distant mountains ring ──────────────────────────────────
-        // A low ring of mountain ridges built from displaced plane strips,
-        // each strip a separate arc segment so they feel organic and varied.
-        // Radius 160m, height 6–18m above ground, subtle and far away.
-        const mtnMat = new THREE.MeshStandardMaterial({
+        // ── Distant outer terrain + mountain perimeter ─────────────────────
+        // Added as a separate landscape layer so the existing lunar ground and
+        // snow systems remain untouched. The forward spawn sector stays open.
+        const outerTerrainMat = new THREE.MeshStandardMaterial({
           map: mDiff, normalMap: mNorm, roughnessMap: mRough,
           roughness: 1, metalness: 0,
-          normalScale: new THREE.Vector2(1.2, 1.2),
-          side: THREE.DoubleSide,
+          normalScale: new THREE.Vector2(0.9, 0.9),
+          side: THREE.FrontSide,
+        });
+        const outerSilhouetteMat = new THREE.MeshStandardMaterial({
+          color: 0x6a7075,
+          roughness: 1,
+          metalness: 0,
+          side: THREE.FrontSide,
+          fog: true,
         });
 
-        const MTN_R = 160;
-        const NUM_STRIPS = 24;      // strips around the ring
-        const STRIP_W = 28;         // arc width (overlap slightly for no gaps)
-        const STRIP_SEGS = 48;      // segments along strip length
-        const H_SEGS = 6;           // height segments
+        const SPAWN_FORWARD = Math.PI * 0.5;     // practical landing view (+Z)
+        const OPEN_ARC = THREE.MathUtils.degToRad(112);
+        const GAP_HALF = OPEN_ARC * 0.5;
+        const INNER_R = 84;
+        const OUTER_R = 255;
+        const RADIAL_SEGS = 34;
+        const ANGULAR_SEGS = 80;
 
-        for (let s = 0; s < NUM_STRIPS; s++) {
-          const baseAngle = (s / NUM_STRIPS) * Math.PI * 2;
-          const stripGeom = new THREE.PlaneGeometry(STRIP_W, 20, STRIP_SEGS, H_SEGS);
-          const sp = stripGeom.getAttribute('position');
-          const seed = s * 31.7;
+        const angleDistance = (a, b) => {
+          let d = a - b;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          return Math.abs(d);
+        };
 
-          for (let i = 0; i < sp.count; i++) {
-            const lx = sp.getX(i);  // along strip
-            const ly = sp.getY(i);  // height (0=bottom, 1=top before displacement)
-            const t = (lx + STRIP_W * 0.5) / STRIP_W;  // 0..1 along strip
-            const angle = baseAngle + (t - 0.5) * (STRIP_W / MTN_R);
-
-            // World position on cylinder
-            const wx = Math.cos(angle) * MTN_R;
-            const wz = Math.sin(angle) * MTN_R;
-
-            // Mountain profile: low undulating ridge
-            const profile =
-              (sn(angle * 6 + seed, 0) * 0.5 + 0.5) * 10
-            + (sn(angle * 14 + seed * 0.3, 1) * 0.5 + 0.5) * 5
-            + (sn(angle * 28 - seed * 0.7, 2) * 0.5 + 0.5) * 2.5;
-
-            // Vertical: bottom vertices sink below ground, top get height
-            const normalizedY = (ly + 10) / 20; // 0=bottom, 1=top
-            const wy = -1.5 + normalizedY * (2.0 + profile);
-
-            sp.setXYZ(i, wx, wy, wz);
+        const buildOuterTerrainSector = (a0, a1, profileSeed) => {
+          const geom = new THREE.BufferGeometry();
+          const positions = [];
+          const uvs = [];
+          const indices = [];
+          const vCountPerRow = ANGULAR_SEGS + 1;
+          for (let ri = 0; ri <= RADIAL_SEGS; ri++) {
+            const rT = ri / RADIAL_SEGS;
+            const r = INNER_R + (OUTER_R - INNER_R) * rT;
+            for (let ai = 0; ai <= ANGULAR_SEGS; ai++) {
+              const aT = ai / ANGULAR_SEGS;
+              const ang = a0 + (a1 - a0) * aT;
+              const wx = Math.cos(ang) * r;
+              const wz = Math.sin(ang) * r;
+              const basinFade = THREE.MathUtils.smoothstep(rT, 0.06, 0.32);
+              const rise = THREE.MathUtils.smootherstep(rT, 0.18, 0.98);
+              const ridgeMask = Math.pow(THREE.MathUtils.smootherstep(rT, 0.44, 1.0), 1.15);
+              const horizonMask = Math.pow(THREE.MathUtils.smootherstep(rT, 0.70, 1.0), 1.45);
+              const broad = (sn(Math.cos(ang) * 1.1 + profileSeed, Math.sin(ang) * 1.1 - profileSeed) * 0.5 + 0.5);
+              const ridge = (sn(ang * 2.4 + profileSeed * 0.23, rT * 2.8 - profileSeed * 0.17) * 0.5 + 0.5);
+              const spur = (sn(ang * 6.5 - profileSeed * 0.11, rT * 5.8 + profileSeed * 0.07) * 0.5 + 0.5);
+              const fracture = sn(ang * 12.5 + profileSeed * 0.37, rT * 9.5 - profileSeed * 0.29) * 0.85;
+              const longRoll = (sn(wx * 0.012 + 12.7, wz * 0.012 - 8.3) * 0.5 + 0.5) * 3.2;
+              const basinUndulation = (sn(wx * 0.020 - 3.0, wz * 0.020 + 5.0) * 0.5 + 0.5) * 1.15 * basinFade;
+              const mountainMass =
+                broad * 12.5 * rise +
+                ridge * 17.5 * ridgeMask +
+                spur * 10.0 * ridgeMask +
+                fracture * 2.8 * ridgeMask;
+              const y = GY - 0.25 + basinUndulation + longRoll * rise + mountainMass * (0.42 + 0.58 * horizonMask);
+              positions.push(wx, y, wz);
+              uvs.push(aT * 5.0, rT * 2.5);
+            }
           }
-          sp.needsUpdate = true;
-          stripGeom.computeVertexNormals();
+          for (let ri = 0; ri < RADIAL_SEGS; ri++) {
+            for (let ai = 0; ai < ANGULAR_SEGS; ai++) {
+              const a = ri * vCountPerRow + ai;
+              const b = a + 1;
+              const c = a + vCountPerRow;
+              const d = c + 1;
+              indices.push(a, c, b, b, c, d);
+            }
+          }
+          geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+          geom.setIndex(indices);
+          geom.computeVertexNormals();
+          const mesh = new THREE.Mesh(geom, outerTerrainMat);
+          sceneObj.add(mesh); this._meshes.push(mesh);
+        };
 
-          const stripMesh = new THREE.Mesh(stripGeom, mtnMat);
-          sceneObj.add(stripMesh); this._meshes.push(stripMesh);
-        }
+        const buildSilhouetteSector = (a0, a1, profileSeed) => {
+          const geom = new THREE.BufferGeometry();
+          const positions = [];
+          const uvs = [];
+          const indices = [];
+          const rows = 3;
+          const baseR = 214;
+          const depth = 44;
+          const segs = 96;
+          for (let row = 0; row <= rows; row++) {
+            const rowT = row / rows;
+            const r = baseR + depth * rowT;
+            for (let i = 0; i <= segs; i++) {
+              const t = i / segs;
+              const ang = a0 + (a1 - a0) * t;
+              const wx = Math.cos(ang) * r;
+              const wz = Math.sin(ang) * r;
+              const broad = (sn(ang * 1.9 + profileSeed * 0.11, rowT * 1.4 - profileSeed * 0.07) * 0.5 + 0.5);
+              const peak = Math.pow((sn(ang * 4.5 - profileSeed * 0.13, 1.2 + rowT * 0.8) * 0.5 + 0.5), 1.65);
+              const serration = (sn(ang * 13.0 + profileSeed * 0.41, rowT * 4.0) * 0.5 + 0.5);
+              const baseLift = 6.5 + rowT * 1.5;
+              const crest = baseLift + broad * 8.5 + peak * 20.0 + serration * 2.5;
+              const y = row === 0 ? GY - 2.2 : GY + crest;
+              positions.push(wx, y, wz);
+              uvs.push(t, rowT);
+            }
+          }
+          const perRow = segs + 1;
+          for (let row = 0; row < rows; row++) {
+            for (let i = 0; i < segs; i++) {
+              const a = row * perRow + i;
+              const b = a + 1;
+              const c = a + perRow;
+              const d = c + 1;
+              indices.push(a, c, b, b, c, d);
+            }
+          }
+          geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+          geom.setIndex(indices);
+          geom.computeVertexNormals();
+          const mesh = new THREE.Mesh(geom, outerSilhouetteMat);
+          mesh.renderOrder = -2;
+          sceneObj.add(mesh); this._meshes.push(mesh);
+        };
+
+        const sectors = [
+          [SPAWN_FORWARD + GAP_HALF, Math.PI * 2],
+          [0, SPAWN_FORWARD - GAP_HALF]
+        ];
+        sectors.forEach(([a0, a1], idx) => {
+          const span = a1 - a0;
+          if (span <= 0.02) return;
+          const mid = a0 + span * 0.5;
+          if (angleDistance(mid, SPAWN_FORWARD) < GAP_HALF * 0.98) return;
+          buildOuterTerrainSector(a0, a1, 19.7 + idx * 31.3);
+          buildSilhouetteSector(a0, a1, 47.2 + idx * 23.9);
+        });
       },
 
       remove: function () {
