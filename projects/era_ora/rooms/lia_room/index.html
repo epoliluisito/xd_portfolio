@@ -5,7 +5,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
 <title>Lia Room</title>
-<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="../../vendor/aframe/aframe-1.5.0.min.js"></script>
 <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
 
@@ -741,183 +741,427 @@ AFRAME.registerComponent('rig-walk', {
         return 70*(n0+n1+n2);
       };
     })(window._snoise={});
-    // ── Unified exterior ground: one stable terrain for rock + snow ─────────
+
+    // ── Snow ground: frost underlayer + cinematic snow drifts against architecture ─
     AFRAME.registerComponent('snow-ground', {
       init: function () {
-        const sceneObj = this.el.sceneEl.object3D;
-        const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+        const sn = window._snoise.simplex2;
         this._meshes = [];
-        this._materials = [];
 
-        const W = 138;
-        const D = 132;
-        const SEG_X = 220;
-        const SEG_Z = 210;
-        const CX = 0;
-        const CZ = -52;
-        const BASE_Y = 0.048;
+        const RADIUS = 130;
+        const SEG = 500;
+        const GROUND_Y = 0.09;
+        const HIDDEN_Y = 0.084;
 
+        // ── Interior volumes ──
+        // Extended to 0.15–0.20m BEYOND the outer wall face so that vertices inside the
+        // wall thickness are fully masked (m=0 → y=HIDDEN_Y), eliminating mesh bleed-through.
+        // North transition corridor outer wall faces: x ≈ 2.25 and 6.75 → add 0.15m margin
         const officeIn  = { x1:-7.20, x2:7.20,  z1:-81.80, z2:-68.20 };
-        const transIn   = { x1:1.90,  x2:7.10,  z1:-69.20, z2:-55.80 };
-        const exitIn    = { x1:-7.10, x2:-1.90, z1:-94.35, z2:-81.05 };
-        const doorN     = { x1:2.70,  x2:6.30,  z1:-69.45, z2:-67.55 };
-        const doorS     = { x1:-6.30, x2:-2.70, z1:-82.45, z2:-80.55 };
-        const officeOut = { x1:-7.00, x2:7.00,  z1:-81.50, z2:-68.50 };
-        const transOut  = { x1:2.18,  x2:6.82,  z1:-68.68, z2:-56.32 };
-        const exitOut   = { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 };
+        const transIn   = { x1:2.10,  x2:6.90,  z1:-68.90, z2:-56.10 };
+        const exitIn    = { x1:-6.90, x2:-2.10, z1:-94.10, z2:-81.30 };
+        // Doorway bridge zones (tight to the actual opening)
+        const doorN     = { x1:2.95,  x2:6.05, z1:-69.25, z2:-67.75 };
+        const doorS     = { x1:-6.05, x2:-2.95,z1:-82.25, z2:-80.75 };
 
-        const boxesIndoor = [officeIn, transIn, exitIn, doorN, doorS];
-        const boxesOuter = [officeOut, transOut, exitOut];
+        // ── Outer shells (for wall-accumulation distance) ──
+        // These include the wall thickness — snow piles against these outer faces
+        const officeOut = { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 };
+        const transOut  = { x1:2.18,  x2:6.82, z1:-68.68, z2:-56.32 };
+        const exitOut   = { x1:-6.82, x2:-2.18,z1:-94.00, z2:-81.30 };
 
-        const clamp01 = (v) => Math.max(0, Math.min(1, v));
-        const smoothstep = (a, b, x) => {
-          const t = clamp01((x - a) / (b - a));
-          return t * t * (3 - 2 * t);
-        };
-        const smootherstep = (a, b, x) => {
-          const t = clamp01((x - a) / (b - a));
-          return t * t * t * (t * (t * 6 - 15) + 10);
-        };
-        const inBox = (x, z, b) => x >= b.x1 && x <= b.x2 && z >= b.z1 && z <= b.z2;
-        const distToBox = (x, z, b) => {
-          const dx = x < b.x1 ? (b.x1 - x) : (x > b.x2 ? (x - b.x2) : 0);
-          const dz = z < b.z1 ? (b.z1 - z) : (z > b.z2 ? (z - b.z2) : 0);
-          return Math.hypot(dx, dz);
-        };
-        const minDistToBoxes = (x, z, arr) => arr.reduce((m, b) => Math.min(m, distToBox(x, z, b)), Infinity);
-        const insideAny = (x, z, arr) => arr.some((b) => inBox(x, z, b));
-        const radial = (x, z, cx, cz, rx, rz) => {
-          const dx = (x - cx) / rx;
-          const dz = (z - cz) / rz;
-          return Math.sqrt(dx * dx + dz * dz);
-        };
+        const officeCX=0, officeCZ=-75;
+        const platCX=0, platCZ=0, platClearR=8.0;
 
-        const snowMask = (x, z) => {
-          if (insideAny(x, z, boxesIndoor)) return 0;
+        function smoothstep(a,b,x){let t=(x-a)/(b-a);t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);}
+        function smootherstep(a,b,x){let t=(x-a)/(b-a);t=Math.max(0,Math.min(1,t));return t*t*t*(t*(t*6-15)+10);}
+        function inBox(x,z,b){return x>=b.x1&&x<=b.x2&&z>=b.z1&&z<=b.z2;}
+        function distToBoxOuter(x,z,b){
+          // Distance from point to nearest edge of box (0 if inside)
+          const dx=Math.max(b.x1-x,0,x-b.x2),dz=Math.max(b.z1-z,0,z-b.z2);
+          return Math.sqrt(dx*dx+dz*dz);
+        }
+        function distFromPlat(x,z){return Math.sqrt((x-platCX)*(x-platCX)+(z-platCZ)*(z-platCZ));}
 
-          let m = 0;
-          const officeField = 1 - smootherstep(0.18, 1.08, radial(x, z, 0, -75, 23, 18));
-          const northField  = 1 - smootherstep(0.16, 1.06, radial(x, z, 4.5, -61.5, 10.5, 13.5));
-          const southField  = 1 - smootherstep(0.18, 1.06, radial(x, z, -4.5, -87.5, 10.5, 13.5));
-          const frontSwath  = smoothstep(16, 5.2, Math.abs(x - 2.4)) * smoothstep(-58, -8, z) * smoothstep(-44, -54, z);
-          m = Math.max(m, officeField, northField, southField, frontSwath * 0.68);
-
-          const dWall = minDistToBoxes(x, z, boxesOuter);
-          const wallBank = smootherstep(4.8, 0.12, dWall);
-          m = Math.max(m, wallBank);
-
-          const breakup = 0.92 + (sn(x * 0.055 + 41, z * 0.055 - 17) * 0.5 + 0.5) * 0.16;
-          m *= breakup;
-
-          const platformDist = Math.hypot(x, z);
-          m *= smootherstep(2.25, 8.0, platformDist);
-
-          // Keep the primal/pool terrain fully snow-free; that zone is owned by the rocky field.
-          const primalHole = radial(x, z, 25 + 1.5, 0, 22.5, 14.5);
-          m *= smootherstep(0.92, 1.08, primalHole);
-          return clamp01(m);
-        };
-
-        const geom = new THREE.PlaneGeometry(W, D, SEG_X, SEG_Z);
-        geom.rotateX(-Math.PI / 2);
-        const pos = geom.getAttribute('position');
-        const colors = new Float32Array(pos.count * 3);
-        const rockColor = new THREE.Color(0xb8c0c8);
-        const snowColor = new THREE.Color(0xf0f3f6);
-        const tmp = new THREE.Color();
-
-        for (let i = 0; i < pos.count; i++) {
-          const lx = pos.getX(i);
-          const lz = pos.getZ(i);
-          const x = CX + lx;
-          const z = CZ + lz;
-          const ex = Math.abs(lx) / (W * 0.5);
-          const ez = Math.abs(lz) / (D * 0.5);
-          const edgeFade = smoothstep(1.0, 0.84, Math.max(ex, ez));
-
-          let h = BASE_Y;
-          h += (sn(x * 0.030 + 11, z * 0.030 - 7) * 0.5 + 0.5) * 0.18;
-          h += (sn(x * 0.075 - 3, z * 0.075 + 13) * 0.5 + 0.5) * 0.08;
-          h += Math.pow(1 - Math.abs(sn(x * 0.16 + 8, z * 0.16 - 5)), 2) * 0.04;
-          h *= edgeFade;
-
-          const bermR = radial(x, z, 25 + 1.5, 0, 15.5, 10.2);
-          const bermCore = Math.exp(-Math.pow((bermR - 1.0) / 0.10, 2.0));
-          const bermOuter = Math.exp(-Math.pow((bermR - 1.14) / 0.18, 2.0));
-          const bermNoise = (sn(x * 0.095 + 7, z * 0.095 - 9) * 0.5 + 0.5);
-          h += bermCore * (0.95 + bermNoise * 0.28);
-          h += bermOuter * 0.28;
-          h -= Math.exp(-Math.pow(radial(x, z, 26.5, 0, 7.3, 4.7) / 0.92, 2.8)) * 0.14;
-
-          const sm = snowMask(x, z);
-          h += sm * 0.06;
-
-          const dWall = minDistToBoxes(x, z, boxesOuter);
-          const wallBank = smootherstep(4.5, 0.18, dWall) * sm;
-          h += wallBank * 0.26;
-
-          const northBank = Math.exp(-(((x - 4.5) / 2.0) ** 2 + ((z + 56.0) / 3.8) ** 2)) * 0.10;
-          const southBank = Math.exp(-(((x + 4.5) / 2.0) ** 2 + ((z + 81.6) / 3.8) ** 2)) * 0.10;
-          h += (northBank + southBank) * sm;
-
-          if (insideAny(x, z, boxesIndoor)) {
-            h = -0.30;
-          } else {
-            const dIndoor = minDistToBoxes(x, z, boxesIndoor);
-            const interiorFeather = smootherstep(0.0, 2.4, dIndoor);
-            h = THREE.MathUtils.lerp(-0.18, h, interiorFeather);
-          }
-
-          const platformDist = Math.hypot(x, z);
-          if (platformDist < 1.95) {
-            h = Math.min(h, -0.22);
-          } else if (platformDist < 3.0) {
-            const pf = smootherstep(1.95, 3.0, platformDist);
-            h = THREE.MathUtils.lerp(-0.22, h, pf);
-          }
-
-          // Hard cutout for the primal rocky field so the two terrain systems never overlap
-          // in depth around the pool / berm area. This is the main source of the apparent
-          // "snow moving" while walking: two large ground meshes fighting at grazing angles.
-          const primalHole = radial(x, z, 25 + 1.5, 0, 24.5, 16.5);
-          if (primalHole < 1.0) {
-            h = -0.34;
-          } else if (primalHole < 1.18) {
-            const hf = smootherstep(1.0, 1.18, primalHole);
-            h = THREE.MathUtils.lerp(-0.34, h, hf);
-          }
-
-          pos.setY(i, h);
-          tmp.copy(rockColor).lerp(snowColor, sm * 0.92);
-          colors[i * 3] = tmp.r;
-          colors[i * 3 + 1] = tmp.g;
-          colors[i * 3 + 2] = tmp.b;
+        function isIndoor(x,z){
+          return inBox(x,z,officeIn)||inBox(x,z,transIn)||inBox(x,z,exitIn)||inBox(x,z,doorN)||inBox(x,z,doorS);
         }
 
-        geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        pos.needsUpdate = true;
-        geom.computeVertexNormals();
+        // Shortest distance to any interior zone (0 if inside, positive if outside)
+        function distToAnyInterior(x,z){
+          return Math.min(
+            distToBoxOuter(x,z,officeIn),
+            distToBoxOuter(x,z,transIn),
+            distToBoxOuter(x,z,exitIn),
+            distToBoxOuter(x,z,doorN),
+            distToBoxOuter(x,z,doorS)
+          );
+        }
 
-        const mat = new THREE.MeshStandardMaterial({
-          color: 0xffffff,
-          vertexColors: true,
-          roughness: 0.97,
-          metalness: 0.0
+        // Distance to nearest outer shell surface (for accumulation)
+        function distToWalls(x,z){
+          return Math.min(
+            distToBoxOuter(x,z,officeOut),
+            distToBoxOuter(x,z,transOut),
+            distToBoxOuter(x,z,exitOut)
+          );
+        }
+
+        // Is point inside any outer shell (i.e. inside the wall volume)?
+        function inWallVolume(x,z){
+          if(inBox(x,z,officeOut)&&!inBox(x,z,officeIn)) return true;
+          if(inBox(x,z,transOut)&&!inBox(x,z,transIn)) return true;
+          if(inBox(x,z,exitOut)&&!inBox(x,z,exitIn)) return true;
+          return false;
+        }
+
+        // ── Channel drift suppression ──
+        // Returns 0 at the carved channel centre (drift → 0, snow flat at GROUND_Y),
+        // 1 everywhere outside. Coverage (m) is NOT touched, so snow stays present —
+        // the channel floor is flat snow. Snow walls form naturally on both sides from
+        // organic drift + wall accumulation against the corridor side walls.
+        function channelDriftSuppress(x,z){
+          const sm=(a,b,t)=>{let k=(t-a)/(b-a);k=Math.max(0,Math.min(1,k));return k*k*(3-2*k);};
+          let s=0;
+          // North corridor: entrance at z=-56.5, centre x=4.5, door gap half-width ≈1.55m
+          // Channel carved 9m outward, tight to door width so walls can flank it naturally
+          {
+            const dz=z-(-56.5); // positive = away from building, northward
+            if(dz>-1.0 && dz<9.5){
+              const xf=sm(2.4,1.4,Math.abs(x-4.5)); // 1 inside ~1.4m of centre, 0 beyond ~2.4m
+              const zf=sm(-1.0,0.3,dz)*sm(9.5,7.0,dz);
+              s=Math.max(s,xf*zf);
+            }
+          }
+          // South exit: exit at z=-81.5, centre x=-4.5
+          {
+            const dz=(-81.5)-z; // positive = away from building, southward
+            if(dz>-1.0 && dz<9.5){
+              const xf=sm(2.4,1.4,Math.abs(x+4.5));
+              const zf=sm(-1.0,0.3,dz)*sm(9.5,7.0,dz);
+              s=Math.max(s,xf*zf);
+            }
+          }
+          return 1.0-s;
+        }
+
+        // ── Snow coverage mask ──
+        function snowMask(x,z){
+          if(isIndoor(x,z)) return 0;
+
+          // Taper near interior edges (smooth falloff over 1.2m so no hard line at doorways)
+          const dIn = distToAnyInterior(x,z);
+          // But DON'T taper along solid walls — only near doorways
+          // Check if we're near a doorway
+          const nearDoorN = distToBoxOuter(x,z,doorN) < 2.5;
+          const nearDoorS = distToBoxOuter(x,z,doorS) < 2.5;
+          let indoorTaper = 1;
+          if(nearDoorN || nearDoorS){
+            const dDoor = Math.min(
+              nearDoorN ? distToBoxOuter(x,z,doorN) : 999,
+              nearDoorS ? distToBoxOuter(x,z,doorS) : 999
+            );
+            indoorTaper = smoothstep(0.25, 1.8, dDoor);
+          }
+          // allow overlap into wall thickness so snow visually kisses exterior walls
+
+          // Platform exclusion
+          const pd=distFromPlat(x,z);
+          if(pd<platClearR-2) return 0;
+          const platFade=smootherstep(platClearR-2,platClearR+5,pd);
+
+          // Domain-warped radial falloff
+          const wx=x+sn(x*0.025+41,z*0.025-17)*4+sn(x*0.065,z*0.065)*2;
+          const wz=z+sn(x*0.025-13,z*0.025+23)*4+sn(x*0.065+7,z*0.065-9)*2;
+          const dx=wx-officeCX,dz=wz-officeCZ;
+          const r=Math.sqrt(dx*dx+dz*dz);
+
+          const n1=sn(wx*0.035,wz*0.035)*4;
+          const n2=sn(wx*0.08+13,wz*0.08-8)*2;
+          const n3=sn(wx*0.15-3,wz*0.15+6)*1;
+          const outer=28+n1+n2+n3;
+          const inner=8+sn(wx*0.05-5,wz*0.05+14)*2;
+          let m=1-smootherstep(inner,outer,r);
+
+          // Fade from office centre — asymmetric: tighter toward platform, wider behind
+          const dOff=Math.sqrt((x-officeCX)*(x-officeCX)+(z-officeCZ)*(z-officeCZ));
+          const platformBias=Math.max(0,Math.min(1,(z-officeCZ)/75));
+          const effOuter=38-10*platformBias;
+          m*=smootherstep(effOuter,effOuter-8,dOff);
+          const frontBias=Math.max(0,Math.min(1,(z+75)/75));
+          m*=(1-0.18*frontBias*(0.8+0.2*(sn(x*0.04+60,z*0.04-10)*0.5+0.5)));
+
+          m*=platFade*indoorTaper;
+
+          // ── Force full coverage near building exterior ──
+          // The domain-warped radial falloff and doorway indoorTaper can push m < 1
+          // right outside the indoor boundary, which with HIDDEN_Y creates a seam line.
+          // Clamp m toward 1.0 within 2.5m of the indoor boundary so all wall-adjacent
+          // vertices are fully covered regardless of what the radial shape does.
+          if(!isIndoor(x,z)){
+            const dIn = distToAnyInterior(x,z);
+            const nearBldg = smootherstep(2.5, 0.3, dIn);
+            m = Math.max(m, nearBldg);
+          }
+
+          // Organic edge breakup
+          const en=sn(x*0.1+100,z*0.1-100)*0.5+0.5;
+          const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
+          m+=(en-0.5)*0.08*eb;
+
+          // North extent cutoff: snow fades to zero well before the platform.
+          // z=-50 → full weight, z=-35 → zero. Office/corridor area (z<-56) is completely untouched.
+          
+
+          
+          return Math.max(0,Math.min(1,m));
+        }
+
+        // ── Frost mask (wider) ──
+        function frostMask(x,z){
+          if(isIndoor(x,z)) return 0;
+          const dIn=distToAnyInterior(x,z);
+          const nearDoorN=distToBoxOuter(x,z,doorN)<1.5;
+          const nearDoorS=distToBoxOuter(x,z,doorS)<1.5;
+          let indoorTaper=1;
+          if(nearDoorN||nearDoorS){
+            indoorTaper=smoothstep(0,1.0,Math.min(
+              nearDoorN?distToBoxOuter(x,z,doorN):999,
+              nearDoorS?distToBoxOuter(x,z,doorS):999
+            ));
+          }
+          // allow overlap into wall thickness so snow visually kisses exterior walls
+
+          const pd=distFromPlat(x,z);
+          if(pd<platClearR-1) return 0;
+          const platFade=smootherstep(platClearR-1,platClearR+10,pd);
+
+          const wx=x+sn(x*0.02+41,z*0.02-17)*4+sn(x*0.05,z*0.05)*2;
+          const wz=z+sn(x*0.02-13,z*0.02+23)*4+sn(x*0.05+7,z*0.05-9)*2;
+          const dx=wx-officeCX,dz=wz-officeCZ;
+          const r=Math.sqrt(dx*dx+dz*dz);
+          const n1=sn(wx*0.025,wz*0.025)*4;
+          const n2=sn(wx*0.06+13,wz*0.06-8)*2;
+          const outer=30+n1+n2;
+          const inner=6+sn(wx*0.04-5,wz*0.04+14)*2;
+          let m=1-smootherstep(inner,outer,r);
+
+          const dOff=Math.sqrt((x-officeCX)*(x-officeCX)+(z-officeCZ)*(z-officeCZ));
+          m*=smootherstep(40,30,dOff);
+          m*=(1-0.15*Math.max(0,Math.min(1,(z+75)/75)));
+          m*=platFade*indoorTaper;
+          
+          return Math.max(0,Math.min(1,m));
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        //  LAYER 1 — FROST
+        // ══════════════════════════════════════════════════════════════
+        const FROST_EXT=200;
+        const ftS=512;
+        const fCv=document.createElement('canvas');fCv.width=ftS;fCv.height=ftS;
+        const fCtx=fCv.getContext('2d');
+        const fid=fCtx.createImageData(ftS,ftS);const fp=fid.data;
+        for(let py=0;py<ftS;py++){
+          for(let px=0;px<ftS;px++){
+            const idx=(py*ftS+px)*4;
+            const wx=(px/ftS-0.5)*FROST_EXT*2;
+            const wz=(py/ftS-0.5)*FROST_EXT*2;
+            let fm=frostMask(wx,wz);
+            fm*=0.6+0.4*(sn(wx*0.08+50,wz*0.08-50)*0.5+0.5);
+            fm*=0.85+0.15*(sn(wx*0.5+200,wz*0.5-200)*0.5+0.5);
+            const alpha=Math.max(0,Math.min(255,fm*130));
+            fp[idx]=248;fp[idx+1]=252;fp[idx+2]=255;fp[idx+3]=Math.floor(alpha);
+          }
+        }
+        fCtx.putImageData(fid,0,0);
+        const frostTex=new THREE.CanvasTexture(fCv);
+        frostTex.magFilter=THREE.LinearFilter;
+        frostTex.minFilter=THREE.LinearMipmapLinearFilter;
+
+        const fnS=256;
+        const fnCv=document.createElement('canvas');fnCv.width=fnS;fnCv.height=fnS;
+        const fnCtx=fnCv.getContext('2d');
+        const fnd=fnCtx.createImageData(fnS,fnS);const fnp=fnd.data;
+        for(let py=0;py<fnS;py++){
+          for(let px=0;px<fnS;px++){
+            const idx=(py*fnS+px)*4;
+            const nx=px/fnS*30,ny=py/fnS*30;
+            const dx2=sn(nx*4+10,ny*4)*0.28+sn(nx*12+5,ny*12)*0.18+sn(nx*25,ny*25+3)*0.12;
+            const dy2=sn(nx*4,ny*4+20)*0.28+sn(nx*12,ny*12+8)*0.18+sn(nx*25+7,ny*25)*0.12;
+            fnp[idx]=Math.floor((dx2*0.5+0.5)*255);
+            fnp[idx+1]=Math.floor((dy2*0.5+0.5)*255);
+            fnp[idx+2]=220;fnp[idx+3]=255;
+          }
+        }
+        fnCtx.putImageData(fnd,0,0);
+        const frostNorm=new THREE.CanvasTexture(fnCv);
+        frostNorm.wrapS=frostNorm.wrapT=THREE.RepeatWrapping;
+        frostNorm.repeat.set(40,40);
+
+        const frostMat=new THREE.MeshStandardMaterial({
+          color:0xd0dde8,transparent:true,map:frostTex,
+          normalMap:frostNorm,normalScale:new THREE.Vector2(0.22,0.22),
+          roughness:0.35,metalness:0.08,depthWrite:false,side:THREE.FrontSide,
+          envMapIntensity:0.2,blending:THREE.NormalBlending,
+          ,,
         });
-        this._materials.push(mat);
+        const frostGeom=new THREE.PlaneGeometry(FROST_EXT*2,FROST_EXT*2,1,1);
+        frostGeom.rotateX(-Math.PI/2);
+        const frostMesh=new THREE.Mesh(frostGeom,frostMat);
+        frostMesh.position.y=GROUND_Y+0.004;
+        frostMesh.frustumCulled=false;
+        this.el.sceneEl.object3D.add(frostMesh);
+        this._meshes.push(frostMesh);
 
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.receiveShadow = true;
-        mesh.frustumCulled = false;
-        sceneObj.add(mesh);
-        this._meshes.push(mesh);
+        // ══════════════════════════════════════════════════════════════
+        //  LAYER 2 — SNOW (smooth displaced mesh)
+        // ══════════════════════════════════════════════════════════════
+        const snowGeom=new THREE.PlaneGeometry(RADIUS*2,RADIUS*2,SEG,SEG);
+        snowGeom.rotateX(-Math.PI/2);
+        const pos=snowGeom.getAttribute('position');
+
+        const wAng=Math.atan2(0.45,1.05),wdX=Math.cos(wAng),wdZ=Math.sin(wAng);
+
+        for(let i=0;i<pos.count;i++){
+          const x=pos.getX(i),z=pos.getZ(i);
+          const edgeR=Math.sqrt(x*x+z*z);
+          if(edgeR>RADIUS*0.985){pos.setY(i,-1.5);continue;}
+
+          const m=snowMask(x,z);
+
+          // ── Drift height: gentle rolling (visual detail via normal map) ──
+          let drift=0;
+          // Very large gentle terrain rolls
+          drift+=(sn(x*0.012+3,z*0.012-5)*0.5+0.5)*0.25;
+          // Medium undulations
+          drift+=(sn(x*0.032+20,z*0.032-8)*0.5+0.5)*0.14;
+          // Gentle sastrugi
+          const saX=x*wdX+z*wdZ,saZ=-x*wdZ+z*wdX;
+          drift+=(sn(saX*0.07,saZ*0.025)*0.5+0.5)*0.07;
+          // Subtle fine variation (won't cause visible faceting)
+          drift+=(sn(x*0.1+3,z*0.1-2)*0.5+0.5)*0.03;
+
+          // ── Wall accumulation: snow banks against outer building surfaces ──
+          if(!isIndoor(x,z)){
+            const dw=distToWalls(x,z);
+            // Drift tapering over 12m, thickest right at wall
+            const wallDrift=smootherstep(12,0,dw);
+            // Organic variation along wall face
+            const wallNoise=0.5+0.5*(sn(x*0.15+4,z*0.15-6)*0.5+0.5);
+            drift+=wallDrift*0.78*wallNoise;
+            // Extra bank right at base (0-1.2m)
+            const baseDrift=smootherstep(1.2,0,dw);
+            drift+=baseDrift*0.28;
+          }
+
+          // ── Corridor approach berms: natural snow banks flanking each entrance lane ──
+          // ── Corridor approach berms: natural snow banks flanking each entrance lane ──
+          {
+            // North corridor: berm peaks at ±(hw+1.0) from lane centre, fades inward & outward
+            const cx=4.5, hw=1.8, zEntry=-56.5;
+            const dz=z-zEntry;
+            if(dz>0 && dz<10.0){
+              const pathLen=smootherstep(10.0,0.0,dz);
+              const xAbs=Math.abs(x-cx);
+              const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
+              drift+=0.22*berm*pathLen;
+            }
+          }
+          {
+            // South exit: same logic, lane grows southward
+            const cx=-4.5, hw=1.1, zEntry=-81.5;
+            const dz=zEntry-z;
+            if(dz>0 && dz<10.0){
+              const pathLen=smootherstep(10.0,0.0,dz);
+              const xAbs=Math.abs(x-cx);
+              const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
+              drift+=0.22*berm*pathLen;
+            }
+          }
+
+          // ── Wall-edge drift taper ──
+          // Taper all drift to zero within ~1.2m of the indoor boundary (outdoor side).
+          // This ensures the vertex just outside the exclusion zone has near-zero height,
+          // so the HIDDEN_Y→outdoor step is tiny and the cliff artifact disappears.
+          if(!isIndoor(x,z)){
+            const dIn = distToAnyInterior(x,z);
+            const edgeTaper = smoothstep(0.0, 1.2, dIn);
+            drift *= edgeTaper;
+          }
+
+          drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
+
+          // ── Canyon channel: carve a slot at ground level through the snow field ──
+          // chSup = 0 in the channel centre (drift zeroed → flat snow floor at GROUND_Y)
+          //       = 1 everywhere else (full drift, natural walls)
+          // mFinal boosted to 1.0 in channel ONLY for outdoor points — indoor vertices
+          // must stay at HIDDEN_Y or the corridor floor z-fights at GROUND_Y.
+          const chSup=channelDriftSuppress(x,z);
+          drift*=chSup;
+          const mFinal = isIndoor(x,z) ? m : Math.max(m, 1.0-chSup);
+
+          // ── Continuous blend: hidden → ground → snow ──
+          const snowSurface=GROUND_Y+Math.max(0,drift);
+          const northSink=smootherstep(-45,-32,z);
+          const effectiveHiddenY=HIDDEN_Y-northSink*0.2;
+          const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
+          pos.setY(i,y);
+        }
+
+        pos.needsUpdate=true;
+        snowGeom.computeVertexNormals();
+        // ── PBR textures (repo'd in ./assets/textures) ──
+        // AO requires uv2 in Three.js
+        if (snowGeom.getAttribute('uv') && !snowGeom.getAttribute('uv2')) {
+          const uv = snowGeom.getAttribute('uv');
+          snowGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
+        }
+
+        const texLoader = new THREE.TextureLoader();
+        const texAniso = 4;
+        const snowColorTex = texLoader.load('./assets/textures/snow_basecolor.webp');
+        const snowNormalTex = texLoader.load('./assets/textures/snow_normal_gl.webp');
+        const snowRoughTex = texLoader.load('./assets/textures/snow_roughness.jpg');
+        const snowAoTex = texLoader.load('./assets/textures/snow_ao.jpg');
+
+        [snowColorTex, snowNormalTex, snowRoughTex, snowAoTex].forEach((t) => {
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(12, 12);
+          t.anisotropy = texAniso;
+        });
+
+        snowColorTex.colorSpace = THREE.SRGBColorSpace;
+
+        const snowMat=new THREE.MeshStandardMaterial({
+          color:0xffffff,
+          map:snowColorTex,
+          normalMap:snowNormalTex,
+          roughnessMap:snowRoughTex,
+          aoMap:snowAoTex,
+          normalScale:new THREE.Vector2(0.45,0.45),
+          roughness:0.95,
+          metalness:0.0,
+          aoMapIntensity:0.35,
+          envMapIntensity:0.07,
+          side:THREE.FrontSide,
+          depthWrite:true
+        });
+        const snowMesh=new THREE.Mesh(snowGeom,snowMat);
+        snowMesh.receiveShadow=true;snowMesh.frustumCulled=false;
+        this.el.sceneEl.object3D.add(snowMesh);
+        this._meshes.push(snowMesh);
       },
-      remove: function () {
-        this._meshes.forEach((m) => {
-          if (m.parent) m.parent.remove(m);
-          if (m.geometry) m.geometry.dispose();
+      remove: function(){
+        this._meshes.forEach(function(m){
+          if(m.parent)m.parent.remove(m);
+          m.geometry.dispose();
+          if(m.material.map)m.material.map.dispose();
+          if(m.material.normalMap)m.material.normalMap.dispose();
+          if(m.material.roughnessMap)m.material.roughnessMap.dispose();
+          if(m.material.aoMap)m.material.aoMap.dispose();
+          m.material.dispose();
         });
-        (this._materials || []).forEach((m) => m && m.dispose && m.dispose());
       }
     });
 
@@ -968,29 +1212,7 @@ AFRAME.registerComponent('rig-walk', {
             d = Math.min(d, distToBoxOuter2D(x, z, b));
           }
           if (inside) return 1.0;
-
-          // Broaden the snow-dominant perimeter around the office/corridors without
-          // altering the indoor cutouts. Push this wider on the platform-facing side.
-          let keepSnow = smoothstep(12.5, 1.5, d);
-
-          const northOfficeBias = smoothstep(-72.0, -62.0, z) * smoothstep(16.0, 4.0, Math.abs(x));
-          const northTransBias  = smoothstep(-60.0, -49.0, z) * smoothstep(9.0, 2.0, Math.abs(x - 4.5));
-          const southExitBias   = smoothstep(-90.0, -98.0, z) * smoothstep(8.5, 2.0, Math.abs(x + 4.5));
-
-          keepSnow = Math.max(keepSnow, northOfficeBias * 0.90);
-          keepSnow = Math.max(keepSnow, northTransBias  * 0.92);
-          keepSnow = Math.max(keepSnow, southExitBias   * 0.78);
-
-          return Math.max(0, Math.min(1, keepSnow));
-        };
-
-        const snowDominanceMask = (x, z) => {
-          const aroundBuilding = officeSnowSuppression(x, z);
-          const frontBlend = smoothstep(-58.0, -46.0, z);
-          const frontSwath = smoothstep(18.0, 5.5, Math.abs(x - 2.5)) * smoothstep(-58.0, -6.0, z);
-          const organic = 0.90 + (sn(x * 0.065 + 17.0, z * 0.065 - 9.0) * 0.5 + 0.5) * 0.16;
-          const frontField = frontBlend * frontSwath * organic;
-          return Math.max(0, Math.min(1, Math.max(aroundBuilding, frontField)));
+          return smoothstep(9.5, 1.5, d);
         };
 
         const tl = new THREE.TextureLoader();
@@ -1023,8 +1245,8 @@ AFRAME.registerComponent('rig-walk', {
         const fRough = mkTex(rockPath + 'moon_rough.png', 7.8, false);
         const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
 
-        // ── Extended rocky underfield restored as the single stable wide rocky base ─
-        const fieldW = 76, fieldD = 58, fieldSeg = 220;
+        // ── Extended rocky underfield (same stack role as lunar ground) ───────
+        const fieldW = 190, fieldD = 170, fieldSeg = 260;
         const fieldGeom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
         fieldGeom.rotateX(-Math.PI / 2);
         const fp = fieldGeom.getAttribute('position');
@@ -1045,89 +1267,19 @@ AFRAME.registerComponent('rig-walk', {
           const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
           h *= 1.0 - approachSoftener * 0.45;
 
-          // Broad central shaping around the pool. Keep the base subdued, then build the berm
-          // directly into this same mesh so there is only one rocky terrain surface.
+          // Broad central flattening around the pool so the local berm still does the heavy lifting.
           const poolEx = (lx - 1.5) / 23.0;
           const poolEz = lz / 16.0;
           const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
-          h *= 1.0 - poolBlend * 0.58;
+          h *= 1.0 - poolBlend * 0.65;
 
-          // Integrated berm around the pool: same geometry as the rocky field, no second mesh.
-          const px = lx - 1.5;
-          const pz = lz;
-          const bermRadiusX = 14.8, bermRadiusZ = 9.4;
-          const poolRadiusX = 7.4, poolRadiusZ = 4.6;
-          const exb = px / bermRadiusX;
-          const ezb = pz / bermRadiusZ;
-          const er = Math.sqrt(exb * exb + ezb * ezb);
-          const ang = Math.atan2(pz, px);
-          const gapCenter = Math.PI;
-          const gapHalf = 0.42;
-          const gapDelta = Math.abs(angleDelta(ang, gapCenter));
-          const gapMask = smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
-          const sideBoost = smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
-
-          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
-          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
-          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
-          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
-          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
-          const ringWidth = 0.12 + ringNoiseC * 0.035;
-
-          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
-          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
-          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
-          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
-
-          let bermH = 0;
-          bermH += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
-          bermH += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
-          bermH += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
-
-          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
-          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
-          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
-          bermH += bermCore * (cragA + cragB + facets) * gapMask;
-
-          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
-          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
-          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
-          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
-          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
-          bermH += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
-          bermH += sideBoost * bermCore * 0.22;
-
-          bermH -= basinFalloff * 0.10;
-
-          const poolEx2 = px / poolRadiusX;
-          const poolEz2 = pz / poolRadiusZ;
-          const poolEr = Math.sqrt(poolEx2 * poolEx2 + poolEz2 * poolEz2);
-          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
-          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
-          bermH += walkShelf * 0.06;
-          bermH += poolLip * 0.05;
-          bermH -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
-
-          const fadeX = smoothstep(21.5, 12.8, Math.abs(lx));
-          const fadeZ = smoothstep(16.8, 9.8, Math.abs(lz));
-          const fadeR = smoothstep(1.32, 0.92, er);
-          const terrainFade = Math.min(fadeX, fadeZ) * fadeR;
-          bermH *= terrainFade;
-
-          const waterMask = smoothstep(0.98, 1.10, poolEr);
-          bermH *= waterMask;
-
-          h += bermH;
-
-          // Keep the office and corridor surroundings snow-dominant: suppress and lower the rocky
-          // underfield beneath the snow zone so it cannot z-fight with the snow sheet in motion.
-          const snowDominance = snowDominanceMask(wx, wz);
-          const snowFeather = smoothstep(0.18, 0.82, snowDominance);
-          h *= 1.0 - snowDominance * 0.985;
-          const baseDrop = 0.05 * snowFeather + 0.025 * snowDominance;
+          // Keep the office and corridor surroundings snow-dominant: suppress the rocky underfield
+          // inside the protected architecture envelopes and through a broader exterior falloff zone.
+          const officeKeepSnow = officeSnowSuppression(wx, wz);
+          h *= 1.0 - officeKeepSnow * 0.98;
 
           // Fade to the base ring at the outer edge to avoid a hard boundary.
-          fp.setY(i, GY - baseDrop + h * edge * 0.9);
+          fp.setY(i, GY + h * edge * 0.9);
         }
         fp.needsUpdate = true;
         fieldGeom.computeVertexNormals();
@@ -1138,11 +1290,11 @@ AFRAME.registerComponent('rig-walk', {
           map: fDiff, normalMap: fNorm, roughnessMap: fRough, aoMap: fAO,
           roughness: 0.965, metalness: 0, aoMapIntensity: 0.94,
           normalScale: new THREE.Vector2(1.95, 1.95),
+          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
         });
         this._materials.push(fieldMat);
         const fieldMesh = new THREE.Mesh(fieldGeom, fieldMat);
-        fieldMesh.position.set(CX, -0.02, CZ);
-        fieldMesh.visible = true;
+        fieldMesh.position.set(CX, -0.002, CZ);
         sceneObj.add(fieldMesh); this._meshes.push(fieldMesh);
 
         // ── Terrain patch (kept local and subtle; additive only) ───────────────
@@ -1176,6 +1328,102 @@ AFRAME.registerComponent('rig-walk', {
         terrMesh.position.set(CX, 0.012, CZ);
         terrMesh.visible = false;
         sceneObj.add(terrMesh); this._meshes.push(terrMesh);
+
+        // ── Rocky berm around the pool: emergent terrain, not object-boulders ──
+        const boulderMat = new THREE.MeshStandardMaterial({
+          color: 0xd7dde4,
+          map: bDiff, normalMap: bNorm, roughnessMap: bRough, aoMap: bAO,
+          roughness: 0.96, metalness: 0, aoMapIntensity: 0.92,
+          normalScale: new THREE.Vector2(1.85, 1.85),
+        });
+        this._materials.push(boulderMat);
+
+        const bermW = 42.0, bermD = 32.0, bermSeg = 220;
+        const bermGeom = new THREE.PlaneGeometry(bermW, bermD, bermSeg, bermSeg);
+        bermGeom.rotateX(-Math.PI / 2);
+        const bp = bermGeom.getAttribute('position');
+        const poolLX = 1.5, poolLZ = 0.0;
+        const bermRadiusX = 14.8, bermRadiusZ = 9.4;
+        const poolRadiusX = 7.4, poolRadiusZ = 4.6;
+        const gapCenter = Math.PI;
+        const gapHalf = 0.42;
+
+        for (let i = 0; i < bp.count; i++) {
+          const lx = bp.getX(i), lz = bp.getZ(i);
+          const px = lx - poolLX;
+          const pz = lz - poolLZ;
+
+          const ex = px / bermRadiusX;
+          const ez = pz / bermRadiusZ;
+          const er = Math.sqrt(ex * ex + ez * ez);
+          const ang = Math.atan2(pz, px);
+          const gapDelta = Math.abs(angleDelta(ang, gapCenter));
+          const gapMask = smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
+          const sideBoost = smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
+
+          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
+          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
+          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
+          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
+          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
+          const ringWidth = 0.12 + ringNoiseC * 0.035;
+
+          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
+          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
+          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
+          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
+
+          let h = 0;
+          h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
+          h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
+          h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
+
+          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
+          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
+          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
+          h += bermCore * (cragA + cragB + facets) * gapMask;
+
+          // lift the two sides of the opening so the berm feels terrain-formed, not cut out
+          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
+          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
+          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
+          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
+          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
+          h += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
+          h += sideBoost * bermCore * 0.22;
+
+          // basin shaping: broad walkable floor with a distinct central water depression
+          h -= basinFalloff * 0.10;
+
+          const poolEx = px / poolRadiusX;
+          const poolEz = pz / poolRadiusZ;
+          const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
+          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
+          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
+          h += walkShelf * 0.06;
+          h += poolLip * 0.05;
+          h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
+
+          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
+          const fadeX = smoothstep(20.6, 15.4, Math.abs(lx));
+          const fadeZ = smoothstep(15.4, 11.2, Math.abs(lz));
+          const terrainFade = Math.min(fadeX, fadeZ);
+          h *= terrainFade;
+
+          // keep only the actual water footprint flat
+          const waterMask = smoothstep(0.98, 1.10, poolEr);
+          h *= waterMask;
+
+          bp.setY(i, GY + h);
+        }
+
+        bp.needsUpdate = true;
+        bermGeom.computeVertexNormals();
+        const buv = bermGeom.getAttribute('uv');
+        bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(buv.array), 2));
+        const bermMesh = new THREE.Mesh(bermGeom, boulderMat);
+        bermMesh.position.set(CX, 0.012, CZ);
+        sceneObj.add(bermMesh); this._meshes.push(bermMesh);
 
         // ── Water pool ─────────────────────────────────────────────────────────
         const poolGeom = new THREE.PlaneGeometry(14.8, 9.2);
@@ -1394,8 +1642,10 @@ AFRAME.registerComponent('rig-walk', {
 <!-- Earth atmospheric halo -->
 <a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
+<!-- ── Lunar ground ─────────────────────────────────────────────── -->
+<a-ring id="lia_lunar_ground" lunar-ground-quality="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.95; repeat: 180 180; normalScale: 2.35 2.35; aoMapIntensity: 1.0; side: front; polygonOffset: true; polygonOffsetFactor: 2; polygonOffsetUnits: 2; opacity: 0.9" position="0 0.066 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
-<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0.03 0" radius="1.55" shadow="cast:false; receive:true">
+<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
 <a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
 <a-entity id="endchamber_handrail_colliders">
 <a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 -0.866" rotation="0 -36.1 0" visible="false"></a-box>
@@ -1585,7 +1835,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
 </a-entity><a-entity id="primal_scene" primal-scene=""></a-entity>
 <a-entity id="rig" position="0 0.07 0" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0">
-<a-entity camera="fov: 60; near: 0.18; far: 320; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
+<a-entity camera="fov: 60; near: 0.1; far: 500; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity cursor="rayOrigin: mouse"></a-entity>
 </a-entity>
 </a-entity>
