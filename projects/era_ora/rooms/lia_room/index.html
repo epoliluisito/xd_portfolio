@@ -909,8 +909,11 @@ AFRAME.registerComponent('rig-walk', {
           const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
           m+=(en-0.5)*0.08*eb;
 
-          // North extent cutoff: snow fades to zero well before the platform.
-          // z=-50 → full weight, z=-35 → zero. Office/corridor area (z<-56) is completely untouched.
+          // North extent cutoff extended so the snow field now reaches almost to the monolith
+          // while still thinning before the platform itself.
+          m *= smootherstep(-24, -52, z);
+
+          m *= smootherstep(-20, -40, z);
           return Math.max(0,Math.min(1,m));
         }
 
@@ -947,13 +950,14 @@ AFRAME.registerComponent('rig-walk', {
           m*=smootherstep(40,30,dOff);
           m*=(1-0.15*Math.max(0,Math.min(1,(z+75)/75)));
           m*=platFade*indoorTaper;
+          m *= smootherstep(-32, -45, z);
           return Math.max(0,Math.min(1,m));
         }
 
         // ══════════════════════════════════════════════════════════════
         //  LAYER 1 — FROST
         // ══════════════════════════════════════════════════════════════
-        const FROST_EXT=200;
+        const FROST_EXT=120;
         const ftS=512;
         const fCv=document.createElement('canvas');fCv.width=ftS;fCv.height=ftS;
         const fCtx=fCv.getContext('2d');
@@ -964,6 +968,8 @@ AFRAME.registerComponent('rig-walk', {
             const wx=(px/ftS-0.5)*FROST_EXT*2;
             const wz=(py/ftS-0.5)*FROST_EXT*2;
             let fm=frostMask(wx,wz);
+            const sm=snowMask(wx,wz);
+            fm*=1.0-smoothstep(0.22,0.72,sm);
             fm*=0.6+0.4*(sn(wx*0.08+50,wz*0.08-50)*0.5+0.5);
             fm*=0.85+0.15*(sn(wx*0.5+200,wz*0.5-200)*0.5+0.5);
             const alpha=Math.max(0,Math.min(255,fm*130));
@@ -1005,7 +1011,7 @@ AFRAME.registerComponent('rig-walk', {
         const frostGeom=new THREE.PlaneGeometry(FROST_EXT*2,FROST_EXT*2,1,1);
         frostGeom.rotateX(-Math.PI/2);
         const frostMesh=new THREE.Mesh(frostGeom,frostMat);
-        frostMesh.position.y=GROUND_Y+0.004;
+        frostMesh.position.y=GROUND_Y+0.0015;
         frostMesh.frustumCulled=false;
         this.el.sceneEl.object3D.add(frostMesh);
         this._meshes.push(frostMesh);
@@ -1267,7 +1273,7 @@ AFRAME.registerComponent('rig-walk', {
           const poolEx = (lx - 1.5) / 23.0;
           const poolEz = lz / 16.0;
           const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
-          h *= 1.0 - poolBlend * 0.65;
+          h *= 1.0 - poolBlend * 0.50;
 
           // Keep the office and corridor surroundings snow-dominant: suppress the rocky underfield
           // inside the protected architecture envelopes and through a broader exterior falloff zone.
@@ -1401,8 +1407,8 @@ AFRAME.registerComponent('rig-walk', {
           h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
 
           // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
-          const fadeX = smoothstep(20.6, 15.4, Math.abs(lx));
-          const fadeZ = smoothstep(15.4, 11.2, Math.abs(lz));
+          const fadeX = smoothstep(21.8, 14.6, Math.abs(lx));
+          const fadeZ = smoothstep(16.6, 10.6, Math.abs(lz));
           const terrainFade = Math.min(fadeX, fadeZ);
           h *= terrainFade;
 
@@ -1418,7 +1424,7 @@ AFRAME.registerComponent('rig-walk', {
         const buv = bermGeom.getAttribute('uv');
         bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(buv.array), 2));
         const bermMesh = new THREE.Mesh(bermGeom, boulderMat);
-        bermMesh.position.set(CX, 0.012, CZ);
+        bermMesh.position.set(CX, 0.004, CZ);
         sceneObj.add(bermMesh); this._meshes.push(bermMesh);
 
         // ── Water pool ─────────────────────────────────────────────────────────
