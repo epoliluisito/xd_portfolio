@@ -1192,6 +1192,28 @@ AFRAME.registerComponent('rig-walk', {
           const r = 1 - Math.abs(n);
           return r * r;
         };
+        const inBox2D = (x, z, b) => x >= b.x1 && x <= b.x2 && z >= b.z1 && z <= b.z2;
+        const distToBoxOuter2D = (x, z, b) => {
+          const dx = x < b.x1 ? (b.x1 - x) : (x > b.x2 ? (x - b.x2) : 0);
+          const dz = z < b.z1 ? (b.z1 - z) : (z > b.z2 ? (z - b.z2) : 0);
+          return Math.hypot(dx, dz);
+        };
+
+        const officeSnowBoxes = [
+          { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 },
+          { x1: 2.18, x2:6.82, z1:-68.68, z2:-56.32 },
+          { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 }
+        ];
+        const officeSnowSuppression = (x, z) => {
+          let d = Infinity;
+          let inside = false;
+          for (const b of officeSnowBoxes) {
+            if (inBox2D(x, z, b)) inside = true;
+            d = Math.min(d, distToBoxOuter2D(x, z, b));
+          }
+          if (inside) return 1.0;
+          return smoothstep(9.5, 1.5, d);
+        };
 
         const tl = new THREE.TextureLoader();
         const mkTex = (path, repeat, isColor) => {
@@ -1251,12 +1273,10 @@ AFRAME.registerComponent('rig-walk', {
           const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
           h *= 1.0 - poolBlend * 0.65;
 
-          // Reserve a gradual snowy perimeter around the office by reducing only the underfield height
-          // in that local zone. This keeps the original snow logic intact and avoids new plane logic.
-          const officeEx = lx / 18.0;
-          const officeEz = (lz + 75.0) / 24.0;
-          const officeBlend = Math.exp(-(officeEx * officeEx + officeEz * officeEz));
-          h *= 1.0 - officeBlend * 0.88;
+          // Keep the office and corridor surroundings snow-dominant: suppress the rocky underfield
+          // inside the protected architecture envelopes and through a broader exterior falloff zone.
+          const officeKeepSnow = officeSnowSuppression(wx, wz);
+          h *= 1.0 - officeKeepSnow * 0.98;
 
           // Fade to the base ring at the outer edge to avoid a hard boundary.
           fp.setY(i, GY + h * edge * 0.9);
