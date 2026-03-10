@@ -1151,7 +1151,10 @@ AFRAME.registerComponent('rig-walk', {
           aoMapIntensity:0.35,
           envMapIntensity:0.07,
           side:THREE.FrontSide,
-          depthWrite:true
+          depthWrite:true,
+          polygonOffset:true,
+          polygonOffsetFactor:-2,
+          polygonOffsetUnits:-4
         });
         const snowMesh=new THREE.Mesh(snowGeom,snowMat);
         snowMesh.receiveShadow=true;snowMesh.frustumCulled=false;
@@ -1234,6 +1237,15 @@ AFRAME.registerComponent('rig-walk', {
           return Math.max(0, Math.min(1, keepSnow));
         };
 
+        const snowDominanceMask = (x, z) => {
+          const aroundBuilding = officeSnowSuppression(x, z);
+          const frontBlend = smoothstep(-58.0, -46.0, z);
+          const frontSwath = smoothstep(18.0, 5.5, Math.abs(x - 2.5)) * smoothstep(-58.0, -6.0, z);
+          const organic = 0.90 + (sn(x * 0.065 + 17.0, z * 0.065 - 9.0) * 0.5 + 0.5) * 0.16;
+          const frontField = frontBlend * frontSwath * organic;
+          return Math.max(0, Math.min(1, Math.max(aroundBuilding, frontField)));
+        };
+
         const tl = new THREE.TextureLoader();
         const mkTex = (path, repeat, isColor) => {
           const t = tl.load(path);
@@ -1292,13 +1304,15 @@ AFRAME.registerComponent('rig-walk', {
           const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
           h *= 1.0 - poolBlend * 0.65;
 
-          // Keep the office and corridor surroundings snow-dominant: suppress the rocky underfield
-          // inside the protected architecture envelopes and through a broader exterior falloff zone.
-          const officeKeepSnow = officeSnowSuppression(wx, wz);
-          h *= 1.0 - officeKeepSnow * 0.98;
+          // Keep the office and corridor surroundings snow-dominant: suppress and lower the rocky
+          // underfield beneath the snow zone so it cannot z-fight with the snow sheet in motion.
+          const snowDominance = snowDominanceMask(wx, wz);
+          const snowFeather = smoothstep(0.18, 0.82, snowDominance);
+          h *= 1.0 - snowDominance * 0.985;
+          const baseDrop = 0.028 * snowFeather + 0.016 * snowDominance;
 
           // Fade to the base ring at the outer edge to avoid a hard boundary.
-          fp.setY(i, GY + h * edge * 0.9);
+          fp.setY(i, GY - baseDrop + h * edge * 0.9);
         }
         fp.needsUpdate = true;
         fieldGeom.computeVertexNormals();
@@ -1313,7 +1327,7 @@ AFRAME.registerComponent('rig-walk', {
         });
         this._materials.push(fieldMat);
         const fieldMesh = new THREE.Mesh(fieldGeom, fieldMat);
-        fieldMesh.position.set(CX, -0.002, CZ);
+        fieldMesh.position.set(CX, -0.012, CZ);
         fieldMesh.visible = true;
         sceneObj.add(fieldMesh); this._meshes.push(fieldMesh);
 
