@@ -177,6 +177,140 @@
       }
     });
 
+
+    // Replace the broad soft lunar ring with a sharper rocky terrain field
+    // using the same cave-wall material family as the berm, while leaving
+    // snow systems untouched above it.
+    AFRAME.registerComponent('rocky-lunar-ground', {
+      init: function () {
+        this._mesh = null;
+        this._material = null;
+        this._textures = [];
+        this._apply = this._apply.bind(this);
+        this.el.addEventListener('object3dset', this._apply);
+        this._apply();
+      },
+      remove: function () {
+        this.el.removeEventListener('object3dset', this._apply);
+        if (this._mesh && this.el.object3D) this.el.object3D.remove(this._mesh);
+        if (this._mesh && this._mesh.geometry) this._mesh.geometry.dispose();
+        if (this._material) this._material.dispose();
+        this._textures.forEach((t) => t && t.dispose && t.dispose());
+      },
+      _apply: function () {
+        const baseMesh = this.el.getObject3D('mesh');
+        if (!baseMesh || this._mesh) return;
+
+        baseMesh.visible = false;
+
+        const noise2 = (x, y) => {
+          const i = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+          return i - Math.floor(i);
+        };
+        const lerp = (a, b, t) => a + (b - a) * t;
+        const smooth = (t) => t * t * (3.0 - 2.0 * t);
+        const fbm = (x, y) => {
+          let amp = 0.5;
+          let freq = 1.0;
+          let sum = 0.0;
+          for (let o = 0; o < 5; o++) {
+            const sx = x * freq;
+            const sy = y * freq;
+            const ix = Math.floor(sx), iy = Math.floor(sy);
+            const fx = smooth(sx - ix), fy = smooth(sy - iy);
+            const a = noise2(ix, iy);
+            const b = noise2(ix + 1.0, iy);
+            const c = noise2(ix, iy + 1.0);
+            const d = noise2(ix + 1.0, iy + 1.0);
+            const v = lerp(lerp(a, b, fx), lerp(c, d, fx), fy);
+            sum += (v * 2.0 - 1.0) * amp;
+            freq *= 2.0;
+            amp *= 0.5;
+          }
+          return sum;
+        };
+
+        const inner = Number(this.el.getAttribute('radius-inner')) || 1.555;
+        const outer = Number(this.el.getAttribute('radius-outer')) || 600;
+        const geom = new THREE.RingGeometry(inner, outer, 320, 120);
+
+        const pos = geom.getAttribute('position');
+        const uv = geom.getAttribute('uv');
+        const uv2 = new Float32Array(uv.array);
+        geom.setAttribute('uv2', new THREE.BufferAttribute(uv2, 2));
+
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i);
+          const z = pos.getY(i);
+          const r = Math.sqrt(x * x + z * z);
+          const nx = x * 0.0105;
+          const nz = z * 0.0105;
+
+          const broad = fbm(nx * 0.52, nz * 0.52) * 1.35;
+          const mid = fbm(nx * 1.55 + 21.0, nz * 1.55 - 13.0) * 0.48;
+          const fine = fbm(nx * 4.8 - 9.0, nz * 4.8 + 7.0) * 0.10;
+
+          let h = broad + mid + fine;
+          h *= 0.62;
+
+          // Keep the central area calm so the pool/berm zone remains dominant.
+          const calm = THREE.MathUtils.smoothstep(r, inner + 26.0, inner + 95.0);
+          h *= calm;
+
+          // Ease very far terrain downward so it still reads as a broad field.
+          const farFade = 1.0 - THREE.MathUtils.smoothstep(r, outer - 120.0, outer - 10.0);
+          h *= 0.82 + farFade * 0.18;
+
+          pos.setZ(i, h);
+        }
+
+        pos.needsUpdate = true;
+        geom.computeVertexNormals();
+
+        const tl = new THREE.TextureLoader();
+        const mkTex = (path, repeat, isColor) => {
+          const t = tl.load(path);
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(repeat, repeat);
+          t.anisotropy = 16;
+          t.minFilter = THREE.LinearMipmapLinearFilter;
+          t.magFilter = THREE.LinearFilter;
+          if (isColor) t.colorSpace = THREE.SRGBColorSpace;
+          this._textures.push(t);
+          return t;
+        };
+
+        const rockPath = './assets/cave_wall/';
+        const diff = mkTex(rockPath + 'moon_diffuse.webp', 185, true);
+        const norm = mkTex(rockPath + 'moon_normal.webp', 185, false);
+        const rough = mkTex(rockPath + 'moon_rough.png', 185, false);
+        const ao = mkTex(rockPath + 'moon_ao.png', 185, false);
+
+        this._material = new THREE.MeshStandardMaterial({
+          color: 0xd7dde4,
+          map: diff,
+          normalMap: norm,
+          roughnessMap: rough,
+          aoMap: ao,
+          aoMapIntensity: 0.98,
+          roughness: 0.97,
+          metalness: 0,
+          normalScale: new THREE.Vector2(1.95, 1.95),
+          side: THREE.FrontSide,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1
+        });
+
+        this._mesh = new THREE.Mesh(geom, this._material);
+        this._mesh.rotation.x = -Math.PI / 2;
+        this._mesh.position.y = 0.068;
+        this._mesh.receiveShadow = true;
+        this._mesh.castShadow = false;
+        this.el.object3D.add(this._mesh);
+      }
+    });
+
     // Pitch clamp
     AFRAME.registerComponent('pitch-clamp', {
       schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
@@ -1565,7 +1699,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <!-- ── Lunar ground ─────────────────────────────────────────────── -->
-<a-ring id="lia_lunar_ground" lunar-ground-quality="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.95; repeat: 180 180; normalScale: 2.35 2.35; aoMapIntensity: 1.0; side: front; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1" position="0 0.068 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
+<a-ring id="lia_lunar_ground" lunar-ground-quality="" rocky-lunar-ground="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.95; repeat: 180 180; normalScale: 2.35 2.35; aoMapIntensity: 1.0; side: front; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1" position="0 0.068 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
 <a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
 <a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
