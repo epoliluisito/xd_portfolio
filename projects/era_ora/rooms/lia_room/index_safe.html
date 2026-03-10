@@ -162,7 +162,7 @@
             mats.forEach((m) => {
               ['map','normalMap','roughnessMap','aoMap'].forEach((key) => {
                 if (m[key]) {
-                  m[key].anisotropy = 8;
+                  m[key].anisotropy = Math.max(16, m[key].anisotropy || 0);
                   m[key].minFilter = THREE.LinearMipmapLinearFilter;
                   m[key].magFilter = THREE.LinearFilter;
                   m[key].needsUpdate = true;
@@ -1218,6 +1218,57 @@ AFRAME.registerComponent('rig-walk', {
         const mNorm  = mkTex(rockPath + 'moon_normal.webp', 10.5, false);
         const mRough = mkTex(rockPath + 'moon_rough.png', 10.5, false);
         const mAO    = mkTex(rockPath + 'moon_ao.png', 10.5, false);
+        const fDiff  = mkTex(rockPath + 'moon_diffuse.webp', 7.8, true);
+        const fNorm  = mkTex(rockPath + 'moon_normal.webp', 7.8, false);
+        const fRough = mkTex(rockPath + 'moon_rough.png', 7.8, false);
+        const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
+
+        // ── Extended rocky underfield (same stack role as lunar ground) ───────
+        const fieldW = 190, fieldD = 170, fieldSeg = 260;
+        const fieldGeom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
+        fieldGeom.rotateX(-Math.PI / 2);
+        const fp = fieldGeom.getAttribute('position');
+        for (let i = 0; i < fp.count; i++) {
+          const lx = fp.getX(i), lz = fp.getZ(i);
+          const wx = CX + lx, wz = CZ + lz;
+          const ex = Math.abs(lx) / (fieldW * 0.5);
+          const ez = Math.abs(lz) / (fieldD * 0.5);
+          const edge = smoothstep(1.0, 0.82, Math.max(ex, ez));
+
+          let h = 0;
+          h += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
+          h += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
+          h += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
+          h += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
+
+          // Keep the approach / interior side more subdued so this stays a base layer.
+          const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
+          h *= 1.0 - approachSoftener * 0.45;
+
+          // Broad central flattening around the pool so the local berm still does the heavy lifting.
+          const poolEx = (lx - 1.5) / 23.0;
+          const poolEz = lz / 16.0;
+          const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
+          h *= 1.0 - poolBlend * 0.65;
+
+          // Fade to the base ring at the outer edge to avoid a hard boundary.
+          fp.setY(i, GY + h * edge * 0.9);
+        }
+        fp.needsUpdate = true;
+        fieldGeom.computeVertexNormals();
+        const fuv = fieldGeom.getAttribute('uv');
+        fieldGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(fuv.array), 2));
+        const fieldMat = new THREE.MeshStandardMaterial({
+          color: 0xd7dde4,
+          map: fDiff, normalMap: fNorm, roughnessMap: fRough, aoMap: fAO,
+          roughness: 0.965, metalness: 0, aoMapIntensity: 0.94,
+          normalScale: new THREE.Vector2(1.95, 1.95),
+          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+        });
+        this._materials.push(fieldMat);
+        const fieldMesh = new THREE.Mesh(fieldGeom, fieldMat);
+        fieldMesh.position.set(CX, -0.002, CZ);
+        sceneObj.add(fieldMesh); this._meshes.push(fieldMesh);
 
         // ── Terrain patch (kept local and subtle; additive only) ───────────────
         const TW = 20, TD = 16, SEG = 100;
@@ -1565,7 +1616,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <!-- ── Lunar ground ─────────────────────────────────────────────── -->
-<a-ring id="lia_lunar_ground" lunar-ground-quality="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.98; repeat: 84 84; normalScale: 1.85 1.85; aoMapIntensity: 0.92; side: front; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1" position="0 0.068 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
+<a-ring id="lia_lunar_ground" lunar-ground-quality="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.95; repeat: 180 180; normalScale: 2.35 2.35; aoMapIntensity: 1.0; side: front; polygonOffset: true; polygonOffsetFactor: 2; polygonOffsetUnits: 2; opacity: 0.9" position="0 0.066 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
 <a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
 <a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
