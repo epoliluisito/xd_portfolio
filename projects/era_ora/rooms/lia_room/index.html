@@ -811,6 +811,10 @@ AFRAME.registerComponent('rig-walk', {
 
           const platformDist = Math.hypot(x, z);
           m *= smootherstep(2.25, 8.0, platformDist);
+
+          // Keep the primal/pool terrain fully snow-free; that zone is owned by the rocky field.
+          const primalHole = radial(x, z, 25 + 1.5, 0, 22.5, 14.5);
+          m *= smootherstep(0.92, 1.08, primalHole);
           return clamp01(m);
         };
 
@@ -870,6 +874,17 @@ AFRAME.registerComponent('rig-walk', {
           } else if (platformDist < 3.0) {
             const pf = smootherstep(1.95, 3.0, platformDist);
             h = THREE.MathUtils.lerp(-0.22, h, pf);
+          }
+
+          // Hard cutout for the primal rocky field so the two terrain systems never overlap
+          // in depth around the pool / berm area. This is the main source of the apparent
+          // "snow moving" while walking: two large ground meshes fighting at grazing angles.
+          const primalHole = radial(x, z, 25 + 1.5, 0, 24.5, 16.5);
+          if (primalHole < 1.0) {
+            h = -0.34;
+          } else if (primalHole < 1.18) {
+            const hf = smootherstep(1.0, 1.18, primalHole);
+            h = THREE.MathUtils.lerp(-0.34, h, hf);
           }
 
           pos.setY(i, h);
@@ -1009,7 +1024,7 @@ AFRAME.registerComponent('rig-walk', {
         const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
 
         // ── Extended rocky underfield restored as the single stable wide rocky base ─
-        const fieldW = 190, fieldD = 170, fieldSeg = 260;
+        const fieldW = 76, fieldD = 58, fieldSeg = 220;
         const fieldGeom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
         fieldGeom.rotateX(-Math.PI / 2);
         const fp = fieldGeom.getAttribute('position');
@@ -1123,7 +1138,6 @@ AFRAME.registerComponent('rig-walk', {
           map: fDiff, normalMap: fNorm, roughnessMap: fRough, aoMap: fAO,
           roughness: 0.965, metalness: 0, aoMapIntensity: 0.94,
           normalScale: new THREE.Vector2(1.95, 1.95),
-          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
         });
         this._materials.push(fieldMat);
         const fieldMesh = new THREE.Mesh(fieldGeom, fieldMat);
