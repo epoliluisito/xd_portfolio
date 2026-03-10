@@ -782,28 +782,6 @@ AFRAME.registerComponent('rig-walk', {
           return Math.sqrt(dx*dx+dz*dz);
         }
         function distFromPlat(x,z){return Math.sqrt((x-platCX)*(x-platCX)+(z-platCZ)*(z-platCZ));}
-        function frontSnowReach(x,z){
-          const northZ = smoothstep(-56.0, -16.0, z);
-          const monolithHold = 1.0 - smoothstep(-10.0, -2.5, z);
-
-          const broadCore =
-            smoothstep(30.0, 10.0, Math.abs(x)) *
-            smoothstep(-58.0, -18.0, z) *
-            monolithHold;
-
-          const corridorAxis =
-            smoothstep(12.0, 2.2, Math.abs(x - 4.5)) *
-            smoothstep(-57.0, -15.0, z) *
-            monolithHold;
-
-          const officeShoulder =
-            smoothstep(22.0, 7.0, Math.abs(x)) *
-            smoothstep(-70.0, -28.0, z) *
-            monolithHold;
-
-          const breakup = 0.86 + (sn(x * 0.035 + 17.0, z * 0.035 - 11.0) * 0.5 + 0.5) * 0.22;
-          return Math.max(0, Math.min(1, Math.max(broadCore * 0.80, corridorAxis * 0.96, officeShoulder * 0.64) * breakup));
-        }
 
         function isIndoor(x,z){
           return inBox(x,z,officeIn)||inBox(x,z,transIn)||inBox(x,z,exitIn)||inBox(x,z,doorN)||inBox(x,z,doorS);
@@ -915,11 +893,6 @@ AFRAME.registerComponent('rig-walk', {
 
           m*=platFade*indoorTaper;
 
-          // Broader platform-facing snow reach so the visible snow field travels much
-          // farther toward the monolith while staying gradual and organic.
-          const frontReach = frontSnowReach(x,z) * platFade;
-          m = Math.max(m, frontReach);
-
           // ── Force full coverage near building exterior ──
           // The domain-warped radial falloff and doorway indoorTaper can push m < 1
           // right outside the indoor boundary, which with HIDDEN_Y creates a seam line.
@@ -936,11 +909,11 @@ AFRAME.registerComponent('rig-walk', {
           const eb=smoothstep(0,0.25,m)*(1-smoothstep(0.25,0.8,m));
           m+=(en-0.5)*0.08*eb;
 
-          // Keep some front-field snow much farther toward the monolith, but still
-          // dissolve it before the immediate platform zone. The dedicated frontReach above
-          // already provides the gradual transition into the rocky ground.
-          m *= smootherstep(-12, -26, z);
+          // North extent cutoff: snow fades to zero well before the platform.
+          // z=-50 → full weight, z=-35 → zero. Office/corridor area (z<-56) is completely untouched.
+          m *= smootherstep(-35, -50, z);
 
+          m *= smootherstep(-32, -45, z);
           return Math.max(0,Math.min(1,m));
         }
 
@@ -1128,18 +1101,11 @@ AFRAME.registerComponent('rig-walk', {
           drift*=chSup;
           const mFinal = isIndoor(x,z) ? m : Math.max(m, 1.0-chSup);
 
-          // Stable top snow cap for the expanded front field so the rocky base does not
-          // pop through as the camera approaches. Near the walls the existing drift logic
-          // still dominates; farther out this becomes a thin visible upper snow layer.
-          const frontCap = frontSnowReach(x,z) * (1.0 - smootherstep(2.0, 8.5, distToWalls(x,z)));
-          const capNoise = (sn(x * 0.09 - 31.0, z * 0.09 + 19.0) * 0.5 + 0.5);
-          const capLift = frontCap * (0.020 + capNoise * 0.030);
-
           // ── Continuous blend: hidden → ground → snow ──
-          const snowSurface=GROUND_Y+Math.max(0,drift) + capLift;
+          const snowSurface=GROUND_Y+Math.max(0,drift);
           const northSink=smootherstep(-45,-32,z);
           const effectiveHiddenY=HIDDEN_Y-northSink*0.2;
-          const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*Math.max(mFinal, frontCap);
+          const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
           pos.setY(i,y);
         }
 
@@ -1254,18 +1220,10 @@ AFRAME.registerComponent('rig-walk', {
           const northOfficeBias = smoothstep(-72.0, -62.0, z) * smoothstep(16.0, 4.0, Math.abs(x));
           const northTransBias  = smoothstep(-60.0, -49.0, z) * smoothstep(9.0, 2.0, Math.abs(x - 4.5));
           const southExitBias   = smoothstep(-90.0, -98.0, z) * smoothstep(8.5, 2.0, Math.abs(x + 4.5));
-          const frontFieldBias  = (function(){
-            const monolithHold = 1.0 - smoothstep(-10.0, -2.5, z);
-            const broadCore = smoothstep(30.0, 10.0, Math.abs(x)) * smoothstep(-58.0, -18.0, z);
-            const corridorAxis = smoothstep(12.0, 2.2, Math.abs(x - 4.5)) * smoothstep(-57.0, -15.0, z);
-            const officeShoulder = smoothstep(22.0, 7.0, Math.abs(x)) * smoothstep(-70.0, -28.0, z);
-            return Math.max(broadCore * 0.78, corridorAxis * 0.94, officeShoulder * 0.62) * monolithHold;
-          })();
 
           keepSnow = Math.max(keepSnow, northOfficeBias * 0.90);
           keepSnow = Math.max(keepSnow, northTransBias  * 0.92);
           keepSnow = Math.max(keepSnow, southExitBias   * 0.78);
-          keepSnow = Math.max(keepSnow, frontFieldBias);
 
           return Math.max(0, Math.min(1, keepSnow));
         };
@@ -1300,7 +1258,7 @@ AFRAME.registerComponent('rig-walk', {
         const fRough = mkTex(rockPath + 'moon_rough.png', 7.8, false);
         const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
 
-        // ── Extended rocky underfield (same stack role as lunar ground) ───────
+        // ── Extended rocky underfield removed from visible stack to prevent terrain popping ─
         const fieldW = 190, fieldD = 170, fieldSeg = 260;
         const fieldGeom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
         fieldGeom.rotateX(-Math.PI / 2);
@@ -1350,6 +1308,7 @@ AFRAME.registerComponent('rig-walk', {
         this._materials.push(fieldMat);
         const fieldMesh = new THREE.Mesh(fieldGeom, fieldMat);
         fieldMesh.position.set(CX, -0.002, CZ);
+        fieldMesh.visible = false;
         sceneObj.add(fieldMesh); this._meshes.push(fieldMesh);
 
         // ── Terrain patch (kept local and subtle; additive only) ───────────────
@@ -1697,10 +1656,8 @@ AFRAME.registerComponent('rig-walk', {
 <!-- Earth atmospheric halo -->
 <a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
-<!-- ── Lunar ground ─────────────────────────────────────────────── -->
-<a-ring id="lia_lunar_ground" lunar-ground-quality="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.95; repeat: 180 180; normalScale: 2.35 2.35; aoMapIntensity: 1.0; side: front; polygonOffset: true; polygonOffsetFactor: 2; polygonOffsetUnits: 2; opacity: 0.9" position="0 0.066 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
-<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
+<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0.03 0" radius="1.55" shadow="cast:false; receive:true">
 <a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
 <a-entity id="endchamber_handrail_colliders">
 <a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 -0.866" rotation="0 -36.1 0" visible="false"></a-box>
