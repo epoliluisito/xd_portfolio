@@ -1291,12 +1291,10 @@ AFRAME.registerComponent('rig-walk', {
           const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
           h *= 1.0 - approachSoftener * 0.45;
 
-          // Keep the broad field present under the primal berm so the merge reads as one terrain mass.
-          const mergeEx = (lx - 1.5) / 21.0;
-          const mergeEz = lz / 14.5;
-          const mergeBlend = Math.exp(-(mergeEx * mergeEx + mergeEz * mergeEz));
-          h *= 1.0 - mergeBlend * 0.28;
-          h += mergeBlend * 0.05;
+          const poolEx = (lx - 1.5) / 23.0;
+          const poolEz = lz / 16.0;
+          const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
+          h *= 1.0 - poolBlend * 0.65;
 
           const officeKeepSnow = officeSnowSuppression(wx, wz);
           h *= 1.0 - officeKeepSnow * 0.98;
@@ -1404,10 +1402,10 @@ AFRAME.registerComponent('rig-walk', {
         const tNorm  = mkTex(rockPath + 'moon_normal.webp', 5.2, false);
         const tRough = mkTex(rockPath + 'moon_rough.png', 5.2, false);
         const tAO    = mkTex(rockPath + 'moon_ao.png', 5.2, false);
-        const bDiff  = mkTex(rockPath + 'moon_diffuse.webp', 2.3, true);
-        const bNorm  = mkTex(rockPath + 'moon_normal.webp', 2.3, false);
-        const bRough = mkTex(rockPath + 'moon_rough.png', 2.3, false);
-        const bAO    = mkTex(rockPath + 'moon_ao.png', 2.3, false);
+        const bDiff  = mkTex(rockPath + 'moon_diffuse.webp', 5.2, true);
+        const bNorm  = mkTex(rockPath + 'moon_normal.webp', 5.2, false);
+        const bRough = mkTex(rockPath + 'moon_rough.png', 5.2, false);
+        const bAO    = mkTex(rockPath + 'moon_ao.png', 5.2, false);
         const mDiff  = mkTex(rockPath + 'moon_diffuse.webp', 10.5, true);
         const mNorm  = mkTex(rockPath + 'moon_normal.webp', 10.5, false);
         const mRough = mkTex(rockPath + 'moon_rough.png', 10.5, false);
@@ -1494,21 +1492,20 @@ AFRAME.registerComponent('rig-walk', {
           const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
           const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
 
-          // Sample the same broad field logic as rock-ground so the berm edge inherits the surrounding terrain.
           let fieldBase = 0;
-          fieldBase += (sn((CX + lx) * 0.020 + 14.0, (CZ + lz) * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
-          fieldBase += (sn((CX + lx) * 0.050 - 2.0, (CZ + lz) * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
-          fieldBase += ridged((CX + lx) * 0.095 + 7.0, (CZ + lz) * 0.095 - 5.0) * 0.07;
-          fieldBase += ridged((CX + lx) * 0.180 - 4.0, (CZ + lz) * 0.180 + 6.0) * 0.035;
+          const wx = CX + lx, wz = CZ + lz;
+          fieldBase += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
+          fieldBase += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
+          fieldBase += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
+          fieldBase += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
           const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
           fieldBase *= 1.0 - approachSoftener * 0.45;
-          const mergeEx = (lx - 1.5) / 21.0;
-          const mergeEz = lz / 14.5;
-          const mergeBlend = Math.exp(-(mergeEx * mergeEx + mergeEz * mergeEz));
-          fieldBase *= 1.0 - mergeBlend * 0.28;
-          fieldBase += mergeBlend * 0.05;
+          const poolExField = (lx - 1.5) / 23.0;
+          const poolEzField = lz / 16.0;
+          const poolBlendField = Math.exp(-(poolExField * poolExField + poolEzField * poolEzField));
+          fieldBase *= 1.0 - poolBlendField * 0.65;
 
-          let h = fieldBase;
+          let h = 0;
           h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
           h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
           h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
@@ -1539,13 +1536,14 @@ AFRAME.registerComponent('rig-walk', {
           h += poolLip * 0.05;
           h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
 
-          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch.
-          // Keep a low outer apron instead of fading to zero, so the rock-ground and berm overlap gently.
-          const fadeX = smoothstep(20.9, 14.8, Math.abs(lx));
-          const fadeZ = smoothstep(15.8, 10.8, Math.abs(lz));
+          // terrain fade so it settles into the surrounding rock-ground without a long overlap strip
+          const fadeX = smoothstep(20.6, 16.9, Math.abs(lx));
+          const fadeZ = smoothstep(15.4, 12.3, Math.abs(lz));
           const terrainFade = Math.min(fadeX, fadeZ);
-          const outerApron = Math.exp(-Math.pow((er - 1.24) / 0.36, 2.0)) * 0.18;
-          h = h * terrainFade + fieldBase * (1.0 - terrainFade) + outerApron * (0.55 + ringNoiseA * 0.18) * terrainFade;
+          const mergeBand = smoothstep(0.72, 0.96, terrainFade);
+          h = h * mergeBand + fieldBase * (1.0 - mergeBand);
+          const shoulder = Math.exp(-Math.pow((er - 1.08) / 0.16, 2.0)) * 0.08 * mergeBand;
+          h += shoulder;
 
           // keep only the actual water footprint flat
           const waterMask = smoothstep(0.98, 1.10, poolEr);
@@ -1560,7 +1558,7 @@ AFRAME.registerComponent('rig-walk', {
         bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(buv.array), 2));
         const bermMesh = new THREE.Mesh(bermGeom, boulderMat);
         bermMesh.name = 'primal-rock-berm';
-        bermMesh.position.set(CX, 0.012, CZ);
+        bermMesh.position.set(CX, -0.03, CZ);
         this._root.add(bermMesh); this._meshes.push(bermMesh);
 
         // ── Water pool ─────────────────────────────────────────────────────────
