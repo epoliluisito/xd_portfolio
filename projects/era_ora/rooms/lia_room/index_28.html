@@ -1230,7 +1230,6 @@ AFRAME.registerComponent('rig-walk', {
           const r = 1 - Math.abs(n);
           return r * r;
         };
-        const lerp = (a, b, t) => a + (b - a) * t;
         const inBox2D = (x, z, b) => x >= b.x1 && x <= b.x2 && z >= b.z1 && z <= b.z2;
         const distToBoxOuter2D = (x, z, b) => {
           const dx = x < b.x1 ? (b.x1 - x) : (x > b.x2 ? (x - b.x2) : 0);
@@ -1252,30 +1251,6 @@ AFRAME.registerComponent('rig-walk', {
           }
           if (inside) return 1.0;
           return smoothstep(9.5, 1.5, d);
-        };
-        const rockGroundHeightAt = (wx, wz, lx, lz) => {
-          const ex = Math.abs(lx) / 250.0;
-          const ez = Math.abs(lz) / 250.0;
-          const edge = smoothstep(1.0, 0.82, Math.max(ex, ez));
-
-          let gh = 0;
-          gh += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
-          gh += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
-          gh += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
-          gh += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
-
-          const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
-          gh *= 1.0 - approachSoftener * 0.45;
-
-          const poolEx = (lx - 1.5) / 23.0;
-          const poolEz = lz / 16.0;
-          const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
-          gh *= 1.0 - poolBlend * 0.65;
-
-          const officeKeepSnow = officeSnowSuppression(wx, wz);
-          gh *= 1.0 - officeKeepSnow * 0.98;
-
-          return GY + gh * edge * 0.9 - 0.002;
         };
 
         const tl = new THREE.TextureLoader();
@@ -1491,10 +1466,35 @@ AFRAME.registerComponent('rig-walk', {
         const poolRadiusX = 7.4, poolRadiusZ = 4.6;
         const gapCenter = Math.PI;
         const gapHalf = 0.42;
+        const rockGroundHeightLocal = (wx, wz) => {
+          const lxg = wx - CX;
+          const lzg = wz - CZ;
+          const exg = Math.abs(lxg) / (500 * 0.5);
+          const ezg = Math.abs(lzg) / (500 * 0.5);
+          const edgeg = smoothstep(1.0, 0.82, Math.max(exg, ezg));
+
+          let hg = 0;
+          hg += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
+          hg += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
+          hg += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
+          hg += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
+
+          const approachSoftenerG = Math.exp(-(((lxg + 12.0) / 18.0) ** 2 + (lzg / 13.0) ** 2));
+          hg *= 1.0 - approachSoftenerG * 0.45;
+
+          const poolExG = (lxg - 1.5) / 23.0;
+          const poolEzG = lzg / 16.0;
+          const poolBlendG = Math.exp(-(poolExG * poolExG + poolEzG * poolEzG));
+          hg *= 1.0 - poolBlendG * 0.65;
+
+          const officeKeepSnowG = officeSnowSuppression(wx, wz);
+          hg *= 1.0 - officeKeepSnowG * 0.98;
+
+          return GY + hg * edgeg * 0.9 - 0.002;
+        };
 
         for (let i = 0; i < bp.count; i++) {
           const lx = bp.getX(i), lz = bp.getZ(i);
-          const wx = CX + lx, wz = CZ + lz;
           const px = lx - poolLX;
           const pz = lz - poolLZ;
 
@@ -1549,24 +1549,27 @@ AFRAME.registerComponent('rig-walk', {
           h += poolLip * 0.05;
           h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
 
-          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
-          const fadeX = smoothstep(20.6, 14.6, Math.abs(lx));
-          const fadeZ = smoothstep(15.4, 10.5, Math.abs(lz));
+          // terrain edge blend: keep the berm body, but bury and irregularize only the outer intersection
+          const fadeX = smoothstep(20.8, 15.8, Math.abs(lx));
+          const fadeZ = smoothstep(15.8, 11.8, Math.abs(lz));
           const terrainFade = Math.min(fadeX, fadeZ);
-          const fadeNoise = (sn(wx * 0.18 + 31.0, wz * 0.18 - 17.0) * 0.5 + 0.5);
-          const noisyFade = Math.max(0, Math.min(1, terrainFade * (0.82 + fadeNoise * 0.36)));
-          h *= noisyFade;
+          const edgeNoise = (sn(px * 0.16 + 31.0, pz * 0.16 - 17.0) * 0.5 + 0.5);
+          const irregularFade = Math.max(0, Math.min(1, terrainFade * (0.88 + edgeNoise * 0.26)));
+          h *= irregularFade;
+
+          const wx = CX + lx;
+          const wz = CZ + lz;
+          const groundY = rockGroundHeightLocal(wx, wz);
+          const bermWorldY = 0.012 + GY + h;
+          const seamBlend = smoothstep(0.58, 0.08, irregularFade);
+          const buriedTarget = groundY - (0.012 + 0.02 + edgeNoise * 0.035);
+          const finalWorldY = THREE.MathUtils.lerp(bermWorldY, buriedTarget, seamBlend);
 
           // keep only the actual water footprint flat
           const waterMask = smoothstep(0.98, 1.10, poolEr);
           h *= waterMask;
 
-          // bury the outer berm slightly into the shared rock ground so the join stops reading as a seam
-          const groundY = rockGroundHeightAt(wx, wz, lx, lz);
-          const seamBlend = smoothstep(0.20, 0.78, noisyFade);
-          const buriedGroundY = groundY - (0.035 + (1.0 - seamBlend) * 0.03);
-          const bermY = GY + h;
-          bp.setY(i, lerp(buriedGroundY, bermY, seamBlend));
+          bp.setY(i, finalWorldY - 0.012);
         }
 
         bp.needsUpdate = true;
