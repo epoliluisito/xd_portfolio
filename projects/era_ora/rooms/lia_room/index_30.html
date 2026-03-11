@@ -1466,32 +1466,6 @@ AFRAME.registerComponent('rig-walk', {
         const poolRadiusX = 7.4, poolRadiusZ = 4.6;
         const gapCenter = Math.PI;
         const gapHalf = 0.42;
-        const rockGroundHeightLocal = (wx, wz) => {
-          const lxg = wx - CX;
-          const lzg = wz - CZ;
-          const exg = Math.abs(lxg) / (500 * 0.5);
-          const ezg = Math.abs(lzg) / (500 * 0.5);
-          const edgeg = smoothstep(1.0, 0.82, Math.max(exg, ezg));
-
-          let hg = 0;
-          hg += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
-          hg += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
-          hg += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
-          hg += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
-
-          const approachSoftenerG = Math.exp(-(((lxg + 12.0) / 18.0) ** 2 + (lzg / 13.0) ** 2));
-          hg *= 1.0 - approachSoftenerG * 0.45;
-
-          const poolExG = (lxg - 1.5) / 23.0;
-          const poolEzG = lzg / 16.0;
-          const poolBlendG = Math.exp(-(poolExG * poolExG + poolEzG * poolEzG));
-          hg *= 1.0 - poolBlendG * 0.65;
-
-          const officeKeepSnowG = officeSnowSuppression(wx, wz);
-          hg *= 1.0 - officeKeepSnowG * 0.98;
-
-          return GY + hg * edgeg * 0.9 - 0.002;
-        };
 
         for (let i = 0; i < bp.count; i++) {
           const lx = bp.getX(i), lz = bp.getZ(i);
@@ -1549,27 +1523,17 @@ AFRAME.registerComponent('rig-walk', {
           h += poolLip * 0.05;
           h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
 
-          // terrain edge blend: keep the berm body, but bury and irregularize only the outer intersection
-          const fadeX = smoothstep(20.8, 15.8, Math.abs(lx));
-          const fadeZ = smoothstep(15.8, 11.8, Math.abs(lz));
+          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
+          const fadeX = smoothstep(20.6, 15.4, Math.abs(lx));
+          const fadeZ = smoothstep(15.4, 11.2, Math.abs(lz));
           const terrainFade = Math.min(fadeX, fadeZ);
-          const edgeNoise = (sn(px * 0.16 + 31.0, pz * 0.16 - 17.0) * 0.5 + 0.5);
-          const irregularFade = Math.max(0, Math.min(1, terrainFade * (0.88 + edgeNoise * 0.26)));
-          h *= irregularFade;
-
-          const wx = CX + lx;
-          const wz = CZ + lz;
-          const groundY = rockGroundHeightLocal(wx, wz);
-          const bermWorldY = 0.012 + GY + h;
-          const seamBlend = smoothstep(0.58, 0.08, irregularFade);
-          const buriedTarget = groundY - (0.012 + 0.02 + edgeNoise * 0.035);
-          const finalWorldY = THREE.MathUtils.lerp(bermWorldY, buriedTarget, seamBlend);
+          h *= terrainFade;
 
           // keep only the actual water footprint flat
           const waterMask = smoothstep(0.98, 1.10, poolEr);
           h *= waterMask;
 
-          bp.setY(i, finalWorldY - 0.012);
+          bp.setY(i, GY + h);
         }
 
         bp.needsUpdate = true;
@@ -2057,6 +2021,15 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
 </a-entity><a-entity id="rock_ground" rock-ground="x: 25; y: -0.002; z: 0"></a-entity>
 <a-entity id="primal_scene" primal-scene="" position="0 0 0" visible="true"></a-entity>
+<a-entity id="primal_berm_colliders">
+  <!-- Invisible colliders approximating the primal rocky berm so the user cannot walk through it -->
+  <a-box class="solid" id="primal_berm_collider_north" position="27 1.2 9.4" width="20.5" height="2.4" depth="2.2" material="transparent: true; opacity: 0"></a-box>
+  <a-box class="solid" id="primal_berm_collider_south" position="27 1.2 -9.4" width="20.5" height="2.4" depth="2.2" material="transparent: true; opacity: 0"></a-box>
+  <a-box class="solid" id="primal_berm_collider_east" position="39.6 1.2 0" width="3.0" height="2.4" depth="16.5" material="transparent: true; opacity: 0"></a-box>
+  <a-box class="solid" id="primal_berm_collider_northwest" position="15.9 1.2 6.8" width="4.2" height="2.4" depth="4.0" material="transparent: true; opacity: 0"></a-box>
+  <a-box class="solid" id="primal_berm_collider_southwest" position="15.9 1.2 -6.8" width="4.2" height="2.4" depth="4.0" material="transparent: true; opacity: 0"></a-box>
+</a-entity>
+
 <a-entity id="primal_mountains" primal-mountains="" position="0 0 0" visible="true"></a-entity>
 <a-entity id="rig" position="0 0.07 0" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0">
 <a-entity camera="fov: 60; near: 0.1; far: 500; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
