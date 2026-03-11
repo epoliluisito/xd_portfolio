@@ -1,0 +1,1931 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistema Cinema Italia — 2026</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body style="margin:0;background:#0c0b09">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+const G = () => (
+  <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&family=Jost:wght@200;300;400;500;600&display=swap');
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#0c0b09;--s1:#161410;--s2:#1e1b16;
+      --b1:#2c2820;--b2:#3e3830;--b3:#524c44;
+      --t1:#ede8e0;--t2:#a8a098;--t3:#68625a;--t4:#3a3530;
+      --gold:#c8a86c;--gold2:#8a6e3c;--gold3:#4a3c20;
+      --red:#b03028;--red2:#6a1c14;
+      --green:#4a8060;--blue:#4a6890;--purple:#7a50a0;
+      --amber:#c87c30;
+      --serif:'Cormorant Garamond',Georgia,serif;
+      --sans:'Jost',sans-serif;
+    }
+    body{background:var(--bg);color:var(--t1);font-family:var(--sans);min-height:100vh}
+    @keyframes up{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes in{from{opacity:0}to{opacity:1}}
+    @keyframes glow{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 12px 2px rgba(200,168,108,.18)}}
+    .au{animation:up .65s ease both}
+    .ai{animation:in .5s ease both}
+    .tile-glow{animation:glow 2s ease-in-out infinite}
+    input[type=text]{background:transparent;border:none;border-bottom:1px solid var(--b2);color:var(--t1);font-family:var(--serif);font-size:22px;font-style:italic;padding:10px 0;width:100%;outline:none;transition:border-color .3s}
+    input[type=text]:focus{border-bottom-color:var(--gold)}
+    input[type=text]::placeholder{color:var(--t4);font-style:italic}
+    .chip{border:1px solid var(--b2);border-radius:3px;color:var(--t3);cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:300;letter-spacing:.04em;padding:9px 15px;transition:all .2s;background:transparent;text-align:left}
+    .chip:hover{border-color:var(--b3);color:var(--t2)}
+    .chip.on{background:var(--s2);border-color:var(--gold);color:var(--gold)}
+    .btn{background:var(--gold);border:none;border-radius:3px;color:var(--bg);cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:500;letter-spacing:.15em;padding:14px 36px;text-transform:uppercase;transition:all .3s}
+    .btn:hover{background:#dfc07c}
+    .btn:disabled{background:var(--b1);color:var(--t4);cursor:default}
+    .btn-g{background:var(--green);border:none;border-radius:3px;color:#fff;cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:500;letter-spacing:.15em;padding:14px 36px;text-transform:uppercase;transition:all .3s}
+    .btn-g:hover{background:#5a9070}
+    .btn-o{background:transparent;border:1px solid var(--b2);border-radius:3px;color:var(--t3);cursor:pointer;font-family:var(--sans);font-size:12px;letter-spacing:.12em;padding:11px 24px;text-transform:uppercase;transition:all .2s}
+    .btn-o:hover{border-color:var(--b3);color:var(--t2)}
+    .lbl{color:var(--t4);font-family:var(--sans);font-size:11px;font-weight:400;letter-spacing:.26em;text-transform:uppercase;margin-bottom:14px;display:block}
+    .screen{min-height:100vh;display:flex;flex-direction:column}
+    .center{flex:1;display:flex;align-items:center;justify-content:center;padding:48px 40px}
+    .wrap{max-width:540px;width:100%}
+    /* Responsive pitch container */
+    .pitch-wrap{max-width:min(960px, 92vw);margin:0 auto;width:100%;padding:40px clamp(24px, 4vw, 64px)}
+    @media(min-width:1100px){.pitch-wrap{padding-top:48px}}
+    /* Two-column layout for wide screens */
+    .pitch-2col{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+    @media(max-width:800px){.pitch-2col{grid-template-columns:1fr}}
+  `}</style>
+);
+
+// ─── SHARED UI ────────────────────────────────────────────────────────────────
+const Progress = ({ step, total }) => (
+  <div style={{ display: "flex", gap: 4, padding: "22px 40px 0" }}>
+    {Array.from({ length: total }).map((_, i) => (
+      <div key={i} style={{ flex: 1, height: 2, borderRadius: 1, background: i < step ? "var(--gold)" : "var(--b1)", transition: "background .4s" }} />
+    ))}
+  </div>
+);
+
+const Landmark = ({ n, label }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 32 }}>
+    <div style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid var(--gold2)", color: "var(--gold)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--sans)", fontSize: 13, fontWeight: 500, flexShrink: 0 }}>{n}</div>
+    <span style={{ fontFamily: "var(--sans)", fontSize: 13, letterSpacing: ".28em", textTransform: "uppercase", color: "var(--t4)" }}>{label}</span>
+  </div>
+);
+
+const EndButtons = ({ onRestart, onPitch }) => (
+  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+    <button className="btn" onClick={onPitch}>Vedi la proposta →</button>
+    <button className="btn-o" onClick={onRestart}>Torna all'inizio</button>
+    <button className="btn-o" onClick={() => { try { window.close(); } catch(e){} setTimeout(() => alert("Puoi chiudere questa scheda / finestra."), 100); }}>Chiudi</button>
+  </div>
+);
+
+// ─── SCREEN 0: INTRO ─────────────────────────────────────────────────────────
+const S0_Intro = ({ onStart }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 120); }, []);
+  return (
+    <div className="screen" style={{ background: "var(--bg)", justifyContent: "center", alignItems: "center", padding: "60px 40px", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0, opacity: .025, backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,.5) 3px,rgba(255,255,255,.5) 4px)", pointerEvents: "none" }} />
+      <div style={{ maxWidth: 580, textAlign: "center", opacity: v ? 1 : 0, transform: v ? "none" : "translateY(20px)", transition: "all 1s ease" }}>
+        <div style={{ fontFamily: "var(--sans)", fontSize: 13, letterSpacing: ".3em", color: "var(--t4)", textTransform: "uppercase", marginBottom: 36 }}>Sistema Cinema Italia · Simulazione 2026</div>
+        <h1 style={{ fontFamily: "var(--serif)", fontSize: "clamp(38px,6vw,58px)", fontWeight: 300, lineHeight: 1.15, color: "var(--t1)", marginBottom: 28 }}>
+          Il tuo film può succedere.<br /><em style={{ color: "var(--gold)" }}>Vediamo se — e come.</em>
+        </h1>
+        <p style={{ fontFamily: "var(--sans)", fontSize: 14, fontWeight: 300, color: "var(--t2)", lineHeight: 1.85, marginBottom: 18, maxWidth: 440, margin: "0 auto 18px" }}>
+          Questa è una simulazione — non un prodotto finito. È una dimostrazione concreta di cosa succederebbe se il sistema del cinema italiano fosse mappato, reso leggibile, e messo nelle mani dell'autore fin dall'inizio.
+        </p>
+        <p style={{ fontFamily: "var(--sans)", fontSize: 13, fontWeight: 300, color: "var(--t3)", lineHeight: 1.8, marginBottom: 52, fontStyle: "italic" }}>
+          I dati sono reali. Gli ostacoli sono documentati. Le possibilità esistono — ma sono quasi sempre invisibili a chi non conosce già il sistema dall'interno.
+        </p>
+        <button className="btn" onClick={onStart}>Cominciamo →</button>
+        <div style={{ marginTop: 40, paddingTop: 24, borderTop: "1px solid var(--b1)", fontFamily: "var(--sans)", fontSize: 13, color: "var(--t4)" }}>
+          Due percorsi disponibili: <span style={{ color: "var(--gold)" }}>Ho una sceneggiatura</span> · <span style={{ color: "var(--green)" }}>Ho un'idea</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 1: CHI SEI ───────────────────────────────────────────────────────
+const S1_ChiSei = ({ d, setD, onNext }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 80); }, []);
+  const ruoli = [
+    { id: "autore_regista", label: "Autore / Regista" },
+    { id: "autore", label: "Autore (cerca un regista)" },
+    { id: "autore_produttore", label: "Autore / Produttore" },
+    { id: "regista", label: "Regista (non autore)" },
+    { id: "produttore", label: "Produttore" },
+  ];
+  const ok = d.nome?.trim() && d.ruolo;
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={1} total={6} />
+      <div className="center">
+        <div className="wrap" style={{ opacity: v ? 1 : 0, transform: v ? "none" : "translateY(18px)", transition: "all .65s ease" }}>
+          <Landmark n="1" label="Chi sei" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 38, fontWeight: 300, lineHeight: 1.25, marginBottom: 12 }}>Prima di tutto,<br /><em>presentiamoci.</em></h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.75, marginBottom: 44, fontWeight: 300 }}>Non ti giudichiamo. Mappiamo.</p>
+          <div style={{ marginBottom: 36 }}>
+            <span className="lbl">Il tuo nome</span>
+            <input type="text" placeholder="Come ti chiami?" value={d.nome || ""} onChange={e => setD({ ...d, nome: e.target.value })} onKeyDown={e => e.key === "Enter" && ok && onNext()} />
+          </div>
+          <div style={{ marginBottom: 48 }}>
+            <span className="lbl">Il tuo ruolo in questo progetto</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {ruoli.map(r => <button key={r.id} className={`chip ${d.ruolo === r.id ? "on" : ""}`} onClick={() => setD({ ...d, ruolo: r.id })}>{r.label}</button>)}
+            </div>
+          </div>
+          <button className="btn" disabled={!ok} onClick={onNext}>Continua →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 2: IL PROGETTO (FORK) ────────────────────────────────────────────
+const S2_Progetto = ({ d, setD, onSceneggiatura, onIdea }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 80); }, []);
+  const stadi = [
+    { id: "sceneggiatura", label: "Ho una sceneggiatura — cerco finanziamento", path: "screen" },
+    { id: "sviluppo", label: "Sviluppo avanzato — ho già un produttore", path: "screen" },
+    { id: "idea", label: "Ho un'idea o un soggetto — voglio svilupparla", path: "idea" },
+    { id: "trattamento", label: "Ho un trattamento — sono in fase di sviluppo", path: "idea" },
+  ];
+  const selected = stadi.find(s => s.id === d.stadio);
+  const canGoScreen = d.titolo?.trim() && (d.stadio === "sceneggiatura" || d.stadio === "sviluppo");
+  const canGoIdea = d.titolo?.trim() && (d.stadio === "idea" || d.stadio === "trattamento");
+
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={2} total={6} />
+      <div className="center">
+        <div className="wrap" style={{ opacity: v ? 1 : 0, transform: v ? "none" : "translateY(18px)", transition: "all .65s ease" }}>
+          <Landmark n="2" label="Il progetto" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 38, fontWeight: 300, lineHeight: 1.25, marginBottom: 12 }}>Parlami del film.<br /><em style={{ color: "var(--gold)" }}>Dove sei nel processo?</em></h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.75, marginBottom: 44, fontWeight: 300 }}>Il titolo e lo stadio di sviluppo aprono due percorsi diversi — entrambi reali, entrambi navigabili.</p>
+          <div style={{ marginBottom: 36 }}>
+            <span className="lbl">Titolo del progetto</span>
+            <input type="text" placeholder="Anche provvisorio" value={d.titolo || ""} onChange={e => setD({ ...d, titolo: e.target.value })} />
+          </div>
+          <div style={{ marginBottom: 44 }}>
+            <span className="lbl">A che punto sei?</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {stadi.map(s => (
+                <button key={s.id} className={`chip ${d.stadio === s.id ? "on" : ""}`}
+                  style={{ borderLeft: s.path === "idea" ? "2px solid var(--green)" : s.path === "screen" ? "2px solid var(--gold)" : undefined }}
+                  onClick={() => setD({ ...d, stadio: s.id })}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            {selected && (
+              <div style={{ marginTop: 10, fontSize: 13, color: selected.path === "idea" ? "var(--green)" : "var(--gold)", fontStyle: "italic" }}>
+                {selected.path === "idea" ? "→ Percorso: sviluppo dell'idea" : "→ Percorso: mappa di finanziamento"}
+              </div>
+            )}
+          </div>
+          {canGoScreen && <button className="btn" onClick={onSceneggiatura}>Mappa di finanziamento →</button>}
+          {canGoIdea && <button className="btn-g" onClick={onIdea}>Sviluppo dell'idea →</button>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PERCORSO A — SCENEGGIATURA
+// ══════════════════════════════════════════════════════════════════
+
+// ─── GENERI ──────────────────────────────────────────────────────
+const GENERI_FICTION = [
+  { id: "drama", label: "Drama" }, { id: "commedia", label: "Commedia" },
+  { id: "thriller", label: "Thriller / Crime" }, { id: "horror", label: "Horror" },
+  { id: "fantasy_sc", label: "Fantasy / Sci-Fi" }, { id: "storico", label: "Storico / Epico" },
+  { id: "biografico", label: "Biografico" }, { id: "politico", label: "Politico / Sociale" },
+  { id: "romantico", label: "Romantico" }, { id: "avventura", label: "Avventura / Azione" },
+  { id: "sperimentale", label: "Sperimentale / Essay film" }, { id: "autobiografico", label: "Autobiografico / Personale" },
+];
+const GENERI_DOC = [
+  { id: "doc_osservativo", label: "Osservativo" }, { id: "doc_partecipativo", label: "Partecipativo / Immersivo" },
+  { id: "doc_inchiesta", label: "Inchiesta / Investigativo" }, { id: "doc_biografico", label: "Biografico / Ritratto" },
+  { id: "doc_storico", label: "Storico / Archivio" }, { id: "doc_sociale", label: "Sociale / Politico" },
+  { id: "doc_ambientale", label: "Ambientale / Scientifico" }, { id: "doc_musicale", label: "Musicale / Concerto" },
+  { id: "doc_viaggio", label: "Viaggio / Antropologico" }, { id: "doc_essay", label: "Essay film / Riflessivo" },
+  { id: "doc_animato", label: "Documentario animato" },
+];
+const GENERI_ANIM = [
+  { id: "anim_famiglia", label: "Famiglia / Bambini" }, { id: "anim_adulti", label: "Adulti / Autoriale" },
+  { id: "anim_fantasy", label: "Fantasy / Avventura" }, { id: "anim_doc", label: "Documentario animato" },
+  { id: "anim_sperimentale", label: "Sperimentale / Arte" },
+];
+
+// ─── SCREEN 3A: L'OPERA ──────────────────────────────────────────
+const S3_Opera = ({ d, setD, onNext }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 80); }, []);
+  const formati = [
+    { id: "lungometraggio", label: "Lungometraggio Fiction" }, { id: "documentario", label: "Documentario" },
+    { id: "animazione", label: "Animazione" }, { id: "cortometraggio", label: "Cortometraggio" },
+    { id: "serie", label: "Serie TV / Streaming" }, { id: "ibrido", label: "Opera Ibrida / Sperimentale" },
+  ];
+  const budget = [
+    { id: "micro", label: "Micro — sotto €200k" }, { id: "basso", label: "Basso — €200k–€800k" },
+    { id: "medio", label: "Medio — €800k–€2,5M" }, { id: "alto", label: "Alto — oltre €2,5M" },
+  ];
+  const territori = [
+    { id: "italiano", label: "Mercato italiano" }, { id: "europeo", label: "Co-produzione europea" },
+    { id: "internazionale", label: "Ambizione internazionale" },
+  ];
+  const generiList = d.formato === "documentario" ? GENERI_DOC : d.formato === "animazione" ? GENERI_ANIM : GENERI_FICTION;
+  const generi = d.generi || [];
+  const toggleGenere = id => { const next = generi.includes(id) ? generi.filter(x => x !== id) : [...generi, id]; setD({ ...d, generi: next }); };
+  const setFormato = id => setD({ ...d, formato: id, generi: [] });
+  const ok = d.formato && generi.length > 0 && d.budget && d.territorio;
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={3} total={6} />
+      <div className="center">
+        <div className="wrap" style={{ opacity: v ? 1 : 0, transform: v ? "none" : "translateY(18px)", transition: "all .65s ease" }}>
+          <Landmark n="3" label="L'opera" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 38, fontWeight: 300, lineHeight: 1.25, marginBottom: 12 }}>Non la storia.<br /><em>Il perimetro in cui esiste.</em></h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.75, marginBottom: 44, fontWeight: 300 }}>Formato, genere, scala e ambizione territoriale definiscono quali strumenti esistono — e quali si escludono.</p>
+          <div style={{ marginBottom: 28 }}>
+            <span className="lbl">Formato</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {formati.map(f => <button key={f.id} className={`chip ${d.formato === f.id ? "on" : ""}`} onClick={() => setFormato(f.id)}>{f.label}</button>)}
+            </div>
+          </div>
+          {d.formato && (
+            <div style={{ marginBottom: 28, animation: "up .4s ease both" }}>
+              <span className="lbl">{d.formato === "documentario" ? "Tipologia documentario" : "Genere"} <span style={{ fontSize: 13, marginLeft: 8, color: "var(--t4)", textTransform: "none", letterSpacing: 0 }}>— più di uno possibile</span></span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                {generiList.map(g => <button key={g.id} className={`chip ${generi.includes(g.id) ? "on" : ""}`} onClick={() => toggleGenere(g.id)}>{g.label}</button>)}
+              </div>
+            </div>
+          )}
+          <div style={{ marginBottom: 28 }}>
+            <span className="lbl">Fascia di budget</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {budget.map(b => <button key={b.id} className={`chip ${d.budget === b.id ? "on" : ""}`} onClick={() => setD({ ...d, budget: b.id })}>{b.label}</button>)}
+            </div>
+          </div>
+          <div style={{ marginBottom: 48 }}>
+            <span className="lbl">Ambizione territoriale</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {territori.map(t => <button key={t.id} className={`chip ${d.territorio === t.id ? "on" : ""}`} onClick={() => setD({ ...d, territorio: t.id })}>{t.label}</button>)}
+            </div>
+          </div>
+          <button className="btn" disabled={!ok} onClick={onNext}>Continua →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 4A: IL CONTESTO ──────────────────────────────────────
+const S4_Contesto = ({ d, setD, onNext }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 80); }, []);
+  const ok = d.esperienza && d.produzione && d.regione;
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={4} total={6} />
+      <div className="center">
+        <div className="wrap" style={{ opacity: v ? 1 : 0, transform: v ? "none" : "translateY(18px)", transition: "all .65s ease" }}>
+          <Landmark n="4" label="Il tuo contesto" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 38, fontWeight: 300, lineHeight: 1.25, marginBottom: 12 }}>Non ti giudichiamo.<br /><em>Mappiamo.</em></h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.75, marginBottom: 44, fontWeight: 300 }}>Queste informazioni cambiano radicalmente quali porte si aprono — non la qualità del tuo film, ma la struttura del sistema intorno a te.</p>
+          <div style={{ marginBottom: 28 }}>
+            <span className="lbl">Film prodotti in precedenza</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {[{ id: "primo", label: "Nessuno — questo è il mio primo" }, { id: "secondo_terzo", label: "Uno o due — sono alla seconda o terza opera" }, { id: "filmografia", label: "Tre o più — ho una filmografia" }].map(e => <button key={e.id} className={`chip ${d.esperienza === e.id ? "on" : ""}`} onClick={() => setD({ ...d, esperienza: e.id })}>{e.label}</button>)}
+            </div>
+          </div>
+          <div style={{ marginBottom: 28 }}>
+            <span className="lbl">Casa di produzione già coinvolta?</span>
+            <div style={{ display: "flex", gap: 7 }}>
+              {["Sì", "In trattativa", "No"].map(val => <button key={val} className={`chip ${d.produzione === val ? "on" : ""}`} onClick={() => setD({ ...d, produzione: val })}>{val}</button>)}
+            </div>
+          </div>
+          <div style={{ marginBottom: 48 }}>
+            <span className="lbl">Sei in una regione con film commission attiva?</span>
+            <p style={{ fontSize: 13, color: "var(--t4)", marginBottom: 10, lineHeight: 1.6 }}>Es. Emilia-Romagna, Lazio, Piemonte, Toscana, FVG, Campania, Alto Adige</p>
+            <div style={{ display: "flex", gap: 7 }}>
+              {["Sì", "Non so", "No"].map(val => <button key={val} className={`chip ${d.regione === val ? "on" : ""}`} onClick={() => setD({ ...d, regione: val })}>{val}</button>)}
+            </div>
+          </div>
+          <button className="btn" disabled={!ok} onClick={onNext}>Mostrami il panorama →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 5A: TRANSIZIONE ──────────────────────────────────────
+const S5_Trans = ({ titolo, onDone }) => {
+  const [step, setStep] = useState(0);
+  const msgs = ["Leggendo il tuo profilo...", "Mappando i fondi disponibili...", "Identificando connessioni e conflitti...", "Costruendo la tua mappa..."];
+  useEffect(() => {
+    let i = 1;
+    const t = setInterval(() => { setStep(i); i++; if (i >= msgs.length) { clearInterval(t); setTimeout(onDone, 900); } }, 750);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="screen" style={{ background: "var(--bg)", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontFamily: "var(--serif)", fontSize: 30, fontStyle: "italic", color: "var(--t2)", marginBottom: 48 }}>"{titolo}"</div>
+        <div style={{ display: "inline-flex", flexDirection: "column", gap: 14 }}>
+          {msgs.map((m, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, opacity: i <= step ? 1 : .2, transition: "opacity .5s" }}>
+              <span style={{ color: i < step ? "var(--gold)" : "var(--t3)", fontSize: 13 }}>{i < step ? "✓" : i === step ? "→" : "·"}</span>
+              <span style={{ fontFamily: "var(--sans)", fontSize: 13, color: i <= step ? "var(--t2)" : "var(--t4)", letterSpacing: ".06em" }}>{m}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── FONTI DI FINANZIAMENTO ───────────────────────────────────────
+const TIPO_COLOR = {
+  pubblico: { bg: "#4a8060", label: "Pubblico" },
+  europeo: { bg: "#4a6890", label: "Europeo" },
+  privato: { bg: "#8a6e3c", label: "Privato" },
+  broadcaster: { bg: "#7a50a0", label: "Broadcaster" },
+  regionale: { bg: "#6a5a3a", label: "Regionale" },
+};
+const STATO_COLOR = {
+  ok: { c: "#4a8060", label: "Accessibile" },
+  attenzione: { c: "#c87c30", label: "Da verificare" },
+  critico: { c: "#b03028", label: "Critico 2025–26" },
+};
+const FONTI = [
+  { id: "tax_credit_interno", nome: "Tax Credit Interno", desc_breve: "40% dei costi ammissibili · cedibile a banca o investitore", tipo: "pubblico", contribuzione: 32, importo: "30–40% dei costi riconosciuti", descrizione: "La leva fiscale centrale di qualsiasi produzione italiana. Il credito matura sui costi di produzione ammissibili e può essere ceduto a un istituto finanziario o a un investitore privato. Su un film da €600k genera circa €180–220k.", stato: "Dal 2025 non è più automatico. Richiede domanda preventiva E un contratto di distribuzione già firmato. Il Fondo Cinema scende a €500M dal 2027.", gravita: "attenzione", connette: ["tax_credit_esterno", "mg_distributore"], esclude: [], visible_per: () => true },
+  { id: "tax_credit_esterno", nome: "Tax Credit Esterno", desc_breve: "Un privato investe · recupera il 40% come credito fiscale", tipo: "privato", contribuzione: 18, importo: "40% rimborso all'investitore", descrizione: "Un privato mette denaro nel film e recupera il 40% come credito d'imposta. Costo netto: 60 centesimi per euro investito. In teoria rende il cinema competitivo con qualsiasi altra asset class.", stato: "Post-scandali 2025: l'iter ministeriale può richiedere 6–12 mesi. Il meccanismo esiste sulla carta. Nella pratica quasi bloccato senza consulente specializzato.", gravita: "critico", connette: ["tax_credit_interno"], esclude: [], visible_per: () => true },
+  { id: "mg_distributore", nome: "Minimum Guarantee", desc_breve: "Advance del distributore · sblocca il requisito tax credit", tipo: "privato", contribuzione: 20, importo: "€50k–300k secondo budget e profilo", descrizione: "Il distributore anticipa una somma contro i diritti di distribuzione italiani. Risolve anche il catch-22 del tax credit: il contratto MG soddisfa il requisito del distributore già coinvolto.", stato: "Loop documentato nel 2026: il distributore vuole il tax credit approvato prima di firmare. Il tax credit richiede il distributore già firmato. Chi conosce il sistema sa come rompere questo loop.", gravita: "attenzione", connette: ["tax_credit_interno", "tax_credit_esterno"], esclude: ["broadcaster_rai_e", "broadcaster_sky"], visible_per: (op) => op.formato !== "documentario" },
+  { id: "contributi_selettivi", nome: "Contributi Selettivi MiC", desc_breve: "Fondo ministeriale · discrezionale · 2 sessioni l'anno", tipo: "pubblico", contribuzione: 28, importo: "€80k–500k secondo progetto", descrizione: "La commissione ministeriale assegna fondi in base al 'valore artistico e culturale'. Due sessioni l'anno: luglio e novembre. Più accessibile per opera seconda.", stato: "Siccità di Virzì: €4,4M selettivi, €1,8M di incasso. C'è ancora domani di Cortellesi: zero selettivi, €36,8M di incasso. La discrezionalità non è l'eccezione — è il sistema.", gravita: "critico", connette: ["tax_credit_interno", "film_commission"], esclude: [], visible_per: (op) => op.budget !== "micro" },
+  { id: "creative_europe", nome: "Creative Europe MEDIA", desc_breve: "Fondo europeo · sviluppo e produzione · credibilità internazionale", tipo: "europeo", contribuzione: 10, importo: "€15k–100k secondo fase", descrizione: "Il punto di partenza europeo. Struttura il dossier professionale, apre porte internazionali, dà credibilità istituzionale. Accessibile se il produttore ha almeno un titolo precedente.", stato: "Tra gli strumenti più accessibili del sistema. Tempi: 3–4 mesi per risposta. Il punto di ingresso più pulito nel panorama europeo.", gravita: "ok", connette: ["eurimages", "film_commission", "mubi"], esclude: [], visible_per: () => true },
+  { id: "film_commission", nome: "Film Commission Regionale", desc_breve: "IDM Alto Adige, Emilia-Romagna, Piemonte · spesa locale 50–60%", tipo: "regionale", contribuzione: 14, importo: "€20k–200k secondo regione", descrizione: "IDM Alto Adige, Emilia-Romagna FC, Piemonte Doc Film Fund tra i più accessibili e trasparenti. Bandi trimestrali. L'obbligo di spesa locale è gestibile se la storia permette di girare in quella regione.", stato: "Richiedono piano finanziario già coperto al 40–50%. Se non hai altre fonti confermate, questa porta resta chiusa. La sequenza conta.", gravita: "attenzione", connette: ["creative_europe", "contributi_selettivi"], esclude: [], visible_per: (op, ctx) => ctx.regione === "Sì" },
+  { id: "broadcaster_rai_e", nome: "Pre-acquisto RAI", desc_breve: "RAI Fiction · RAI Documentari · diritti TV nazionali", tipo: "broadcaster", contribuzione: 22, importo: "€30k–300k secondo formato", descrizione: "RAI co-finanzia pre-comprando i diritti televisivi italiani. RAI Documentari per doc e doc d'autore, RAI Fiction per lungometraggi di finzione.", stato: "RAI pretende diritti esclusivi nazionali e finestre di 3–5 anni. Frequenti vincoli editoriali. Se scegli RAI, chiudi le porte a MUBI, Netflix, Sky.", gravita: "attenzione", connette: ["contributi_selettivi"], esclude: ["mubi", "broadcaster_sky", "mg_distributore"], visible_per: () => true },
+  { id: "broadcaster_sky", nome: "Sky / Netflix", desc_breve: "Pre-acquisto piattaforme pay · richiede track record o cast", tipo: "broadcaster", contribuzione: 28, importo: "€80k–700k secondo profilo", descrizione: "Sky Italia e Netflix co-finanziano su progetti selezionati. Netflix è più aperta agli autori europei dal 2024 ma tende a preferire cast riconoscibile o filmografia consolidata.", stato: "Mercato ristretto. Richiedono diritti esclusivi. Apple TV+ è attiva commercialmente in Italia — non ha mai investito in una produzione italiana.", gravita: "attenzione", connette: [], esclude: ["broadcaster_rai_e", "mubi", "mg_distributore"], visible_per: (op, ctx) => op.budget !== "micro" && (ctx.esperienza !== "primo" || op.budget === "alto") },
+  { id: "mubi", nome: "Pre-acquisto MUBI Italia", desc_breve: "Cinema d'autore e documentario · l'interlocutore più reattivo", tipo: "broadcaster", contribuzione: 10, importo: "€10k–60k", descrizione: "MUBI ha significativamente aumentato la presenza nel doc e cinema d'autore italiano negli ultimi tre anni. Nel 2026 è l'interlocutore più reattivo per progetti di qualità a budget contenuto.", stato: "Richiede dossier sviluppato e preferibilmente materiale visivo. Non opera su progetti prematuri. Compatibile con film commission e Creative Europe.", gravita: "ok", connette: ["creative_europe", "film_commission"], esclude: ["broadcaster_rai_e", "broadcaster_sky"], visible_per: (op) => op.formato === "documentario" || op.budget === "micro" || op.budget === "basso" },
+  { id: "eurimages", nome: "Eurimages", desc_breve: "Co-produzione europea · fino a €700k · 4 scadenze l'anno", tipo: "europeo", contribuzione: 25, importo: "€200k–700k", descrizione: "Fondo del Consiglio d'Europa. Richiede almeno 2 partner europei. Riduce la quota italiana necessaria e apre i fondi nazionali del paese partner. 4 scadenze annuali.", stato: "Il partner europeo vuole il finanziamento italiano confermato. Il finanziamento italiano aspetta la struttura europea. Risolvere questo loop richiede in media 2–3 anni.", gravita: "attenzione", connette: ["creative_europe", "sales_agent"], esclude: [], visible_per: (op) => op.budget === "medio" || op.budget === "alto" },
+  { id: "sales_agent", nome: "Sales Agent Internazionale", desc_breve: "Advance sui diritti internazionali · WIDE, Match Factory, Cercamon", tipo: "privato", contribuzione: 16, importo: "€80k–400k", descrizione: "L'agente internazionale vende i diritti paese per paese in anticipo. WIDE, The Match Factory, Film Constellation hanno forte presenza sul mercato italiano d'autore.", stato: "Firma solo con struttura europea credibile già confermata. Chi rompe prima il loop Tax Credit → Distributore → Eurimages → Sales Agent vince.", gravita: "attenzione", connette: ["eurimages"], esclude: [], visible_per: (op) => (op.budget === "medio" || op.budget === "alto") && op.territorio !== "italiano" },
+];
+
+function getFontiVisibili(opera, contesto) { return FONTI.filter(f => f.visible_per(opera, contesto)); }
+
+// ─── SCREEN 6A: IL PIANO ─────────────────────────────────────────
+const S6_Piano = ({ profilo, onNext }) => {
+  const { progetto, opera, contesto } = profilo;
+  const [v, setV] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [expanded, setExpanded] = useState(null);
+  const [done, setDone] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  const fonti = getFontiVisibili(opera, contesto);
+  const escluse = new Set();
+  selected.forEach(id => { const f = FONTI.find(x => x.id === id); if (f) f.esclude.forEach(e => escluse.add(e)); });
+  const connesse = new Set();
+  selected.forEach(id => { const f = FONTI.find(x => x.id === id); if (f) f.connette.forEach(c => { if (!selected.has(c)) connesse.add(c); }); });
+  const totalePct = Math.min(100, [...selected].reduce((sum, id) => { const f = FONTI.find(x => x.id === id); return sum + (f ? f.contribuzione : 0); }, 0));
+  const coperto = totalePct >= 88;
+  useEffect(() => { if (coperto && !done) setTimeout(() => setDone(true), 400); }, [coperto]);
+  const toggleFonte = (id) => {
+    if (escluse.has(id) && !selected.has(id)) return;
+    setSelected(prev => { const next = new Set(prev); if (next.has(id)) { next.delete(id); if (expanded === id) setExpanded(null); } else { next.add(id); setExpanded(id); } return next; });
+  };
+  const budgetLabel = { micro: "< €200k", basso: "€200k–€800k", medio: "€800k–€2,5M", alto: "> €2,5M" };
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={5} total={6} />
+      <div style={{ flex: 1, maxWidth: 820, margin: "0 auto", width: "100%", padding: "40px 40px", opacity: v ? 1 : 0, transition: "opacity .65s" }}>
+        <div style={{ marginBottom: 28 }}>
+          <Landmark n="5" label="Come può succedere" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 36, fontWeight: 300, lineHeight: 1.2, marginBottom: 10 }}>
+            <em style={{ color: "var(--gold)" }}>"{progetto?.titolo || "il tuo film"}"</em><br />può essere finanziato.
+          </h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.8, maxWidth: 580, fontWeight: 300 }}>
+            Queste sono le fonti accessibili al tuo profilo. Selezionale per vedere come si connettono — e come si escludono.
+          </p>
+        </div>
+        {/* Budget bar */}
+        <div style={{ background: "var(--s1)", border: `1px solid ${coperto ? "var(--gold)" : "var(--b2)"}`, borderRadius: 6, padding: "16px 20px", marginBottom: 28, transition: "border-color .4s" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontFamily: "var(--sans)", fontSize: 13, letterSpacing: ".24em", textTransform: "uppercase", color: "var(--t4)" }}>Copertura stimata · Budget {budgetLabel[opera?.budget]}</span>
+            <span style={{ fontFamily: "var(--serif)", fontSize: 18, fontStyle: "italic", color: coperto ? "var(--gold)" : "var(--t2)" }}>{totalePct}%</span>
+          </div>
+          <div style={{ height: 6, background: "var(--b1)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${totalePct}%`, background: coperto ? "linear-gradient(90deg,var(--green),var(--gold))" : "linear-gradient(90deg,var(--blue),var(--green))", borderRadius: 3, transition: "width .5s ease, background .4s" }} />
+          </div>
+          {coperto && <div className="au" style={{ marginTop: 10, fontFamily: "var(--sans)", fontSize: 13, color: "var(--gold)", letterSpacing: ".12em" }}>✓ &nbsp;Questo piano può coprire il budget</div>}
+          {!coperto && selected.size === 0 && <div style={{ marginTop: 8, fontFamily: "var(--sans)", fontSize: 13, color: "var(--t4)", fontStyle: "italic" }}>Inizia selezionando una fonte per vedere come si connette alle altre</div>}
+        </div>
+        {/* Griglia fonti */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, marginBottom: 28 }}>
+          {fonti.map(fonte => {
+            const isSel = selected.has(fonte.id);
+            const isEsc = escluse.has(fonte.id) && !isSel;
+            const isConn = connesse.has(fonte.id);
+            const isExp = expanded === fonte.id;
+            const tc = TIPO_COLOR[fonte.tipo];
+            const sc = STATO_COLOR[fonte.gravita];
+            return (
+              <div key={fonte.id} onClick={() => toggleFonte(fonte.id)} className={isConn && !isSel ? "tile-glow" : ""}
+                style={{ border: `1px solid ${isSel ? "var(--gold)" : isConn ? "rgba(200,168,108,.35)" : "var(--b1)"}`, borderRadius: 5, background: isSel ? "var(--s2)" : "var(--s1)", cursor: isEsc ? "not-allowed" : "pointer", opacity: isEsc ? .35 : 1, transition: "all .25s", overflow: "hidden" }}>
+                <div style={{ padding: "14px 16px 12px", borderBottom: isExp ? "1px solid var(--b1)" : "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, letterSpacing: ".18em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 2, background: `${tc.bg}28`, color: tc.bg }}>{tc.label}</span>
+                      {isConn && !isSel && <span style={{ fontSize: 13, color: "var(--gold)", letterSpacing: ".1em" }}>↔ si connette</span>}
+                      {isEsc && <span style={{ fontSize: 13, color: "var(--red)", letterSpacing: ".1em" }}>✕ non compatibile</span>}
+                    </div>
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", border: `1.5px solid ${isSel ? "var(--gold)" : "var(--b2)"}`, background: isSel ? "var(--gold)" : "transparent", flexShrink: 0, marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {isSel && <span style={{ fontSize: 13, color: "var(--bg)" }}>✓</span>}
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: isSel ? "var(--t1)" : "var(--t2)", marginBottom: 4, fontWeight: 400 }}>{fonte.nome}</div>
+                  <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t4)", lineHeight: 1.5 }}>{fonte.desc_breve}</div>
+                </div>
+                {isExp && (
+                  <div style={{ padding: "14px 16px 16px" }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, letterSpacing: ".2em", textTransform: "uppercase", color: "var(--t4)", marginBottom: 5 }}>Apporto tipico</div>
+                      <div style={{ fontFamily: "var(--serif)", fontSize: 13, fontStyle: "italic", color: "var(--t2)" }}>{fonte.importo}</div>
+                    </div>
+                    <p style={{ fontSize: 13.5, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, marginBottom: 12 }}>{fonte.descrizione}</p>
+                    <div style={{ borderLeft: `2px solid ${sc.c}`, paddingLeft: 12 }}>
+                      <div style={{ fontSize: 13, letterSpacing: ".18em", textTransform: "uppercase", color: sc.c, marginBottom: 4 }}>{sc.label} · oggi</div>
+                      <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.75, fontWeight: 300 }}>{fonte.stato}</p>
+                    </div>
+                    {fonte.connette.length > 0 && <div style={{ marginTop: 10, fontSize: 13, color: "var(--t4)", fontStyle: "italic" }}>Si connette con: {fonte.connette.map(id => FONTI.find(x => x.id === id)?.nome).filter(Boolean).join(" · ")}</div>}
+                    {fonte.esclude.length > 0 && <div style={{ marginTop: 4, fontSize: 13, color: "#b03028", opacity: .7 }}>Esclude: {fonte.esclude.map(id => FONTI.find(x => x.id === id)?.nome).filter(Boolean).join(" · ")}</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Legenda */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 28 }}>
+          {Object.entries(TIPO_COLOR).map(([k, v]) => (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: v.bg }} />
+              <span style={{ fontSize: 13, color: "var(--t4)", letterSpacing: ".1em" }}>{v.label}</span>
+            </div>
+          ))}
+        </div>
+        {done && (
+          <div className="au" style={{ background: "var(--s1)", border: "1px solid var(--gold)", borderRadius: 6, padding: "28px 32px", marginBottom: 16 }}>
+            <div style={{ fontFamily: "var(--serif)", fontSize: 22, fontStyle: "italic", color: "var(--t1)", marginBottom: 10 }}>Hai trovato un piano che può funzionare.</div>
+            <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.85, fontWeight: 300, marginBottom: 20 }}>
+              {[...selected].map(id => FONTI.find(x => x.id === id)?.nome).filter(Boolean).join(" + ")}. Questi strumenti, nell'ordine giusto, possono portare il tuo film in produzione.
+            </p>
+            <button className="btn" onClick={() => onNext([...selected])}>Vai alla sintesi →</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 7A: END CARD SCENEGGIATURA ───────────────────────────
+const S7_EndCard = ({ profilo, pianoPick, onRestart, onPitch }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  const { chi, progetto, opera, contesto } = profilo;
+  const fontePick = pianoPick.map(id => FONTI.find(f => f.id === id)).filter(Boolean);
+  const formatoLabel = { lungometraggio: "Lungometraggio", documentario: "Documentario", animazione: "Animazione", cortometraggio: "Cortometraggio", serie: "Serie", ibrido: "Opera Ibrida" };
+  const budgetLabel = { micro: "< €200k", basso: "€200k–€800k", medio: "€800k–€2,5M", alto: "> €2,5M" };
+  const senzaProduttore = contesto?.produzione === "No";
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ flex: 1, maxWidth: 760, margin: "0 auto", width: "100%", padding: "44px 40px", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <Landmark n="6" label="La tua sintesi" />
+        <h2 style={{ fontFamily: "var(--serif)", fontSize: 40, fontWeight: 300, lineHeight: 1.15, marginBottom: 8 }}>
+          <em style={{ color: "var(--gold)" }}>"{progetto?.titolo}"</em><br />può succedere.
+        </h2>
+        <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.8, marginBottom: 36, fontWeight: 300, maxWidth: 520 }}>
+          Hai visto la struttura di finanziamento del tuo film — con le sue possibilità reali e i suoi nodi critici — prima ancora di sederti al tavolo con un produttore. Questo cambia la conversazione.
+        </p>
+
+        {/* Piano scelto */}
+        <div style={{ background: "var(--s1)", border: "1px solid var(--b2)", borderRadius: 8, padding: "24px 28px", marginBottom: 24 }}>
+          <span className="lbl">Il tuo piano di finanziamento</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {fontePick.map((f, i) => {
+              const tc = TIPO_COLOR[f.tipo];
+              const sc = STATO_COLOR[f.gravita];
+              return (
+                <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "var(--s2)", borderRadius: 4, border: "1px solid var(--b1)" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: "50%", background: "var(--b1)", color: "var(--t3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>{i + 1}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, color: "var(--t1)", marginBottom: 2 }}>{f.nome}</div>
+                    <div style={{ fontSize: 13, color: "var(--t4)" }}>{f.importo}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 2, background: `${tc.bg}22`, color: tc.bg }}>{tc.label}</span>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: sc.c, flexShrink: 0 }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--b1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "var(--t4)", letterSpacing: ".14em" }}>Copertura stimata</span>
+            <span style={{ fontFamily: "var(--serif)", fontSize: 18, fontStyle: "italic", color: "var(--gold)" }}>~{Math.min(100, fontePick.reduce((s, f) => s + f.contribuzione, 0))}% del budget</span>
+          </div>
+        </div>
+
+        {/* Profilo */}
+        <div style={{ background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: 6, padding: "20px 24px", marginBottom: 24 }}>
+          <span className="lbl">Il profilo del film</span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 28px" }}>
+            {[
+              ["Titolo", <em>"{progetto?.titolo}"</em>],
+              ["Formato", formatoLabel[opera?.formato]],
+              ["Genere", Array.isArray(opera?.generi) ? opera.generi.map(g => g.replace(/^(doc_|anim_)/,"").replace(/_/g," ")).join(", ") : "—"],
+              ["Budget", budgetLabel[opera?.budget]],
+              ["Territorio", opera?.territorio],
+              ["Esperienza", { primo: "Prima opera", secondo_terzo: "Seconda / Terza", filmografia: "Filmografia" }[contesto?.esperienza]],
+            ].map(([k, val], i) => (
+              <div key={i}>
+                <div style={{ fontSize: 13, letterSpacing: ".2em", color: "var(--t4)", textTransform: "uppercase", marginBottom: 2 }}>{k}</div>
+                <div style={{ fontSize: 13, color: "var(--t2)", fontFamily: typeof val === "object" ? "var(--serif)" : "var(--sans)", fontStyle: typeof val === "object" ? "italic" : "normal" }}>{val}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Consapevolezza — non prescrizione */}
+        <div style={{ marginBottom: 24 }}>
+          <span className="lbl">Cosa significa questo piano — in termini reali</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {pianoPick.includes("contributi_selettivi") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--green)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--green)", marginBottom: 5 }}>Contributi Selettivi MiC</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Valutati due volte l'anno da una commissione. I tempi medi dall'application all'erogazione: 8–14 mesi. Non sono garantiti — la selectivity rate è intorno al 15–20% dei progetti presentati. Il tuo profilo (prima opera, livello di ambizione del progetto) incide molto sulla probabilità reale.</p>
+              </div>
+            )}
+            {pianoPick.includes("tax_credit_interno") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--amber)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--amber)", marginBottom: 5 }}>Tax Credit Interno (40%)</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Dal 2025 non è più automatico: richiede eleggibilità culturale approvata dal MiC + contratto con uno dei 20 distributori top di lista. I tempi di approvazione: 3–6 mesi dalla domanda. Il 32% dei budget cinematografici italiani nel 2023 veniva da tax credit. È lo strumento più usato — ma anche il più lento da sbloccare.</p>
+              </div>
+            )}
+            {pianoPick.includes("mg_distributore") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--amber)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--amber)", marginBottom: 5 }}>Minimum Guarantee Distributore</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Si negozia prima della produzione — o non si negozia. Un distributore che si impegna in pre-produzione paga meno ma garantisce più stabilità. Un distributore che entra dopo vede il film e paga di più, ma quella certezza non la dai al budget. La MG sblocca il tax credit esterno. Le due cose sono collegate.</p>
+              </div>
+            )}
+            {pianoPick.includes("creative_europe") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--blue)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--blue)", marginBottom: 5 }}>Creative Europe MEDIA</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Le call principali aprono una/due volte l'anno. Il dossier richiede: sinossi, dossier creativo, piano di sviluppo, CV produttore, piano budget. La selectivity rate europea è bassa — ma un'applicazione ben costruita ha più probabilità di un'applicazione italiana mal presentata. Il documento che scrivi per MEDIA vale per tutte le altre domande europee.</p>
+              </div>
+            )}
+            {pianoPick.includes("eurimages") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--blue)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--blue)", marginBottom: 5 }}>Eurimages</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Richiede un partner di coproduzione in almeno un altro paese europeo. Non è un fondo a cui ci si "iscrive" — è il risultato di un accordo di coproduzione già strutturato. Prima viene il partner, poi viene Eurimages. Se non hai ancora un coproduttore europeo identificato, questo fondo è più lontano di quanto appare sul piano.</p>
+              </div>
+            )}
+            {pianoPick.includes("film_commission") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid #8a6e3c", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "#8a6e3c", marginBottom: 5 }}>Film Commission Regionale</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>La condizione è che una percentuale delle spese di produzione (solitamente 100–150% del contributo ricevuto) venga spesa nel territorio della regione. Questo può essere un vincolo creativo reale — influenza location, cast, crew locali. A volte si gestisce, a volte cambia il film.</p>
+              </div>
+            )}
+            <div style={{ padding: "14px 18px", background: "var(--s2)", border: "1px solid var(--b1)", borderRadius: 4 }}>
+              <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, fontStyle: "italic" }}>
+                Conoscere questi meccanismi prima della trattativa non ti toglie scelte — te ne aggiunge. Puoi scegliere consapevolmente di perseguire un piano complesso. Puoi scegliere di semplificare il film per renderlo più fattibile. Puoi scegliere di aspettare il momento giusto. Ma almeno lo scegli tu.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Preview produttori — se non ha produttore */}
+        {senzaProduttore && (
+          <div style={{ marginBottom: 24, border: "1px solid var(--b2)", borderRadius: 6, overflow: "hidden" }}>
+            <div style={{ background: "var(--s2)", padding: "14px 20px", borderBottom: "1px solid var(--b1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 13, letterSpacing: ".22em", textTransform: "uppercase", color: "var(--t4)", marginBottom: 3 }}>Funzione disponibile nel sistema completo</div>
+                <div style={{ fontSize: 14, color: "var(--t2)" }}>Panorama produttori italiani</div>
+              </div>
+              <div style={{ fontSize: 13, color: "var(--t4)", border: "1px solid var(--b2)", borderRadius: 3, padding: "4px 10px", letterSpacing: ".1em" }}>COMING SOON</div>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, marginBottom: 14 }}>
+                Non hai un produttore. Nel sistema completo questa sezione ti permetterebbe di esplorare il panorama delle case di produzione italiane — filtrate per genere, per tipo di progetto che sviluppano, per approccio (chi lavora su idee vs chi vuole solo sceneggiature finite), per track record e apertura alle opere prime.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[
+                  { nome: "Vivo Film", note: "Opere prime · sviluppo da idea", attivo: true },
+                  { nome: "Tempesta Film", note: "Sviluppo · opera d'autore", attivo: true },
+                  { nome: "BiBi Film", note: "Storica · aperta allo sviluppo", attivo: true },
+                  { nome: "Indigo Film", note: "Portfolio misto · internazionale", attivo: true },
+                  { nome: "Wildside", note: "Materiale più avanzato preferito", attivo: false },
+                  { nome: "Colorado Film", note: "Commedia · mercato italiano", attivo: false },
+                ].map((p, i) => (
+                  <div key={i} style={{ padding: "10px 12px", background: "var(--s2)", borderRadius: 3, border: "1px solid var(--b1)", opacity: p.attivo ? 1 : .45 }}>
+                    <div style={{ fontSize: 13, color: "var(--t1)", marginBottom: 2 }}>{p.nome}</div>
+                    <div style={{ fontSize: 13, color: "var(--t4)" }}>{p.note}</div>
+                    {!p.attivo && <div style={{ fontSize: 13, color: "var(--t4)", marginTop: 3, opacity: .5 }}>— dati bloccati</div>}
+                  </div>
+                ))}
+              </div>
+              <p style={{ marginTop: 12, fontSize: 13, color: "var(--t4)", fontStyle: "italic" }}>
+                Il sistema completo includerebbe anche: tipi di contratti d'opzione tipici, storico dei film prodotti, approccio al primo contatto, disponibilità al co-sviluppo.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div style={{ borderTop: "1px solid var(--b1)", margin: "36px 0" }} />
+        <div style={{ fontFamily: "var(--serif)", fontSize: 22, fontStyle: "italic", color: "var(--t1)", marginBottom: 16 }}>La simulazione è conclusa.</div>
+        <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, marginBottom: 28, fontWeight: 300, maxWidth: 480 }}>
+          Quello che hai visto funziona su logiche approssimate. Il sistema reale — con dati aggiornati, AI addestrata sul corpus normativo italiano, e connessioni live ai bandi aperti — è quello che stiamo costruendo.
+        </p>
+        <EndButtons onRestart={onRestart} onPitch={onPitch} />
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PERCORSO B — IDEA
+// ══════════════════════════════════════════════════════════════════
+
+// ─── FONTI SVILUPPO ───────────────────────────────────────────────
+const FONTI_SVILUPPO = [
+  {
+    id: "mic_sviluppo", nome: "Fondi Scrittura MiC", tipo: "pubblico",
+    desc_breve: "Contributi sviluppo soggetto / trattamento / sceneggiatura",
+    importo: "€10k–30k", gravita: "attenzione",
+    descrizione: "Il MiC finanzia la fase di scrittura tramite i Contributi Sviluppo. Richiedono un produttore già coinvolto e coprono fino al 50% dei costi di sviluppo. Due sessioni l'anno.",
+    stato: "Dal 2024 i tempi si sono allungati significativamente. Il bando 2025 ha stanziato circa €4M complessivi per lo sviluppo. Richiedono produttore con track record minimo.",
+    connette: ["creative_europe_sv"], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "creative_europe_sv", nome: "Creative Europe — Sviluppo", tipo: "europeo",
+    desc_breve: "Fondo europeo · soggetti e sceneggiature · €15k–60k",
+    importo: "€15k–60k", gravita: "ok",
+    descrizione: "Il fondo europeo copre sviluppo singolo e slate di progetti. È lo strumento che dà più credibilità internazionale a un'idea anche nella fase embrionale. Bando annuale, scadenza tipicamente a giugno.",
+    stato: "Uno dei percorsi più solidi e accessibili. Tempi di risposta: 4–5 mesi. Richiede produttore italiano con almeno un titolo precedente. Il punto di ingresso europeo più realistico.",
+    connette: ["torino_lab", "mic_sviluppo"], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "torino_lab", nome: "TorinoFilmLab", tipo: "europeo",
+    desc_breve: "Laboratorio competitivo · €15k–25k + mentorship internazionale",
+    importo: "€15k–25k borsa sviluppo", gravita: "ok",
+    descrizione: "Il laboratorio di sviluppo più importante per autori emergenti in Italia. Selezione competitiva, sessioni intensive, mentorship di professionisti internazionali. Due percorsi: FeatureLab e ScriptLab. Scadenza: novembre.",
+    stato: "Accettazione ~5–8% delle domande. È però uno dei percorsi che veramente apre porte internazionali per un'opera prima. L'accettazione vale come credenziale presso i fondi europei.",
+    connette: ["creative_europe_sv", "eave"], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "biennale_college", nome: "Biennale College Cinema", tipo: "europeo",
+    desc_breve: "Fino a €100k per produrre il film · opera prima · Venezia",
+    importo: "fino a €100k per produzione", gravita: "ok",
+    descrizione: "Il programma della Biennale di Venezia finanzia 3–4 opere prime all'anno, dall'idea alla produzione. Selezionati in residenza a Venezia, poi presentati alla Mostra. Una delle rare porte che finanziano direttamente senza richiedere un sistema di finanziamento completato.",
+    stato: "Molto competitivo, ma l'unico programma che può portare un'idea direttamente a Venezia senza passare dal sistema normale. Scadenza: aprile. Richiede regista e autore, non necessariamente produttore.",
+    connette: [], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "eave", nome: "EAVE European Producers", tipo: "europeo",
+    desc_breve: "Workshop europeo produttori · rete · co-sviluppo",
+    importo: "No fondi diretti · networking strategico", gravita: "ok",
+    descrizione: "EAVE è un programma di formazione per produttori europei — ma il valore per l'autore è indiretto: un produttore EAVE ha la rete per muovere un progetto in Europa. Tre moduli residenziali annuali.",
+    stato: "Non dà fondi all'autore. Ma un produttore che ha fatto EAVE ha accesso a una rete di coproduzioni europee che nessun altro percorso offre. Consigliato come criterio nella scelta del produttore.",
+    connette: ["torino_lab", "creative_europe_sv"], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "berlinale_talents", nome: "Berlinale Talents", tipo: "europeo",
+    desc_breve: "Residenza competitiva · nessun fondo · rete internazionale",
+    importo: "No fondi diretti", gravita: "ok",
+    descrizione: "Programma di residenza alla Berlinale per autori selezionati. Nessun contributo economico diretto, ma accesso a pitch con produttori e distributori europei, workshop con maestri, visibilità internazionale.",
+    stato: "Accettazione ~2–3%. Il valore è nella visibilità e nel network. Un'accettazione Berlinale Talents su un CV di opera prima cambia significativamente come i fondi leggono la domanda.",
+    connette: ["torino_lab"], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "residenza_scrittura", nome: "Residenze di Scrittura", tipo: "regionale",
+    desc_breve: "CNA · SCAM · Moulin d'Andé · tempo protetto per scrivere",
+    importo: "Vitto/alloggio + €2k–8k borsa", gravita: "ok",
+    descrizione: "Le residenze di scrittura offrono tempo protetto — spesso 4–12 settimane — in cui l'autore scrive senza pressioni economiche. Alcune includono una borsa, tutte includono vitto e alloggio. In Francia SCAM e Moulin d'Andé sono tra le più note per gli italiani.",
+    stato: "Sottoutilizzate dagli autori italiani. CNA (Confederazione Nazionale dell'Artigianato) offre alcune opportunità in Italia. Le residenze francesi sono spesso accessibili agli autori europei con progetto sviluppato.",
+    connette: [], esclude: [], visible_per: () => true,
+  },
+  {
+    id: "opzione_produttore", nome: "Opzione da Produttore", tipo: "privato",
+    desc_breve: "Il produttore acquisisce il diritto di sviluppare l'idea · periodo esclusivo",
+    importo: "€0–50k secondo profilo e negoziazione", gravita: "attenzione",
+    descrizione: "Il produttore paga per avere il diritto esclusivo di sviluppare e portare in produzione il tuo progetto per un periodo determinato. Non è un acquisto definitivo — è una scommessa sul futuro.",
+    stato: "Il compenso varia enormemente. Per un'opera prima: spesso simbolico (€500–2.000). Per un autore con track record: €5k–20k. Con un progetto molto forte o cast già interessato: fino a €50k. La durata standard è 12–18 mesi, rinnovabile.",
+    connette: ["mic_sviluppo", "creative_europe_sv"], esclude: [], visible_per: () => true,
+  },
+];
+
+// ─── SCREEN 3B: L'IDEA ───────────────────────────────────────────
+const SI_A = ({ d, setD, chi, onNext }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 80); }, []);
+  const formati = [
+    { id: "lungometraggio", label: "Lungometraggio" }, { id: "documentario", label: "Documentario" },
+    { id: "serie", label: "Serie" }, { id: "cortometraggio", label: "Cortometraggio" },
+    { id: "animazione", label: "Animazione" },
+  ];
+  const generiList = d.formato === "documentario" ? GENERI_DOC : d.formato === "animazione" ? GENERI_ANIM : GENERI_FICTION;
+  const generi = d.generi || [];
+  const toggleGenere = id => { const next = generi.includes(id) ? generi.filter(x => x !== id) : [...generi, id]; setD({ ...d, generi: next }); };
+  const setFormato = id => setD({ ...d, formato: id, generi: [] });
+  const territori = [
+    { id: "italiano", label: "Italiano" }, { id: "europeo", label: "Co-produzione europea" }, { id: "internazionale", label: "Internazionale" },
+  ];
+  const ok = d.formato && generi.length > 0 && d.territorio;
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={3} total={5} />
+      <div className="center">
+        <div className="wrap" style={{ opacity: v ? 1 : 0, transform: v ? "none" : "translateY(18px)", transition: "all .65s ease" }}>
+          <Landmark n="3" label="L'idea" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 38, fontWeight: 300, lineHeight: 1.25, marginBottom: 12 }}>
+            Che tipo di film<br /><em style={{ color: "var(--green)" }}>hai in mente?</em>
+          </h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.75, marginBottom: 44, fontWeight: 300 }}>
+            Anche se l'idea è ancora fluida, il formato previsto e il genere cambiano radicalmente cosa esiste per svilupparla.
+          </p>
+          <div style={{ marginBottom: 28 }}>
+            <span className="lbl">Formato previsto</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {formati.map(f => <button key={f.id} className={`chip ${d.formato === f.id ? "on" : ""}`} onClick={() => setFormato(f.id)}>{f.label}</button>)}
+            </div>
+          </div>
+          {d.formato && (
+            <div style={{ marginBottom: 28, animation: "up .4s ease both" }}>
+              <span className="lbl">{d.formato === "documentario" ? "Tipologia" : "Genere"} <span style={{ fontSize: 13, marginLeft: 8, color: "var(--t4)", textTransform: "none", letterSpacing: 0 }}>— più di uno possibile</span></span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                {generiList.map(g => <button key={g.id} className={`chip ${generi.includes(g.id) ? "on" : ""}`} onClick={() => toggleGenere(g.id)}>{g.label}</button>)}
+              </div>
+            </div>
+          )}
+          <div style={{ marginBottom: 48 }}>
+            <span className="lbl">Ambizione</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {territori.map(t => <button key={t.id} className={`chip ${d.territorio === t.id ? "on" : ""}`} onClick={() => setD({ ...d, territorio: t.id })}>{t.label}</button>)}
+            </div>
+          </div>
+          <button className="btn" disabled={!ok} onClick={onNext}>Continua →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 4B: MAPPA SVILUPPO ───────────────────────────────────
+const SI_B = ({ d, chi, onNext }) => {
+  const [v, setV] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [expanded, setExpanded] = useState(null);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+
+  const TIPO_SV_COLOR = {
+    pubblico: { bg: "#4a8060", label: "Pubblico" },
+    europeo: { bg: "#4a6890", label: "Europeo" },
+    privato: { bg: "#8a6e3c", label: "Privato" },
+    regionale: { bg: "#6a5a3a", label: "Regionale" },
+  };
+  const STATO_SV_COLOR = {
+    ok: { c: "#4a8060", label: "Accessibile" },
+    attenzione: { c: "#c87c30", label: "Da valutare" },
+  };
+
+  const toggle = (id) => {
+    setSelected(prev => { const next = new Set(prev); if (next.has(id)) { next.delete(id); if (expanded === id) setExpanded(null); } else { next.add(id); setExpanded(id); } return next; });
+  };
+  const connesse = new Set();
+  selected.forEach(id => { const f = FONTI_SVILUPPO.find(x => x.id === id); if (f) f.connette.forEach(c => { if (!selected.has(c)) connesse.add(c); }); });
+
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={4} total={5} />
+      <div style={{ flex: 1, maxWidth: 820, margin: "0 auto", width: "100%", padding: "40px 40px", opacity: v ? 1 : 0, transition: "opacity .65s" }}>
+        <div style={{ marginBottom: 28 }}>
+          <Landmark n="4" label="Gli strumenti per sviluppare" />
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: 36, fontWeight: 300, lineHeight: 1.2, marginBottom: 10 }}>
+            Cosa esiste<br /><em style={{ color: "var(--green)" }}>per portare l'idea avanti.</em>
+          </h2>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.8, maxWidth: 580, fontWeight: 300 }}>
+            Non tutti questi strumenti si usano insieme — e non tutti sono adatti a ogni profilo. Selezionali per capire come si connettono e cosa richiedono.
+          </p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 10, marginBottom: 32 }}>
+          {FONTI_SVILUPPO.map(fonte => {
+            const isSel = selected.has(fonte.id);
+            const isConn = connesse.has(fonte.id);
+            const isExp = expanded === fonte.id;
+            const tc = TIPO_SV_COLOR[fonte.tipo] || TIPO_SV_COLOR.europeo;
+            const sc = STATO_SV_COLOR[fonte.gravita] || STATO_SV_COLOR.ok;
+            return (
+              <div key={fonte.id} onClick={() => toggle(fonte.id)} className={isConn && !isSel ? "tile-glow" : ""}
+                style={{ border: `1px solid ${isSel ? "var(--green)" : isConn ? "rgba(74,128,96,.35)" : "var(--b1)"}`, borderRadius: 5, background: isSel ? "var(--s2)" : "var(--s1)", cursor: "pointer", transition: "all .25s", overflow: "hidden" }}>
+                <div style={{ padding: "14px 16px 12px", borderBottom: isExp ? "1px solid var(--b1)" : "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, letterSpacing: ".18em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 2, background: `${tc.bg}28`, color: tc.bg }}>{tc.label}</span>
+                      {isConn && !isSel && <span style={{ fontSize: 13, color: "var(--green)", letterSpacing: ".1em" }}>↔ si connette</span>}
+                    </div>
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", border: `1.5px solid ${isSel ? "var(--green)" : "var(--b2)"}`, background: isSel ? "var(--green)" : "transparent", flexShrink: 0, marginTop: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {isSel && <span style={{ fontSize: 13, color: "#fff" }}>✓</span>}
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: isSel ? "var(--t1)" : "var(--t2)", marginBottom: 4, fontWeight: 400 }}>{fonte.nome}</div>
+                  <div style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t4)", lineHeight: 1.5 }}>{fonte.desc_breve}</div>
+                </div>
+                {isExp && (
+                  <div style={{ padding: "14px 16px 16px" }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, letterSpacing: ".2em", textTransform: "uppercase", color: "var(--t4)", marginBottom: 5 }}>Apporto / Valore</div>
+                      <div style={{ fontFamily: "var(--serif)", fontSize: 13, fontStyle: "italic", color: "var(--t2)" }}>{fonte.importo}</div>
+                    </div>
+                    <p style={{ fontSize: 13.5, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, marginBottom: 12 }}>{fonte.descrizione}</p>
+                    <div style={{ borderLeft: `2px solid ${sc.c}`, paddingLeft: 12 }}>
+                      <div style={{ fontSize: 13, letterSpacing: ".18em", textTransform: "uppercase", color: sc.c, marginBottom: 4 }}>{sc.label} · oggi</div>
+                      <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.75, fontWeight: 300 }}>{fonte.stato}</p>
+                    </div>
+                    {fonte.connette.length > 0 && <div style={{ marginTop: 10, fontSize: 13, color: "var(--t4)", fontStyle: "italic" }}>Si connette con: {fonte.connette.map(id => FONTI_SVILUPPO.find(x => x.id === id)?.nome).filter(Boolean).join(" · ")}</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 28 }}>
+          {Object.entries(TIPO_SV_COLOR).map(([k, v]) => <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}><div style={{ width: 8, height: 8, borderRadius: 2, background: v.bg }} /><span style={{ fontSize: 13, color: "var(--t4)", letterSpacing: ".1em" }}>{v.label}</span></div>)}
+        </div>
+        <div style={{ background: "var(--s1)", border: "1px solid var(--b2)", borderRadius: 6, padding: "24px 28px", marginBottom: 16 }}>
+          <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.85, fontWeight: 300 }}>
+            {selected.size === 0 ? "Seleziona gli strumenti che ritieni rilevanti per capire come si connettono e cosa richiedono concretamente." : `Hai selezionato: ${[...selected].map(id => FONTI_SVILUPPO.find(x => x.id === id)?.nome).filter(Boolean).join(", ")}. Continua per vedere l'analisi completa — inclusa la meccanica dell'opzione con il produttore.`}
+          </p>
+        </div>
+        <button className="btn" onClick={() => onNext([...selected])}>Continua →</button>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN 5B: IL PRODUTTORE E L'OPZIONE ────────────────────────
+const SI_C = ({ d, chi, sviluppoPick, onNext }) => {
+  const [v, setV] = useState(false);
+  const [tab, setTab] = useState("autore"); // "autore" | "produttore"
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+
+  const hasOpzione = sviluppoPick.includes("opzione_produttore");
+  const needsProduttore = sviluppoPick.some(id => ["mic_sviluppo", "creative_europe_sv", "eave"].includes(id));
+
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <Progress step={5} total={5} />
+      <div style={{ flex: 1, maxWidth: 720, margin: "0 auto", width: "100%", padding: "40px 40px", opacity: v ? 1 : 0, transition: "opacity .65s" }}>
+        <Landmark n="5" label="Il produttore — e cosa significa" />
+        <h2 style={{ fontFamily: "var(--serif)", fontSize: 36, fontWeight: 300, lineHeight: 1.2, marginBottom: 10 }}>
+          Il produttore non è<br /><em style={{ color: "var(--green)" }}>un salvatore. È un partner.</em>
+        </h2>
+        <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.8, marginBottom: 32, fontWeight: 300 }}>
+          Capire cosa significa per te — e cosa significa per lui — è il primo passo per negoziare alla pari.
+        </p>
+
+        {/* Tab selector */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 28, border: "1px solid var(--b2)", borderRadius: 4, overflow: "hidden" }}>
+          {[{ id: "autore", label: "Cosa significa per te" }, { id: "produttore", label: "Cosa significa per lui" }].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: "12px 20px", background: tab === t.id ? "var(--s2)" : "transparent", border: "none", borderRight: t.id === "autore" ? "1px solid var(--b2)" : "none", color: tab === t.id ? "var(--t1)" : "var(--t3)", fontFamily: "var(--sans)", fontSize: 13, letterSpacing: ".1em", cursor: "pointer", transition: "all .2s" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "autore" && (
+          <div className="au">
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 28 }}>
+              {[
+                { titolo: "Il produttore non sviluppa ogni idea", corpo: "Alcuni produttori italiani cercano attivamente idee allo stadio embrionale — Vivo Film, Tempesta, BiBi Film. Ma la maggior parte vuole vedere un trattamento o una sceneggiatura. Sapere chi fa cosa ti evita mesi di email senza risposta." },
+                { titolo: "L'opzione non è un contratto definitivo", corpo: "Firmare un'opzione significa cedere l'esclusiva per un periodo determinato (tipicamente 12–18 mesi). Se il produttore non produce il film entro quel periodo, i diritti tornano a te. Ma controlla sempre la clausola di rinnovo — spesso automatica — e la durata totale massima." },
+                { titolo: "Il compenso dell'opzione", corpo: "Per un'opera prima italiana: tipicamente €500–2.000 simbolici. Per un autore con track record: €3.000–15.000. Per un progetto con cast già interessato o forte potenziale commerciale: fino a €50.000. La cifra è negoziabile — ma il potere di negoziazione dipende dal tuo profilo e dalla fame del produttore per quel progetto." },
+                { titolo: "L'opzione non è il pagamento finale", corpo: "Il pagamento dell'opzione è separato dal compenso per la sceneggiatura (se sei anche lo sceneggiatore) e dall'eventuale quota di produzione (se diventi co-produttore). Tieni separate le tre voci — confonderle è uno degli errori più comuni nella trattativa." },
+              ].map((item, i) => (
+                <div key={i} style={{ padding: "16px 20px", background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: 4, borderLeft: "2px solid var(--green)" }}>
+                  <div style={{ fontSize: 13, color: "var(--green)", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 6 }}>{item.titolo}</div>
+                  <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>{item.corpo}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Range opzioni visualizzato */}
+            <div style={{ background: "var(--s1)", border: "1px solid var(--b2)", borderRadius: 6, padding: "20px 24px", marginBottom: 0 }}>
+              <span className="lbl">Range compenso opzione — opera prima italiana (2025–26)</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {[
+                  { label: "Autore sconosciuto, prima opera", range: "€0 – €2.000", note: "spesso simbolico o in servizi", color: "var(--t4)" },
+                  { label: "Autore con cortometraggi premiati o festival", range: "€1.000 – €5.000", note: "dipende dal progetto", color: "var(--amber)" },
+                  { label: "Autore con un titolo precedente o cast interessato", range: "€5.000 – €20.000", note: "negoziabile", color: "var(--gold)" },
+                  { label: "Progetto con forte potenziale commerciale / IP noto", range: "€20.000 – €50.000+", note: "raro per opera prima", color: "var(--green)" },
+                ].map((r, i) => (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, padding: "10px 14px", background: "var(--s2)", borderRadius: 3, borderLeft: `2px solid ${r.color}` }}>
+                    <div>
+                      <div style={{ fontSize: 13, color: "var(--t2)", marginBottom: 2 }}>{r.label}</div>
+                      <div style={{ fontSize: 13, color: "var(--t4)", fontStyle: "italic" }}>{r.note}</div>
+                    </div>
+                    <div style={{ fontFamily: "var(--serif)", fontSize: 13, fontStyle: "italic", color: r.color, textAlign: "right", alignSelf: "center" }}>{r.range}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "produttore" && (
+          <div className="au">
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 28 }}>
+              {[
+                { titolo: "Cosa rischia il produttore", corpo: "Quando un produttore sviluppa un'idea, investe tempo e denaro senza garanzia di risultato. Lo sviluppo di una sceneggiatura costa tra €20.000 e €80.000 tra pagamenti all'autore, viaggi, consulenze, bandi. La maggior parte dei film non arriva mai in produzione. Per ogni film prodotto, un produttore ha nel cassetto 3–5 progetti sviluppati e mai fatti." },
+                { titolo: "Il produttore non ti fa un favore", corpo: "Sviluppare il tuo film è un investimento per lui — o almeno dovrebbe esserlo. Se un produttore ti propone di lavorare 'per visibilità' o senza compenso di opzione, o non crede davvero nel progetto, o non ha le risorse per farlo bene. Entrambe le cose sono problemi." },
+                { titolo: "Perché alcuni produttori preferiscono le idee", corpo: "I produttori che lavorano su idee hanno più controllo creativo e più tempo per costruire il film. Quelli che comprano sceneggiature già pronte pagano di più ma assumono meno rischio. Capire in quale categoria si trova il tuo interlocutore ti dice molto su cosa puoi chiedere — e cosa lui si aspetta." },
+                { titolo: "Cosa significa per lui l'opzione", corpo: "Il pagamento dell'opzione è il prezzo del controllo esclusivo. Più paga, più è motivato a muoversi velocemente. Un'opzione simbolica (€500) può significare un produttore che non è sicuro del progetto ma non vuole perderlo. Uno strumento mappato ti permetterebbe di vedere lo storico dei film sviluppati e prodotti da ogni casa — oggi quelle informazioni non sono accessibili." },
+              ].map((item, i) => (
+                <div key={i} style={{ padding: "16px 20px", background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: 4, borderLeft: "2px solid var(--amber)" }}>
+                  <div style={{ fontSize: 13, color: "var(--amber)", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 6 }}>{item.titolo}</div>
+                  <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>{item.corpo}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Preview produttori locked */}
+            <div style={{ border: "1px solid var(--b2)", borderRadius: 6, overflow: "hidden" }}>
+              <div style={{ background: "var(--s2)", padding: "14px 20px", borderBottom: "1px solid var(--b1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 13, letterSpacing: ".22em", textTransform: "uppercase", color: "var(--t4)", marginBottom: 3 }}>Funzione disponibile nel sistema completo</div>
+                  <div style={{ fontSize: 14, color: "var(--t2)" }}>Panorama produttori italiani per opere prime</div>
+                </div>
+                <div style={{ fontSize: 13, color: "var(--t4)", border: "1px solid var(--b2)", borderRadius: 3, padding: "4px 10px", letterSpacing: ".1em" }}>COMING SOON</div>
+              </div>
+              <div style={{ padding: "16px 20px" }}>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, marginBottom: 14 }}>
+                  Nel sistema completo: panorama filtrato per produttori che lavorano su idee e soggetti, con storico dei film sviluppati, approccio al primo contatto, disponibilità al co-sviluppo, tipico compenso di opzione offerto, e track record rispetto ai fondi italiani ed europei.
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {[
+                    { nome: "Vivo Film", tag: "Lavora su idee · Roma", open: true },
+                    { nome: "Tempesta Film", tag: "Sviluppo dall'idea · Milano", open: true },
+                    { nome: "BiBi Film", tag: "Storica · aperta a soggetti", open: true },
+                    { nome: "Indigo Film", tag: "Portfolio misto · internazionale", open: true },
+                    { nome: "Fandango", tag: "Dati accesso bloccato", open: false },
+                    { nome: "Colorado Film", tag: "Dati accesso bloccato", open: false },
+                  ].map((p, i) => (
+                    <div key={i} style={{ padding: "10px 12px", background: "var(--s2)", borderRadius: 3, border: "1px solid var(--b1)", opacity: p.open ? 1 : .4 }}>
+                      <div style={{ fontSize: 13, color: "var(--t1)", marginBottom: 2 }}>{p.nome}</div>
+                      <div style={{ fontSize: 13, color: "var(--t4)" }}>{p.tag}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 32 }}>
+          <button className="btn" onClick={onNext}>Vai alla sintesi →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── SCREEN END B: END CARD IDEA ─────────────────────────────────
+const SI_End = ({ chi, progetto, idea, sviluppoPick, onRestart, onPitch }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  const fontiScelte = sviluppoPick.map(id => FONTI_SVILUPPO.find(f => f.id === id)).filter(Boolean);
+  const formatoLabel = { lungometraggio: "Lungometraggio", documentario: "Documentario", serie: "Serie", cortometraggio: "Cortometraggio", animazione: "Animazione" };
+
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ flex: 1, maxWidth: 760, margin: "0 auto", width: "100%", padding: "44px 40px", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <Landmark n="5" label="La tua sintesi — percorso sviluppo" />
+        <h2 style={{ fontFamily: "var(--serif)", fontSize: 40, fontWeight: 300, lineHeight: 1.15, marginBottom: 8 }}>
+          <em style={{ color: "var(--green)" }}>"{progetto?.titolo}"</em><br />può prendere forma.
+        </h2>
+        <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.8, marginBottom: 36, fontWeight: 300, maxWidth: 520 }}>
+          Hai mappato gli strumenti per sviluppare la tua idea e capito cosa significa portare un produttore nel progetto — prima di qualsiasi trattativa. Questo ti mette in una posizione diversa.
+        </p>
+
+        {/* Profilo idea */}
+        <div style={{ background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: 6, padding: "20px 24px", marginBottom: 24 }}>
+          <span className="lbl">Il profilo dell'idea</span>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 28px" }}>
+            {[
+              ["Titolo", <em>"{progetto?.titolo}"</em>],
+              ["Stadio", { idea: "Idea / Soggetto", trattamento: "Trattamento" }[progetto?.stadio] || progetto?.stadio],
+              ["Formato previsto", formatoLabel[idea?.formato]],
+              ["Genere", Array.isArray(idea?.generi) ? idea.generi.map(g => g.replace(/^(doc_|anim_)/,"").replace(/_/g," ")).join(", ") : "—"],
+              ["Ambizione", idea?.territorio],
+            ].map(([k, val], i) => (
+              <div key={i}>
+                <div style={{ fontSize: 13, letterSpacing: ".2em", color: "var(--t4)", textTransform: "uppercase", marginBottom: 2 }}>{k}</div>
+                <div style={{ fontSize: 13, color: "var(--t2)", fontFamily: typeof val === "object" ? "var(--serif)" : "var(--sans)", fontStyle: typeof val === "object" ? "italic" : "normal" }}>{val}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Strumenti esplorati */}
+        {fontiScelte.length > 0 && (
+          <div style={{ background: "var(--s1)", border: "1px solid var(--b2)", borderRadius: 8, padding: "24px 28px", marginBottom: 24 }}>
+            <span className="lbl">Strumenti di sviluppo esplorati</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {fontiScelte.map((f, i) => {
+                const tc = { pubblico: "#4a8060", europeo: "#4a6890", privato: "#8a6e3c", regionale: "#6a5a3a" };
+                return (
+                  <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "var(--s2)", borderRadius: 4, border: "1px solid var(--b1)" }}>
+                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--green)", flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: "var(--t1)" }}>{f.nome}</div>
+                      <div style={{ fontSize: 13, color: "var(--t4)" }}>{f.importo}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Consapevolezza — non prescrizione */}
+        <div style={{ marginBottom: 24 }}>
+          <span className="lbl">Cosa significa questo percorso — in termini reali</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {sviluppoPick.includes("torino_lab") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--green)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--green)", marginBottom: 5 }}>TorinoFilmLab</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>La scadenza è a novembre per la sessione seguente. Il materiale richiesto: sinossi (1 pag), nota di regia (2 pag), trattamento (10–15 pag), CV autore. Il selezionato ottiene tutoring e visibilità a mercati internazionali — ma non finanziamento diretto. È un investimento in relazioni, non in budget.</p>
+              </div>
+            )}
+            {sviluppoPick.includes("biennale_college") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--green)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--green)", marginBottom: 5 }}>Biennale College Cinema</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Uno dei rari percorsi che porta un'idea direttamente in produzione, con fino a €100k. Richiede regista + sceneggiatore (possono essere la stessa persona), nessun produttore richiesto. Budget film: max €150k. Scadenza: aprile/maggio. Selectivity rate bassissima — ma se sei selezionato, salti molti passaggi del sistema tradizionale.</p>
+              </div>
+            )}
+            {sviluppoPick.includes("creative_europe_svil") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--blue)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--blue)", marginBottom: 5 }}>Creative Europe Sviluppo</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>Richiede una società di produzione come richiedente — non puoi applicare direttamente come autore. Se hai un produttore, questo è il fondo che copre la fase di sviluppo prima della produzione. I tempi: domanda → esito: 4–6 mesi. Il documento che scrivi per questa domanda vale per tutte le domande europee successive.</p>
+              </div>
+            )}
+            {sviluppoPick.includes("opzione_produttore") && (
+              <div style={{ padding: "14px 18px", background: "var(--s1)", borderLeft: "2px solid var(--amber)", borderRadius: "0 4px 4px 0" }}>
+                <div style={{ fontSize: 13, letterSpacing: ".14em", textTransform: "uppercase", color: "var(--amber)", marginBottom: 5 }}>Opzione Produttore</div>
+                <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>L'opzione è il momento in cui il sistema smette di essere teoria. Il produttore paga per il diritto esclusivo di sviluppare il progetto — solitamente 6–18 mesi. L'importo dell'opzione segnala quanto ci crede davvero. Un'opzione simbolica (€500–1k) può significare interesse tiepido. Un'opzione seria (€5k–20k) significa che ha budget e intenzione.</p>
+              </div>
+            )}
+            <div style={{ padding: "14px 18px", background: "var(--s2)", border: "1px solid var(--b1)", borderRadius: 4 }}>
+              <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, fontStyle: "italic" }}>
+                Questi strumenti non sono un percorso obbligato — sono un panorama. Puoi scegliere di seguire la strada più rapida verso la produzione, o quella che costruisce meglio la tua carriera nel lungo periodo. Entrambe le scelte sono legittime — ma è importante che tu le stia facendo consapevolmente.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--b1)", margin: "36px 0" }} />
+        <div style={{ fontFamily: "var(--serif)", fontSize: 22, fontStyle: "italic", color: "var(--t1)", marginBottom: 16 }}>La simulazione è conclusa.</div>
+        <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.8, marginBottom: 28, fontWeight: 300, maxWidth: 480 }}>
+          Quello che hai visto funziona su logiche approssimate. Il sistema reale includerebbe bandi aggiornati in tempo reale, profili dettagliati dei produttori, storico dei contratti di opzione, e connessioni live ai laboratori aperti.
+        </p>
+        <EndButtons onRestart={onRestart} onPitch={onPitch} />
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH — PROPOSTA
+// ══════════════════════════════════════════════════════════════════
+
+// ─── Shared back button ───────────────────────────────────────────
+const BackBtn = ({ onClick, label = "← Indietro" }) => (
+  <button
+    onClick={onClick}
+    style={{ background: "none", border: "none", color: "var(--t3)", fontFamily: "var(--sans)", fontSize: "13px", letterSpacing: ".08em", cursor: "pointer", padding: "0", marginBottom: "36px", display: "inline-block", transition: "color .2s" }}
+    onMouseEnter={e => e.target.style.color = "var(--t1)"}
+    onMouseLeave={e => e.target.style.color = "var(--t3)"}
+  >{label}</button>
+);
+
+// ─── Pitch step indicator ─────────────────────────────────────────
+const PitchNav = ({ current, total }) => (
+  <div style={{ display: "flex", gap: "6px", marginBottom: "40px" }}>
+    {Array.from({ length: total }).map((_, i) => (
+      <div key={i} style={{ width: i === current ? "24px" : "6px", height: "2px", borderRadius: "1px", background: i === current ? "var(--gold)" : i < current ? "var(--gold2)" : "var(--b2)", transition: "all .3s" }} />
+    ))}
+  </div>
+);
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH 0: INTRO (S_Bridge)
+// ══════════════════════════════════════════════════════════════════
+const S_Bridge = ({ onNext, onBack }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  return (
+    <div className="screen" style={{ background: "var(--bg)", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ maxWidth: "min(760px, 92vw)", width: "100%", padding: "32px clamp(24px, 5vw, 64px)", opacity: v ? 1 : 0, transform: v ? "none" : "translateY(16px)", transition: "all .8s ease" }}>
+        <BackBtn onClick={onBack} />
+        <PitchNav current={0} total={5} />
+        <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "20px" }}>Il progetto</div>
+        <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(28px, 3.2vw, 38px)", fontWeight: 300, lineHeight: 1.2, color: "var(--t1)", marginBottom: "24px" }}>
+          Un sistema per ridare<br />controllo e spazio<br /><em style={{ color: "var(--gold)" }}>agli autori.</em>
+        </h2>
+        <p style={{ fontFamily: "var(--sans)", fontSize: "15px", color: "var(--t2)", lineHeight: 1.85, marginBottom: "14px", fontWeight: 300 }}>
+          Il sistema di finanziamento cinematografico italiano è estremamente nebuloso e complesso. Per i produttori è un mare in tempesta a stento navigabile, per gli autori un labirinto all'interno del quale è impossibile districarsi.
+        </p>
+        <p style={{ fontFamily: "var(--sans)", fontSize: "15px", color: "var(--t2)", lineHeight: 1.85, marginBottom: "14px", fontWeight: 300 }}>
+          Registi e sceneggiatori affrontano da soli un sistema di 21 Film Commission, 8 linee MiC, bandi europei e meccaniche broadcaster che cambiano ogni anno. Questo caos ha come conseguenza una perdita di agency da parte degli autori nei confronti del proprio lavoro e della propria carriera.
+        </p>
+        <p style={{ fontFamily: "var(--sans)", fontSize: "15px", color: "var(--t2)", lineHeight: 1.85, marginBottom: "32px", fontWeight: 300 }}>
+          Quello che segue è una proposta di mappatura del sistema cinema, con l'intento di renderne visibili i meccanismi, per contrastare il dilagante senso di impotenza che circonda questo settore — presentandosi come uno strumento addizionale per lavorare in modo concreto e strutturato verso un orizzonte di possibilità.
+        </p>
+        <button className="btn" onClick={onNext}>Il sistema completo →</button>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH 1: IL PRODOTTO FINITO (S_P1) — due step interni
+// ══════════════════════════════════════════════════════════════════
+const S_P1 = ({ onNext, onBack }) => {
+  const [v, setV] = useState(false);
+  const [step, setStep] = useState(0); // 0=intro, 1=moduli
+  const [open, setOpen] = useState(null);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+
+  const MODULI = [
+    {
+      id: "mappa", label: "Mappa completa del finanziamento", color: "var(--gold)",
+      sub: "22 Film Commission · 8 linee MiC · 6 fondi europei · broadcast",
+      dettaglio: [
+        "Tutte le 21 Film Commission attive in Italia, con bandi live, requisiti di spesa locale, importi medi per tipo di progetto, scadenze storiche e frequenza dei bandi.",
+        "Fondo Cinema MiC: Tax Credit interno (40%), Tax Credit esterno (18%), Contributi Selettivi produzione (€37M/anno 2025), Contributi Automatici, Sviluppo e preproduzione, Coproduzioni minoritarie.",
+        "Fondi europei: Creative Europe MEDIA (sviluppo, distribuzione, coproduzione, strumenti digitali), Eurimages, Europa Creativa Cultura.",
+        "Broadcast: RAI Cinema, SKY, Netflix Italia, Mediaset — con le clausole di esclusività tipiche e le finestre di sfruttamento.",
+        "Fondi privati: Agenti di vendita internazionali, fondi di private equity culturale, investitori privati con credito d'imposta esterno."
+      ]
+    },
+    {
+      id: "schemi", label: "Schemi reali di finanziamento 2020–2024", color: "var(--amber)",
+      sub: "Come i film italiani sono stati effettivamente finanziati",
+      dettaglio: [
+        "Nel 2023: 402 film italiani prodotti. Il 32% del budget medio veniva da tax credit. Contributi selettivi: €32M distribuiti su 162 progetti.",
+        "Tipologia A — Film autoriale internazionale (€1–4M): Tax Credit + Eurimages + Creative Europe + Film Commission + presale estero.",
+        "Tipologia B — Film autoriale italiano (€500k–1,5M): Tax Credit + Contributi Selettivi + Film Commission + RAI Cinema.",
+        "Tipologia C — Opera prima a basso budget (€200–500k): Biennale College o TorinoFilmLab + Film Commission + tax credit.",
+        "Tipologia D — Documentario (€80–300k): Fondi scrittura MiC + Film Commission + Creative Europe + distributore specializzato.",
+        "Caso 'C'è ancora domani': zero contributi selettivi, budget ~€2M, incasso €36M. Caso 'Siccità': €4,4M selettivi, incasso €1,8M."
+      ]
+    },
+    {
+      id: "produttori", label: "Database produttori italiani", color: "var(--green)",
+      sub: "Filtrato per approccio, genere, budget, primo contatto",
+      dettaglio: [
+        "Per ogni casa di produzione: generi preferiti, budget tipico, modalità di primo contatto, approccio alle opere prime.",
+        "Distinzione fondamentale: chi lavora su idee (sviluppo dall'inizio) vs chi vuole sceneggiature pronte. Mercati diversi, aspettative e compensi diversi.",
+        "Storico track record: film prodotti negli ultimi 5 anni, fondi ottenuti, festival, distribuzione. I dati sostituiscono le reputazioni.",
+        "Clausole tipiche dei contratti di opzione per profilo autore: range compenso, durata, diritti ceduti, cosa succede se il film non viene prodotto.",
+        "Produttori aperti alle coproduzioni europee vs produttori localizzati nel mercato italiano."
+      ]
+    },
+    {
+      id: "simulatore", label: "Simulatore di fattibilità e tempistiche", color: "var(--blue)",
+      sub: "Dato il tuo profilo e il tuo film: probabilità reale e timeline",
+      dettaglio: [
+        "Input: formato, budget, esperienza autore, presenza/assenza produttore, territorio narrativo. Output: probabilità stimata per ogni fondo, timeline realistica.",
+        "Scenario A (18–24 mesi): tax credit + Film Commission + MG distributore anticipata.",
+        "Scenario B (24–36 mesi): contributi selettivi + Creative Europe + Eurimages.",
+        "Scenario C (12–18 mesi): Biennale College o TorinoFilmLab → produzione scalata.",
+        "La funzione più importante: mostrare come le scelte creative impattano la fattibilità — prima ancora di presentarsi al produttore."
+      ]
+    },
+    {
+      id: "contratti", label: "Meccanica contrattuale e diritti", color: "#7a50a0",
+      sub: "Opzioni, compensi, cessioni — cosa significano in pratica",
+      dettaglio: [
+        "Glossario vivo: cosa è un'opzione vs un'acquisizione, cessione esclusiva vs non esclusiva, 'net profit' in un contratto cinematografico italiano.",
+        "Range reali dei compensi di opzione per profilo: €0–2k (sconosciuto), €1k–5k (cortometraggi), €5k–20k (track record), €20k–50k+ (alto potenziale).",
+        "Clausole da negoziare: durata, diritto di primo adattamento, compenso sceneggiatura, quota utili, crediti.",
+        "Red flag: opzioni senza compenso, cessioni a tempo indeterminato, clausole di proprietà intellettuale sul materiale sviluppato."
+      ]
+    },
+    {
+      id: "alert", label: "Sistema di aggiornamento e alert", color: "var(--t2)",
+      sub: "I fondi cambiano. Il sistema resta vero.",
+      dettaglio: [
+        "I bandi MiC aprono e chiudono irregolarmente. Nel 2024 bloccati per quasi un anno. Nel 2025 le regole del tax credit sono cambiate radicalmente. Senza aggiornamento, una mappa statica diventa fuorviante in pochi mesi.",
+        "Il sistema monitora: apertura nuovi bandi, modifica requisiti, variazioni ai budget pubblici (taglio da €700M a €610M nel 2026, poi €500M dal 2027).",
+        "Alert personalizzati per profilo: se una call rilevante per il tuo progetto apre, il sistema lo segnala. Non devi più monitorare 20 fonti.",
+        "Storico delle variazioni normative: per capire i pattern, anticipare i cicli, costruire piani che resistano all'incertezza legislativa."
+      ]
+    },
+  ];
+
+  if (step === 0) {
+    return (
+      <div className="screen" style={{ background: "var(--bg)" }}>
+        <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+          <BackBtn onClick={onBack} />
+          <PitchNav current={1} total={5} />
+          <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "20px" }}>1 di 5 — Il sistema</div>
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(30px, 3.5vw, 42px)", fontWeight: 300, lineHeight: 1.15, color: "var(--t1)", marginBottom: "36px" }}>
+            Il prodotto finito.<br /><em style={{ color: "var(--gold)" }}>Cosa mappa, cosa dice, cosa cambia.</em>
+          </h2>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "22px", fontWeight: 300 }}>
+            Non uno strumento di ricerca — un'infrastruttura di consapevolezza. L'autore che usa questo sistema non ottiene risposte preconfezionate: ottiene la capacità di leggere il sistema in prima persona, valutare le proprie opzioni e portare dati concreti a ogni conversazione con produttori, distributori e istituzioni.
+          </p>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "48px", fontWeight: 300 }}>
+            Da anni gli autori sentono dire che fare film è impossibile. Nel frattempo i film escono. Il sistema può essere bloccato — ma se è bloccato, almeno deve essere bloccato per tutti, in modo trasparente. La differenza tra chi riesce e chi no non è quasi mai solo il talento: spesso è l'informazione. Questo sistema restituisce quell'informazione a chi ne ha diritto.
+          </p>
+          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <button className="btn" onClick={() => setStep(1)}>Scopri i moduli →</button>
+            <button className="btn-o" onClick={onNext}>Salta alle fasi →</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <BackBtn onClick={() => setStep(0)} label="← Torna al testo" />
+        <PitchNav current={1} total={5} />
+        <div className="pitch-2col" style={{ alignItems: "start" }}>
+          {/* Left: header + intro */}
+          <div style={{ position: "sticky", top: "40px" }}>
+            <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "16px" }}>1 di 5 — I moduli</div>
+            <h3 style={{ fontFamily: "var(--serif)", fontSize: "clamp(26px, 3vw, 34px)", fontWeight: 300, color: "var(--t1)", marginBottom: "16px", lineHeight: 1.2 }}>Sei aree di conoscenza.</h3>
+            <p style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.8, marginBottom: "28px", fontWeight: 300 }}>Clicca ogni modulo per entrare nel dettaglio e vedere cosa includerebbe il sistema reale.</p>
+            <button className="btn" onClick={onNext} style={{ display: "none" }} />
+          </div>
+          {/* Right: accordion list */}
+          <div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "28px" }}>
+              {MODULI.map(m => (
+                <div key={m.id} style={{ border: `1px solid ${open === m.id ? m.color + "60" : "var(--b1)"}`, borderRadius: "5px", overflow: "hidden", transition: "border-color .2s" }}>
+                  <div onClick={() => setOpen(open === m.id ? null : m.id)}
+                    style={{ padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", background: open === m.id ? "var(--s2)" : "var(--s1)" }}>
+                    <div>
+                      <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "4px" }}>
+                        <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: m.color, flexShrink: 0 }} />
+                        <span style={{ fontSize: "14px", color: "var(--t1)", fontFamily: "var(--sans)" }}>{m.label}</span>
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--t4)", paddingLeft: "17px" }}>{m.sub}</div>
+                    </div>
+                    <span style={{ color: "var(--t4)", fontSize: "18px", transition: "transform .2s", transform: open === m.id ? "rotate(45deg)" : "none", marginLeft: "12px", flexShrink: 0 }}>+</span>
+                  </div>
+                  {open === m.id && (
+                    <div style={{ padding: "18px 26px 22px", borderTop: `1px solid ${m.color}25` }}>
+                      <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {m.dettaglio.map((d, i) => (
+                          <li key={i} style={{ display: "flex", gap: "12px", fontSize: "14px", color: "var(--t3)", lineHeight: 1.8, fontWeight: 300 }}>
+                            <span style={{ color: m.color, flexShrink: 0, marginTop: "3px" }}>◎</span>
+                            <span>{d}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="btn" onClick={onNext}>Come si costruisce →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH 2: LE FASI (S_P2) — step interno per ogni fase
+// ══════════════════════════════════════════════════════════════════
+const S_P2 = ({ onNext, onBack }) => {
+  const [v, setV] = useState(false);
+  const [step, setStep] = useState(0); // 0=overview, 1=fase0, 2=fase1, 3=fase2
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+
+  const FASI = [
+    {
+      n: "0", label: "Prototipo validato", budget: "€10k cash + €5k in-kind", durata: "10 settimane", color: "var(--gold)",
+      intro: "La prima fase produce qualcosa di tangibile e verificabile — non un prototipo generico, ma un sistema connesso a dati reali, testato con autori reali.",
+      steps: [
+        { wk: "1–3", t: "Mappatura verificata", d: "Tutti i fondi attivi — 21 Film Commission, 8 linee MiC, Creative Europe, Eurimages — con normativa vigente su fonte primaria. Zero stime, solo dati verificati." },
+        { wk: "4–6", t: "Architettura e dossier metodologico", d: "Come il sistema ragiona: connessioni tra fondi, esclusioni, logica di profilazione per tipo di autore. Questo documento è il prerequisito per la domanda Creative Europe." },
+        { wk: "7–9", t: "Prototipo interattivo su dati reali", d: "Un sistema navigabile connesso ai dati verificati. Testato con 20–30 autori reali — profili diversi, feedback documentato, problemi annotati." },
+        { wk: "10", t: "Report di validazione", d: "Cosa funziona, cosa va calibrato, quali profili trovano più valore. Più il dossier completo per Creative Europe MEDIA." },
+      ]
+    },
+    {
+      n: "1", label: "Database + modello AI", budget: "€25k–45k", durata: "3–4 mesi", color: "var(--t2)",
+      intro: "Finanziata da Creative Europe MEDIA con il dossier prodotto in Fase 0, questa fase porta il sistema da prototipo a infrastruttura reale.",
+      steps: [
+        { wk: null, t: "Dati strutturati e aggiornabili", d: "Architettura database con semi-aggiornamento automatico da fonti ufficiali (DG Cinema, Film Commission, EACEA). Il dato non è più statico." },
+        { wk: null, t: "Fine-tuning AI sul corpus normativo", d: "Il modello viene addestrato su decreti, bandi, regolamenti, piani finanziari verificati. Il sistema ragiona sulle combinazioni — non elenca fonti." },
+        { wk: null, t: "Finanziamento", d: "Domanda Creative Europe MEDIA presentata con il dossier di Fase 0. Il prototipo validato è la prova di concept necessaria." },
+      ]
+    },
+    {
+      n: "2", label: "Piattaforma completa", budget: "€50k–95k", durata: "4–6 mesi", color: "var(--t3)",
+      intro: "La piattaforma completa con profili utente, database produttori verificato e il modello di revenue che rende il sistema sostenibile nel tempo.",
+      steps: [
+        { wk: null, t: "Profili utente e percorsi salvati", d: "L'autore costruisce il suo piano nel tempo, lo aggiorna, lo esporta come documento per le trattative." },
+        { wk: null, t: "Database produttori completo", d: "Profili verificati, aggiornati, con track record reale. Filtri per genere, budget, apertura alle opere prime." },
+        { wk: null, t: "Revenue da Film Commission e produttori", d: "Modello B2B attivo. Il sistema diventa autosufficiente. Gratuito per gli autori — strutturalmente, non come concessione." },
+      ]
+    },
+  ];
+
+  const goStep = n => { window.scrollTo({ top: 0, behavior: "smooth" }); setStep(n); };
+
+  if (step === 0) {
+    return (
+      <div className="screen" style={{ background: "var(--bg)" }}>
+        <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+          <BackBtn onClick={onBack} />
+          <PitchNav current={2} total={5} />
+          <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "20px" }}>2 di 5 — Le fasi</div>
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(30px, 3.5vw, 42px)", fontWeight: 300, lineHeight: 1.15, color: "var(--t1)", marginBottom: "32px" }}>
+            Come si costruisce.<br /><em style={{ color: "var(--gold)" }}>Una fase alla volta, con prove di funzionamento.</em>
+          </h2>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "44px", fontWeight: 300 }}>
+            Il sistema si costruisce in fasi verificabili — ogni fase produce qualcosa di tangibile e giustifica quella successiva. Non si chiede mai di credere in quello che ancora non esiste. Clicca su ogni fase per vedere il dettaglio.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "40px" }}>
+            {FASI.map((fase, idx) => (
+              <div key={fase.n}
+                onClick={() => goStep(idx + 1)}
+                style={{ border: "1px solid var(--b2)", borderRadius: "6px", padding: "22px 26px", cursor: "pointer", background: "var(--s1)", transition: "all .2s", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = fase.color; e.currentTarget.style.background = "var(--s2)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--b2)"; e.currentTarget.style.background = "var(--s1)"; }}
+              >
+                <div style={{ display: "flex", gap: "18px", alignItems: "center" }}>
+                  <div style={{ width: "32px", height: "32px", borderRadius: "50%", border: `1px solid ${fase.color}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", color: fase.color, flexShrink: 0 }}>{fase.n}</div>
+                  <div>
+                    <div style={{ fontSize: "15px", color: "var(--t1)", marginBottom: "4px" }}>Fase {fase.n} — {fase.label}</div>
+                    <div style={{ fontSize: "13px", color: "var(--t4)" }}>{fase.durata}</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontFamily: "var(--serif)", fontSize: "16px", fontStyle: "italic", color: fase.color }}>{fase.budget}</div>
+                  <div style={{ fontSize: "12px", color: "var(--t4)", marginTop: "4px" }}>dettaglio →</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn" onClick={onNext}>Chi lo finanzia →</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const fase = FASI[step - 1];
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <BackBtn onClick={() => goStep(0)} label="← Tutte le fasi" />
+        <PitchNav current={2} total={5} />
+        <div style={{ display: "flex", gap: "14px", alignItems: "center", marginBottom: "28px" }}>
+          <div style={{ width: "36px", height: "36px", borderRadius: "50%", border: `1px solid ${fase.color}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "15px", color: fase.color, flexShrink: 0 }}>{fase.n}</div>
+          <div>
+            <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".28em", color: "var(--t4)", textTransform: "uppercase" }}>Fase {fase.n}</div>
+            <div style={{ fontFamily: "var(--serif)", fontSize: "24px", fontWeight: 300, color: "var(--t1)" }}>{fase.label}</div>
+          </div>
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ fontFamily: "var(--serif)", fontSize: "20px", fontStyle: "italic", color: fase.color }}>{fase.budget}</div>
+            <div style={{ fontSize: "12px", color: "var(--t4)", marginTop: "2px" }}>{fase.durata}</div>
+          </div>
+          <button onClick={() => goStep(0)} title="Chiudi" style={{ background: "none", border: "1px solid var(--b2)", borderRadius: "50%", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--t3)", cursor: "pointer", fontSize: "16px", flexShrink: 0, marginLeft: "8px", transition: "all .2s" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--t2)"; e.currentTarget.style.color = "var(--t1)"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--b2)"; e.currentTarget.style.color = "var(--t3)"; }}>×</button>
+        </div>
+        <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.9, marginBottom: "32px", fontWeight: 300, borderLeft: `3px solid ${fase.color}40`, paddingLeft: "20px" }}>
+          {fase.intro}
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+          {fase.steps.map((s, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: s.wk ? "80px 1fr" : "1fr", gap: "0 16px", padding: "18px 0", borderBottom: i < fase.steps.length - 1 ? "1px solid var(--b1)" : "none" }}>
+              {s.wk && <div style={{ fontSize: "12px", color: fase.color, letterSpacing: ".12em", fontWeight: 500, paddingTop: "2px" }}>Sett. {s.wk}</div>}
+              <div>
+                <div style={{ fontSize: "15px", color: "var(--t2)", marginBottom: "6px" }}>{s.t}</div>
+                <div style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.8 }}>{s.d}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: "10px", justifyContent: step > 1 ? "space-between" : "flex-end", marginTop: "36px" }}>
+          {step > 1 && <button className="btn-o" onClick={() => goStep(step - 1)}>← Fase precedente</button>}
+          {step < FASI.length
+            ? <button className="btn-o" onClick={() => goStep(step + 1)}>Fase successiva →</button>
+            : <button className="btn" onClick={onNext}>Chi lo finanzia →</button>
+          }
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH 3: CHI HA INTERESSE (S_P3)
+// ══════════════════════════════════════════════════════════════════
+const S_P3 = ({ onNext, onBack }) => {
+  const [v, setV] = useState(false);
+  const [open, setOpen] = useState(null);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  const SK = [
+    {
+      id: "100autori", nome: "100autori", tag: "Partner fondatore · mandato diretto", color: "#c8a86c",
+      interesse: "Istituzionale + di mandato",
+      perche: "100autori ha già un Ufficio Studi che produce ricerche sul mercato audiovisivo, e ha già costruito 'Sceneggiature Italiane' — un database digitale di copioni. Il precedente esiste. Questo strumento è la versione più ambiziosa di quello che l'associazione già fa.",
+      guadagno: "Posizionamento come motore di innovazione. Servizio concreto per i 1000+ soci. Credibilità per accedere a fondi europei come co-richiedente. Capacità di negoziare con MiC e broadcaster portando dati reali al tavolo.",
+      come: "Co-firma della domanda Creative Europe MEDIA. Accesso ai soci per il test. Ufficio Studi come partner di ricerca. Introductions alle Film Commission. Governance condivisa.",
+      status: "Interlocutore diretto — Alta priorità"
+    },
+    {
+      id: "film_commission", nome: "Film Commission Regionali", tag: "Revenue primaria del sistema completo", color: "#6a9a80",
+      interesse: "Economico + istituzionale",
+      perche: "Le Film Commission hanno mandato esplicito: attrarre produzioni nel loro territorio. Per farlo, devono essere trovate dagli autori. Emilia-Romagna FC: €21M investiti, 469 progetti, moltiplicatore €4,7. Hanno budget, mandato, e interesse diretto a essere visibili.",
+      guadagno: "Visibilità strutturale ogni volta che un autore costruisce il suo piano. Dati strutturati sulle produzioni che transitano per loro. Strumento per selezionare meglio i progetti.",
+      come: "Licenza annuale: €3k–6k/anno per Film Commission. Contratto istituzionale, non abbonamento. Primo approccio: Emilia-Romagna FC + IDM come pilot.",
+      status: "Revenue primaria — Attivabile dopo prototipo validato"
+    },
+    {
+      id: "creative_europe", nome: "Creative Europe MEDIA 2026", tag: "Grant europeo · call specifica attiva", color: "#4a6890",
+      interesse: "Istituzionale europeo",
+      perche: "Creative Europe 2026 ha una call specifica per 'strumenti innovativi che usano AI, big data, sistemi di raccomandazione nel settore audiovisivo' — deadline aprile 2026. Budget programma: €380M. Questa non è una possibilità vaga: è un bando esistente che descrive questo progetto.",
+      guadagno: "Non applicabile — è un grant. Copre fino al 70–80% dei costi di sviluppo per la Fase 1.",
+      come: "100autori come ente richiedente o co-richiedente. Il dossier metodologico prodotto in Fase 0 è il materiale necessario. Sequenza: Fase 0 → dossier → domanda CE per Fase 1.",
+      status: "Grant europeo — Deadline aprile 2026"
+    },
+    {
+      id: "produttori", nome: "Produttori e consulenti", tag: "Abbonamento professionale", color: "#a06878",
+      interesse: "Economico — accesso a dati strutturati",
+      perche: "Chi lavora nel settore a livello professionale — produttori, consulenti di sviluppo, consulenti legali specializzati — ha interesse a dati aggiornati, precisi, e navigabili senza dover fare ricerca manuale.",
+      guadagno: "Accesso al database produttori completo, ai dati storici di finanziamento, e alle meccaniche contrattuali. Informazioni che oggi richiedono anni di esperienza accumulata nel settore.",
+      come: "Abbonamento annuale: €200–400/anno. Separato dall'accesso gratuito per gli autori. La distinzione è strutturale: gli autori non pagano mai.",
+      status: "Revenue secondaria — Fase 2"
+    },
+  ];
+
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <BackBtn onClick={onBack} />
+        <PitchNav current={3} total={5} />
+        <div className="pitch-2col" style={{ alignItems: "start" }}>
+          {/* Left: header + intro */}
+          <div style={{ position: "sticky", top: "40px" }}>
+            <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "20px" }}>3 di 5 — I partner</div>
+            <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(28px, 3vw, 38px)", fontWeight: 300, lineHeight: 1.15, color: "var(--t1)", marginBottom: "28px" }}>
+              Chi può essere interessato,<br /><em style={{ color: "var(--gold)" }}>e perché.</em>
+            </h2>
+            <p style={{ fontSize: "15px", color: "var(--t2)", lineHeight: 1.9, marginBottom: "16px", fontWeight: 300 }}>
+              Il sistema è pensato per essere gratuito per gli autori. Il finanziamento deve arrivare da chi ha interesse economico e istituzionale nel suo funzionamento.
+            </p>
+            <p style={{ fontSize: "13px", color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, fontStyle: "italic", paddingLeft: "14px", borderLeft: "2px solid var(--b2)" }}>
+              Nota: MiC, RAI e CDP potrebbero avere interesse nel lungo periodo — ma la loro governance è lenta e opaca. Non sono inclusi come pilastri del modello iniziale.
+            </p>
+          </div>
+          {/* Right: tiles */}
+          <div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "28px" }}>
+              {SK.map(s => (
+                <div key={s.id} style={{ border: `1px solid ${open === s.id ? s.color + "60" : "var(--b1)"}`, borderRadius: "5px", overflow: "hidden", transition: "border-color .2s" }}>
+                  <div onClick={() => setOpen(open === s.id ? null : s.id)}
+                    style={{ padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", cursor: "pointer", background: open === s.id ? "var(--s2)" : "var(--s1)" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "5px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "15px", color: "var(--t1)" }}>{s.nome}</span>
+                        <span style={{ fontSize: "11px", letterSpacing: ".1em", textTransform: "uppercase", padding: "2px 8px", borderRadius: "2px", background: s.color + "22", color: s.color }}>{s.interesse}</span>
+                      </div>
+                      <div style={{ fontSize: "13px", color: "var(--t4)" }}>{s.tag}</div>
+                    </div>
+                    <span style={{ color: "var(--t4)", fontSize: "18px", transition: "transform .2s", transform: open === s.id ? "rotate(45deg)" : "none", marginLeft: "12px", flexShrink: 0, marginTop: "2px" }}>+</span>
+                  </div>
+                  {open === s.id && (
+                    <div style={{ padding: "20px 26px 24px", borderTop: `1px solid ${s.color}25` }}>
+                      {[
+                        { label: "Su cosa si basa il match", testo: s.perche },
+                        { label: "Cosa ci guadagna concretamente", testo: s.guadagno },
+                        { label: "Come approcciarlo", testo: s.come },
+                      ].map((item, i) => (
+                        <div key={i} style={{ paddingLeft: "16px", borderLeft: `2px solid ${s.color}40`, marginBottom: i < 2 ? "18px" : 0 }}>
+                          <div style={{ fontSize: "11px", letterSpacing: ".2em", textTransform: "uppercase", color: s.color, marginBottom: "6px" }}>{item.label}</div>
+                          <p style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.85, fontWeight: 300 }}>{item.testo}</p>
+                        </div>
+                      ))}
+                      <div style={{ marginTop: "16px", padding: "8px 14px", background: s.color + "12", borderRadius: "3px" }}>
+                        <span style={{ fontSize: "13px", color: s.color, letterSpacing: ".08em" }}>{s.status}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
+              <button className="btn" onClick={onNext}>Quello che serve →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH 4: QUELLO CHE SERVE (S_P4)
+// ══════════════════════════════════════════════════════════════════
+const S_P4 = ({ onNext, onBack }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <BackBtn onClick={onBack} />
+        <PitchNav current={4} total={5} />
+        <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "20px" }}>4 di 5 — Il finanziamento</div>
+        <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(30px, 3.5vw, 42px)", fontWeight: 300, lineHeight: 1.15, color: "var(--t1)", marginBottom: "32px" }}>
+          Quello che serve per partire.<br /><em style={{ color: "var(--gold)" }}>Costi e tempistiche.</em>
+        </h2>
+        <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "22px", fontWeight: 300 }}>
+          Il lavoro iniziale implica ricerca, costruzione dell'architettura del sistema e prototipazione. L'output includerà dati verificati, test reali e un dossier che regga una domanda a Creative Europe.
+        </p>
+        <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "40px", fontWeight: 300 }}>
+          Per far partire il processo con la serietà che richiede c'è bisogno di un finanziamento. L'avanzamento può essere modulare, garantendo una validazione progressiva.
+        </p>
+
+        {/* Budget */}
+        <div style={{ border: "1px solid var(--b2)", borderRadius: "6px", overflow: "hidden", marginBottom: "24px" }}>
+          <div style={{ padding: "16px 24px", background: "var(--s2)", borderBottom: "1px solid var(--b1)" }}>
+            <span className="lbl" style={{ marginBottom: 0 }}>Il budget — voce per voce</span>
+          </div>
+          <div style={{ padding: "22px 24px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "16px" }}>
+              {[
+                { voce: "Ricerca e mappatura dati", note: "15 giorni · fonti primarie verificate", importo: "€4.500" },
+                { voce: "Sviluppo prototipo su dati reali", note: "20 giorni · architettura + codice", importo: "€4.500" },
+                { voce: "Testing con autori + report", note: "20–30 soci · feedback documentato + dossier CE", importo: "€1.000 cash + €3k in-kind" },
+                { voce: "Strumenti AI e software", note: "Indispensabili per ricerca e prototipazione rapida — senza, i tempi si triplicano", importo: "€1.000" },
+              ].map((item, i) => (
+                <div key={i} style={{ padding: "14px 16px", background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: "4px" }}>
+                  <div style={{ fontSize: "14px", color: "var(--t2)", marginBottom: "5px" }}>{item.voce}</div>
+                  <div style={{ fontSize: "13px", color: "var(--t4)", marginBottom: "10px", lineHeight: 1.55 }}>{item.note}</div>
+                  <div style={{ fontFamily: "var(--serif)", fontSize: "16px", color: "var(--gold)", fontStyle: "italic" }}>{item.importo}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: "14px 18px", background: "var(--s2)", border: "1px solid var(--b2)", borderRadius: "4px", borderLeft: "3px solid var(--gold)" }}>
+              <p style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.8, margin: 0, fontWeight: 300 }}>
+                La richiesta cash a 100autori è <strong style={{ color: "var(--gold)" }}>€10.000</strong>. Il migliaio restante lo copro con lavoro proprio. Con il contributo in-kind dell'associazione (Ufficio Studi, accesso soci, introductions) il valore totale del progetto sale a €15.000.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Tranche */}
+        <div style={{ marginBottom: "24px" }}>
+          <div className="lbl">Struttura del pagamento — due tranche</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+            {[
+              { t: "Tranche 1 — €5.000", quando: "Alla firma", cosa: "Ricerca, mappatura dati, setup metodologico", nota: "Entro settimana 1" },
+              { t: "Tranche 2 — €5.000", quando: "Alla consegna", cosa: "Prototipo funzionante + report + dossier CE", nota: "Entro settimana 10" },
+            ].map((tr, i) => (
+              <div key={i} style={{ padding: "18px 20px", background: "var(--s1)", border: "1px solid var(--b2)", borderRadius: "4px", borderTop: "2px solid var(--gold)" }}>
+                <div style={{ fontFamily: "var(--serif)", fontSize: "18px", color: "var(--gold)", fontStyle: "italic", marginBottom: "12px" }}>{tr.t}</div>
+                <div style={{ fontSize: "12px", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--t4)", marginBottom: "3px" }}>Quando</div>
+                <div style={{ fontSize: "14px", color: "var(--t2)", marginBottom: "12px" }}>{tr.quando}</div>
+                <div style={{ fontSize: "12px", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--t4)", marginBottom: "3px" }}>Consegna</div>
+                <div style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.65 }}>{tr.cosa}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Cosa serve da 100autori */}
+        <div style={{ marginBottom: "24px", border: "1px solid var(--b1)", borderRadius: "6px", padding: "22px 24px" }}>
+          <div className="lbl">Perché 100autori — e non solo i soldi</div>
+          <p style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.85, marginBottom: "16px", fontWeight: 300 }}>
+            Fatto da una persona sola, questo rimane un progetto personale. Con 100autori diventa infrastruttura del settore — con una governance, un canale di distribuzione verso gli autori, e la credibilità per accedere ai fondi europei. Il sistema dovrebbe appartenere al settore, non a un singolo.
+          </p>
+          {[
+            { v: "Co-firma domanda Creative Europe MEDIA 2026", n: "100autori come ente richiedente. La deadline è aprile 2026 — il dossier di Fase 0 arriva in tempo." },
+            { v: "Accesso ai soci per il test", n: "20–30 autori che danno feedback reale e documentato — non attori del test." },
+            { v: "Ufficio Studi come partner di ricerca", n: "Accesso a documentazione e network istituzionale che riducono i tempi della mappatura." },
+            { v: "Introductions a Film Commission", n: "Il canale più rapido verso Emilia-Romagna FC, IDM, e le altre FC attive." },
+            { v: "Governance condivisa sullo sviluppo", n: "100autori ha voce su cosa mappare e come — garantendo che rimanga uno strumento al servizio degli autori." },
+          ].map((d, i) => (
+            <div key={i} style={{ display: "flex", gap: "12px", padding: "12px 16px", background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: "3px", marginBottom: "6px" }}>
+              <span style={{ color: "var(--gold)", flexShrink: 0, marginTop: "1px" }}>✓</span>
+              <div>
+                <div style={{ fontSize: "14px", color: "var(--t1)", marginBottom: "3px" }}>{d.v}</div>
+                <div style={{ fontSize: "13px", color: "var(--t4)", lineHeight: 1.65, fontStyle: "italic" }}>{d.n}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Alternative */}
+        <div style={{ marginBottom: "36px" }}>
+          <div className="lbl">Da dove possono venire i €10k — opzioni concrete</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {[
+              { fonte: "100autori direttamente", prob: "Alta", note: "Budget operativo + servizi in-kind dell'Ufficio Studi. Investimento diretto nell'infrastruttura dell'associazione.", color: "var(--gold)" },
+              { fonte: "Crowdfunding tra soci", prob: "Alta", note: "€50 da 200 soci su 1.000 iscritti = €10.000. Una campagna che coinvolge i soci direttamente e costruisce community intorno al progetto.", color: "var(--green)" },
+              { fonte: "Investitore privato esterno", prob: "Media", note: "Angel investor nell'innovazione culturale. Possibile combinazione: 100autori €5k + investitore €5k.", color: "var(--blue)" },
+              { fonte: "Combinazione ibrida", prob: "Flessibile", note: "100autori in-kind (valore €5k) + investitore privato €5k cash. Stesso valore totale, rischio dimezzato per l'associazione.", color: "var(--amber)" },
+            ].map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: "16px", padding: "16px 20px", background: "var(--s1)", border: "1px solid var(--b1)", borderRadius: "4px", alignItems: "flex-start" }}>
+                <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: f.color, flexShrink: 0, marginTop: "5px" }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "5px" }}>
+                    <span style={{ fontSize: "14px", color: "var(--t1)" }}>{f.fonte}</span>
+                    <span style={{ fontSize: "11px", letterSpacing: ".1em", textTransform: "uppercase", padding: "1px 7px", borderRadius: "2px", background: f.color + "22", color: f.color }}>prob. {f.prob}</span>
+                  </div>
+                  <div style={{ fontSize: "14px", color: "var(--t4)", lineHeight: 1.7 }}>{f.note}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button className="btn" onClick={onNext}>Chi sono →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════
+// PITCH 5: BIO (S_P5)
+// ══════════════════════════════════════════════════════════════════
+const S_P5 = ({ onRestart, onBack, onSimulation }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 100); }, []);
+  return (
+    <div className="screen" style={{ background: "var(--bg)" }}>
+      <div style={{ maxWidth: "min(960px, 92vw)", margin: "0 auto", width: "100%", padding: "40px clamp(24px, 4vw, 64px)", opacity: v ? 1 : 0, transition: "opacity .7s" }}>
+        <BackBtn onClick={onBack} />
+        <PitchNav current={5} total={5} />
+        <div style={{ fontFamily: "var(--sans)", fontSize: "12px", letterSpacing: ".32em", color: "var(--t4)", textTransform: "uppercase", marginBottom: "20px" }}>5 di 5 — Chi sono</div>
+
+        <div style={{ marginBottom: "48px" }}>
+          <h2 style={{ fontFamily: "var(--serif)", fontSize: "clamp(32px, 4vw, 46px)", fontWeight: 300, lineHeight: 1.2, color: "var(--t1)", marginBottom: "8px" }}>
+            Enrico Poli.
+          </h2>
+          <div style={{ fontFamily: "var(--sans)", fontSize: "15px", color: "var(--gold)", letterSpacing: ".04em", fontWeight: 300, marginBottom: "36px" }}>
+            Narrative &amp; Experience Designer · Strategic Foresight
+          </div>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "22px", fontWeight: 300 }}>
+            Individuo pattern nel rumore. Poi costruisco sistemi per renderli leggibili. Il mio lavoro si colloca all'intersezione tra foresight strategico, narrative design ed experience intelligence.
+          </p>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "22px", fontWeight: 300 }}>
+            Negli ultimi dieci anni ho lavorato con organizzazioni globali — da Google a Deutsche Bank, fino allo sviluppo di IP per Indigo Film — non per creare semplici contenuti, ma per aiutarle a decifrare cosa sta realmente accadendo sotto la superficie dei loro mercati e delle loro culture.
+          </p>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, marginBottom: "22px", fontWeight: 300 }}>
+            Ho immaginato questo strumento perché ne ho vissuto la mancanza in prima persona. Sono rimasto bloccato per due anni su un progetto cinematografico che era strutturalmente disallineato col sistema: un'opera prima con ambizioni internazionali e un casting estero di alto profilo. Le necessità del progetto andavano ben oltre ciò che il mercato italiano poteva sostenere per quel livello di rischio.
+          </p>
+          <p style={{ fontSize: "16px", color: "var(--t2)", lineHeight: 1.95, fontWeight: 300 }}>
+            Non lo sapevo. O meglio: lo intuivo vagamente, ma non avevo uno strumento per visualizzare questa disconnessione con chiarezza. Con questo sistema avrei capito subito le mie probabilità reali e avrei potuto scegliere consapevolmente come agire. La scelta sarebbe stata mia. Avrei mantenuto la mia agency. Invece, la mancanza di consapevolezza si è tradotta in un'attesa impotente.
+          </p>
+        </div>
+
+        <div style={{ borderLeft: "2px solid var(--gold3)", paddingLeft: "24px", marginBottom: "48px" }}>
+          <p style={{ fontFamily: "var(--serif)", fontSize: "22px", fontStyle: "italic", color: "var(--t2)", lineHeight: 1.65, margin: 0 }}>
+            "Chi controlla l'informazione nel cinema italiano controlla l'accesso. Restituire quella informazione agli autori è un atto politico — ed è esattamente quello che questo sistema fa."
+          </p>
+        </div>
+
+        <div style={{ background: "var(--s1)", border: "1px solid var(--b2)", borderRadius: "8px", padding: "28px 32px", marginBottom: "40px" }}>
+          <div style={{ fontSize: "11px", letterSpacing: ".28em", textTransform: "uppercase", color: "var(--t4)", marginBottom: "20px" }}>Contatti</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {[
+              { label: "Email", valore: "epoli.uk@gmail.com", link: "mailto:epoli.uk@gmail.com" },
+              { label: "Sito", valore: "www.enricopoli.com", link: "https://www.enricopoli.com" },
+              { label: "Telefono", valore: "+39 329 8018180", link: "tel:00393298018180" },
+            ].map((c, i) => (
+              <div key={i} style={{ display: "flex", gap: "20px", alignItems: "center" }}>
+                <div style={{ fontSize: "11px", letterSpacing: ".2em", textTransform: "uppercase", color: "var(--t4)", width: "64px", flexShrink: 0 }}>{c.label}</div>
+                <a href={c.link} style={{ fontSize: "16px", color: "var(--gold)", textDecoration: "none", fontFamily: "var(--serif)", fontStyle: "italic" }}
+                  onMouseEnter={e => e.target.style.textDecoration = "underline"}
+                  onMouseLeave={e => e.target.style.textDecoration = "none"}>
+                  {c.valore}
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center", padding: "28px 32px", border: "1px solid var(--b1)", borderRadius: "6px", marginBottom: "36px" }}>
+          <div style={{ fontFamily: "var(--serif)", fontSize: "20px", fontStyle: "italic", color: "var(--t1)", marginBottom: "10px" }}>Questo prototipo è una dimostrazione di metodo.</div>
+          <p style={{ fontSize: "14px", color: "var(--t3)", lineHeight: 1.8, fontWeight: 300, maxWidth: "420px", margin: "0 auto" }}>
+            I dati sono reali. La logica è verificabile. Quello che manca è il tempo e il finanziamento per farlo bene — dati aggiornati, test reali, un sistema che duri.
+          </p>
+        </div>
+
+        <div style={{ textAlign: "center", display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
+          <button className="btn" onClick={onSimulation}>Prova la simulazione →</button>
+          <button className="btn-o" onClick={onRestart}>Torna all'inizio</button>
+          <button className="btn-o" onClick={() => { try { window.close(); } catch(e){} setTimeout(() => alert("Puoi chiudere questa scheda."), 100); }}>Chiudi</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+const S0_Landing = ({ onSimulation, onPitch }) => {
+  const [v, setV] = useState(false);
+  useEffect(() => { setTimeout(() => setV(true), 120); }, []);
+  return (
+    <div className="screen" style={{ background: "var(--bg)", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+      <div style={{ maxWidth: 620, padding: "60px 40px", width: "100%", opacity: v ? 1 : 0, transform: v ? "none" : "translateY(18px)", transition: "all .9s ease" }}>
+        {/* Header */}
+        <div style={{ marginBottom: 56, textAlign: "center" }}>
+          <div style={{ fontFamily: "var(--sans)", fontSize: 13, letterSpacing: ".36em", color: "var(--t4)", textTransform: "uppercase", marginBottom: 24 }}>100autori · 2026</div>
+          <h1 style={{ fontFamily: "var(--serif)", fontSize: 52, fontWeight: 300, lineHeight: 1.1, color: "var(--t1)", marginBottom: 20 }}>
+            Il sistema del<br /><em style={{ color: "var(--gold)" }}>cinema italiano.</em>
+          </h1>
+          <p style={{ fontFamily: "var(--sans)", fontSize: 13, color: "var(--t3)", lineHeight: 1.9, fontWeight: 300, maxWidth: 420, margin: "0 auto" }}>
+            Una simulazione interattiva del sistema di finanziamento cinematografico italiano — e una proposta per renderlo reale.
+          </p>
+        </div>
+
+        {/* Due percorsi */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 32 }}>
+          {/* Simulazione */}
+          <div
+            onClick={onSimulation}
+            style={{ border: "1px solid var(--b2)", borderRadius: 8, padding: "28px 24px", cursor: "pointer", background: "var(--s1)", transition: "all .25s", position: "relative", overflow: "hidden" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--gold)"; e.currentTarget.style.background = "var(--s2)"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--b2)"; e.currentTarget.style.background = "var(--s1)"; }}
+          >
+            <div style={{ fontSize: 13, letterSpacing: ".22em", textTransform: "uppercase", color: "var(--gold)", marginBottom: 14 }}>~10 minuti</div>
+            <div style={{ fontFamily: "var(--serif)", fontSize: 22, color: "var(--t1)", marginBottom: 12, lineHeight: 1.2 }}>La simulazione</div>
+            <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.75, fontWeight: 300, marginBottom: 20 }}>
+              Inserisci il tuo progetto e scopri come funziona il sistema. Come si finanzia un film in Italia — con le sue possibilità reali e i suoi nodi critici.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 24 }}>
+              {["Ho una sceneggiatura", "Ho un'idea / soggetto"].map((t, i) => (
+                <div key={i} style={{ fontSize: 13, color: "var(--t4)", display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: "var(--gold)", fontSize: 13 }}>◎</span>{t}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--gold)" }}>Inizia →</div>
+          </div>
+
+          {/* Pitch */}
+          <div
+            onClick={onPitch}
+            style={{ border: "1px solid var(--b2)", borderRadius: 8, padding: "28px 24px", cursor: "pointer", background: "var(--s1)", transition: "all .25s" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "#4a6890"; e.currentTarget.style.background = "var(--s2)"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--b2)"; e.currentTarget.style.background = "var(--s1)"; }}
+          >
+            <div style={{ fontSize: 13, letterSpacing: ".22em", textTransform: "uppercase", color: "#4a6890", marginBottom: 14 }}>~5 minuti</div>
+            <div style={{ fontFamily: "var(--serif)", fontSize: 22, color: "var(--t1)", marginBottom: 12, lineHeight: 1.2 }}>La proposta</div>
+            <p style={{ fontSize: 13, color: "var(--t3)", lineHeight: 1.75, fontWeight: 300, marginBottom: 20 }}>
+              Scopri il progetto completo — il sistema mappato, le fasi di sviluppo, chi lo finanzia e come. Per chi vuole vedere la proposta direttamente.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 24 }}>
+              {["Il sistema completo", "Le fasi e i costi", "I partner e la richiesta", "Contatti"].map((t, i) => (
+                <div key={i} style={{ fontSize: 13, color: "var(--t4)", display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: "#4a6890", fontSize: 13 }}>◎</span>{t}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 13, color: "#4a6890" }}>Esplora →</div>
+          </div>
+        </div>
+
+        <p style={{ textAlign: "center", fontSize: 13, color: "var(--t4)", lineHeight: 1.7 }}>
+          Un progetto di Enrico Poli · <a href="mailto:epoli.uk@gmail.com" style={{ color: "var(--t3)", textDecoration: "none" }}>epoli.uk@gmail.com</a> · <a href="https://www.enricopoli.com" style={{ color: "var(--t3)", textDecoration: "none" }}>enricopoli.com</a>
+        </p>
+      </div>
+    </div>
+  );
+};
+// ══════════════════════════════════════════════════════════════════
+
+
+
+// ══════════════════════════════════════════════════════════════════
+// APP
+// ══════════════════════════════════════════════════════════════════
+function App() {
+  const [screen, setScreen] = useState("landing");
+  const [chi, setChi] = useState({});
+  const [progetto, setProgetto] = useState({});
+  const [opera, setOpera] = useState({});
+  const [idea, setIdea] = useState({});
+  const [contesto, setContesto] = useState({});
+  const [pianoPick, setPianoPick] = useState([]);
+  const [sviluppoPick, setSviluppoPick] = useState([]);
+
+  const go = s => { window.scrollTo({ top: 0, behavior: "smooth" }); setTimeout(() => setScreen(s), 80); };
+
+  const restart = () => {
+    setChi({}); setProgetto({}); setOpera({}); setIdea({});
+    setContesto({}); setPianoPick([]); setSviluppoPick([]);
+    go("landing");
+  };
+
+  return (
+    <>
+      <G />
+      {screen === "landing" && (
+        <S0_Landing
+          onSimulation={() => go("s0")}
+          onPitch={() => go("pitch")}
+        />
+      )}
+      {screen === "s0" && <S0_Intro onStart={() => go("s1")} />}
+      {screen === "s1" && <S1_ChiSei d={chi} setD={setChi} onNext={() => go("s2")} />}
+      {screen === "s2" && (
+        <S2_Progetto
+          d={progetto} setD={setProgetto}
+          onSceneggiatura={() => go("s3a")}
+          onIdea={() => go("si_a")}
+        />
+      )}
+
+      {/* ── PERCORSO A: SCENEGGIATURA ── */}
+      {screen === "s3a" && <S3_Opera d={opera} setD={setOpera} onNext={() => go("s4a")} />}
+      {screen === "s4a" && <S4_Contesto d={contesto} setD={setContesto} onNext={() => go("s5a_trans")} />}
+      {screen === "s5a_trans" && <S5_Trans titolo={progetto.titolo || "Il tuo film"} onDone={() => go("s6a")} />}
+      {screen === "s6a" && (
+        <S6_Piano
+          profilo={{ chi, progetto, opera, contesto }}
+          onNext={picks => { setPianoPick(picks); go("s7a"); }}
+        />
+      )}
+      {screen === "s7a" && (
+        <S7_EndCard
+          profilo={{ chi, progetto, opera, contesto }}
+          pianoPick={pianoPick}
+          onRestart={restart}
+          onPitch={() => go("pitch")}
+        />
+      )}
+
+      {/* ── PERCORSO B: IDEA ── */}
+      {screen === "si_a" && <SI_A d={idea} setD={setIdea} chi={chi} onNext={() => go("si_b")} />}
+      {screen === "si_b" && <SI_B d={idea} chi={chi} onNext={picks => { setSviluppoPick(picks); go("si_c"); }} />}
+      {screen === "si_c" && (
+        <SI_C
+          d={idea} chi={chi} sviluppoPick={sviluppoPick}
+          onNext={() => go("si_end")}
+        />
+      )}
+      {screen === "si_end" && (
+        <SI_End
+          chi={chi} progetto={progetto} idea={idea}
+          sviluppoPick={sviluppoPick}
+          onRestart={restart}
+          onPitch={() => go("pitch")}
+        />
+      )}
+
+      {/* ── PITCH SECTION — 5 schermi ── */}
+      {screen === "pitch"  && <S_Bridge onNext={() => go("p1")} onBack={() => go("landing")} />}
+      {screen === "p1"     && <S_P1 onNext={() => go("p2")} onBack={() => go("pitch")} />}
+      {screen === "p2"     && <S_P2 onNext={() => go("p3")} onBack={() => go("p1")} />}
+      {screen === "p3"     && <S_P3 onNext={() => go("p4")} onBack={() => go("p2")} />}
+      {screen === "p4"     && <S_P4 onNext={() => go("p5")} onBack={() => go("p3")} />}
+      {screen === "p5"     && <S_P5 onRestart={restart} onBack={() => go("p4")} onSimulation={() => go("s0")} />}
+    </>
+  );
+}
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
