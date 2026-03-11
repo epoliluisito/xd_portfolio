@@ -748,8 +748,12 @@ AFRAME.registerComponent('rig-walk', {
         const sn = window._snoise.simplex2;
         this._meshes = [];
 
-        const RADIUS = 130;
-        const SEG = 500;
+        const FIELD_CX = 0;
+        const FIELD_CZ = -75;
+        const FIELD_HALF_W = 32;
+        const FIELD_HALF_D = 28;
+        const SEG_X = 260;
+        const SEG_Z = 228;
         const GROUND_Y = 0.09;
         const HIDDEN_Y = 0.084;
 
@@ -898,8 +902,8 @@ AFRAME.registerComponent('rig-walk', {
           // right outside the indoor boundary, which with HIDDEN_Y creates a seam line.
           // Clamp m toward 1.0 within 2.5m of the indoor boundary so all wall-adjacent
           // vertices are fully covered regardless of what the radial shape does.
-          if(!isIndoor(x,z)){
-            const dIn = distToAnyInterior(x,z);
+          if(!isIndoor(worldX,worldZ)){
+            const dIn = distToAnyInterior(worldX,worldZ);
             const nearBldg = smootherstep(2.5, 0.3, dIn);
             m = Math.max(m, nearBldg);
           }
@@ -957,7 +961,8 @@ AFRAME.registerComponent('rig-walk', {
         // ══════════════════════════════════════════════════════════════
         //  LAYER 1 — FROST
         // ══════════════════════════════════════════════════════════════
-        const FROST_EXT=200;
+        const FROST_HALF_W=34;
+        const FROST_HALF_D=30;
         const ftS=512;
         const fCv=document.createElement('canvas');fCv.width=ftS;fCv.height=ftS;
         const fCtx=fCv.getContext('2d');
@@ -965,8 +970,8 @@ AFRAME.registerComponent('rig-walk', {
         for(let py=0;py<ftS;py++){
           for(let px=0;px<ftS;px++){
             const idx=(py*ftS+px)*4;
-            const wx=(px/ftS-0.5)*FROST_EXT*2;
-            const wz=(py/ftS-0.5)*FROST_EXT*2;
+            const wx=FIELD_CX + (px/ftS-0.5)*FROST_HALF_W*2;
+            const wz=FIELD_CZ + (py/ftS-0.5)*FROST_HALF_D*2;
             let fm=frostMask(wx,wz);
             fm*=0.6+0.4*(sn(wx*0.08+50,wz*0.08-50)*0.5+0.5);
             fm*=0.85+0.15*(sn(wx*0.5+200,wz*0.5-200)*0.5+0.5);
@@ -1006,7 +1011,7 @@ AFRAME.registerComponent('rig-walk', {
           envMapIntensity:0.2,blending:THREE.NormalBlending,
           polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-2
         });
-        const frostGeom=new THREE.PlaneGeometry(FROST_EXT*2,FROST_EXT*2,1,1);
+        const frostGeom=new THREE.PlaneGeometry(FROST_HALF_W*2,FROST_HALF_D*2,1,1);
         frostGeom.rotateX(-Math.PI/2);
         const frostMesh=new THREE.Mesh(frostGeom,frostMat);
         frostMesh.position.y=GROUND_Y+0.004;
@@ -1015,7 +1020,7 @@ AFRAME.registerComponent('rig-walk', {
         const frostEntity=document.createElement('a-entity');
         frostEntity.setAttribute('id','frost-underlayer');
         frostEntity.setAttribute('class','clickable');
-        frostEntity.object3D.position.set(0,0,0);
+        frostEntity.object3D.position.set(FIELD_CX,0,FIELD_CZ);
         frostEntity.setObject3D('mesh', frostMesh);
         this.el.sceneEl.appendChild(frostEntity);
         this._frostEntity=frostEntity;
@@ -1023,7 +1028,7 @@ AFRAME.registerComponent('rig-walk', {
         // ══════════════════════════════════════════════════════════════
         //  LAYER 2 — SNOW (smooth displaced mesh)
         // ══════════════════════════════════════════════════════════════
-        const snowGeom=new THREE.PlaneGeometry(RADIUS*2,RADIUS*2,SEG,SEG);
+        const snowGeom=new THREE.PlaneGeometry(FIELD_HALF_W*2,FIELD_HALF_D*2,SEG_X,SEG_Z);
         snowGeom.rotateX(-Math.PI/2);
         const pos=snowGeom.getAttribute('position');
 
@@ -1031,30 +1036,34 @@ AFRAME.registerComponent('rig-walk', {
 
         for(let i=0;i<pos.count;i++){
           const x=pos.getX(i),z=pos.getZ(i);
-          const edgeR=Math.sqrt(x*x+z*z);
-          if(edgeR>RADIUS*0.985){pos.setY(i,-1.5);continue;}
+          const worldX = x + FIELD_CX;
+          const worldZ = z + FIELD_CZ;
+          const edgeU = Math.abs(x) / FIELD_HALF_W;
+          const edgeV = Math.abs(z) / FIELD_HALF_D;
+          const edgeN = Math.max(edgeU, edgeV);
+          if(edgeN>0.992){pos.setY(i,-1.5);continue;}
 
-          const m=snowMask(x,z);
+          const m=snowMask(worldX,worldZ);
 
           // ── Drift height: gentle rolling (visual detail via normal map) ──
           let drift=0;
           // Very large gentle terrain rolls
-          drift+=(sn(x*0.012+3,z*0.012-5)*0.5+0.5)*0.25;
+          drift+=(sn(worldX*0.012+3,worldZ*0.012-5)*0.5+0.5)*0.25;
           // Medium undulations
-          drift+=(sn(x*0.032+20,z*0.032-8)*0.5+0.5)*0.14;
+          drift+=(sn(worldX*0.032+20,worldZ*0.032-8)*0.5+0.5)*0.14;
           // Gentle sastrugi
-          const saX=x*wdX+z*wdZ,saZ=-x*wdZ+z*wdX;
+          const saX=worldX*wdX+worldZ*wdZ,saZ=-worldX*wdZ+worldZ*wdX;
           drift+=(sn(saX*0.07,saZ*0.025)*0.5+0.5)*0.07;
           // Subtle fine variation (won't cause visible faceting)
-          drift+=(sn(x*0.1+3,z*0.1-2)*0.5+0.5)*0.03;
+          drift+=(sn(worldX*0.1+3,worldZ*0.1-2)*0.5+0.5)*0.03;
 
           // ── Wall accumulation: snow banks against outer building surfaces ──
-          if(!isIndoor(x,z)){
-            const dw=distToWalls(x,z);
+          if(!isIndoor(worldX,worldZ)){
+            const dw=distToWalls(worldX,worldZ);
             // Drift tapering over 12m, thickest right at wall
             const wallDrift=smootherstep(12,0,dw);
             // Organic variation along wall face
-            const wallNoise=0.5+0.5*(sn(x*0.15+4,z*0.15-6)*0.5+0.5);
+            const wallNoise=0.5+0.5*(sn(worldX*0.15+4,worldZ*0.15-6)*0.5+0.5);
             drift+=wallDrift*0.78*wallNoise;
             // Extra bank right at base (0-1.2m)
             const baseDrift=smootherstep(1.2,0,dw);
@@ -1066,10 +1075,10 @@ AFRAME.registerComponent('rig-walk', {
           {
             // North corridor: berm peaks at ±(hw+1.0) from lane centre, fades inward & outward
             const cx=4.5, hw=1.8, zEntry=-56.5;
-            const dz=z-zEntry;
+            const dz=worldZ-zEntry;
             if(dz>0 && dz<10.0){
               const pathLen=smootherstep(10.0,0.0,dz);
-              const xAbs=Math.abs(x-cx);
+              const xAbs=Math.abs(worldX-cx);
               const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
               drift+=0.22*berm*pathLen;
             }
@@ -1077,10 +1086,10 @@ AFRAME.registerComponent('rig-walk', {
           {
             // South exit: same logic, lane grows southward
             const cx=-4.5, hw=1.1, zEntry=-81.5;
-            const dz=zEntry-z;
+            const dz=zEntry-worldZ;
             if(dz>0 && dz<10.0){
               const pathLen=smootherstep(10.0,0.0,dz);
-              const xAbs=Math.abs(x-cx);
+              const xAbs=Math.abs(worldX-cx);
               const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
               drift+=0.22*berm*pathLen;
             }
@@ -1090,8 +1099,8 @@ AFRAME.registerComponent('rig-walk', {
           // Taper all drift to zero within ~1.2m of the indoor boundary (outdoor side).
           // This ensures the vertex just outside the exclusion zone has near-zero height,
           // so the HIDDEN_Y→outdoor step is tiny and the cliff artifact disappears.
-          if(!isIndoor(x,z)){
-            const dIn = distToAnyInterior(x,z);
+          if(!isIndoor(worldX,worldZ)){
+            const dIn = distToAnyInterior(worldX,worldZ);
             const edgeTaper = smoothstep(0.0, 1.2, dIn);
             drift *= edgeTaper;
           }
@@ -1102,20 +1111,20 @@ AFRAME.registerComponent('rig-walk', {
           // the filled snow mass and fades toward the irregular perimeter.
           drift += 0.075 * smoothstep(0.32, 0.92, m);
 
-          drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
+          drift*=(1-smootherstep(0.78,0.97,edgeN));
 
           // ── Canyon channel: carve a slot at ground level through the snow field ──
           // chSup = 0 in the channel centre (drift zeroed → flat snow floor at GROUND_Y)
           //       = 1 everywhere else (full drift, natural walls)
           // mFinal boosted to 1.0 in channel ONLY for outdoor points — indoor vertices
           // must stay at HIDDEN_Y or the corridor floor z-fights at GROUND_Y.
-          const chSup=channelDriftSuppress(x,z);
+          const chSup=channelDriftSuppress(worldX,worldZ);
           drift*=chSup;
-          const mFinal = isIndoor(x,z) ? m : Math.max(m, 1.0-chSup);
+          const mFinal = isIndoor(worldX,worldZ) ? m : Math.max(m, 1.0-chSup);
 
           // ── Continuous blend: hidden → ground → snow ──
           const snowSurface=GROUND_Y+Math.max(0,drift);
-          const northSink=smootherstep(-45,-32,z);
+          const northSink=smootherstep(-45,-32,worldZ);
           const effectiveHiddenY=HIDDEN_Y-northSink*0.2;
           const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
           pos.setY(i,y);
@@ -1166,7 +1175,7 @@ AFRAME.registerComponent('rig-walk', {
         const snowEntity=document.createElement('a-entity');
         snowEntity.setAttribute('id','snow-ground-field');
         snowEntity.setAttribute('class','clickable');
-        snowEntity.object3D.position.set(0,0,0);
+        snowEntity.object3D.position.set(FIELD_CX,0,FIELD_CZ);
         snowEntity.setObject3D('mesh', snowMesh);
         this.el.sceneEl.appendChild(snowEntity);
         this._snowEntity=snowEntity;
