@@ -241,7 +241,7 @@ const world=document.getElementById('world');
 
 function applyCamera(anim, dur){
   const tx=window.innerWidth/2-camX*camS, ty=window.innerHeight/2-camY*camS;
-  world.style.transition=anim?`transform ${dur||1.6}s cubic-bezier(.4,0,.2,1)`:'none';
+  world.style.transition=anim?`transform ${dur||1.6}s cubic-bezier(.5,0,.5,1)`:'none';
   world.style.transform=`translate(${tx}px,${ty}px) scale(${camS})`;
 }
 function cam(x,y,s,delay,dur){
@@ -613,12 +613,6 @@ function onSynthesis(){
     requestAnimationFrame(()=>requestAnimationFrame(()=>n.classList.add('show')));
   }
 
-  // draw a line, return the time it finishes
-  function seg(from, to, startMs, durMs){
-    setTimeout(()=>line(from.x,from.y,to.x,to.y,.07,durMs/1000), startMs);
-    return startMs + durMs;
-  }
-
   // ── 2. Camera follows origin down toward node 0 ──
   cam(OX, N0Y, null, 1200, 2.2);
 
@@ -630,36 +624,56 @@ function onSynthesis(){
   const T0 = 1200 + LINE_DUR + 300;
   setTimeout(()=>spawnNode(0, OUTPUTS[0]), T0);
 
-  // ── 5. Camera pullback: frames all 7 nodes — top arc + node 0 at bottom ──
-  const SEG = 1600; // ms per segment — slower, more cinematic
+  // ── 5. Sequential journey counterclockwise: 0→6→5→4→3→2→1, then close ring ──
+  // Camera follows each segment draw, pauses on each node for reading, then zooms out
 
-  // Bounding box of all node positions
+  const SEG_DUR  = 1400; // ms: line draws
+  const CAM_DUR  = 1.8;  // s:  camera travel per step — matches line draw with ease
+  const PAUSE    = 1500; // ms: pause on each node for reading
+
+  // Counterclockwise order: 0,6,5,4,3,2,1
+  const journey = [0,6,5,4,3,2,1];
+  // Labels match ring index: pos[0]=OUTPUTS[0], pos[1]=OUTPUTS[1], etc.
+  // but arcNodes order: pos[1..6] = arcNodes[0..5]
+  // OUTPUTS assignment: pos[0]=OUTPUTS[0], pos[1]=OUTPUTS[1]...pos[6]=OUTPUTS[6]
+  const journeyLabels = [OUTPUTS[0],OUTPUTS[6],OUTPUTS[5],OUTPUTS[4],OUTPUTS[3],OUTPUTS[2],OUTPUTS[1]];
+
+  const BS = T0 + 1900; // linger on node 0 for ~1500ms before journey begins
+  let t = BS;
+
+  journey.forEach((ri, i) => {
+    if(i === 0){
+      // Node 0 already spawned — just schedule the first segment start
+      return;
+    }
+    const prev = journey[i-1];
+    const tDraw = t;
+    // Draw segment
+    setTimeout(()=> line(pos[prev].x, pos[prev].y, pos[ri].x, pos[ri].y, .07, SEG_DUR/1000), tDraw);
+    // Camera follows the line to destination
+    cam(pos[ri].x, pos[ri].y, null, tDraw, CAM_DUR);
+    t = tDraw + SEG_DUR;
+    // Node appears when line arrives
+    setTimeout(()=> spawnNode(ri, journeyLabels[i]), t);
+    t += PAUSE;
+  });
+
+  // Closing segment: 1 → 0 (completes the ring)
+  // Camera stays at node 1 — user already saw node 0 at the start
+  const T_CLOSE = t;
+  setTimeout(()=> line(pos[1].x, pos[1].y, pos[0].x, pos[0].y, .07, SEG_DUR/1000), T_CLOSE);
+  const T_DONE = T_CLOSE + SEG_DUR;
+
+  // Final zoom out: starts only after ring is complete, slow ease-in-out
   const allX = pos.map(p=>p.x), allY = pos.map(p=>p.y);
   const minX = Math.min(...allX), maxX = Math.max(...allX);
   const minY = Math.min(...allY), maxY = Math.max(...allY);
-  const padX = 160, padY = 120;
-  const frameW = (maxX - minX) + padX*2;
-  const frameH = (maxY - minY) + padY*2;
+  const frameW = (maxX - minX) + 320;
+  const frameH = (maxY - minY) + 240;
   const frameCX = (minX + maxX) / 2;
   const frameCY = (minY + maxY) / 2;
   const finalS = Math.min(vw()/frameW*.9, vh()/frameH*.9);
-  cam(frameCX, frameCY, finalS, T0+400, (3*SEG + 2400)/1000);
-
-  // ── 6. Right branch: node0 → arc[0] → arc[1] → arc[2] ──
-  const BS = T0 + 300;
-  let tr = BS;
-  tr = seg(pos[0], pos[1], tr, SEG); setTimeout(()=>spawnNode(1, OUTPUTS[1]), tr);
-  tr = seg(pos[1], pos[2], tr, SEG); setTimeout(()=>spawnNode(2, OUTPUTS[2]), tr);
-  tr = seg(pos[2], pos[3], tr, SEG); setTimeout(()=>spawnNode(3, OUTPUTS[3]), tr);
-
-  // ── 7. Left branch: node0 → arc[5] → arc[4] → arc[3] ──
-  let tl = BS;
-  tl = seg(pos[0], pos[6], tl, SEG); setTimeout(()=>spawnNode(6, OUTPUTS[6]), tl);
-  tl = seg(pos[6], pos[5], tl, SEG); setTimeout(()=>spawnNode(5, OUTPUTS[5]), tl);
-  tl = seg(pos[5], pos[4], tl, SEG); setTimeout(()=>spawnNode(4, OUTPUTS[4]), tl);
-
-  // ── 8. Closing segment: right tip → left tip ──
-  setTimeout(()=>line(pos[3].x,pos[3].y,pos[4].x,pos[4].y,.07,SEG/1000), tr + 300);
+  cam(frameCX, frameCY, finalS, T_CLOSE, 3.5);
 }
 
 // ══════════════════════════════════════════════
