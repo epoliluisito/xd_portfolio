@@ -1544,22 +1544,6 @@ AFRAME.registerComponent('rig-walk', {
         const geom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
         geom.rotateX(-Math.PI / 2);
         const pos = geom.getAttribute('position');
-        const primalCutCX = 25.0;
-        const primalCutCZ = 0.0;
-        // The berm overlay owns the primal floor region. Make the rock-ground cut
-        // slightly larger than the berm plane itself so no residual triangles survive
-        // near the seam when the camera moves.
-        const primalCutRadiusX = 22.6;
-        const primalCutRadiusZ = 17.2;
-        const primalCutFeather = 2.8;
-        const inPrimalCut = (wx, wz, feather = 0.0) => {
-          const rx = primalCutRadiusX + feather;
-          const rz = primalCutRadiusZ + feather;
-          const dx = (wx - primalCutCX) / rx;
-          const dz = (wz - primalCutCZ) / rz;
-          return (dx * dx + dz * dz) <= 1.0;
-        };
-
         for (let i = 0; i < pos.count; i++) {
           const lx = pos.getX(i), lz = pos.getZ(i);
           const wx = CX + lx, wz = CZ + lz;
@@ -1587,27 +1571,6 @@ AFRAME.registerComponent('rig-walk', {
           pos.setY(i, GY + h * edge * 0.9);
         }
         pos.needsUpdate = true;
-
-        const srcIndex = geom.index ? Array.from(geom.index.array) : [...Array(pos.count).keys()];
-        const filteredIndex = [];
-        for (let i = 0; i < srcIndex.length; i += 3) {
-          const ia = srcIndex[i + 0];
-          const ib = srcIndex[i + 1];
-          const ic = srcIndex[i + 2];
-          const ax = pos.getX(ia) + CX, az = pos.getZ(ia) + CZ;
-          const bx = pos.getX(ib) + CX, bz = pos.getZ(ib) + CZ;
-          const cx = pos.getX(ic) + CX, cz = pos.getZ(ic) + CZ;
-          const mx = (ax + bx + cx) / 3;
-          const mz = (az + bz + cz) / 3;
-          const intersectsCut =
-            inPrimalCut(ax, az, -primalCutFeather) ||
-            inPrimalCut(bx, bz, -primalCutFeather) ||
-            inPrimalCut(cx, cz, -primalCutFeather) ||
-            inPrimalCut(mx, mz, -primalCutFeather * 0.5);
-          if (intersectsCut) continue;
-          filteredIndex.push(ia, ib, ic);
-        }
-        geom.setIndex(filteredIndex);
         geom.computeVertexNormals();
         const uv = geom.getAttribute('uv');
         geom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
@@ -1938,6 +1901,10 @@ AFRAME.registerComponent('rig-walk', {
     <a-asset-item id="david_sitting_glb" src="../../characters/david_sitting.glb"></a-asset-item>
     <a-asset-item id="jenny_typing_glb" src="../../characters/jenny_typing.glb"></a-asset-item>
     <a-asset-item id="astra_typing_glb" src="../../characters/astra_typing.glb"></a-asset-item>
+    <a-asset-item id="monkey_agreeing_glb" src="./assets/monkeys/monkey_agreeing.glb"></a-asset-item>
+    <a-asset-item id="monkey_idle_glb" src="./assets/monkeys/monkey_idle.glb"></a-asset-item>
+    <a-asset-item id="monkey_warrior_glb" src="./assets/monkeys/monkey_warrior.glb"></a-asset-item>
+    <a-asset-item id="monkey_dancing_glb" src="./assets/monkeys/monkey_dancing.glb"></a-asset-item>
 
   </a-assets>
 <!-- ── Sky ──────────────────────────────────────────────────────── -->
@@ -1992,7 +1959,27 @@ AFRAME.registerComponent('rig-walk', {
 <!-- Black cap so shaft doesn't show void -->
 <a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.31 0" radius="1.60" rotation="-90 0 0"></a-circle>
 <!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
-<a-box depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="14.3 2.5 0" primal-anchor="x: 14.3; z: 0; yOffset: 2.48" rotation="0 90 0" shadow="cast:false; receive:true" width="2"></a-box>
+<a-entity id="primal_monkeys">
+  <a-entity id="monkey_agreeing_01" class="npc" mixamo-mat-fix gltf-model="#monkey_agreeing_glb" play-gltf-clip="randomStart: true; seed: 0.17" primal-anchor="x: 24.9; z: 7.95; yOffset: 0.02" face-point-y="x: 14.3; z: 0">
+    <a-box class="solid" width="0.85" height="1.25" depth="0.85" position="0 0.63 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_agreeing_02" class="npc" mixamo-mat-fix gltf-model="#monkey_agreeing_glb" play-gltf-clip="randomStart: true; seed: 0.63" primal-anchor="x: 28.1; z: -4.85; yOffset: 0.02" face-point-y="x: 14.3; z: 0">
+    <a-box class="solid" width="0.85" height="1.25" depth="0.85" position="0 0.63 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_idle_01" class="npc" mixamo-mat-fix gltf-model="#monkey_idle_glb" play-gltf-clip="randomStart: true; seed: 0.31" primal-anchor="x: 22.55; z: 3.35; yOffset: 0.02" face-point-y="x: 14.3; z: 0">
+    <a-box class="solid" width="0.82" height="1.2" depth="0.82" position="0 0.6 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_idle_02" class="npc" mixamo-mat-fix gltf-model="#monkey_idle_glb" play-gltf-clip="randomStart: true; seed: 0.81" primal-anchor="x: 24.7; z: -7.85; yOffset: 0.02" face-point-y="x: 14.3; z: 0">
+    <a-box class="solid" width="0.82" height="1.2" depth="0.82" position="0 0.6 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_warrior_01" class="npc" mixamo-mat-fix gltf-model="#monkey_warrior_glb" play-gltf-clip="randomStart: true; seed: 0.49" primal-anchor="x: 25.35; z: 0.95; yOffset: 0.02" face-point-y="x: 14.3; z: 0">
+    <a-box class="solid" width="0.9" height="1.35" depth="0.9" position="0 0.68 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_dancing_01" class="npc" mixamo-mat-fix gltf-model="#monkey_dancing_glb" play-gltf-clip="randomStart: false; seed: 0.05" primal-anchor="x: 31.4; z: 0.15; yOffset: 0.02" face-point-y="x: 14.3; z: 0">
+    <a-box class="solid" width="1.15" height="1.45" depth="1.15" position="0 0.73 0" visible="false"></a-box>
+  </a-entity>
+</a-entity>
 <!-- ── Player rig ────────────────────────────────────────────────── -->
 <!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
 <!-- ── Imported office + corridors from index.html ─────────────────────── --><a-entity id="transition_corridor" position="4.5 0.07 -62.5">
@@ -2304,6 +2291,103 @@ function primalSceneHeight(worldX, worldZ, sn) {
   const localZ = worldZ - PRIMAL_SCENE_CFG.CZ;
   return primalBaseGroundHeight(worldX, worldZ, sn) + primalOverlayHeight(localX, localZ, sn);
 }
+
+AFRAME.registerComponent('primal-anchor', {
+  schema: {
+    x: { type: 'number', default: 0 },
+    z: { type: 'number', default: 0 },
+    yOffset: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this._place = this._place.bind(this);
+    this.el.sceneEl.addEventListener('loaded', this._place);
+    this._place();
+  },
+  update: function () {
+    this._place();
+  },
+  _place: function () {
+    const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+    const y = primalSceneHeight(this.data.x, this.data.z, sn) + this.data.yOffset;
+    this.el.object3D.position.set(this.data.x, y, this.data.z);
+  },
+  remove: function () {
+    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('loaded', this._place);
+  }
+});
+
+AFRAME.registerComponent('face-point-y', {
+  schema: {
+    x: { type: 'number', default: 0 },
+    z: { type: 'number', default: 0 },
+    yawOffset: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this._face = this._face.bind(this);
+    this.el.sceneEl.addEventListener('loaded', this._face);
+    this.el.addEventListener('model-loaded', this._face);
+    this._face();
+  },
+  update: function () {
+    this._face();
+  },
+  _face: function () {
+    const pos = this.el.object3D.position;
+    const dx = this.data.x - pos.x;
+    const dz = this.data.z - pos.z;
+    const yaw = THREE.MathUtils.radToDeg(Math.atan2(dx, dz)) + this.data.yawOffset;
+    this.el.object3D.rotation.set(0, THREE.MathUtils.degToRad(yaw), 0);
+  },
+  remove: function () {
+    if (!this.el.sceneEl) return;
+    this.el.sceneEl.removeEventListener('loaded', this._face);
+    this.el.removeEventListener('model-loaded', this._face);
+  }
+});
+
+AFRAME.registerComponent('play-gltf-clip', {
+  schema: {
+    clip: { type: 'string', default: '' },
+    clipIndex: { type: 'int', default: 0 },
+    randomStart: { type: 'boolean', default: true },
+    seed: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this.mixer = null;
+    this.action = null;
+    this._onModelLoaded = (e) => {
+      const model = this.el.getObject3D('mesh');
+      if (!model) return;
+      const clips = (model.animations && model.animations.length) ? model.animations : ((e.detail && e.detail.model && e.detail.model.animations) || []);
+      if (!clips || !clips.length) return;
+      let clip = null;
+      if (this.data.clip) clip = clips.find((c) => c && c.name === this.data.clip) || null;
+      if (!clip) clip = clips[Math.max(0, Math.min(clips.length - 1, this.data.clipIndex))] || clips[0];
+      if (!clip) return;
+      this.mixer = new THREE.AnimationMixer(model);
+      this.action = this.mixer.clipAction(clip);
+      this.action.reset();
+      this.action.setLoop(THREE.LoopRepeat, Infinity);
+      this.action.play();
+      if (this.data.randomStart && clip.duration > 0) {
+        const normalizedSeed = Math.abs(this.data.seed % 1);
+        this.action.time = normalizedSeed * clip.duration;
+      }
+    };
+    this.el.addEventListener('model-loaded', this._onModelLoaded);
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+  },
+  remove: function () {
+    this.el.removeEventListener('model-loaded', this._onModelLoaded);
+    if (this.action) {
+      this.action.stop();
+      this.action = null;
+    }
+    this.mixer = null;
+  }
+});
 
 AFRAME.registerComponent('play-gltf-anim', {
   init: function () {
