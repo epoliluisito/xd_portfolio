@@ -1546,9 +1546,12 @@ AFRAME.registerComponent('rig-walk', {
         const pos = geom.getAttribute('position');
         const primalCutCX = 25.0;
         const primalCutCZ = 0.0;
-        const primalCutRadiusX = 18.8;
-        const primalCutRadiusZ = 13.8;
-        const primalCutFeather = 1.8;
+        // The berm overlay owns the primal floor region. Make the rock-ground cut
+        // slightly larger than the berm plane itself so no residual triangles survive
+        // near the seam when the camera moves.
+        const primalCutRadiusX = 22.6;
+        const primalCutRadiusZ = 17.2;
+        const primalCutFeather = 2.8;
         const inPrimalCut = (wx, wz, feather = 0.0) => {
           const rx = primalCutRadiusX + feather;
           const rz = primalCutRadiusZ + feather;
@@ -1591,9 +1594,17 @@ AFRAME.registerComponent('rig-walk', {
           const ia = srcIndex[i + 0];
           const ib = srcIndex[i + 1];
           const ic = srcIndex[i + 2];
-          const cx = (pos.getX(ia) + pos.getX(ib) + pos.getX(ic)) / 3 + CX;
-          const cz = (pos.getZ(ia) + pos.getZ(ib) + pos.getZ(ic)) / 3 + CZ;
-          if (inPrimalCut(cx, cz, -primalCutFeather)) continue;
+          const ax = pos.getX(ia) + CX, az = pos.getZ(ia) + CZ;
+          const bx = pos.getX(ib) + CX, bz = pos.getZ(ib) + CZ;
+          const cx = pos.getX(ic) + CX, cz = pos.getZ(ic) + CZ;
+          const mx = (ax + bx + cx) / 3;
+          const mz = (az + bz + cz) / 3;
+          const intersectsCut =
+            inPrimalCut(ax, az, -primalCutFeather) ||
+            inPrimalCut(bx, bz, -primalCutFeather) ||
+            inPrimalCut(cx, cz, -primalCutFeather) ||
+            inPrimalCut(mx, mz, -primalCutFeather * 0.5);
+          if (intersectsCut) continue;
           filteredIndex.push(ia, ib, ic);
         }
         geom.setIndex(filteredIndex);
