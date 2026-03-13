@@ -382,17 +382,17 @@ function onDecode(e){
     $('sig-dot').classList.add('small');
     setTimeout(()=>$('sig-title').classList.add('on'),400);
   },400);
-  // Line — impulse of the collapse — draws downward
+  // Line draws downward — matrix begins appearing as line arrives
   setTimeout(()=>{
     line(WCX,Y_SIG+4,WCX,Y_LINE_END,.15,1.5);
     cam(WCX,(Y_SIG+Y_MAT)/2,null,200);
   },750);
-  // Matrix at end of line
+  // Matrix fades in just as line reaches it — 100ms before line ends
   setTimeout(()=>{
     $('mat-block').classList.add('on');
     startScramble();
-    cam(WCX,Y_MAT,null,200);
-  },2600);
+    cam(WCX,Y_MAT,null,0);
+  },2150);
 }
 
 // ══════════════════════════════════════════════
@@ -481,16 +481,16 @@ function buildIntentSystems(positions){
       col.style.transition='left 1.2s cubic-bezier(.4,0,.2,1)';
       col.style.left=INT_XS[i]+'px';
     });
-    setTimeout(growSystem, 1400);
+    setTimeout(growSystem, 1000);
   });});
 }
 
 function growSystem(){
-  // Stems
+  // Stems grow immediately
   INTENT.forEach((_,i)=>{
-    setTimeout(()=>{ const s=$('istem-'+i); if(s)s.style.height='26px'; },i*50);
+    setTimeout(()=>{ const s=$('istem-'+i); if(s)s.style.height='26px'; },i*40);
   });
-  const t0=INTENT.length*50+200;
+  const t0 = INTENT.length*40 + 80; // dims start almost as stems finish
 
   // Dim names + subs staggered
   INTENT.forEach((d,i)=>{
@@ -569,27 +569,18 @@ function onSynthesis(){
   if(!sortChoice||phase!=='sorted')return;
   phase='synthesis';
 
-  // ── 1. Panel and button fade out slowly, origin circle fades in ──
+  // ── 1. Panel collapses — the existing vertical line resumes from where it stopped ──
   const wp=$('world-panel');
-  if(wp){ wp.style.transition='opacity 1s ease'; wp.style.opacity='0'; }
+  if(wp){ wp.style.transition='opacity .8s ease'; wp.style.opacity='0'; }
   $('btn-syn').classList.remove('on');
 
   // ── geometry ──
   const OX  = WCX;
-  const OY  = Y_PANEL;
+  const OY  = Y_LINE_END; // continuation of the original line from weak signal
   const N0Y = Y_PANEL + 220;
   const CY  = Y_MAT - 20;
   const RX  = 520;
   const RY  = 320;
-
-  const origin = document.createElement('div');
-  origin.style.cssText=`position:absolute;width:8px;height:8px;border-radius:50%;
-    background:rgba(255,255,255,.5);transform:translate(-50%,-50%);
-    opacity:0;transition:opacity 1.2s ease;`;
-  origin.style.left = OX+'px';
-  origin.style.top  = OY+'px';
-  document.getElementById('world').appendChild(origin);
-  setTimeout(()=>origin.style.opacity='1', 900);
 
   // 6 arc nodes spanning top half of ellipse: angles from lower-right to lower-left
   // angle 0 = right, going counter-clockwise (upward on right, down on left)
@@ -608,20 +599,26 @@ function onSynthesis(){
     n.className='onode';
     n.style.left = pos[i].x+'px';
     n.style.top  = (pos[i].y - 3)+'px';
-    n.innerHTML = `<div class="onode-dot"></div><div class="onode-lbl">${label.replace('\n','<br/>')}</div>`;
+    n.innerHTML = `<div class="onode-dot"></div><div class="onode-lbl" style="opacity:0;transition:opacity 1.4s ease">${label.replace('\n','<br/>')}</div>`;
     document.getElementById('world').appendChild(n);
+    // Dot appears first
     requestAnimationFrame(()=>requestAnimationFrame(()=>n.classList.add('show')));
+    // Label fades in 500ms after dot
+    setTimeout(()=>{
+      const lbl = n.querySelector('.onode-lbl');
+      if(lbl) lbl.style.opacity='1';
+    }, 500);
   }
 
   // ── 2. Camera follows origin down toward node 0 ──
-  cam(OX, N0Y, null, 1200, 2.2);
+  cam(OX, N0Y, null, 600, 2.2);
 
-  // ── 3. Line descends from origin to node 0 ──
+  // ── 3. Line continues downward from where it stopped near INTENT ──
   const LINE_DUR = 1800;
-  setTimeout(()=>line(OX, OY, OX, N0Y, .14, LINE_DUR/1000), 1200);
+  setTimeout(()=>line(OX, OY, OX, N0Y, .14, LINE_DUR/1000), 600);
 
   // ── 4. Node 0 appears where line ends ──
-  const T0 = 1200 + LINE_DUR + 300;
+  const T0 = 600 + LINE_DUR + 300;
   setTimeout(()=>spawnNode(0, OUTPUTS[0]), T0);
 
   // ── 5. Sequential journey counterclockwise: 0→6→5→4→3→2→1, then close ring ──
@@ -653,8 +650,8 @@ function onSynthesis(){
     // Camera follows the line to destination
     cam(pos[ri].x, pos[ri].y, null, tDraw, CAM_DUR);
     t = tDraw + SEG_DUR;
-    // Node appears when line arrives
-    setTimeout(()=> spawnNode(ri, journeyLabels[i]), t);
+    // Dot appears 400ms before camera arrives — fading in during travel
+    setTimeout(()=> spawnNode(ri, journeyLabels[i]), t - 400);
     t += PAUSE;
   });
 
@@ -664,15 +661,16 @@ function onSynthesis(){
   setTimeout(()=> line(pos[1].x, pos[1].y, pos[0].x, pos[0].y, .07, SEG_DUR/1000), T_CLOSE);
   const T_DONE = T_CLOSE + SEG_DUR;
 
-  // Final zoom out: starts only after ring is complete, slow ease-in-out
+  // Final zoom out: full journey visible — weak signal at top to constellation at bottom
   const allX = pos.map(p=>p.x), allY = pos.map(p=>p.y);
   const minX = Math.min(...allX), maxX = Math.max(...allX);
-  const minY = Math.min(...allY), maxY = Math.max(...allY);
+  const minY = Math.min(Math.min(...allY), Y_SIG); // include weak signal
+  const maxY = Math.max(...allY);
   const frameW = (maxX - minX) + 320;
   const frameH = (maxY - minY) + 240;
   const frameCX = (minX + maxX) / 2;
   const frameCY = (minY + maxY) / 2;
-  const finalS = Math.min(vw()/frameW*.9, vh()/frameH*.9);
+  const finalS = Math.min(vw()/frameW*.88, vh()/frameH*.88);
   cam(frameCX, frameCY, finalS, T_CLOSE, 3.5);
 }
 
@@ -731,7 +729,7 @@ vp.addEventListener('touchend',()=>{ if(pinch){pinch=false;return;} td=false; },
 vp.addEventListener('wheel',e=>{
   e.preventDefault();
   const ticks = e.deltaY / 100;
-  const f = Math.pow(0.994, ticks);
+  const f = Math.pow(0.988, ticks);
   const wx=(e.clientX-vw()/2)/camS+camX, wy=(e.clientY-vh()/2)/camS+camY;
   camS=Math.max(.08,Math.min(3,camS*f));
   camX=wx-(e.clientX-vw()/2)/camS; camY=wy-(e.clientY-vh()/2)/camS;
