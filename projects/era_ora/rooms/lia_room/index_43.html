@@ -307,6 +307,114 @@ AFRAME.registerComponent('rig-walk', {
         this._tmpBox = new THREE.Box3();
         this._tmpV3 = new THREE.Vector3();
 
+        this._smoothstep = (a, b, x) => {
+          const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+          return t * t * (3 - 2 * t);
+        };
+        this._angleDelta = (a, b) => {
+          let d = a - b;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          return d;
+        };
+        this._primalBermHeightAt = (x, z) => {
+          const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+          const ridged = (nx, nz) => {
+            const n = sn(nx, nz);
+            const r = 1 - Math.abs(n);
+            return r * r;
+          };
+
+          const CX = 25, CZ = 0;
+          const GY = 0.055;
+          const poolLX = 1.5, poolLZ = 0.0;
+          const bermRadiusX = 14.8, bermRadiusZ = 9.4;
+          const poolRadiusX = 7.4, poolRadiusZ = 4.6;
+          const gapCenter = Math.PI;
+          const gapHalf = 0.42;
+
+          const lx = x - CX;
+          const lz = z - CZ;
+          const px = lx - poolLX;
+          const pz = lz - poolLZ;
+
+          const ex = px / bermRadiusX;
+          const ez = pz / bermRadiusZ;
+          const er = Math.sqrt(ex * ex + ez * ez);
+          const ang = Math.atan2(pz, px);
+          const gapDelta = Math.abs(this._angleDelta(ang, gapCenter));
+          const gapMask = this._smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
+          const sideBoost = this._smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
+
+          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
+          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
+          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
+          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
+          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
+          const ringWidth = 0.12 + ringNoiseC * 0.035;
+
+          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
+          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
+          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
+          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
+
+          let h = 0;
+          h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
+          h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
+          h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
+
+          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
+          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
+          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
+          h += bermCore * (cragA + cragB + facets) * gapMask;
+
+          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
+          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
+          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
+          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
+          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
+          h += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
+          h += sideBoost * bermCore * 0.22;
+
+          h -= basinFalloff * 0.10;
+
+          const poolEx = px / poolRadiusX;
+          const poolEz = pz / poolRadiusZ;
+          const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
+          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
+          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
+          h += walkShelf * 0.06;
+          h += poolLip * 0.05;
+          h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
+
+          const terrainFade = Math.min(
+            this._smoothstep(20.6, 15.4, Math.abs(lx)),
+            this._smoothstep(15.4, 11.2, Math.abs(lz))
+          );
+          h *= terrainFade;
+
+          const waterMask = this._smoothstep(0.98, 1.10, poolEr);
+          h *= waterMask;
+
+          return GY + h + 0.012;
+        };
+        this._primalBermBlocksAt = (x, z) => {
+          const threshold = 0.34;
+          const r = this.data.radius + 0.08;
+          const samples = [
+            [0, 0],
+            [r, 0], [-r, 0], [0, r], [0, -r],
+            [r * 0.707, r * 0.707], [r * 0.707, -r * 0.707],
+            [-r * 0.707, r * 0.707], [-r * 0.707, -r * 0.707]
+          ];
+          for (let i = 0; i < samples.length; i++) {
+            const sx = x + samples[i][0];
+            const sz = z + samples[i][1];
+            if (this._primalBermHeightAt(sx, sz) >= threshold) return true;
+          }
+          return false;
+        };
+
         this._refreshColliders = () => {
           const scene = this.el.sceneEl;
           if (!scene) return;
@@ -338,6 +446,8 @@ AFRAME.registerComponent('rig-walk', {
 
           if (this._tmpBox.intersectsBox(this._playerBox)) return true;
         }
+
+        if (this._primalBermBlocksAt(x, z)) return true;
         return false;
       },
 
@@ -2071,7 +2181,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-sphere id="lia_earth_atmo" position="0 47 -420" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <a-sphere id="lia_earth_glow" position="0 47 -420" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
-<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
+<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0.12 0" radius="1.55" shadow="cast:false; receive:true">
 <a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
 <a-entity id="endchamber_handrail_colliders">
 <a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 -0.866" rotation="0 -36.1 0" visible="false"></a-box>
@@ -2097,13 +2207,13 @@ AFRAME.registerComponent('rig-walk', {
 </a-entity>
 </a-cylinder>
 <!-- Seam trim ring -->
-<a-entity id="lia_seam_trim" position="0 0.0715 0">
+<a-entity id="lia_seam_trim" position="0 0.1915 0">
 <a-ring id="lia_seam_flange" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" radius-inner="1.555" radius-outer="1.62" rotation="-90 0 0" segments-theta="128" shadow="cast:false; receive:true"></a-ring>
 </a-entity>
 <!-- Shaft collar (visible when looking down into hole) -->
-<a-cylinder height="1.50" id="lia_shaft_collar" material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double" open-ended="true" position="0 -0.68 0" radius="1.60" segments-radial="64" shadow="cast:false; receive:true"></a-cylinder>
+<a-cylinder height="1.50" id="lia_shaft_collar" material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double" open-ended="true" position="0 -0.56 0" radius="1.60" segments-radial="64" shadow="cast:false; receive:true"></a-cylinder>
 <!-- Black cap so shaft doesn't show void -->
-<a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.43 0" radius="1.60" rotation="-90 0 0"></a-circle>
+<a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.31 0" radius="1.60" rotation="-90 0 0"></a-circle>
 <!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
 <a-box depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
 <!-- ── Player rig ────────────────────────────────────────────────── -->
