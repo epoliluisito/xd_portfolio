@@ -1182,6 +1182,11 @@ AFRAME.registerComponent('rig-walk', {
         snowEntity.setObject3D('mesh', snowMesh);
         this.el.sceneEl.appendChild(snowEntity);
 
+        const FIELD_MIN_X = FIELD_CX - FIELD_HALF_W;
+        const FIELD_MAX_X = FIELD_CX + FIELD_HALF_W;
+        const FIELD_MIN_Z = FIELD_CZ - FIELD_HALF_D;
+        const FIELD_MAX_Z = FIELD_CZ + FIELD_HALF_D;
+
         const makeExtensionPatch = (cfg) => {
           const patchRes = cfg.res || 180;
           const alphaSize = 512;
@@ -1196,23 +1201,81 @@ AFRAME.registerComponent('rig-walk', {
           geom.rotateX(-Math.PI / 2);
           const pos = geom.attributes.position;
           const uv = geom.attributes.uv;
-          const innerOverlap = cfg.innerOverlap || 3.5;
+          const seamOverlap = cfg.seamOverlap || 2.6;
+          const seamBlend = cfg.seamBlend || 2.8;
           const sideFade = cfg.sideFade || 0.22;
-          const outerNoise = cfg.outerNoise || 2.4;
+          const outerFadeStart = cfg.outerFadeStart || 0.82;
+          const outerFadeEnd = cfg.outerFadeEnd || 1.02;
+          const rockClearance = cfg.rockClearance || 0.05;
+          const seamDrop = cfg.seamDrop || 0.014;
+          const perimeterSoftness = cfg.perimeterSoftness || 0.22;
+          const silhouetteInset = cfg.silhouetteInset || 0.15;
 
-          function patchMask(worldX, worldZ, u, v) {
+          function getPatchAxes(u, v) {
             let outward, lateral;
             if (cfg.dir === 'north') { outward = 1 - v; lateral = Math.abs(u - 0.5) * 2; }
             else if (cfg.dir === 'south') { outward = v; lateral = Math.abs(u - 0.5) * 2; }
             else if (cfg.dir === 'east') { outward = u; lateral = Math.abs(v - 0.5) * 2; }
             else { outward = 1 - u; lateral = Math.abs(v - 0.5) * 2; }
+            return { outward, lateral };
+          }
 
-            const core = smoothstep(-innerOverlap / Math.max(cfg.w, cfg.d), 0.08, outward) * (1 - smootherstep(0.78, 1.0, outward));
-            const side = 1 - smootherstep(1 - sideFade, 1.0, lateral);
-            const breakup = 0.88 + 0.12 * (sn(worldX * 0.08 + cfg.seedA, worldZ * 0.08 - cfg.seedB) * 0.5 + 0.5);
-            const fingers = 1 - smootherstep(0.72, 1.0, outward + (sn(worldX * 0.05 - cfg.seedB, worldZ * 0.05 + cfg.seedA) * 0.5 + 0.5) * 0.16);
-            let m = core * side * breakup * fingers;
-            m *= 0.82 + 0.18 * snowMask(worldX, worldZ);
+          function getSeamDistance(worldX, worldZ) {
+            if (cfg.dir === 'north') return worldZ - FIELD_MAX_Z;
+            if (cfg.dir === 'south') return FIELD_MIN_Z - worldZ;
+            if (cfg.dir === 'east') return worldX - FIELD_MAX_X;
+            return FIELD_MIN_X - worldX;
+          }
+
+          function patchMask(worldX, worldZ, u, v) {
+            const axes = getPatchAxes(u, v);
+            const outward = axes.outward;
+            const lateral = axes.lateral;
+            const seamDist = getSeamDistance(worldX, worldZ);
+
+            const nShapeA = sn(worldX * 0.040 + cfg.seedA * 1.37, worldZ * 0.040 - cfg.seedB * 1.11) * 0.5 + 0.5;
+            const nShapeB = sn(worldX * 0.090 - cfg.seedB * 0.73, worldZ * 0.090 + cfg.seedA * 0.91) * 0.5 + 0.5;
+            const nShapeC = sn(worldX * 0.16 + cfg.seedB * 0.29, worldZ * 0.16 - cfg.seedA * 0.33) * 0.5 + 0.5;
+            const laneNoise = sn(
+              (cfg.dir === 'north' || cfg.dir === 'south' ? worldX : worldZ) * 0.055 + cfg.seedA * 0.61,
+              (cfg.dir === 'north' || cfg.dir === 'south' ? worldZ : worldX) * 0.022 - cfg.seedB * 0.37
+            ) * 0.5 + 0.5;
+            const breakup = 0.90 + 0.10 * nShapeB;
+
+            const outerNoise = (nShapeA - 0.5) * 0.10 + (nShapeB - 0.5) * 0.06;
+            const sideNoise = (nShapeB - 0.5) * 0.09 + (nShapeC - 0.5) * 0.05 + (laneNoise - 0.5) * 0.08;
+            const tipNoise = (nShapeA - 0.5) * 0.09 + (nShapeC - 0.5) * 0.07;
+
+            const sidePull = Math.pow(Math.max(0, outward), 0.95) * (0.22 + 0.12 * nShapeA + 0.05 * laneNoise);
+            const sideThreshold = Math.max(
+              0.46,
+              1.0 - sideFade - silhouetteInset + perimeterSoftness - sidePull + sideNoise
+            );
+            const sideCore = 1 - smootherstep(sideThreshold, sideThreshold + 0.18, lateral);
+
+            const roundnessWarp =
+              outward +
+              lateral * (0.22 + 0.10 * nShapeA) +
+              Math.pow(lateral, 2.0) * (0.12 + 0.10 * nShapeB);
+            const tipThreshold = outerFadeStart + outerNoise + tipNoise * 0.45;
+            const core = 1 - smootherstep(tipThreshold, outerFadeEnd + outerNoise + 0.07, roundnessWarp);
+
+            const bulb = 1 - smootherstep(
+              0.74 + outerNoise * 0.28,
+              1.00 + outerNoise * 0.34,
+              outward + lateral * (0.18 + 0.08 * nShapeA) + Math.pow(lateral, 2.0) * (0.11 + 0.07 * nShapeC)
+            );
+            const capWarp = Math.sqrt(
+              Math.pow(outward * (0.96 + 0.10 * nShapeA), 2.0) +
+              Math.pow(lateral * (0.66 + 0.10 * nShapeB), 2.0)
+            );
+            const roundedCap = 1 - smootherstep(0.90 + outerNoise * 0.10, 1.05 + outerNoise * 0.12, capWarp);
+
+            const seamSolid = 1 - smootherstep(seamOverlap + 0.35, seamOverlap + seamBlend + 1.25, seamDist);
+            const innerSideClamp = 1 - smootherstep(0.90, 1.01, lateral);
+
+            let m = Math.max(core * sideCore * breakup * Math.max(bulb, roundedCap), seamSolid * innerSideClamp);
+            m *= 0.92 + 0.08 * snowMask(worldX, worldZ);
             return Math.max(0, Math.min(1, m));
           }
 
@@ -1223,21 +1286,34 @@ AFRAME.registerComponent('rig-walk', {
             const worldZ = cfg.cz + lz;
             const u = uv.getX(i);
             const v = uv.getY(i);
-            let outward;
-            if (cfg.dir === 'north') outward = 1 - v;
-            else if (cfg.dir === 'south') outward = v;
-            else if (cfg.dir === 'east') outward = u;
-            else outward = 1 - u;
-
+            const axes = getPatchAxes(u, v);
+            const outward = axes.outward;
             const baseMask = patchMask(worldX, worldZ, u, v);
+            const seamDist = getSeamDistance(worldX, worldZ);
+            const seamUnderlap = 1 - smootherstep(0.0, seamOverlap + seamBlend, seamDist);
             const nBig = sn(worldX * 0.05 + cfg.seedA, worldZ * 0.05 - cfg.seedB) * 0.5 + 0.5;
             const nMid = sn(worldX * 0.14 - cfg.seedB, worldZ * 0.14 + cfg.seedA) * 0.5 + 0.5;
-            const drift = (0.06 + 0.12 * (1 - outward)) * baseMask;
-            const edgeLift = 0.024 * (1 - smootherstep(0.0, 0.4, outward)) * baseMask;
-            let y = GROUND_Y + drift + edgeLift + nBig * 0.02 + nMid * 0.012;
-            y -= smootherstep(0.62, 1.0, outward) * (0.018 + 0.012 * nMid);
+            const nSmall = sn(worldX * 0.24 + cfg.seedB, worldZ * 0.24 - cfg.seedA) * 0.5 + 0.5;
+
+            const innerBias = 1 - smootherstep(0.0, 0.78, outward);
+            const bodyLift = (0.10 + 0.16 * innerBias) * baseMask;
+            const shoulderLift = (0.038 + 0.018 * nBig) * (1 - smootherstep(0.05, 0.52, outward)) * baseMask;
+            const edgeFeatherLift = 0.020 * (1 - smootherstep(0.48, 0.96, outward)) * baseMask;
+            let y = GROUND_Y + bodyLift + shoulderLift + edgeFeatherLift + nBig * 0.024 + nMid * 0.015 + nSmall * 0.008;
+            y -= smootherstep(0.72, 1.02, outward) * (0.012 + 0.008 * nMid);
             y += (channelDriftSuppress(worldX, worldZ) - 1.0) * 0.012;
-            if (baseMask < 0.02) y = HIDDEN_Y;
+
+            const edgeSupport = 1 - smootherstep(0.55, 1.02, outward);
+            const seamSupport = 1 - smootherstep(seamOverlap + 0.15, seamOverlap + seamBlend + 0.9, seamDist);
+            const minSnowSurface = GROUND_Y + (rockClearance + 0.030 * edgeSupport + 0.026 * seamSupport) * baseMask;
+            y = Math.max(y, minSnowSurface);
+
+            if (seamUnderlap > 0.0) {
+              const buriedY = GROUND_Y + rockClearance * 0.25 - seamDrop;
+              y = y * (1 - seamUnderlap) + buriedY * seamUnderlap;
+            }
+
+            if (baseMask < 0.008) y = HIDDEN_Y;
             pos.setY(i, y);
           }
           pos.needsUpdate = true;
@@ -1266,10 +1342,10 @@ AFRAME.registerComponent('rig-walk', {
           mat.transparent = true;
           mat.alphaMap = alphaTex;
           mat.depthWrite = true;
-          mat.alphaTest = 0.42;
+          mat.alphaTest = 0.10;
           mat.polygonOffset = true;
-          mat.polygonOffsetFactor = -2;
-          mat.polygonOffsetUnits = -2;
+          mat.polygonOffsetFactor = -3;
+          mat.polygonOffsetUnits = -3;
           mat.needsUpdate = true;
 
           const mesh = new THREE.Mesh(geom, mat);
@@ -1287,10 +1363,10 @@ AFRAME.registerComponent('rig-walk', {
           this._extensionEntities.push(entity);
         };
 
-        makeExtensionPatch({ id:'snow-ground-north', dir:'north', cx:0, cz:-32, w:68, d:30, seedA:11, seedB:29, sideFade:0.14, innerOverlap:6.0, res:176 });
-        makeExtensionPatch({ id:'snow-ground-south', dir:'south', cx:0, cz:-118, w:68, d:30, seedA:37, seedB:7, sideFade:0.16, innerOverlap:6.0, res:176 });
-        makeExtensionPatch({ id:'snow-ground-east', dir:'east', cx:48, cz:-75, w:32, d:64, seedA:19, seedB:41, sideFade:0.16, innerOverlap:6.0, res:176 });
-        makeExtensionPatch({ id:'snow-ground-west', dir:'west', cx:-48, cz:-75, w:32, d:64, seedA:53, seedB:17, sideFade:0.16, innerOverlap:6.0, res:176 });
+        makeExtensionPatch({ id:'snow-ground-north', dir:'north', cx:0, cz:-35.0, w:67.5, d:27.0, seedA:11, seedB:29, sideFade:0.10, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.10, perimeterSoftness:0.34, silhouetteInset:0.11, outerFadeStart:0.80, outerFadeEnd:1.00, res:224 });
+        makeExtensionPatch({ id:'snow-ground-south', dir:'south', cx:0, cz:-115.0, w:67.5, d:27.5, seedA:37, seedB:7, sideFade:0.10, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.10, perimeterSoftness:0.34, silhouetteInset:0.11, outerFadeStart:0.80, outerFadeEnd:1.01, res:224 });
+        makeExtensionPatch({ id:'snow-ground-east', dir:'east', cx:44.75, cz:-75, w:29.5, d:64.5, seedA:19, seedB:41, sideFade:0.10, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.10, perimeterSoftness:0.33, silhouetteInset:0.11, outerFadeStart:0.80, outerFadeEnd:1.00, res:224 });
+        makeExtensionPatch({ id:'snow-ground-west', dir:'west', cx:-44.75, cz:-75, w:29.5, d:64.5, seedA:53, seedB:17, sideFade:0.10, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.10, perimeterSoftness:0.33, silhouetteInset:0.11, outerFadeStart:0.80, outerFadeEnd:1.00, res:224 });
 
         this._snowEntity=snowEntity;
       },
@@ -1364,10 +1440,14 @@ AFRAME.registerComponent('rig-walk', {
           { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 },
           { x1: 2.18, x2:6.82, z1:-68.68, z2:-56.32 },
           { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 },
-          { x1:-34.0, x2:34.0, z1:-47.0, z2:-17.0 },
-          { x1:-34.0, x2:34.0, z1:-133.0, z2:-103.0 },
-          { x1:32.0, x2:64.0, z1:-107.0, z2:-43.0 },
-          { x1:-64.0, x2:-32.0, z1:-107.0, z2:-43.0 }
+          { x1:-38.5, x2:38.5, z1:-53.5, z2:-13.0 },
+          { x1:-38.5, x2:38.5, z1:-137.0, z2:-96.5 },
+          { x1:27.0, x2:69.5, z1:-112.0, z2:-38.0 },
+          { x1:-69.5, x2:-27.0, z1:-112.0, z2:-38.0 },
+          { x1:-42.0, x2:42.0, z1:-56.5, z2:-10.5 },
+          { x1:-42.0, x2:42.0, z1:-139.5, z2:-93.5 },
+          { x1:24.5, x2:72.5, z1:-115.0, z2:-35.0 },
+          { x1:-72.5, x2:-24.5, z1:-115.0, z2:-35.0 }
         ];
         const officeSnowSuppression = (x, z) => {
           let d = Infinity;
@@ -1377,7 +1457,7 @@ AFRAME.registerComponent('rig-walk', {
             d = Math.min(d, distToBoxOuter2D(x, z, b));
           }
           if (inside) return 1.0;
-          return smoothstep(14.0, 2.0, d);
+          return smoothstep(18.0, 1.5, d);
         };
 
         const tl = new THREE.TextureLoader();
@@ -1500,10 +1580,14 @@ AFRAME.registerComponent('rig-walk', {
           { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 },
           { x1: 2.18, x2:6.82, z1:-68.68, z2:-56.32 },
           { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 },
-          { x1:-34.0, x2:34.0, z1:-47.0, z2:-17.0 },
-          { x1:-34.0, x2:34.0, z1:-133.0, z2:-103.0 },
-          { x1:32.0, x2:64.0, z1:-107.0, z2:-43.0 },
-          { x1:-64.0, x2:-32.0, z1:-107.0, z2:-43.0 }
+          { x1:-38.5, x2:38.5, z1:-53.5, z2:-13.0 },
+          { x1:-38.5, x2:38.5, z1:-137.0, z2:-96.5 },
+          { x1:27.0, x2:69.5, z1:-112.0, z2:-38.0 },
+          { x1:-69.5, x2:-27.0, z1:-112.0, z2:-38.0 },
+          { x1:-42.0, x2:42.0, z1:-56.5, z2:-10.5 },
+          { x1:-42.0, x2:42.0, z1:-139.5, z2:-93.5 },
+          { x1:24.5, x2:72.5, z1:-115.0, z2:-35.0 },
+          { x1:-72.5, x2:-24.5, z1:-115.0, z2:-35.0 }
         ];
         const officeSnowSuppression = (x, z) => {
           let d = Infinity;
@@ -1513,7 +1597,7 @@ AFRAME.registerComponent('rig-walk', {
             d = Math.min(d, distToBoxOuter2D(x, z, b));
           }
           if (inside) return 1.0;
-          return smoothstep(14.0, 2.0, d);
+          return smoothstep(18.0, 1.5, d);
         };
 
         const tl = new THREE.TextureLoader();
