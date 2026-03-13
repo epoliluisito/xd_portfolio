@@ -319,87 +319,14 @@ AFRAME.registerComponent('rig-walk', {
         };
         this._primalBermHeightAt = (x, z) => {
           const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
-          const ridged = (nx, nz) => {
-            const n = sn(nx, nz);
-            const r = 1 - Math.abs(n);
-            return r * r;
-          };
-
-          const CX = 25, CZ = 0;
-          const GY = 0.055;
-          const poolLX = 1.5, poolLZ = 0.0;
-          const bermRadiusX = 14.8, bermRadiusZ = 9.4;
-          const poolRadiusX = 7.4, poolRadiusZ = 4.6;
-          const gapCenter = Math.PI;
-          const gapHalf = 0.42;
-
-          const lx = x - CX;
-          const lz = z - CZ;
-          const px = lx - poolLX;
-          const pz = lz - poolLZ;
-
-          const ex = px / bermRadiusX;
-          const ez = pz / bermRadiusZ;
-          const er = Math.sqrt(ex * ex + ez * ez);
-          const ang = Math.atan2(pz, px);
-          const gapDelta = Math.abs(this._angleDelta(ang, gapCenter));
-          const gapMask = this._smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
-          const sideBoost = this._smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
-
-          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
-          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
-          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
-          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
-          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
-          const ringWidth = 0.12 + ringNoiseC * 0.035;
-
-          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
-          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
-          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
-          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
-
-          let h = 0;
-          h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
-          h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
-          h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
-
-          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
-          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
-          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
-          h += bermCore * (cragA + cragB + facets) * gapMask;
-
-          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
-          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
-          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
-          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
-          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
-          h += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
-          h += sideBoost * bermCore * 0.22;
-
-          h -= basinFalloff * 0.10;
-
-          const poolEx = px / poolRadiusX;
-          const poolEz = pz / poolRadiusZ;
-          const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
-          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
-          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
-          h += walkShelf * 0.06;
-          h += poolLip * 0.05;
-          h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
-
-          const terrainFade = Math.min(
-            this._smoothstep(20.6, 15.4, Math.abs(lx)),
-            this._smoothstep(15.4, 11.2, Math.abs(lz))
-          );
-          h *= terrainFade;
-
-          const waterMask = this._smoothstep(0.98, 1.10, poolEr);
-          h *= waterMask;
-
-          return GY + h + 0.012;
+          return primalSceneHeight(x, z, sn);
+        };
+        this._primalOverlayAt = (x, z) => {
+          const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+          return primalOverlayHeight(x - PRIMAL_SCENE_CFG.CX, z - PRIMAL_SCENE_CFG.CZ, sn);
         };
         this._primalBermBlocksAt = (x, z) => {
-          const threshold = 0.34;
+          const threshold = 0.24;
           const r = this.data.radius + 0.08;
           const samples = [
             [0, 0],
@@ -410,7 +337,7 @@ AFRAME.registerComponent('rig-walk', {
           for (let i = 0; i < samples.length; i++) {
             const sx = x + samples[i][0];
             const sz = z + samples[i][1];
-            if (this._primalBermHeightAt(sx, sz) >= threshold) return true;
+            if (this._primalOverlayAt(sx, sz) >= threshold) return true;
           }
           return false;
         };
@@ -1686,54 +1613,7 @@ AFRAME.registerComponent('rig-walk', {
         this._root.name = 'primal-scene-root';
         this.el.setObject3D('mesh', this._root);
 
-        const CX = 25, CZ = 0;
-        const GY = 0.055;
-
-        const smoothstep = (a, b, x) => {
-          const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
-          return t * t * (3 - 2 * t);
-        };
-        const angleDelta = (a, b) => {
-          let d = a - b;
-          while (d > Math.PI) d -= Math.PI * 2;
-          while (d < -Math.PI) d += Math.PI * 2;
-          return d;
-        };
-        const ridged = (x, y) => {
-          const n = sn(x, y);
-          const r = 1 - Math.abs(n);
-          return r * r;
-        };
-        const inBox2D = (x, z, b) => x >= b.x1 && x <= b.x2 && z >= b.z1 && z <= b.z2;
-        const distToBoxOuter2D = (x, z, b) => {
-          const dx = x < b.x1 ? (b.x1 - x) : (x > b.x2 ? (x - b.x2) : 0);
-          const dz = z < b.z1 ? (b.z1 - z) : (z > b.z2 ? (z - b.z2) : 0);
-          return Math.hypot(dx, dz);
-        };
-
-        const officeSnowBoxes = [
-          { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 },
-          { x1: 2.18, x2:6.82, z1:-68.68, z2:-56.32 },
-          { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 },
-          { x1:-38.5, x2:38.5, z1:-53.5, z2:-13.0 },
-          { x1:-38.5, x2:38.5, z1:-137.0, z2:-96.5 },
-          { x1:27.0, x2:69.5, z1:-112.0, z2:-38.0 },
-          { x1:-69.5, x2:-27.0, z1:-112.0, z2:-38.0 },
-          { x1:-42.0, x2:42.0, z1:-56.5, z2:-10.5 },
-          { x1:-42.0, x2:42.0, z1:-139.5, z2:-93.5 },
-          { x1:24.5, x2:72.5, z1:-115.0, z2:-35.0 },
-          { x1:-72.5, x2:-24.5, z1:-115.0, z2:-35.0 }
-        ];
-        const officeSnowSuppression = (x, z) => {
-          let d = Infinity;
-          let inside = false;
-          for (const b of officeSnowBoxes) {
-            if (inBox2D(x, z, b)) inside = true;
-            d = Math.min(d, distToBoxOuter2D(x, z, b));
-          }
-          if (inside) return 1.0;
-          return smoothstep(18.0, 1.5, d);
-        };
+        const CX = PRIMAL_SCENE_CFG.CX, CZ = PRIMAL_SCENE_CFG.CZ;
 
         const tl = new THREE.TextureLoader();
         const mkTex = (path, repeat, isColor) => {
@@ -1765,38 +1645,7 @@ AFRAME.registerComponent('rig-walk', {
         const fRough = mkTex(rockPath + 'moon_rough.png', 7.8, false);
         const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
 
-        // ── Terrain patch (kept local and subtle; additive only) ───────────────
-        const TW = 20, TD = 16, SEG = 100;
-        const terrGeom = new THREE.PlaneGeometry(TW, TD, SEG, SEG);
-        terrGeom.rotateX(-Math.PI / 2);
-        const tp = terrGeom.getAttribute('position');
-        for (let i = 0; i < tp.count; i++) {
-          const lx = tp.getX(i), lz = tp.getZ(i);
-          const wx = CX + lx, wz = CZ + lz;
-          let h = (sn(wx*0.22, wz*0.22)*0.5+0.5)*0.18
-                + (sn(wx*0.55+7, wz*0.55-3)*0.5+0.5)*0.09
-                + (sn(wx*1.30+2, wz*1.30+9)*0.5+0.5)*0.045
-                + (sn(wx*3.00-5, wz*3.00+1)*0.5+0.5)*0.02;
-          const ex = Math.abs(lx)/(TW*0.5), ez = Math.abs(lz)/(TD*0.5);
-          const edge = Math.max(0, 1-Math.pow(Math.max(ex,ez)/0.82, 3));
-          tp.setY(i, GY + h * edge);
-        }
-        tp.needsUpdate = true;
-        terrGeom.computeVertexNormals();
-        const tuv = terrGeom.getAttribute('uv');
-        terrGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(tuv.array), 2));
-        const terrMat = new THREE.MeshStandardMaterial({
-          color: 0xd7dde4,
-          map: tDiff, normalMap: tNorm, roughnessMap: tRough, aoMap: tAO,
-          roughness: 0.98, metalness: 0, normalScale: new THREE.Vector2(1.6, 1.6), aoMapIntensity: 0.82,
-          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
-        });
-        this._materials.push(terrMat);
-        const terrMesh = new THREE.Mesh(terrGeom, terrMat);
-        terrMesh.name = 'primal-terrain-patch';
-        terrMesh.position.set(CX, 0.012, CZ);
-        terrMesh.visible = false;
-        this._root.add(terrMesh); this._meshes.push(terrMesh);
+        // Primal floor now derives directly from the shared base terrain + berm height field.
 
         // ── Rocky berm around the pool: emergent terrain, not object-boulders ──
         const boulderMat = new THREE.MeshStandardMaterial({
@@ -1804,6 +1653,7 @@ AFRAME.registerComponent('rig-walk', {
           map: bDiff, normalMap: bNorm, roughnessMap: bRough, aoMap: bAO,
           roughness: 0.96, metalness: 0, aoMapIntensity: 0.92,
           normalScale: new THREE.Vector2(1.85, 1.85),
+          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
         });
         this._materials.push(boulderMat);
 
@@ -1811,79 +1661,22 @@ AFRAME.registerComponent('rig-walk', {
         const bermGeom = new THREE.PlaneGeometry(bermW, bermD, bermSeg, bermSeg);
         bermGeom.rotateX(-Math.PI / 2);
         const bp = bermGeom.getAttribute('position');
-        const poolLX = 1.5, poolLZ = 0.0;
-        const bermRadiusX = 14.8, bermRadiusZ = 9.4;
-        const poolRadiusX = 7.4, poolRadiusZ = 4.6;
-        const gapCenter = Math.PI;
-        const gapHalf = 0.42;
 
         for (let i = 0; i < bp.count; i++) {
           const lx = bp.getX(i), lz = bp.getZ(i);
-          const px = lx - poolLX;
-          const pz = lz - poolLZ;
+          const wx = CX + lx, wz = CZ + lz;
+          let y = primalSceneHeight(wx, wz, sn);
 
-          const ex = px / bermRadiusX;
-          const ez = pz / bermRadiusZ;
-          const er = Math.sqrt(ex * ex + ez * ez);
-          const ang = Math.atan2(pz, px);
-          const gapDelta = Math.abs(angleDelta(ang, gapCenter));
-          const gapMask = smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
-          const sideBoost = smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
+          // Bury the berm perimeter slightly under the shared rock ground so the
+          // overlay mesh cannot reveal its triangulated boundary or z-fight seam.
+          const edgeDistX = bermW * 0.5 - Math.abs(lx);
+          const edgeDistZ = bermD * 0.5 - Math.abs(lz);
+          const edgeDist = Math.min(edgeDistX, edgeDistZ);
+          const t = Math.max(0, Math.min(1, 1.0 - edgeDist / 4.2));
+          const bury = t * t * (3 - 2 * t);
+          y -= bury * 0.22;
 
-          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
-          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
-          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
-          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
-          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
-          const ringWidth = 0.12 + ringNoiseC * 0.035;
-
-          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
-          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
-          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
-          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
-
-          let h = 0;
-          h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
-          h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
-          h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
-
-          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
-          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
-          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
-          h += bermCore * (cragA + cragB + facets) * gapMask;
-
-          // lift the two sides of the opening so the berm feels terrain-formed, not cut out
-          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
-          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
-          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
-          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
-          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
-          h += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
-          h += sideBoost * bermCore * 0.22;
-
-          // basin shaping: broad walkable floor with a distinct central water depression
-          h -= basinFalloff * 0.10;
-
-          const poolEx = px / poolRadiusX;
-          const poolEz = pz / poolRadiusZ;
-          const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
-          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
-          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
-          h += walkShelf * 0.06;
-          h += poolLip * 0.05;
-          h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
-
-          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
-          const fadeX = smoothstep(20.6, 15.4, Math.abs(lx));
-          const fadeZ = smoothstep(15.4, 11.2, Math.abs(lz));
-          const terrainFade = Math.min(fadeX, fadeZ);
-          h *= terrainFade;
-
-          // keep only the actual water footprint flat
-          const waterMask = smoothstep(0.98, 1.10, poolEr);
-          h *= waterMask;
-
-          bp.setY(i, GY + h);
+          bp.setY(i, y);
         }
 
         bp.needsUpdate = true;
@@ -1892,7 +1685,7 @@ AFRAME.registerComponent('rig-walk', {
         bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(buv.array), 2));
         const bermMesh = new THREE.Mesh(bermGeom, boulderMat);
         bermMesh.name = 'primal-rock-berm';
-        bermMesh.position.set(CX, 0.012, CZ);
+        bermMesh.position.set(CX, 0, CZ);
         this._root.add(bermMesh); this._meshes.push(bermMesh);
 
 
@@ -2108,6 +1901,11 @@ AFRAME.registerComponent('rig-walk', {
     <a-asset-item id="david_sitting_glb" src="../../characters/david_sitting.glb"></a-asset-item>
     <a-asset-item id="jenny_typing_glb" src="../../characters/jenny_typing.glb"></a-asset-item>
     <a-asset-item id="astra_typing_glb" src="../../characters/astra_typing.glb"></a-asset-item>
+    <a-asset-item id="monkey_agreeing_glb" src="./assets/monkeys/monkey_agreeing.glb"></a-asset-item>
+    <a-asset-item id="monkey_idle_glb" src="./assets/monkeys/monkey_idle.glb"></a-asset-item>
+    <a-asset-item id="monkey_warrior_glb" src="./assets/monkeys/monkey_warrior.glb"></a-asset-item>
+    <a-asset-item id="monkey_dancing_glb" src="./assets/monkeys/monkey_dancing.glb"></a-asset-item>
+    <video id="lia_video_monolith_04" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_04.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto"></video>
 
   </a-assets>
 <!-- ── Sky ──────────────────────────────────────────────────────── -->
@@ -2162,7 +1960,29 @@ AFRAME.registerComponent('rig-walk', {
 <!-- Black cap so shaft doesn't show void -->
 <a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.31 0" radius="1.60" rotation="-90 0 0"></a-circle>
 <!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
-<a-box depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="42.087 3.408 -0.119" primal-anchor="x: 42.087; z: -0.119; yOffset: 2.2980255761" rotation="0 270 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_01_video" src="#lia_video_monolith_04" width="2.813" height="5" position="0 0 0.158" material="shader: flat; side: front; transparent: false"></a-video>
+</a-box>
+<a-entity id="primal_monkeys">
+  <a-entity id="monkey_agreeing_01" class="npc" mixamo-mat-fix gltf-model="#monkey_agreeing_glb" play-gltf-clip="randomStart: true; seed: 0.17" scale="4 4 4" primal-anchor="x: 24.9; z: 7.95; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.85" height="1.25" depth="0.85" position="0 0.63 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_agreeing_02" class="npc" mixamo-mat-fix gltf-model="#monkey_agreeing_glb" play-gltf-clip="randomStart: true; seed: 0.63" scale="4 4 4" primal-anchor="x: 28.1; z: -4.85; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.85" height="1.25" depth="0.85" position="0 0.63 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_idle_01" class="npc" mixamo-mat-fix gltf-model="#monkey_idle_glb" play-gltf-clip="randomStart: true; seed: 0.31" scale="4 4 4" primal-anchor="x: 22.55; z: 3.35; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.82" height="1.2" depth="0.82" position="0 0.6 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_idle_02" class="npc" mixamo-mat-fix gltf-model="#monkey_idle_glb" play-gltf-clip="randomStart: true; seed: 0.81" scale="4 4 4" primal-anchor="x: 24.7; z: -7.85; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.82" height="1.2" depth="0.82" position="0 0.6 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_warrior_01" class="npc" mixamo-mat-fix gltf-model="#monkey_warrior_glb" play-gltf-clip="randomStart: true; seed: 0.49" scale="4 4 4" primal-anchor="x: 25.35; z: 0.95; yOffset: 0.050" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.9" height="1.35" depth="0.9" position="0 0.68 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_dancing_01" class="npc" mixamo-mat-fix gltf-model="#monkey_dancing_glb" play-gltf-clip="randomStart: false; seed: 0.05" primal-anchor="x: 31.4; z: 0.15; yOffset: 0.063" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="1.15" height="1.45" depth="1.15" position="0 0.73 0" visible="false"></a-box>
+  </a-entity>
+</a-entity>
 <!-- ── Player rig ────────────────────────────────────────────────── -->
 <!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
 <!-- ── Imported office + corridors from index.html ─────────────────────── --><a-entity id="transition_corridor" position="4.5 0.07 -62.5">
@@ -2317,7 +2137,7 @@ AFRAME.registerComponent('rig-walk', {
 <a-box class="solid" depth="12" height="5" id="corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
 <a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
 </a-entity><a-entity id="rock_ground" rock-ground="x: 25; y: -0.002; z: 0"></a-entity>
-<a-entity id="primal_scene" primal-scene="" position="0 0 0" visible="true"></a-entity>
+<a-entity id="primal_scene" primal-scene="" position="0 -0.04 0" visible="true"></a-entity>
 <a-entity id="primal_mountains" primal-mountains="" position="0 0 0" visible="true"></a-entity>
 <a-entity id="rig" position="0 0.07 0" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0">
 <a-entity camera="fov: 60; near: 0.1; far: 500; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
@@ -2329,6 +2149,248 @@ AFRAME.registerComponent('rig-walk', {
 
 
 
+const PRIMAL_SCENE_CFG = {
+  CX: 25,
+  CZ: 0,
+  GY: 0.055,
+  poolLX: 1.5,
+  poolLZ: 0.0,
+  bermRadiusX: 14.8,
+  bermRadiusZ: 9.4,
+  gapCenter: Math.PI,
+  gapHalf: 0.42,
+};
+
+function primalSmoothstep(a, b, x) {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+function primalAngleDelta(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function primalRidged(sn, x, y) {
+  const n = sn(x, y);
+  const r = 1 - Math.abs(n);
+  return r * r;
+}
+
+function primalBaseGroundHeight(worldX, worldZ, sn) {
+  const { GY, CX, CZ } = PRIMAL_SCENE_CFG;
+  const lx = worldX - CX;
+  const lz = worldZ - CZ;
+
+  let h = 0;
+  h += (sn(worldX * 0.020 + 14.0, worldZ * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
+  h += (sn(worldX * 0.050 - 2.0, worldZ * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
+  h += primalRidged(sn, worldX * 0.095 + 7.0, worldZ * 0.095 - 5.0) * 0.07;
+  h += primalRidged(sn, worldX * 0.180 - 4.0, worldZ * 0.180 + 6.0) * 0.035;
+
+  const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
+  h *= 1.0 - approachSoftener * 0.45;
+
+  const poolEx = (lx - 1.5) / 23.0;
+  const poolEz = lz / 16.0;
+  const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
+  h *= 1.0 - poolBlend * 0.65;
+
+  return GY + h * 0.9;
+}
+
+function primalOverlayRawHeight(localX, localZ, sn) {
+  const { poolLX, poolLZ, bermRadiusX, bermRadiusZ, gapCenter, gapHalf } = PRIMAL_SCENE_CFG;
+  const px = localX - poolLX;
+  const pz = localZ - poolLZ;
+
+  const ex = px / bermRadiusX;
+  const ez = pz / bermRadiusZ;
+  const er = Math.sqrt(ex * ex + ez * ez);
+  const ang = Math.atan2(pz, px);
+  const gapDelta = Math.abs(primalAngleDelta(ang, gapCenter));
+  const gapMask = primalSmoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
+  const sideBoost = primalSmoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
+
+  const ringNoiseA = (sn(px * 0.080 + 4.0, pz * 0.080 - 9.0) * 0.5 + 0.5);
+  const ringNoiseB = primalRidged(sn, px * 0.120 - 8.0, pz * 0.120 + 3.0);
+  const ringNoiseC = (sn(px * 0.220 + 1.0, pz * 0.220 - 6.0) * 0.5 + 0.5);
+  const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
+  const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
+  const ringWidth = 0.12 + ringNoiseC * 0.035;
+
+  const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
+  const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
+  const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
+  const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
+
+  let h = 0;
+  h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
+  h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
+  h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
+
+  const landingMask = Math.exp(-(((px - 0.35) / 7.2) ** 2 + (pz / 4.9) ** 2));
+  const cragDamp = 1.0 - landingMask * 0.78;
+  const approachDamp = 1.0 - landingMask * 0.58;
+
+  const cragA = primalRidged(sn, px * 0.22 + 11.0, pz * 0.22 - 2.0) * 0.34 * cragDamp;
+  const cragB = primalRidged(sn, px * 0.38 - 7.0, pz * 0.38 + 5.0) * 0.18 * cragDamp;
+  const facets = Math.max(0, sn(px * 0.42 + 2.0, pz * 0.42 - 4.0)) * 0.12 * cragDamp;
+  h += bermCore * (cragA + cragB + facets) * gapMask;
+
+  const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
+  const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
+  const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
+  const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
+  const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
+  h += (mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24) * approachDamp;
+  h += sideBoost * bermCore * 0.22;
+
+  h -= basinFalloff * 0.10;
+
+  const poolRadiusX = 7.4, poolRadiusZ = 4.6;
+  const poolEx = px / poolRadiusX;
+  const poolEz = pz / poolRadiusZ;
+  const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
+  const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
+  const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
+  const beamClear = Math.exp(-(((px - 0.15) / 5.8) ** 2 + (pz / 3.7) ** 2));
+  h += walkShelf * 0.05;
+  h += poolLip * 0.035;
+  h *= 1.0 - beamClear * 0.18;
+  h -= beamClear * 0.035;
+  h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.15;
+
+  const fadeX = primalSmoothstep(20.6, 15.4, Math.abs(localX));
+  const fadeZ = primalSmoothstep(15.4, 11.2, Math.abs(localZ));
+  const terrainFade = Math.min(fadeX, fadeZ);
+
+  return h * terrainFade;
+}
+
+function primalOverlayHeight(localX, localZ, sn) {
+  const raw = primalOverlayRawHeight(localX, localZ, sn);
+  const px = localX - PRIMAL_SCENE_CFG.poolLX;
+  const pz = localZ - PRIMAL_SCENE_CFG.poolLZ;
+  const warpGuard = Math.exp(-(((px - 0.35) / 6.8) ** 2 + (pz / 4.6) ** 2));
+  if (warpGuard < 0.001) return raw;
+
+  const step = 0.34;
+  const avg = (
+    raw * 4.0 +
+    primalOverlayRawHeight(localX - step, localZ, sn) +
+    primalOverlayRawHeight(localX + step, localZ, sn) +
+    primalOverlayRawHeight(localX, localZ - step, sn) +
+    primalOverlayRawHeight(localX, localZ + step, sn)
+  ) / 8.0;
+
+  return raw * (1.0 - warpGuard * 0.72) + avg * (warpGuard * 0.72);
+}
+
+function primalSceneHeight(worldX, worldZ, sn) {
+  const localX = worldX - PRIMAL_SCENE_CFG.CX;
+  const localZ = worldZ - PRIMAL_SCENE_CFG.CZ;
+  return primalBaseGroundHeight(worldX, worldZ, sn) + primalOverlayHeight(localX, localZ, sn);
+}
+
+AFRAME.registerComponent('primal-anchor', {
+  schema: {
+    x: { type: 'number', default: 0 },
+    z: { type: 'number', default: 0 },
+    yOffset: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this._place = this._place.bind(this);
+    this.el.sceneEl.addEventListener('loaded', this._place);
+    this._place();
+  },
+  update: function () {
+    this._place();
+  },
+  _place: function () {
+    const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+    const y = primalSceneHeight(this.data.x, this.data.z, sn) + this.data.yOffset;
+    this.el.object3D.position.set(this.data.x, y, this.data.z);
+  },
+  remove: function () {
+    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('loaded', this._place);
+  }
+});
+
+AFRAME.registerComponent('face-point-y', {
+  schema: {
+    x: { type: 'number', default: 0 },
+    z: { type: 'number', default: 0 },
+    yawOffset: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this._face = this._face.bind(this);
+    this.el.sceneEl.addEventListener('loaded', this._face);
+    this.el.addEventListener('model-loaded', this._face);
+    this._face();
+  },
+  update: function () {
+    this._face();
+  },
+  _face: function () {
+    const pos = this.el.object3D.position;
+    const dx = this.data.x - pos.x;
+    const dz = this.data.z - pos.z;
+    const yaw = THREE.MathUtils.radToDeg(Math.atan2(dx, dz)) + this.data.yawOffset;
+    this.el.object3D.rotation.set(0, THREE.MathUtils.degToRad(yaw), 0);
+  },
+  remove: function () {
+    if (!this.el.sceneEl) return;
+    this.el.sceneEl.removeEventListener('loaded', this._face);
+    this.el.removeEventListener('model-loaded', this._face);
+  }
+});
+
+AFRAME.registerComponent('play-gltf-clip', {
+  schema: {
+    clip: { type: 'string', default: '' },
+    clipIndex: { type: 'int', default: 0 },
+    randomStart: { type: 'boolean', default: true },
+    seed: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this.mixer = null;
+    this.action = null;
+    this._onModelLoaded = (e) => {
+      const model = this.el.getObject3D('mesh');
+      if (!model) return;
+      const clips = (model.animations && model.animations.length) ? model.animations : ((e.detail && e.detail.model && e.detail.model.animations) || []);
+      if (!clips || !clips.length) return;
+      let clip = null;
+      if (this.data.clip) clip = clips.find((c) => c && c.name === this.data.clip) || null;
+      if (!clip) clip = clips[Math.max(0, Math.min(clips.length - 1, this.data.clipIndex))] || clips[0];
+      if (!clip) return;
+      this.mixer = new THREE.AnimationMixer(model);
+      this.action = this.mixer.clipAction(clip);
+      this.action.reset();
+      this.action.setLoop(THREE.LoopRepeat, Infinity);
+      this.action.play();
+      if (this.data.randomStart && clip.duration > 0) {
+        const normalizedSeed = Math.abs(this.data.seed % 1);
+        this.action.time = normalizedSeed * clip.duration;
+      }
+    };
+    this.el.addEventListener('model-loaded', this._onModelLoaded);
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+  },
+  remove: function () {
+    this.el.removeEventListener('model-loaded', this._onModelLoaded);
+    if (this.action) {
+      this.action.stop();
+      this.action = null;
+    }
+    this.mixer = null;
+  }
+});
 
 AFRAME.registerComponent('play-gltf-anim', {
   init: function () {
@@ -2678,5 +2740,23 @@ AFRAME.registerComponent('hand-clamp', {
 })();
 </script>
 
+
+<script>
+(function(){
+  const bootVideo = () => {
+    const v = document.getElementById('lia_video_monolith_04');
+    if (!v) return;
+    v.loop = true;
+    v.muted = false;
+    v.volume = 1.0;
+    const playPromise = v.play();
+    if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
+  };
+  document.addEventListener('DOMContentLoaded', bootVideo, { once: true });
+  ['click','touchstart','keydown'].forEach(evt => {
+    window.addEventListener(evt, bootVideo, { once: true, passive: true });
+  });
+})();
+</script>
 </body>
 </html>
