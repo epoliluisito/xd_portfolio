@@ -573,6 +573,16 @@ AFRAME.registerComponent('light-beam', {
     font-size: 12px;
     opacity: 0.75;
   }
+  #bootBrowserNote{
+    margin-top: 22px;
+    font-size: 11px;
+    opacity: 0.38;
+    letter-spacing: 0.06em;
+    line-height: 1.5;
+  }
+  #bootBrowserNote span{
+    opacity: 0.72;
+  }
 
   #introScreen{
     position: fixed; inset: 0;
@@ -2552,7 +2562,7 @@ const far = this.data.avoidDist;
 <div id="hint" style="display:none"></div>
 <!-- ===== UI OVERLAY: Elevator Ride Video (fullscreen) ===== -->
 <div id="elevatorVideoOverlay" aria-hidden="true">
-  <video id="elevatorRideVideo" playsinline webkit-playsinline preload="auto" tabindex="-1"
+  <video id="elevatorRideVideo" crossorigin="anonymous" playsinline webkit-playsinline preload="auto" tabindex="-1"
          disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
     <source src="elevator_ride.mp4" type="video/mp4"/>
   </video>
@@ -2569,6 +2579,7 @@ const far = this.data.avoidDist;
 <div id="bootSub">experience loading</div>
 <div id="bootBarWrap"><div id="bootBar"></div></div>
 <div id="bootPct">0%</div>
+<div id="bootBrowserNote">Best experienced in <span>Google Chrome</span> on desktop.</div>
 </div>
 </div>
 <div aria-hidden="true" class="mode-waiting" id="introScreen">
@@ -7465,6 +7476,20 @@ function startOverlayVideo(){
       }));
     });
 
+    // Explicitly gate boot on elevator video being fully buffered.
+    // preload="auto" alone is passive — the browser may defer it under asset load pressure,
+    // which is the root cause of first-play stutter. We register here without calling
+    // .load() (that would flush the already-filling buffer).
+    const rideVid = document.getElementById('elevatorRideVideo');
+    if (rideVid) {
+      add(new Promise((res) => {
+        if (rideVid.readyState >= 4) return res(); // HAVE_ENOUGH_DATA
+        rideVid.addEventListener('canplaythrough', () => res(), { once: true });
+        rideVid.addEventListener('error', () => res(), { once: true });
+        setTimeout(() => res(), 25000); // fail-open: never block forever
+      }));
+    }
+
     return Promise.all(tasks);
   }
 
@@ -7479,10 +7504,12 @@ function startOverlayVideo(){
   }, { passive: true });
 
   if (BEGIN) BEGIN.addEventListener('click', () => startWalkingVideo());
-  if (SKIP_INTRO) SKIP_INTRO.addEventListener('click', () => fadeIntoRoom());
-  SKIP_INTRO.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fadeIntoRoom(); }
-  });
+  if (SKIP_INTRO) {
+    SKIP_INTRO.addEventListener('click', () => fadeIntoRoom());
+    SKIP_INTRO.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fadeIntoRoom(); }
+    });
+  }
 
   if (QUIT) QUIT.addEventListener('click', openQuitConfirm);
   if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
