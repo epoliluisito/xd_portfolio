@@ -2956,144 +2956,187 @@ AFRAME.registerComponent('hand-clamp', {
 
 <script>
 (function(){
-  const videoIds = [
-    'lia_video_monolith_04',
-    'lia_video_monolith_01',
-    'lia_video_monolith_02',
-    'lia_video_monolith_03',
-    'lia_video_monolith_05',
-    'lia_video_monolith_06',
-    'lia_video_monolith_07',
-    'lia_video_monolith_08',
-    'lia_video_monolith_09'
-  ];
-
   const cfg = {
-    volume: 0.42,
-    refDistance: 2.35,
-    maxDistance: 26.0,
-    rolloffFactor: 1.75,
-    distanceModel: 'inverse',
-    coneInner: 110,
-    coneOuter: 185,
-    coneOuterGain: 0.22
+    maxGain: 0.34,
+    minGain: 0.0,
+    near: 2.4,
+    far: 34.0,
+    curve: 1.85,
+    smoothing: 0.12,
+    syncTolerance: 0.45
   };
 
-  let initialized = false;
-  let userActivated = false;
+  const sources = [];
+  const tmpCam = new THREE.Vector3();
+  const tmpSrc = new THREE.Vector3();
+
+  let booted = false;
+  let activated = false;
+  let rafId = 0;
 
   function sceneEl(){ return document.querySelector('a-scene'); }
-  function listener(){ const s = sceneEl(); return s && s.audioListener ? s.audioListener : null; }
-  function audioContext(){ const l = listener(); return l && l.context ? l.context : null; }
+  function rigEl(){ return document.getElementById('rig'); }
+  function camEl(){ return document.getElementById('playerCam'); }
+  function audioContext(){
+    const s = sceneEl();
+    return s && s.audioListener && s.audioListener.context ? s.audioListener.context : null;
+  }
 
-  function prepareVideo(videoEl){
+  function ensureVideoSilent(videoEl){
     if (!videoEl) return;
     videoEl.loop = true;
     videoEl.crossOrigin = 'anonymous';
     videoEl.preload = 'auto';
     videoEl.playsInline = true;
+    videoEl.defaultMuted = true;
+    videoEl.muted = true;
+    videoEl.volume = 0;
+    videoEl.setAttribute('muted', 'muted');
     videoEl.setAttribute('playsinline', 'playsinline');
     videoEl.setAttribute('webkit-playsinline', 'webkit-playsinline');
-    videoEl.muted = true;
-    videoEl.defaultMuted = true;
-    videoEl.volume = 1.0;
-    videoEl.setAttribute('muted', 'muted');
-    if (videoEl.readyState < 2 && typeof videoEl.load === 'function') {
-      try { videoEl.load(); } catch (_) {}
-    }
     const p = videoEl.play();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   }
 
-  function enableSpatialPlayback(videoEl){
-    if (!videoEl) return;
-    videoEl.defaultMuted = false;
-    videoEl.muted = false;
-    videoEl.volume = 1.0;
-    videoEl.removeAttribute('muted');
-    const p = videoEl.play();
-    if (p && typeof p.catch === 'function') p.catch(() => {});
+  function makeHiddenAudio(src){
+    const audio = document.createElement('audio');
+    audio.src = src;
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.loop = true;
+    audio.playsInline = true;
+    audio.setAttribute('playsinline', 'playsinline');
+    audio.setAttribute('webkit-playsinline', 'webkit-playsinline');
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    return audio;
   }
 
-  function ensureSpatialOnPlane(vPlane){
-    if (!vPlane) return;
+  function mapDistanceToGain(distance){
+    if (distance <= cfg.near) return cfg.maxGain;
+    if (distance >= cfg.far) return cfg.minGain;
+    const t = (distance - cfg.near) / (cfg.far - cfg.near);
+    return cfg.maxGain * Math.pow(1 - t, cfg.curve);
+  }
+
+  function buildSource(vPlane){
+    if (!vPlane || vPlane.__distanceAudioBuilt) return vPlane.__distanceAudioBuilt;
     const srcSel = vPlane.getAttribute('src');
-    if (!srcSel || srcSel.charAt(0) !== '#') return;
+    if (!srcSel || srcSel.charAt(0) !== '#') return null;
 
     const videoEl = document.querySelector(srcSel);
-    const l = listener();
-    if (!videoEl || !l || !vPlane.object3D) return;
+    if (!videoEl) return null;
+    ensureVideoSilent(videoEl);
 
-    prepareVideo(videoEl);
+    const ctx = audioContext();
+    if (!ctx) return null;
 
-    try {
-      if (!videoEl.__mediaElementSource) {
-        const ctx = l.context;
-        videoEl.__mediaElementSource = ctx.createMediaElementSource(videoEl);
-      }
+    const audioEl = makeHiddenAudio(videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src'));
+    const node = ctx.createMediaElementSource(audioEl);
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    node.connect(gain);
+    gain.connect(ctx.destination);
 
-      if (!vPlane.__spatialAttached) {
-        const pa = new THREE.PositionalAudio(l);
-        pa.setNodeSource(videoEl.__mediaElementSource);
-        pa.setRefDistance(cfg.refDistance);
-        pa.setMaxDistance(cfg.maxDistance);
-        pa.setRolloffFactor(cfg.rolloffFactor);
-        pa.setDistanceModel(cfg.distanceModel);
-        pa.setDirectionalCone(cfg.coneInner, cfg.coneOuter, cfg.coneOuterGain);
-        pa.setVolume(cfg.volume);
-        pa.panner.panningModel = 'HRTF';
+    const data = {
+      plane: vPlane,
+      videoEl,
+      audioEl,
+      gain,
+      currentGain: 0,
+      started: false
+    };
 
-        vPlane.object3D.add(pa);
-        vPlane.__spatialAudio = pa;
-        vPlane.__spatialAttached = true;
-      }
+    vPlane.__distanceAudioBuilt = data;
+    sources.push(data);
+    return data;
+  }
 
-      if (userActivated) enableSpatialPlayback(videoEl);
-    } catch (err) {
-      console.warn('Spatial audio attach failed for', srcSel, err);
+  function buildAll(){
+    document.querySelectorAll('a-video[id^="monolith_"]').forEach(buildSource);
+    booted = true;
+  }
+
+  function trySync(source){
+    if (!source || !source.videoEl || !source.audioEl) return;
+    const v = source.videoEl;
+    const a = source.audioEl;
+    if (!Number.isFinite(v.currentTime)) return;
+    if (!Number.isFinite(a.currentTime)) return;
+    const delta = Math.abs(v.currentTime - a.currentTime);
+    if (delta > cfg.syncTolerance) {
+      try { a.currentTime = v.currentTime; } catch (_) {}
     }
   }
 
-  function attachAllSpatial(){
-    document.querySelectorAll('a-video[id^="monolith_"]').forEach(ensureSpatialOnPlane);
-  }
-
-  function startSpatial(){
+  function startAll(){
     const ctx = audioContext();
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
 
-    videoIds.forEach(id => {
-      const videoEl = document.getElementById(id);
-      prepareVideo(videoEl);
-      if (userActivated) enableSpatialPlayback(videoEl);
+    sources.forEach(source => {
+      ensureVideoSilent(source.videoEl);
+      if (!source.started) {
+        trySync(source);
+        const p = source.audioEl.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+        source.started = true;
+      }
     });
-    attachAllSpatial();
-    initialized = true;
+  }
+
+  function getListenerObject(){
+    const cam = camEl();
+    if (cam && cam.object3D) return cam.object3D;
+    const rig = rigEl();
+    if (rig && rig.object3D) return rig.object3D;
+    return null;
+  }
+
+  function updateGains(){
+    const listenerObj = getListenerObject();
+    if (!listenerObj) return;
+    listenerObj.getWorldPosition(tmpCam);
+
+    for (const source of sources) {
+      if (!source.plane || !source.plane.object3D) continue;
+      source.plane.object3D.getWorldPosition(tmpSrc);
+      const distance = tmpCam.distanceTo(tmpSrc);
+      const targetGain = activated ? mapDistanceToGain(distance) : 0;
+      source.currentGain += (targetGain - source.currentGain) * cfg.smoothing;
+      source.gain.gain.value = source.currentGain;
+    }
+  }
+
+  function tick(){
+    updateGains();
+    rafId = requestAnimationFrame(tick);
   }
 
   function boot(){
+    if (booted) return;
+    buildAll();
+    if (!rafId) tick();
+  }
+
+  function activate(){
+    activated = true;
+    if (!booted) boot();
+    startAll();
+  }
+
+  function init(){
+    document.querySelectorAll('video[id^="lia_video_monolith_"]').forEach(ensureVideoSilent);
     const s = sceneEl();
     if (!s) return;
-    const go = () => {
-      startSpatial();
-      setTimeout(startSpatial, 300);
-      setTimeout(startSpatial, 900);
-      setTimeout(startSpatial, 1600);
-    };
-    if (s.hasLoaded) go();
-    else s.addEventListener('loaded', go, { once: true });
+    if (s.hasLoaded) boot();
+    else s.addEventListener('loaded', boot, { once: true });
   }
 
-  function activateFromGesture(){
-    userActivated = true;
-    if (!initialized) boot();
-    startSpatial();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+  else init();
 
-  document.addEventListener('DOMContentLoaded', boot, { once: true });
-  window.addEventListener('load', boot, { once: true });
   ['click','touchstart','keydown'].forEach(evt => {
-    window.addEventListener(evt, activateFromGesture, { once: false, passive: true });
+    window.addEventListener(evt, activate, { passive: true });
   });
 })();
 </script>
