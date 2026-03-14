@@ -7404,6 +7404,33 @@ function startOverlayVideo(){
   }
 
   // Loading progress (simple count-based progress)
+  // GPU warmup for the elevator ride video.
+  // Browsers allocate the video texture pipeline lazily — the very first frame
+  // displayed on screen triggers a GPU texture upload that causes a visible stutter.
+  // We force this allocation during the boot phase by playing the video briefly
+  // (muted, invisible) so the GPU compositor is fully warm before the user ever
+  // reaches the elevator.
+  function gpuWarmRideVideo(vid, done){
+    try {
+      vid.muted = true;
+      vid.currentTime = 0;
+      const playP = vid.play();
+      const finish = () => {
+        try { vid.pause(); } catch(e){}
+        vid.currentTime = 0;
+        done();
+      };
+      // Let it run for ~250ms — enough for 6-8 frames at 30fps to be decoded
+      // and uploaded to the GPU texture, warming the compositor pipeline.
+      setTimeout(finish, 250);
+      if (playP && typeof playP.catch === 'function'){
+        playP.catch(() => done()); // autoplay blocked — skip warmup gracefully
+      }
+    } catch(e) {
+      done();
+    }
+  }
+
   function buildLoadTasks() {
     const tasks = [];
     let total = 0;
@@ -7485,8 +7512,11 @@ function startOverlayVideo(){
     const rideVid = document.getElementById('elevatorRideVideo');
     if (rideVid) {
       add(new Promise((res) => {
-        if (rideVid.readyState >= 4) return res(); // HAVE_ENOUGH_DATA
-        rideVid.addEventListener('canplaythrough', () => res(), { once: true });
+        if (rideVid.readyState >= 4) {
+          gpuWarmRideVideo(rideVid, res);
+          return;
+        }
+        rideVid.addEventListener('canplaythrough', () => gpuWarmRideVideo(rideVid, res), { once: true });
         rideVid.addEventListener('error', () => res(), { once: true });
         try { rideVid.load(); } catch(e) {} // forces buffering despite display:none
         setTimeout(() => res(), 25000); // fail-open: never block forever
