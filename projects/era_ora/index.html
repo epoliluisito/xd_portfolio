@@ -8545,7 +8545,8 @@ AFRAME.registerComponent('racer-controller', {
     if (_camDir.lengthSq() < 0.0001) return false;
     _camDir.normalize();
 
-    cam3.getWorldPosition(_camWorld);
+    // _camWorld is pre-set by proximityTick to the rig's world position —
+    // do NOT overwrite it here with the camera position.
 
     var halfRad = GAZE_HALF_ANGLE * Math.PI / 180;
     var targets = zone.gazeTargets;
@@ -8569,6 +8570,14 @@ AFRAME.registerComponent('racer-controller', {
     var scene = rigEl.sceneEl;
     var cam3 = scene && scene.camera;
     if (!cam3) return;
+
+    // Pre-set _camWorld to the rig's world position before calling isGazingAt.
+    // isGazingAt uses _camWorld as the spatial origin for the to-target angle test.
+    // Using the camera's own position is wrong in third-person: the camera sits
+    // several metres behind the player on the spring arm, which pulls every
+    // to-target vector toward "forward" and causes false gaze hits for panels
+    // that are actually to the side. The rig position is always the correct origin.
+    rigEl.object3D.getWorldPosition(_camWorld);
 
     var closest = null, closestDist = Infinity;
     for (var i = 0; i < ZONES.length; i++){
