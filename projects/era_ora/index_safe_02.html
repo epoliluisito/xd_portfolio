@@ -8161,7 +8161,7 @@ AFRAME.registerComponent('racer-controller', {
     // 1. Projection label
     ZONES.push({
       id: 'projection_label', cx: 2.5, cz: 2.0, radius: 4,
-      gazeEntityIds: ['projection_label_station_1'],
+      gazeTargets: [{x:0.1, z:2.0}],
       hintTitle: 'After the Shift',
       build: function(ct){
         ct.innerHTML =
@@ -8175,7 +8175,7 @@ AFRAME.registerComponent('racer-controller', {
     // 2. Entrance walls (Wall2 + Wall2B combined, two pages)
     ZONES.push({
       id: 'entrance_walls', cx: 16.0, cz: 5.0, radius: 4,
-      gazeEntityIds: ['Wall2_panel', 'Wall2B_panel'],
+      gazeTargets: [{x:17.93, z:3.0}, {x:15.75, z:5.99}],
       hintTitle: 'Exhibition wall text',
       build: function(ct){
         var pages = [
@@ -8199,7 +8199,7 @@ AFRAME.registerComponent('racer-controller', {
     // 3. Network label
     ZONES.push({
       id: 'network_label', cx: 5.5, cz: 17.0, radius: 3.5,
-      gazeEntityIds: ['network_label'],
+      gazeTargets: [{x:4.0, z:18.0}],
       hintTitle: 'The Old Network',
       build: function(ct){
         ct.innerHTML =
@@ -8216,7 +8216,7 @@ AFRAME.registerComponent('racer-controller', {
     // 4. Painting label
     ZONES.push({
       id: 'painting', cx: 17.0, cz: 18.5, radius: 4,
-      gazeEntityIds: ['painting_label'],
+      gazeTargets: [{x:17.99, z:20.0}, {x:15.7, z:16.01}],
       hintTitle: 'The Reclassification Field',
       build: function(ct){
         ct.innerHTML =
@@ -8233,12 +8233,7 @@ AFRAME.registerComponent('racer-controller', {
     // 5. Station 3
     ZONES.push({
       id: 'station3', cx: 15.10, cz: 11.40, radius: 4,
-      gazeEntityIds: [
-        'station3_A1_panel',
-        'station3_B1_panel','station3_B2_panel','station3_B3_panel',
-        'station3_B4_panel','station3_B5_panel',
-        'station3_C1_panel'
-      ],
+      gazeTargets: [{x:17.87, z:11.0}, {x:15.75, z:6.13}, {x:15.75, z:15.87}],
       hintTitle: 'Station 3 \u2014 Job Displacement',
       build: function(ct){
         var imgs = [
@@ -8264,7 +8259,7 @@ AFRAME.registerComponent('racer-controller', {
     // 6. Station 4 — triggered by looking at the LABEL at entrance
     ZONES.push({
       id: 'station4', cx: 11.0, cz: 21.0, radius: 4,
-      gazeEntityIds: ['s4_station4_label'],
+      gazeTargets: [{x:11.02, z:19.7}],
       hintTitle: 'Station 4 \u2014 The Mercurial Mon',
       build: function(ct){
         var imgs = [
@@ -8293,12 +8288,7 @@ AFRAME.registerComponent('racer-controller', {
     // 7. Station 5
     ZONES.push({
       id: 'station5', cx: 21.5, cz: 28.0, radius: 4,
-      gazeEntityIds: [
-        'station5_A_authority_trace_panel',
-        'station5_B_ownership_control_register_panel',
-        'station5_C_lobbying_policy_timeline_panel',
-        'station5_D_accountability_register_panel'
-      ],
+      gazeTargets: [{x:23.9, z:28.5}, {x:23.9, z:26.5}, {x:20.15, z:29.9}, {x:22.5, z:29.9}],
       hintTitle: 'Station 5 \u2014 Accountability',
       build: function(ct){
         var imgs = [
@@ -8331,7 +8321,7 @@ AFRAME.registerComponent('racer-controller', {
     }
     ZONES.push({
       id: 'photography', cx: 2.5, cz: 20.5, radius: 3.5,
-      gazeEntityIds: ['photo_label'],
+      gazeTargets: [{x:2.99, z:19.5}],
       hintTitle: 'The Aftershift \u2014 Photography',
       build: function(ct){
         ct.innerHTML =
@@ -8476,12 +8466,12 @@ AFRAME.registerComponent('racer-controller', {
   var activeZone = null;
   var isOpen = false;
   var gazeAwayTimer = 0;
-  var GAZE_GRACE = 0.3;
+  var GAZE_GRACE = 2.0;
   var GAZE_HALF_ANGLE = 50;
   var CHECK_MS = 160;
   var lastCheck = 0;
 
-  var _camDir = null, _camWorld = null, _raycaster = null;
+  var _camDir = null, _toTarget = null, _camWorld = null;
 
   /* ================================================================
      INIT
@@ -8495,10 +8485,8 @@ AFRAME.registerComponent('racer-controller', {
     defineZones();
 
     _camDir    = new THREE.Vector3();
+    _toTarget  = new THREE.Vector3();
     _camWorld  = new THREE.Vector3();
-    _raycaster = new THREE.Raycaster();
-    _raycaster.near = 0;
-    _raycaster.far  = 14; // covers any panel within the proximity zone
 
     // Key handler (useCapture to beat movement keys)
     document.addEventListener('keydown', function(e){
@@ -8539,7 +8527,6 @@ AFRAME.registerComponent('racer-controller', {
         if (rig && !rig.hasAttribute('proximity-info-tick')){
           rig.setAttribute('proximity-info-tick', '');
         }
-        resolveGazeObjects();
       };
       if (scene.hasLoaded) attach();
       else scene.addEventListener('loaded', attach);
@@ -8547,45 +8534,29 @@ AFRAME.registerComponent('racer-controller', {
   }
 
   /* ================================================================
-     GAZE CHECK — raycaster against actual scene meshes
-     gazeObjects are resolved lazily on first use (and re-resolved if
-     empty), so we never depend on scene-load timing for mesh readiness.
+     GAZE CHECK
+     Three.js Object3D.getWorldDirection() returns the LOCAL +Z axis
+     in world space — but cameras look down LOCAL -Z.
+     So we NEGATE to get the actual look direction.
      ================================================================ */
-  function resolveGazeObjects(){
-    for (var i = 0; i < ZONES.length; i++){
-      var zone = ZONES[i];
-      zone.gazeObjects = [];
-      var ids = zone.gazeEntityIds || [];
-      for (var j = 0; j < ids.length; j++){
-        var el = document.getElementById(ids[j]);
-        if (el && el.object3D) zone.gazeObjects.push(el.object3D);
-      }
-    }
-  }
-
-  function ensureGazeObjects(zone){
-    // Re-resolve if not yet populated (handles case where meshes weren't
-    // ready at scene-load time).
-    if (!zone.gazeObjects || !zone.gazeObjects.length){
-      zone.gazeObjects = [];
-      var ids = zone.gazeEntityIds || [];
-      for (var j = 0; j < ids.length; j++){
-        var el = document.getElementById(ids[j]);
-        if (el && el.object3D) zone.gazeObjects.push(el.object3D);
-      }
-    }
-  }
-
   function isGazingAt(zone, cam3){
-    ensureGazeObjects(zone);
-    var objects = zone.gazeObjects;
-    if (!objects || !objects.length) return false;
+    cam3.getWorldDirection(_camDir);      // Camera already returns -Z (look dir)
+    _camDir.y = 0;
+    if (_camDir.lengthSq() < 0.0001) return false;
+    _camDir.normalize();
 
-    cam3.getWorldPosition(_camWorld);
-    cam3.getWorldDirection(_camDir);
+    // _camWorld is pre-set by proximityTick to the rig's world position —
+    // do NOT overwrite it here with the camera position.
 
-    _raycaster.set(_camWorld, _camDir);
-    return _raycaster.intersectObjects(objects, true).length > 0;
+    var halfRad = GAZE_HALF_ANGLE * Math.PI / 180;
+    var targets = zone.gazeTargets;
+    for (var i = 0; i < targets.length; i++){
+      _toTarget.set(targets[i].x - _camWorld.x, 0, targets[i].z - _camWorld.z);
+      if (_toTarget.lengthSq() < 0.0001) return true;
+      _toTarget.normalize();
+      if (_camDir.dot(_toTarget) >= Math.cos(halfRad)) return true;
+    }
+    return false;
   }
 
   /* ================================================================
@@ -8599,6 +8570,14 @@ AFRAME.registerComponent('racer-controller', {
     var scene = rigEl.sceneEl;
     var cam3 = scene && scene.camera;
     if (!cam3) return;
+
+    // Pre-set _camWorld to the rig's world position before calling isGazingAt.
+    // isGazingAt uses _camWorld as the spatial origin for the to-target angle test.
+    // Using the camera's own position is wrong in third-person: the camera sits
+    // several metres behind the player on the spring arm, which pulls every
+    // to-target vector toward "forward" and causes false gaze hits for panels
+    // that are actually to the side. The rig position is always the correct origin.
+    rigEl.object3D.getWorldPosition(_camWorld);
 
     var closest = null, closestDist = Infinity;
     for (var i = 0; i < ZONES.length; i++){
