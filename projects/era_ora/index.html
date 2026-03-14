@@ -7477,15 +7477,17 @@ function startOverlayVideo(){
     });
 
     // Explicitly gate boot on elevator video being fully buffered.
-    // preload="auto" alone is passive — the browser may defer it under asset load pressure,
-    // which is the root cause of first-play stutter. We register here without calling
-    // .load() (that would flush the already-filling buffer).
+    // The overlay is display:none at page load, so browsers suppress preload="auto"
+    // for hidden media — the video never actually buffers without an explicit .load().
+    // Calling .load() here (boot phase) is correct and safe. The "do not call .load()"
+    // note in onSecondF applies only at playback time, where it would flush a live buffer.
     const rideVid = document.getElementById('elevatorRideVideo');
     if (rideVid) {
       add(new Promise((res) => {
         if (rideVid.readyState >= 4) return res(); // HAVE_ENOUGH_DATA
         rideVid.addEventListener('canplaythrough', () => res(), { once: true });
         rideVid.addEventListener('error', () => res(), { once: true });
+        try { rideVid.load(); } catch(e) {} // forces buffering despite display:none
         setTimeout(() => res(), 25000); // fail-open: never block forever
       }));
     }
