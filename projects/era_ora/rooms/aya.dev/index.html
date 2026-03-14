@@ -12055,6 +12055,7 @@ _applyPlatformReflectionFade: function (factor) {
     if (this.state.running) return;
 
     this.state.running = true;
+    this._earlyFadeTriggered = false; // guards the early scene-transition path
     // Background prefetch so the page is likely cached before arrival.
     try { fetch(this.data.nextUrl || '../lia_room/', { cache: 'force-cache' }).catch(() => {}); } catch(e) {}
     try {
@@ -12109,6 +12110,40 @@ _applyPlatformReflectionFade: function (factor) {
 
     const ease = (u) => (u < 0.5) ? (4 * u * u * u) : (1 - Math.pow(-2 * u + 2, 3) / 2);
 
+    // Early scene transition: fades to black ~1.4 s before platform lands and
+    // navigates immediately. lia_room has its own loading bar, so we don't need
+    // a fake bar here — just black screen → new scene.
+    const doEarlyNav = () => {
+      if (this._earlyFadeTriggered) return;
+      this._earlyFadeTriggered = true;
+
+      this._disableAscentLookLock();
+      this._hideGuideIfOwner();
+
+      let transOverlay = document.getElementById('_sceneTransOverlay');
+      if (!transOverlay) {
+        transOverlay = document.createElement('div');
+        transOverlay.id = '_sceneTransOverlay';
+        Object.assign(transOverlay.style, {
+          position: 'fixed', inset: '0', background: '#000',
+          opacity: '0', transition: 'opacity 280ms ease',
+          zIndex: '99999', pointerEvents: 'none'
+        });
+        document.body.appendChild(transOverlay);
+      }
+      transOverlay.offsetHeight; // force reflow before transition
+      transOverlay.style.opacity = '1';
+
+      const nextUrl = this.data.nextUrl || '../lia_room/';
+      setTimeout(() => {
+        try {
+          const vid = document.getElementById('ayaFullscreenVideo');
+          if (vid) { vid.pause(); vid.removeAttribute('src'); vid.load(); }
+        } catch(e) {}
+        window.location.replace(nextUrl);
+      }, 320); // 320 ms: black fade completes, then navigate
+    };
+
     const step = (t) => {
       const u = Math.min(1, (t - t0) / dur);
       const e = ease(u);
@@ -12156,6 +12191,14 @@ _applyPlatformReflectionFade: function (factor) {
         this._setPlatformMatteAboveGround(false);
       }
 
+      // Early scene transition: trigger exactly 2 s before animation end.
+      // Time-based (not u-based) so the ease curve doesn't compress the window.
+      // Screen goes black and navigation fires while platform is still rising,
+      // so the user never sees the changed lunar surface.
+      if (!this._earlyFadeTriggered && (t - t0) >= dur - 2000) {
+        doEarlyNav();
+      }
+
       if (u < 1) {
         requestAnimationFrame(step);
       } else {
@@ -12168,6 +12211,8 @@ _applyPlatformReflectionFade: function (factor) {
         const baseI = (typeof this._oculusSpotBaseI === 'number') ? this._oculusSpotBaseI : 0;
 
         const finishArrival = () => {
+          // Early transition already handled navigation — nothing to do.
+          if (this._earlyFadeTriggered) return;
           this._disableAscentLookLock();
           this._hideGuideIfOwner();
 
@@ -21022,6 +21067,16 @@ AFRAME.registerComponent('zone-manager', {
     this._initializeZones();
     
     this._checkInterval = 0;
+
+    // ── aya_dome occlusion suppression (junction_dome only) ──────────────
+    // aya_dome stays preloadDist:999 (always loaded). We simply hide/show it
+    // based on whether the player is inside junction_dome, where aya_dome is
+    // not visible but still costs GPU. Uses hardcoded junction_dome world
+    // position (root entity — no parent transform, fully reliable at any time).
+    this._ayaDomeEl = document.getElementById('aya_dome');
+    this._junctionDomePos = new THREE.Vector3(-46.660, 1.200, 38.790);
+    this._ayaSuppressed = false;
+    // ─────────────────────────────────────────────────────────────────────
   },
 
   _initializeZones: function () {
@@ -21110,6 +21165,27 @@ AFRAME.registerComponent('zone-manager', {
         this._unloadZone(id);
       }
     });
+
+    // ── aya_dome occlusion suppression (junction_dome only) ──────────────
+    // Hide aya_dome when player is inside junction_dome (it's fully occluded
+    // there but still costs GPU). Re-show it while player is still deep in
+    // the outbound tunnel — solid geometry surrounds them at that point, so
+    // the re-show happens completely out of sight.
+    //   hide threshold : 13m  (player clearly inside junction_dome shell)
+    //   show threshold : 35m  (player mid-tunnel, ~22m hysteresis gap)
+    // State flag ensures the visible assignment fires exactly once per
+    // transition — never every tick, never flickering.
+    if (this._ayaDomeEl) {
+      const jDist = playerPos.distanceTo(this._junctionDomePos);
+      if (!this._ayaSuppressed && jDist < 13) {
+        this._ayaDomeEl.object3D.visible = false;
+        this._ayaSuppressed = true;
+      } else if (this._ayaSuppressed && jDist > 35) {
+        this._ayaDomeEl.object3D.visible = true;
+        this._ayaSuppressed = false;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
   }
 });
 
