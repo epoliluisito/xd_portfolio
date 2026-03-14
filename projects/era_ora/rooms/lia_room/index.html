@@ -2894,97 +2894,83 @@ AFRAME.registerComponent('hand-clamp', {
 
 <script>
 (function(){
-  const videoIds = [
-    'lia_video_monolith_04',
-    'lia_video_monolith_01',
-    'lia_video_monolith_02',
-    'lia_video_monolith_03',
-    'lia_video_monolith_05',
-    'lia_video_monolith_06',
-    'lia_video_monolith_07',
-    'lia_video_monolith_08',
-    'lia_video_monolith_09'
-  ];
-
+  const MONOLITH_SELECTOR = 'a-video[id^="monolith_"]';
   let booted = false;
 
-  const getSceneAudioContext = () => {
+  function getAudioContext(){
     const scene = document.querySelector('a-scene');
     const listener = scene && scene.audioListener;
     return listener && listener.context ? listener.context : null;
-  };
+  }
 
-  const applySpatialMix = () => {
-    document.querySelectorAll('a-video[id^="monolith_"]').forEach(vPlane => {
-      try {
-        if (vPlane.hasAttribute('sound')) vPlane.removeAttribute('sound');
+  function getListener(){
+    const scene = document.querySelector('a-scene');
+    return scene && scene.audioListener ? scene.audioListener : null;
+  }
 
-        vPlane.setAttribute('sound', [
-          `src: ${vPlane.getAttribute('src')}`,
-          'positional: true',
-          'loop: true',
-          'autoplay: true',
-          'volume: 1.0',
-          'refDistance: 3.2',
-          'maxDistance: 18',
-          'rolloffFactor: 1.8',
-          'distanceModel: inverse'
-        ].join('; '));
+  function prepareVideoEl(videoEl){
+    videoEl.loop = true;
+    videoEl.crossOrigin = 'anonymous';
+    videoEl.playsInline = true;
+    videoEl.setAttribute('playsinline', 'playsinline');
+    videoEl.setAttribute('webkit-playsinline', 'webkit-playsinline');
+    videoEl.muted = true;
+    videoEl.defaultMuted = true;
+    videoEl.volume = 0.0;
+    const playPromise = videoEl.play();
+    if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
+  }
 
-        const setupCone = () => {
-          const soundCmp = vPlane.components && vPlane.components.sound;
-          const positional = soundCmp && soundCmp.pool && soundCmp.pool.children && soundCmp.pool.children[0];
-          if (!positional || typeof positional.setDirectionalCone !== 'function') return false;
-          positional.setDirectionalCone(65, 150, 0.15);
-          return true;
-        };
+  function attachSpatialAudio(vPlane){
+    const srcSel = vPlane.getAttribute('src');
+    if (!srcSel || srcSel.charAt(0) !== '#') return;
+    const videoEl = document.querySelector(srcSel);
+    const listener = getListener();
+    if (!videoEl || !listener || !vPlane.object3D) return;
 
-        if (!setupCone()) {
-          setTimeout(setupCone, 0);
-          setTimeout(setupCone, 250);
-          setTimeout(setupCone, 750);
-        }
-      } catch (e) {}
-    });
-  };
+    if (vPlane.__positionalAudio) {
+      try { vPlane.object3D.remove(vPlane.__positionalAudio); } catch (e) {}
+      try { if (vPlane.__mediaSource && typeof vPlane.__mediaSource.disconnect === 'function') vPlane.__mediaSource.disconnect(); } catch (e) {}
+      try { if (vPlane.__panner && typeof vPlane.__panner.disconnect === 'function') vPlane.__panner.disconnect(); } catch (e) {}
+    }
 
-  const bootVideos = () => {
+    prepareVideoEl(videoEl);
+
+    const ctx = listener.context;
+    const positional = new THREE.PositionalAudio(listener);
+    const mediaSource = ctx.createMediaElementSource(videoEl);
+    const panner = positional.panner;
+
+    mediaSource.connect(panner);
+    panner.connect(positional.gain);
+
+    positional.setRefDistance(2.25);
+    positional.setMaxDistance(12);
+    positional.setRolloffFactor(2.6);
+    positional.setDistanceModel('inverse');
+    positional.setDirectionalCone(55, 120, 0.08);
+    positional.setVolume(1.0);
+
+    vPlane.object3D.add(positional);
+    vPlane.__positionalAudio = positional;
+    vPlane.__mediaSource = mediaSource;
+    vPlane.__panner = panner;
+  }
+
+  function bootSpatialAudio(){
+    if (booted) return;
     const scene = document.querySelector('a-scene');
     if (!scene) return;
 
     const sceneReady = () => {
-      const audioCtx = getSceneAudioContext();
-      if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
-      }
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
 
-      videoIds.forEach(id => {
-        const v = document.getElementById(id);
-        if (!v) return;
-        v.loop = true;
-        v.muted = false;
-        v.defaultMuted = false;
-        v.volume = 1.0;
-        v.playsInline = true;
-        v.setAttribute('muted', false);
-        v.setAttribute('playsinline', 'playsinline');
-        v.setAttribute('webkit-playsinline', 'webkit-playsinline');
-        v.load();
-        const playPromise = v.play();
-        if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
-      });
-
-      applySpatialMix();
-
-      document.querySelectorAll('a-video[id^="monolith_"]').forEach(vPlane => {
-        const playSpatial = () => {
-          try {
-            if (vPlane.components && vPlane.components.sound) vPlane.components.sound.playSound();
-          } catch (e) {}
-        };
-        playSpatial();
-        setTimeout(playSpatial, 200);
-        setTimeout(playSpatial, 700);
+      document.querySelectorAll(MONOLITH_SELECTOR).forEach(vPlane => {
+        try {
+          if (vPlane.hasAttribute('sound')) vPlane.removeAttribute('sound');
+          attachSpatialAudio(vPlane);
+        } catch (e) {}
       });
 
       booted = true;
@@ -2992,18 +2978,11 @@ AFRAME.registerComponent('hand-clamp', {
 
     if (scene.hasLoaded) sceneReady();
     else scene.addEventListener('loaded', sceneReady, { once: true });
-  };
+  }
 
-  const startOnGesture = () => {
-    bootVideos();
-  };
-
-  document.addEventListener('DOMContentLoaded', () => {
-    if (!booted) bootVideos();
-  }, { once: true });
-
-  ['click', 'touchstart', 'keydown'].forEach(evt => {
-    window.addEventListener(evt, startOnGesture, { passive: true });
+  document.addEventListener('DOMContentLoaded', bootSpatialAudio, { once: true });
+  ['click','touchstart','keydown'].forEach(evt => {
+    window.addEventListener(evt, bootSpatialAudio, { once: true, passive: true });
   });
 })();
 </script>
