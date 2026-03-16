@@ -7024,20 +7024,18 @@ AFRAME.registerComponent('pbr-carpet', {
   }
   function onSkipElevatorActivate(e){
     if (e && e.preventDefault) e.preventDefault();
-
-    // If the next room isn't ready yet, do NOT hard-cut to black.
-    // Instead, hold the elevator video, show "SKIP ELEVATOR" and auto-complete once READY arrives.
-    const ready = (window.__ayaIsReady && window.__ayaIsReady());
-    if (!ready){
-      __skipPressed = true;
-      __skipEnabled = false;
-      setSkipUI('hidden');
-      startSkipReadyPolling();
-      return;
-    }
-
-    // Ready: proceed immediately with a clear "Loading…" acknowledgement.
     if (__elevatorRideFinished) return;
+
+    __skipPressed = true;
+
+    // Cancel any in-flight skip-ready polling loop so it doesn't
+    // race with the finishElevatorRide() call below.
+    if (__skipPollRAF) { cancelAnimationFrame(__skipPollRAF); __skipPollRAF = 0; }
+
+    // Proceed immediately regardless of AYA readiness.
+    // waitForAyaReadyThenNavigate() (called inside finishElevatorRide) already
+    // waits up to 30 s for AYA and then navigates, so the "not ready yet" case
+    // is handled there — no need to hold the elevator video open any longer.
     setSkipUI('loading');
     finishElevatorRide();
   }
