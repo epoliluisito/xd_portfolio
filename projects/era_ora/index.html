@@ -6925,7 +6925,8 @@ AFRAME.registerComponent('pbr-carpet', {
   // --- Skip gating (prevents "dead" black screen if user skips before next room is ready)
   let __skipEnabled = false;
   let __skipPressed = false;
-  let __skipPollRAF = 0;
+  let __skipPollTimer = 0;  // setInterval handle (not RAF — resilient to GPU-load throttling)
+  let __skipPollDone  = false;
 
   function setSkipUI(mode){
     // mode: 'hidden' | 'disabled' | 'enabled' | 'loading'
@@ -6964,19 +6965,20 @@ AFRAME.registerComponent('pbr-carpet', {
     } catch (e) {}
   }
 
-  let __skipPollDone = false;
-
   function startSkipReadyPolling(){
-    if (__skipPollRAF) return;
-    // Only show skip as a last resort if AYA never signals within this window.
-    // 25 s keeps it under waitForAyaReadyThenNavigate's 30 s hard cap.
-    const SKIP_SHOW_TIMEOUT_MS = 25000;
+    if (__skipPollTimer) return;
+    // Poll every 500 ms using setInterval — unlike RAF, this is not throttled by
+    // GPU overload, so the button will always appear even under heavy system load.
+    // Timeout is 20 s: AYA preload starts at 8 s of video, so this gives AYA
+    // up to 28 s total from video start, well within the 30 s hard nav cap.
+    const SKIP_SHOW_TIMEOUT_MS = 20000;
     const pollStart = performance.now();
-    const tick = () => {
-      __skipPollRAF = 0;
+    __skipPollTimer = setInterval(() => {
       const ready = (window.__ayaIsReady && window.__ayaIsReady());
       const timedOut = (performance.now() - pollStart) >= SKIP_SHOW_TIMEOUT_MS;
       if (ready || timedOut){
+        clearInterval(__skipPollTimer);
+        __skipPollTimer = 0;
         __skipPollDone = true;
         __skipEnabled = !!ready;
         // If the user already tried to skip, complete the action now.
@@ -6986,12 +6988,8 @@ AFRAME.registerComponent('pbr-carpet', {
           return;
         }
         setSkipUI('enabled');
-        return;
       }
-      // keep waiting
-      __skipPollRAF = requestAnimationFrame(tick);
-    };
-    __skipPollRAF = requestAnimationFrame(tick);
+    }, 500);
   }
 
   let __elevatorRideFinished = false;
@@ -7031,7 +7029,7 @@ AFRAME.registerComponent('pbr-carpet', {
     const ready = (window.__ayaIsReady && window.__ayaIsReady());
 
     if (ready){
-      // AYA is ready — go immediately.
+      // AYA is fully loaded — navigate immediately.
       setSkipUI('loading');
       finishElevatorRide();
       return;
@@ -7042,15 +7040,16 @@ AFRAME.registerComponent('pbr-carpet', {
     __skipEnabled = false;
 
     if (!__skipPollDone){
-      // Poll is still running — just mark __skipPressed and hide the button.
-      // The poll will call finishElevatorRide() as soon as AYA signals ready.
+      // Poll is still running — mark __skipPressed and hide the button.
+      // The interval will call finishElevatorRide() the moment AYA signals ready
+      // (or after the 20 s fallback). Video keeps playing; no black screen.
       setSkipUI('hidden');
       return;
     }
 
-    // Poll has already ended without AYA being ready (25 s fallback expired).
-    // Show 'loading', keep the elevator video running, and check with a lightweight
-    // interval so the user sees feedback rather than a frozen black screen.
+    // Poll already ended without AYA ready (20 s fallback expired).
+    // Show "LOADING…", keep video running, recheck every 300 ms.
+    // Hard fallback: navigate after 5 s regardless.
     setSkipUI('loading');
     const waitInt = setInterval(() => {
       if (window.__ayaIsReady && window.__ayaIsReady()) {
@@ -7059,7 +7058,6 @@ AFRAME.registerComponent('pbr-carpet', {
         finishElevatorRide();
       }
     }, 300);
-    // Hard fallback: give up waiting after another 5 s and navigate anyway.
     const waitFallback = setTimeout(() => {
       clearInterval(waitInt);
       finishElevatorRide();
@@ -7079,6 +7077,7 @@ function startOverlayVideo(){
     __skipPressed = false;
     __skipEnabled = false;
     __skipPollDone = false;
+    if (__skipPollTimer){ clearInterval(__skipPollTimer); __skipPollTimer = 0; }
     // Hide the skip control until AYA preload has finished (prevents "stuck" black screen).
     setSkipUI('hidden');
 
@@ -7113,12 +7112,28 @@ function startOverlayVideo(){
     // We do NOT call load() here — video is preloaded and must not be re-decoded.
     const alreadyPlaying = !rideVideo.paused;
 
+    // Delay AYA preload until the video has played 8 seconds of real content.
+    // This ensures the video decoder is warm and buffered before we start loading
+    // a full A-Frame scene (which hammers GPU/CPU/network and causes stutter).
+    const scheduleAyaPreload = () => {
+      const PRELOAD_AT_S = 8;
+      if (rideVideo.currentTime >= PRELOAD_AT_S) {
+        if (window.preloadAyaFragment) window.preloadAyaFragment();
+        return;
+      }
+      const onTU = () => {
+        if (rideVideo.currentTime >= PRELOAD_AT_S) {
+          rideVideo.removeEventListener('timeupdate', onTU);
+          if (window.preloadAyaFragment) window.preloadAyaFragment();
+        }
+      };
+      rideVideo.addEventListener('timeupdate', onTU);
+    };
+
     if (alreadyPlaying) {
-      // Pre-play succeeded — just unmute.
+      // Pre-play succeeded — just unmute, then wait for stable playback.
       rideVideo.muted = false;
-      // The 'playing' event already fired 680ms ago, so we trigger preload directly
-      // now that the scene is paused (safe to load without competing with 3D rendering).
-      setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 3500);
+      scheduleAyaPreload();
     } else {
       // Fallback: pre-play was blocked (e.g. very strict autoplay policy).
       if (!rideVideo.__warmed) { try { rideVideo.load(); } catch(e){} rideVideo.__warmed = true; }
@@ -7131,9 +7146,9 @@ function startOverlayVideo(){
           rideVideo.play().catch(()=>{});
         });
       }
-      // Preload next room once video is confirmed running (scene is already paused above).
+      // Schedule preload once video is confirmed running.
       rideVideo.addEventListener('playing', () => {
-        setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 3500);
+        scheduleAyaPreload();
       }, { once: true });
     }
 
