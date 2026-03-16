@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Narrative Reduction System</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --red: #C8102E;
+  --black: #0a0a0a;
+  --gray: #888;
+  --light: #f2f2f2;
+  --border: #e0e0e0;
+  --panel-w: 420px;
+}
+html, body { height: 100%; overflow: hidden; background: #fff; color: var(--black); font-family: 'DM Sans', sans-serif; }
+
+/* ─── INTRO ──────────────────────────────────────── */
+#intro {
+  position: fixed; inset: 0; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100; transition: opacity .6s ease;
+}
+#intro.out { opacity: 0; pointer-events: none; }
+.ii { width: min(500px, 88vw); display: flex; flex-direction: column; gap: 44px; }
+.eyebrow { display: flex; align-items: center; gap: 12px; }
+.eyebrow-line { width: 28px; height: 1px; background: #ccc; }
+.eyebrow-txt { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .25em; text-transform: uppercase; color: var(--gray); }
+.i-title { font-family: 'DM Serif Display', serif; font-size: clamp(40px,6vw,58px); line-height: 1; }
+.i-title em { font-style: italic; color: var(--red); }
+.i-sub { margin-top: 8px; font-size: 13.5px; line-height: 1.8; color: var(--gray); font-weight: 300; }
+.i-form { display: flex; flex-direction: column; gap: 26px; }
+.field { display: flex; flex-direction: column; gap: 7px; }
+.field label { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--gray); }
+.field input { border: none; border-bottom: 1.5px solid var(--black); padding: 8px 0; font-family: 'DM Serif Display', serif; font-size: 22px; color: var(--black); background: transparent; outline: none; transition: border-color .2s; width: 100%; }
+.field input::placeholder { color: #ccc; }
+.field input:focus { border-color: var(--red); }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .06em; padding: 7px 14px; border: 1.5px solid #ddd; color: var(--gray); cursor: pointer; transition: all .15s; user-select: none; }
+.chip:hover { border-color: var(--black); color: var(--black); }
+.chip.on { border-color: var(--black); background: var(--black); color: #fff; }
+.btn-begin { align-self: flex-start; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; padding: 12px 30px; background: var(--black); color: #fff; border: none; cursor: pointer; transition: background .2s, opacity .2s; }
+.btn-begin:hover:not(:disabled) { background: var(--red); }
+.btn-begin:disabled { opacity: .3; cursor: default; }
+
+/* ─── APP ─────────────────────────────────────────── */
+#app { position: fixed; inset: 0; display: none; flex-direction: column; }
+#app.on { display: flex; }
+
+/* ─── TOPBAR ──────────────────────────────────────── */
+#topbar { height: 50px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; border-bottom: 1px solid var(--border); background: #fff; z-index: 50; position: relative; }
+.tbl { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.tb-logo { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .24em; text-transform: uppercase; color: #bbb; flex-shrink: 0; }
+.tb-div { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; }
+.tb-title { font-family: 'DM Serif Display', serif; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-badge { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--red); background: rgba(200,16,46,.07); padding: 3px 8px; flex-shrink: 0; display: none; }
+.tbr { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.zbtn { width: 28px; height: 28px; border: 1.5px solid var(--border); background: #fff; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color .15s; user-select: none; }
+.zbtn:hover { border-color: var(--black); }
+.zbtn.txt { font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .05em; width: auto; padding: 0 8px; white-space: nowrap; }
+#z-pct { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--gray); min-width: 34px; text-align: center; }
+
+/* ─── VIEWPORT ────────────────────────────────────── */
+#vp {
+  flex: 1; position: relative; overflow: hidden; cursor: grab;
+  background-color: #fff;
+  background-image: radial-gradient(circle, #ddd 1px, transparent 1px);
+  background-size: 24px 24px;
+  touch-action: none; /* prevent browser scroll interference */
+}
+#vp.grabbing { cursor: grabbing; }
+
+/* ─── CANVAS ──────────────────────────────────────── */
+#cv { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; transform-origin: 0 0; will-change: transform; }
+
+/* ─── TIMELINE ────────────────────────────────────── */
+/* Anchor: canvas (80, 300). Line width: 1400px */
+#tl { position: absolute; left: 80px; top: 300px; }
+
+#tl-line {
+  position: absolute; left: 0; top: -2px;
+  width: 1400px; height: 4px;
+  background: var(--black);
+  transform: scaleX(0); transform-origin: left center;
+  transition: transform .9s cubic-bezier(.16,1,.3,1);
+}
+#tl-line.go { transform: scaleX(1); }
+
+#tl-arrow {
+  position: absolute; left: 1400px; top: -9px;
+  opacity: 0; transition: opacity .3s ease .85s;
+}
+#tl-arrow.go { opacity: 1; }
+
+#tl-tick {
+  position: absolute; left: -1px; top: -70px;
+  width: 2px; height: 144px; background: #ccc;
+  opacity: 0; transition: opacity .3s ease .85s;
+}
+#tl-tick.go { opacity: 1; }
+
+#tl-hint {
+  position: absolute; left: 700px; top: -52px;
+  transform: translateX(-50%);
+  font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .18em;
+  text-transform: uppercase; color: #ccc; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .5s;
+}
+#tl-hint.go { opacity: 1; }
+
+/* ─── SEGMENTS ────────────────────────────────────── */
+.seg {
+  position: absolute;
+  top: -120px; height: 244px;
+  border-right: 1.5px solid #ccc;
+  cursor: pointer;
+  /* reveal start state */
+  opacity: 0; transform: scaleY(0);
+  transform-origin: 50% 120px; /* scale from the line */
+}
+.seg:last-child { border-right: none; }
+.seg.go { opacity: 1; transform: scaleY(1); transition: opacity .4s ease, transform .45s cubic-bezier(.34,1.56,.64,1), background .15s; }
+.seg:hover { background: rgba(200,16,46,.04); }
+.seg.active { background: rgba(200,16,46,.07); border-right-color: var(--red) !important; }
+.seg.lit { background: rgba(200,16,46,.02); border-right-color: rgba(200,16,46,.35); }
+
+.seg-num {
+  position: absolute; top: 16px; left: 0; right: 0; text-align: center;
+  font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .1em;
+  color: #bbb; transition: color .15s;
+}
+.seg.active .seg-num { color: var(--red); }
+
+.seg-label {
+  position: absolute; bottom: 10px; left: 6px; right: 6px; text-align: center;
+  font-family: 'DM Mono', monospace; font-size: 8.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: #bbb; transition: color .15s;
+  line-height: 1.4;
+  /* allow 2 lines, clip beyond */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.seg.active .seg-label { color: var(--black); }
+
+/* act label above line */
+.seg-act {
+  position: absolute; top: 32px; left: 0; right: 0; text-align: center;
+  font-family: 'DM Mono', monospace; font-size: 7.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: #ddd; transition: color .15s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 4px;
+}
+.seg.active .seg-act { color: rgba(200,16,46,.5); }
+
+/* ─── START BUTTON ────────────────────────────────── */
+#btn-start {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+  z-index: 40; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .2em;
+  text-transform: uppercase; padding: 13px 32px;
+  background: var(--black); color: #fff; border: none; cursor: pointer;
+  display: flex; align-items: center; gap: 10px;
+  transition: background .2s, opacity .25s, transform .25s;
+  white-space: nowrap;
+}
+#btn-start:hover { background: var(--red); }
+#btn-start.out { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(6px); }
+.s-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--red); transition: background .2s; }
+#btn-start:hover .s-dot { background: rgba(255,255,255,.5); }
+
+/* ─── MODAL ───────────────────────────────────────── */
+#modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.32);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200; opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+#modal.on { opacity: 1; pointer-events: all; }
+.mbox { background: #fff; width: min(420px, 92vw); padding: 42px; border: 1px solid #eee; transform: translateY(8px); transition: transform .2s; }
+#modal.on .mbox { transform: translateY(0); }
+.m-eye { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--gray); margin-bottom: 8px; }
+.m-title { font-family: 'DM Serif Display', serif; font-size: 26px; line-height: 1.1; margin-bottom: 10px; }
+.m-desc { font-size: 13px; line-height: 1.72; color: var(--gray); font-weight: 300; margin-bottom: 28px; }
+.m-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.mcard { border: 1.5px solid #ddd; padding: 24px 12px; cursor: pointer; text-align: center; transition: all .15s; }
+.mcard:hover { border-color: var(--black); }
+.mcard.on { border-color: var(--black); background: var(--black); color: #fff; }
+.mc-n { font-family: 'DM Serif Display', serif; font-size: 48px; line-height: 1; margin-bottom: 6px; }
+.mc-l { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--gray); }
+.mcard.on .mc-l { color: #aaa; }
+.mc-s { font-size: 11px; color: var(--gray); margin-top: 3px; font-weight: 300; }
+.mcard.on .mc-s { color: #888; }
+.m-ok { width: 100%; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; padding: 13px; background: var(--black); color: #fff; border: none; cursor: pointer; transition: background .2s; }
+.m-ok:hover:not(:disabled) { background: var(--red); }
+.m-ok:disabled { background: #ccc; cursor: default; }
+
+/* ─── PANEL ───────────────────────────────────────── */
+#panel {
+  position: fixed; top: 50px; right: 0; bottom: 0;
+  width: min(var(--panel-w), 100vw);
+  background: #fff; border-left: 1px solid var(--border);
+  z-index: 45; display: flex; flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .35s cubic-bezier(.16,1,.3,1);
+}
+#panel.on { transform: translateX(0); }
+.ph { padding: 16px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.ph-lbl { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--gray); }
+.ph-close { width: 26px; height: 26px; border: 1.5px solid var(--border); background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--gray); transition: all .15s; }
+.ph-close:hover { border-color: var(--black); background: var(--black); color: #fff; }
+.ps { flex: 1; overflow-y: auto; padding: 26px 22px 52px; display: flex; flex-direction: column; gap: 22px; }
+.ps::-webkit-scrollbar { width: 3px; }
+.ps::-webkit-scrollbar-thumb { background: #ddd; }
+
+/* panel content */
+.p-num { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--red); }
+.p-title { font-family: 'DM Serif Display', serif; font-size: 22px; line-height: 1.15; margin-top: 5px; }
+.p-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.p-tag { font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; background: var(--light); color: var(--gray); }
+.p-blk { display: flex; flex-direction: column; gap: 8px; }
+.p-blk-lbl { font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .18em; text-transform: uppercase; color: var(--gray); padding-bottom: 5px; border-bottom: 1px solid #f0f0f0; }
+.p-text { font-size: 13px; line-height: 1.78; font-weight: 300; }
+.p-text p { margin-bottom: 10px; }
+.p-text p:last-child { margin-bottom: 0; }
+.p-text strong { font-weight: 500; }
+.p-qs { display: flex; flex-direction: column; gap: 9px; }
+.p-q { display: flex; gap: 8px; }
+.p-q-d { font-family: 'DM Serif Display', serif; font-style: italic; color: var(--red); font-size: 14px; line-height: 1.6; flex-shrink: 0; }
+.p-q-t { font-size: 12.5px; line-height: 1.65; font-weight: 300; }
+.p-refs { display: flex; flex-direction: column; gap: 6px; }
+.p-ref { display: flex; gap: 10px; }
+.p-ref-s { font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .06em; text-transform: uppercase; color: var(--gray); min-width: 80px; padding-top: 1px; flex-shrink: 0; }
+.p-ref-v { font-size: 12px; font-weight: 300; line-height: 1.5; }
+.p-conn { background: #f8f8f8; border-left: 2px solid var(--red); padding: 12px 14px; font-size: 12px; line-height: 1.72; color: #555; font-style: italic; font-weight: 300; }
+.p-note { width: 100%; min-height: 80px; resize: vertical; border: 1px solid #eee; padding: 10px; font-family: 'DM Mono', monospace; font-size: 11px; line-height: 1.6; background: #fafafa; color: var(--black); outline: none; transition: border-color .18s, background .18s; }
+.p-note:focus { border-color: var(--black); background: #fff; }
+.p-note::placeholder { color: #ccc; }
+
+/* ─── STATUS ──────────────────────────────────────── */
+#status { position: fixed; bottom: 26px; left: 24px; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .18em; text-transform: uppercase; color: var(--gray); display: flex; align-items: center; gap: 8px; opacity: 0; pointer-events: none; transition: opacity .4s; z-index: 40; }
+#status.on { opacity: 1; }
+.s-dot2 { width: 4px; height: 4px; border-radius: 50%; background: var(--red); }
+</style>
+</head>
+<body>
+
+<!-- INTRO -->
+<div id="intro">
+  <div class="ii">
+    <div class="eyebrow"><div class="eyebrow-line"></div><span class="eyebrow-txt">Narrative Development Tool</span></div>
+    <div>
+      <h1 class="i-title">Narrative<br><em>Reduction</em></h1>
+      <p class="i-sub">Break any narrative into essential blocks.<br>Solve one thing at a time — without losing sight of the whole.</p>
+    </div>
+    <div class="i-form">
+      <div class="field">
+        <label>Working Title</label>
+        <input type="text" id="inp-title" placeholder="Untitled Project" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Artifact Type</label>
+        <div class="chips">
+          <div class="chip" data-v="Screenplay">Screenplay</div>
+          <div class="chip" data-v="Narrative Environment">Narrative Environment</div>
+          <div class="chip" data-v="Experience">Experience</div>
+        </div>
+      </div>
+      <button class="btn-begin" id="btn-begin" disabled>Begin →</button>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div id="topbar">
+    <div class="tbl">
+      <span class="tb-logo">NRS</span>
+      <div class="tb-div"></div>
+      <span class="tb-title" id="tb-title">—</span>
+      <span class="tb-badge" id="tb-badge"></span>
+    </div>
+    <div class="tbr">
+      <button class="zbtn" id="z-out" title="Zoom out">−</button>
+      <span id="z-pct">100%</span>
+      <button class="zbtn" id="z-in" title="Zoom in">+</button>
+      <button class="zbtn" id="z-fit" title="Fit to screen">⌂</button>
+      <button class="zbtn txt" id="z-rebuild" title="Change structure" style="display:none">↺ rebuild</button>
+    </div>
+  </div>
+
+  <div id="vp">
+    <div id="cv">
+      <div id="tl">
+        <div id="tl-line"></div>
+        <svg id="tl-arrow" width="44" height="20" viewBox="0 0 44 20" style="position:absolute;top:-8px;left:1400px">
+          <polygon points="0,4 34,4 34,0 44,10 34,20 34,16 0,16" fill="#0a0a0a"/>
+        </svg>
+        <div id="tl-tick"></div>
+        <div id="tl-hint">↑ click any segment to explore its function</div>
+      </div>
+    </div>
+  </div>
+
+  <button id="btn-start"><span class="s-dot"></span>Start Reduction</button>
+  <div id="status"><div class="s-dot2"></div><span id="status-txt"></span></div>
+
+  <div id="modal">
+    <div class="mbox">
+      <div class="m-eye">Choose Structure</div>
+      <h2 class="m-title">How do you want<br>to divide this?</h2>
+      <p class="m-desc">Start with the 3-act skeleton to understand the large shape. Then go to 8 to work the individual beats.</p>
+      <div class="m-cards">
+        <div class="mcard" data-n="4">
+          <div class="mc-n">4</div>
+          <div class="mc-l">3-Act Structure</div>
+          <div class="mc-s">Act 1 · 2A · 2B · 3</div>
+        </div>
+        <div class="mcard" data-n="8">
+          <div class="mc-n">8</div>
+          <div class="mc-l">Beat Sequence</div>
+          <div class="mc-s">Save the Cat + Hero's Journey</div>
+        </div>
+      </div>
+      <button class="m-ok" id="m-ok" disabled>Apply Structure →</button>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div class="ph">
+      <span class="ph-lbl">Segment Detail</span>
+      <button class="ph-close" id="p-close">✕</button>
+    </div>
+    <div class="ps" id="p-body"></div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════
+   DATA — 4-segment 3-act structure
+══════════════════════════════════════════════════ */
+const DATA4 = [
+  {
+    num: 'I', short: 'Act 1', label: 'Act 1',
+    act: 'Act 1 — Setup', pos: '0 – 25%', pages: 'pp. 1–27 (feature)',
+    fn: `Establish the protagonist's ordinary world with precision. Every detail is loaded — introduce the central wound or want, plant the theme, and deliver the catalyst that cracks the ordinary world open. The specific must feel real and ready to break.
+
+The first act has one job: make us care, and make us understand what is at stake. You establish the world as it is — its rules, its texture, its contradictions. You introduce the protagonist in their ordinary state, not as a hero yet but as a person with a specific wound, a want they've misidentified, and a need they can't yet see. The act ends with a rupture — a catalyst that closes the door on the ordinary world. Everything in Act 1 is a setup for everything that follows. Nothing is decoration.`,
+    qs: ["What is the ordinary world, and what specific detail makes it feel lived-in rather than generic?","What does the protagonist want — and what do they actually need? Are they aware of the gap?","What is the inciting incident, and why does it happen to this person at this moment?","What is the last image before everything changes — and what should it rhyme with at the end?"],
+    ref: 'Syd Field: Pages 1–30. The Setup — establishing character, world, and dramatic premise before the first plot point.',
+    conn: "Act 1 and Act 3 are mirror images. What you establish here — the wound, the belief system, the opening image — must be directly answered, transformed, or inverted in Act 3. Nothing planted in Act 1 should go unresolved.",
+    rel: [1,2,3]
+  },
+  {
+    num: 'II', short: 'Act 2A', label: 'Act 2A',
+    act: 'Act 2 — Confrontation (first half)', pos: '25 – 50%', pages: 'pp. 27–55 (feature)',
+    fn: `The protagonist enters a new context — a new world, a new problem, a new set of rules. They are active, testing, attempting. They gather what they think they need: allies, information, tools, confidence. The first half of Act 2 is fundamentally about a character operating under a false belief — the belief that they can solve the problem with who they currently are. The audience sees what they cannot.
+
+This half ends at the midpoint: a moment that appears to be a peak or a valley, but is actually the precise instant the real story begins. The midpoint raises the stakes definitively and marks the point where the protagonist can no longer simply withdraw.`,
+    qs: ["What does the protagonist think the problem is — and what is the problem actually?","Who or what enters their life here, and why does that encounter matter structurally?","What is the false belief they're acting on, and how is it quietly being shown to be insufficient?","What happens at the midpoint — and does it raise or lower the stakes?"],
+    ref: 'Syd Field: Pages 30–60. First half of the Confrontation — rising action, obstacles, the protagonist actively pursuing their goal.',
+    conn: "Everything built in Act 2A — the alliances, the confidence, the apparent progress — exists to be dismantled in Act 2B. The higher the climb, the harder the fall. The midpoint is the hinge.",
+    rel: [0,2,3]
+  },
+  {
+    num: 'III', short: 'Act 2B', label: 'Act 2B',
+    act: 'Act 2 — Confrontation (second half)', pos: '50 – 75%', pages: 'pp. 55–85 (feature)',
+    fn: `Everything falls apart. The false belief that carried the protagonist through Act 2A is exposed as insufficient. The real antagonist — often internal, often the protagonist's own wound — takes center stage. This is the dark half of Act 2: setbacks escalate, allies are lost or revealed as false, and the protagonist reaches their lowest point.
+
+The All Is Lost moment is not a plot device — it is the moment the old self is destroyed. Only from this rubble can something new be built. The second act ends not with resolution but with the decision to try again — transformed. By showing what is lost, the story finally reveals what was at stake all along.`,
+    qs: ["What is the protagonist's lowest moment, and does it feel genuinely earned?","What specifically dies here — a relationship, a belief, an identity?","What does the protagonist finally understand that they have been refusing to see?","What is the decision or action that closes Act 2 and opens Act 3?"],
+    ref: 'Syd Field: Pages 60–90. Second half of the Confrontation — complications intensify, second plot point forces a new direction.',
+    conn: "The destruction in Act 2B is the direct cause of the transformation in Act 3. The wound exposed here — present since Act 1 — becomes the source of the protagonist's new capability. Nothing is wasted.",
+    rel: [0,1,3]
+  },
+  {
+    num: 'IV', short: 'Act 3', label: 'Act 3',
+    act: 'Act 3 — Resolution', pos: '75 – 100%', pages: 'pp. 85–110 (feature)',
+    fn: `The protagonist — broken and rebuilt by Act 2B — confronts the central problem one final time. But they are different now. The tools that failed them before are no longer what they reach for. Act 3 is the proof of everything the story has argued.
+
+The theme is not stated here — it is demonstrated. The resolution must feel both surprising and inevitable. The closing image answers the opening. Whether the ending is triumphant, tragic, or ambiguous, it must be honest to the transformation that preceded it.`,
+    qs: ["How is the protagonist fundamentally different from who they were in Act 1?","What does the final confrontation demand that only the transformed protagonist can provide?","What is the closing image — and does it directly answer the opening image of Act 1?","Is the ending earned, or does it resolve too easily? What does the story honestly require?"],
+    ref: 'Syd Field: Pages 90–120. The Resolution — the dramatic question posed in Act 1 is answered.',
+    conn: "Act 3 exists in direct conversation with Act 1. Every unresolved thread, every planted image, every stated theme must find its answer here. The closing image is the final argument of the story.",
+    rel: [0,1,2]
+  }
+];
+
+/* ══════════════════════════════════════════════════
+   DATA — 8-segment beat sequence
+══════════════════════════════════════════════════ */
+const DATA8 = [
+  {
+    num: '01', short: 'Setup → Catalyst', label: 'Opening Image → Catalyst',
+    act: 'Act 1 — Setup', pos: '0 – 12.5%', pages: 'pp. 1–12',
+    fn: `Segment 1 contains four distinct beats that move in rapid sequence: Opening Image, Theme Stated, Set-up, and Catalyst — with the Catalyst landing at the very end of the segment and triggering everything that follows.
+
+<strong>Opening Image:</strong> A single, precise image or scene that captures the protagonist's world before anything changes. It is not mood-setting — it is structural. It encodes the wound, the want, and the emotional register of the entire story. The best opening images are fully revisitable at the end, where they mean something different.
+
+<strong>Theme Stated:</strong> Almost always in dialogue, almost always directed at the protagonist, almost always unheard or dismissed by them. Someone in their world names what this story is actually about — not the plot, but the deeper question. The protagonist can't receive it yet. That's the point.
+
+<strong>Set-up:</strong> The ordinary world is established in full — its textures, its people, its rules, and crucially, the specific ways it is already broken. We're not just meeting a character; we're cataloguing everything that is about to change. Every element introduced here is a promise.
+
+<strong>Catalyst:</strong> The rupture. Something happens — unexpected, external, often irreversible — that cracks the ordinary world open. The Catalyst is also the Opportunity: it contains within it the possibility of the entire story. The protagonist doesn't know that yet. They experience it first as disruption, loss, or shock.`,
+    qs: ["What is the opening image — and what does it say about the wound before any words are spoken?","Who states the theme, and why is the protagonist unable to truly hear it at this moment?","What does the ordinary world look like at its most specific — and what is already quietly wrong with it?","What is the Catalyst, and how does it function simultaneously as rupture and as opportunity?"],
+    snyder: 'Opening Image · Theme Stated · Set-up · Catalyst',
+    journey: 'Ordinary World · Call to Adventure',
+    conn: "The Opening Image here is in direct dialogue with the Closing Image in Segment 08. The Theme Stated is the question — Segment 08 is the answer. The Catalyst ends this segment and makes Segment 02 inevitable: the protagonist cannot unsee what has just happened.",
+    rel: [1,7]
+  },
+  {
+    num: '02', short: 'Doubt → Lock-in', label: 'Doubt → Lock-in',
+    act: 'Act 1 — Debate (end of Act 1)', pos: '12.5 – 25%', pages: 'pp. 12–25',
+    fn: `Segment 2 is the Debate. It opens in the aftermath of the Catalyst — the protagonist has received the call, the opportunity, the rupture — and their first response is resistance. This segment traces a clear internal arc: Doubt → Overcoming Reluctance → Acceptance.
+
+<strong>Doubt:</strong> The protagonist pushes back. They have reasons — good ones. The old life still feels possible. The cost of the new path is visible; the reward is not. In the Hero's Journey, this is the Refusal of the Call. It is not weakness; it is human. It makes the eventual acceptance meaningful.
+
+<strong>Overcoming Reluctance:</strong> Something shifts. Not through will alone — through external pressure, a new piece of information, a relationship, a realisation, or simply the growing impossibility of the alternative. The protagonist begins to move toward acceptance. This movement must feel earned, not forced.
+
+<strong>Acceptance / Lock-in:</strong> The protagonist commits. In Save the Cat, this is Break into Two — the moment the main story begins, Act 2 opens, and the character steps into a new world with new rules. It is a choice, even if it feels like there was no choice. The character who steps through the door at the end of Segment 02 is not yet transformed — but they have agreed to be tested.
+
+This is the end of Act 1. Everything before this was the world as it was. Everything after is the story.`,
+    qs: ["What specifically does the protagonist doubt — the task, themselves, or the cost?","What tips the balance from reluctance to acceptance? Is it internal or external — and which is more honest for this story?","What do they have to leave behind, give up, or risk in order to lock in?","What does the Lock-in look like as a scene — is it a decision, a declaration, a physical crossing, or a quiet moment of no return?"],
+    snyder: 'Debate · Break into Two (Lock-in)',
+    journey: 'Refusal of the Call · Crossing the Threshold',
+    conn: "The doubt in Segment 02 is the first test of the theme stated in Segment 01. The Lock-in directly causes everything in Segment 03 — the protagonist is now in the new world and must navigate it. The reluctance here will return, harder, in Segment 06.",
+    rel: [0,2,3]
+  },
+  {
+    num: '03', short: 'First Obstacle + B Story', label: 'First Obstacle + B Story',
+    act: 'Act 2A — Begin', pos: '25 – 37.5%', pages: 'pp. 25–38',
+    fn: `Segment 3 opens the main story — Act 2 has begun. The protagonist has locked in, and the world immediately tests that commitment. Three things happen simultaneously, and the craft is in weaving them together rather than presenting them in sequence.
+
+<strong>First Obstacle:</strong> The direct consequence of acceptance. The protagonist steps into the new world and encounters the first real resistance — not a warning, not a hint, but an actual obstacle that must be engaged. This is the story honouring its own premise: you chose this, now here it is. The obstacle is usually overcome by the end of the segment — partially or fully — but the resolution carries a cost. That cost, or the very act of overcoming it, triggers something larger: a Bigger Obstacle that will dominate Segment 04.
+
+<strong>B Story:</strong> This is also the moment the B Story enters — typically a relationship, often a love story, sometimes a mentor or rival. The B Story is not decoration. It is the emotional argument of the film: where the theme gets tested through connection rather than plot. The A Story asks 'can they succeed?' The B Story asks 'who are they becoming?' Both questions need an answer by the end.
+
+<strong>Fun & Games:</strong> This is the Promise of the Premise. It is why the audience bought a ticket. Whatever the film's central concept is — the genre, the world, the hook — this is where it is delivered, fully and generously. Fun & Games runs from here through Segment 04, all the way to the Midpoint. It is not filler; it is the film doing exactly what it said it would do.`,
+    qs: ["What is the First Obstacle, and why does it arrive as a direct consequence of the Lock-in?","How does the protagonist overcome it — and what does that victory cost or reveal?","What triggers the Bigger Obstacle at the end of this segment?","Who or what is the B Story — and how does it carry the emotional and thematic weight the A Story cannot?","What is the Promise of the Premise for this specific story — and is Segment 03 delivering it fully?"],
+    snyder: 'B Story · Fun & Games (begins)',
+    journey: 'Crossing the Threshold · Tests, Allies and Enemies (begin)',
+    conn: "The B Story introduced here will provide the emotional resolution in Segment 08, when the A Story plot alone cannot. The Fun & Games begun here must sustain through Segment 04 — the Midpoint is its culmination. The cost of overcoming the First Obstacle is the seed of the Bigger Obstacle in Segment 04.",
+    rel: [1,3,4]
+  },
+  {
+    num: '04', short: 'Fun & Games → Midpoint', label: 'Fun & Games → Midpoint',
+    act: 'Act 2A — Culmination', pos: '37.5 – 50%', pages: 'pp. 38–50',
+    fn: `Segment 4 is Act 2A brought to its peak. The Bigger Obstacle — triggered by the partial victory of Segment 03 — now dominates. The protagonist is still operating with energy and forward momentum; they have not yet broken. The Fun & Games continues and reaches its fullest expression here. This is the film at its most alive inside the premise it promised.
+
+The segment ends at the Midpoint — one of the most important structural moments in the entire story.
+
+<strong>Midpoint:</strong> Stakes are dramatically raised. What the protagonist thought the story was about is revealed to be insufficient. A point of no return is crossed — different from the Lock-in of Segment 02. Where the Lock-in was an acceptance of a challenge, the Midpoint is the moment that challenge becomes existential. Withdrawal is no longer even a thought.
+
+The Midpoint is where the true message of the film first fully emerges. Not stated — felt. If there is an image that evolves or answers the Opening Image of Segment 01, this is where it belongs. The protagonist has changed enough that the same image means something new.
+
+<strong>False Victory or False Defeat:</strong> Midpoint takes one of two forms. A False Victory raises the protagonist to their highest point before the fall — they appear to win, and the audience is set up for the greater collapse of Act 2B. A False Defeat drops them suddenly, confronting them with the true scale of what they're up against. Both work. Both close Act 2A.`,
+    qs: ["What is the Bigger Obstacle, and why is it bigger — what does it demand that the First Obstacle didn't?","Is the Midpoint a False Victory or a False Defeat — and which is structurally true for this story?","What is the true message of the film, and how does it first become visible here?","Is there an image at the Midpoint that evolves the Opening Image — a visual echo that now carries new weight?","What becomes impossible to ignore or avoid after this moment?"],
+    snyder: 'Fun & Games (culminates) · Midpoint',
+    journey: 'Tests, Allies and Enemies · Approach to the Inmost Cave (begins)',
+    conn: "The Midpoint is the structural mirror of the All Is Lost in Segment 06. If Midpoint is False Victory, Segment 06 must be the corresponding fall. The protagonist's peak here determines the depth of their collapse there. Act 2A ends here at exactly 50%.",
+    rel: [2,3,5,6]
+  },
+  {
+    num: '05', short: 'Bad Guys Close In', label: 'Bad Guys Close In',
+    act: 'Act 2B — Pressure', pos: '50 – 62.5%', pages: 'pp. 50–63',
+    fn: `Act 2B begins. The energy that carried the protagonist through the Fun & Games is gone. The Midpoint raised the stakes — and now the world responds. The Bad Guys Close In.
+
+<strong>Bad Guys Close In:</strong> This is not necessarily a villain tightening their grip — though it can be. It is the broader sense that everything is converging against the protagonist. External forces intensify. Internal doubts resurface. Alliances that seemed solid begin to crack. The protagonist is still moving, still fighting, but the ground is shifting under them. The story is no longer delivering its promise — it is beginning to collect on it.
+
+This is also the segment where the film risks losing grip. The audience has had the Fun & Games, the Midpoint has reoriented the stakes — and now there is a danger of the middle sagging, of the pressure feeling mechanical rather than inevitable. The antidote is the B Story.
+
+<strong>B Story Returns:</strong> The emotional thread introduced in Segment 03 comes back with new urgency. A conversation, a confrontation, a moment of connection or rupture in the B Story relationship does two things at once: it brings fresh emotional energy into a segment that could otherwise feel like pure plot mechanics, and it advances the thematic argument. The B Story is not relief from the pressure; it is a different register of the same pressure. Remember — B Story and A Story must converge at the Break into Three in Segment 06.`,
+    qs: ["What specifically closes in — external forces, internal collapse, or both?","Which alliances, beliefs, or certainties begin to fracture here?","How does the B Story return — and what does it reveal or demand at this moment?","How does the B Story connect to the A Story's mounting pressure rather than simply relieving it?","What is the final blow that tips the protagonist from resistance into All Is Lost?"],
+    snyder: 'Bad Guys Close In · B Story (returns)',
+    journey: 'Approach to the Inmost Cave · The Ordeal (approaching)',
+    conn: "The B Story thread developed here must converge with the A Story at the Break into Three in Segment 06. Everything that closes in here determines the specific shape of the All Is Lost — the collapse must feel earned by exactly what was built in Segments 03, 04, and 05.",
+    rel: [3,4,6]
+  },
+  {
+    num: '06', short: 'All Is Lost → Break into 3', label: 'All Is Lost → Break into 3',
+    act: 'Act 2B — Culmination', pos: '62.5 – 75%', pages: 'pp. 63–75',
+    fn: `Segment 06 is the most important segment in the film. Not the most spectacular — the most important. This is where the story reveals what it was actually about the entire time.
+
+<strong>All Is Lost:</strong> The protagonist hits the lowest point of the story. Everything they built, gathered, and fought for is gone — or revealed to be insufficient. This moment must feel total. Not a setback, not a complication — a collapse. And it must be specific: whatever the protagonist cared about most, whatever they were most afraid to lose, that is exactly what is lost here. By showing what is lost, the story finally reveals what was at stake all along.
+
+<strong>Dark Night of the Soul:</strong> The protagonist stops. There is no action here — there is reckoning. This is the quiet after the collapse. They sit with what has happened and face, without escape, the truth they have been avoiding since Segment 01. It may be brief in screen time. It is enormous in emotional time. Do not rush it. Do not fill it with plot. The Dark Night is not depression — it is the necessary stillness before transformation becomes possible.
+
+<strong>New Intuition / Break into Three:</strong> Out of the stillness, something shifts. Not a plan — an understanding. The protagonist sees something they could not have seen before the collapse. This new intuition is the proof of transformation. The decision they make here is not the old protagonist trying harder — it is a new person acting from a new place. A and B Stories converge: the emotional truth of the B Story and the unresolved stakes of the A Story finally occupy the same space.
+
+Act 2B ends here at 75%. The audience should not be satisfied — they should be craving.`,
+    qs: ["What specifically is lost — and does it land with the full weight of everything built in Acts 1 and 2A?","What was the story actually about, and how does the All Is Lost make that visible for the first time?","What does the Dark Night look like in this story — what is its texture, its duration, its silence?","What is the new intuition — and how is it something only the transformed protagonist could arrive at?","How do the A Story and B Story converge in the Break into Three?"],
+    snyder: 'All Is Lost · Dark Night of the Soul · Break into Three',
+    journey: 'The Ordeal · Road Back',
+    conn: "The All Is Lost here is the direct mirror of the Midpoint in Segment 04. The Break into Three directly causes and shapes everything in Segments 07 and 08. The new intuition born in the Dark Night is the internal tool that makes the final confrontation possible.",
+    rel: [1,4,5,7]
+  },
+  {
+    num: '07', short: 'Finale → High Tower', label: 'Gather the Team → High Tower',
+    act: 'Act 3 — Finale (first half)', pos: '75 – 87.5%', pages: 'pp. 75–88',
+    fn: `Act 3 begins. The Break into Three has given the protagonist a new direction — and the first thing they do is move. After the stillness of the Dark Night, Segment 07 opens with energy and purpose. But it is a different energy than Act 2A. Less naive. More intentional.
+
+<strong>Gather the Team:</strong> The protagonist rounds up their allies — those who were there from the beginning, those who were lost and must be won back, those who can only be called upon now that the protagonist has changed enough to deserve them. Resources are assembled, the plan takes shape. There is momentum here, even optimism — but it is earned optimism, not the false confidence of Act 2A.
+
+<strong>Executing the Plan:</strong> The plan launches. The castle is being stormed. For a moment — perhaps a sustained moment — it works. The protagonist and their team are operating at full capacity, and the dramatic question seems close to resolution. The audience leans forward. This apparent success is structurally necessary: the fall that follows must come from a height.
+
+<strong>The High Tower Surprise:</strong> The plan fails. Or is revealed to have been anticipated. A twist arrives — the villain was expecting them, a key ally is lost, a hidden piece of information reframes everything, or the protagonist discovers that what they were fighting for was not what they thought. This is a False Defeat in the deepest sense: it strips away not just the plan but the protagonist's remaining certainty. The High Tower Surprise ends Segment 07 at the moment of maximum apparent hopelessness.`,
+    qs: ["Who needs to be gathered — and is anyone missing or estranged that must be re-earned?","What is the plan, and what makes it feel credible and worthy of the protagonist's transformation?","What does the plan's initial success look like — and how high does it climb before the surprise?","What is the High Tower Surprise specifically — a betrayal, a revelation, a trap, a loss?","What does the surprise take away — and does it feel like the final, impossible obstacle?"],
+    snyder: 'Finale: Gather the Team · Execute the Plan · High Tower Surprise',
+    journey: 'The Road Back · Resurrection (approaching)',
+    conn: "The High Tower Surprise at the end of Segment 07 is what makes Segment 08 necessary. The plan's failure is the proof that the old approach, even improved, is still not enough. Only what comes in Segment 08 will be.",
+    rel: [5,6]
+  },
+  {
+    num: '08', short: 'Dig Deep → Final Image', label: 'Dig Deep → Final Image',
+    act: 'Act 3 — Finale (resolution)', pos: '87.5 – 100%', pages: 'pp. 88–100',
+    fn: `The last segment carries the full weight of everything the story has built. It opens in apparent defeat and ends in resolution — but between those two points, the most important thing the story has to say must be demonstrated, not stated.
+
+<strong>Dig Deep Down:</strong> Stripped of the plan, stripped of certainty, stripped of the last layer of the old self — the protagonist faces their deepest fear or their oldest false belief one final time. This is the moment the theme of the film is no longer a question. It becomes an answer. What they find here is not a strategy; it is a truth. The lesson carried all the way from Segment 01 — glimpsed at the Midpoint, forged in the Dark Night — is now fully inhabited. This is who they are now. There is no going back to who they were.
+
+<strong>Execution of the New Plan:</strong> The protagonist acts from their transformed self. The new plan is usually simpler than the old one, and riskier — because it requires them to be exactly who they have become, with no safety net. The antagonist is faced and overcome. Not because the protagonist is stronger, but because they are different. The external resolution of the A Story and the emotional resolution of the B Story arrive together or in immediate sequence — each completing what the other cannot.
+
+<strong>Final Image:</strong> The story closes on an image. It is the third point in a progression that began with the Opening Image in Segment 01 and evolved at the Midpoint in Segment 04. Where the Opening Image showed the world and the protagonist as they were, and the Midpoint image showed the first tremor of change, the Final Image shows the world as it now is. The same elements, if possible — but transformed. The audience may not consciously track this progression. They will feel it.`,
+    qs: ["What is the specific fear or false belief the protagonist must face in the Dig Deep — has the story genuinely earned this moment?","What is the new plan, and why can only the transformed protagonist execute it?","How do the A Story and B Story resolve — do they converge in the same scene, or in sequence?","What is the Final Image — and how does it complete the visual progression from Opening Image through Midpoint?","What does the audience feel in the last moment — and is that the feeling the story has been building toward from the first frame?"],
+    snyder: 'Finale: Dig Deep Down · Execute the New Plan · Closing Image',
+    journey: 'Resurrection · Return with the Elixir',
+    conn: "The Dig Deep answers the Dark Night of Segment 06. The Final Image answers the Opening Image of Segment 01 and the evolved image of Segment 04 — it is the third and conclusive point in the visual argument of the entire story. The B Story resolution here is the emotional proof of everything the theme stated in Segment 01 promised.",
+    rel: [0,3,5,6]
+  }
+];
+
+/* ══════════════════════════════════════════════════
+   CANVAS / PAN / ZOOM
+   Timeline anchor in canvas space: (80, 300)
+   Line width: 1400px
+══════════════════════════════════════════════════ */
+const TL_X = 80, TL_Y = 300, TL_W = 1400;
+
+let tx = 0, ty = 0, sc = 1;
+let isPanning = false, pOffX = 0, pOffY = 0;
+let downX = 0, downY = 0, wasDrag = false;
+
+const $cv  = document.getElementById('cv');
+const $vp  = document.getElementById('vp');
+const $tl  = document.getElementById('tl');
+
+function applyT() {
+  $cv.style.transform = `translate(${tx}px,${ty}px) scale(${sc})`;
+  document.getElementById('z-pct').textContent = Math.round(sc * 100) + '%';
+}
+
+function fitView() {
+  const vw = $vp.offsetWidth;
+  const vh = $vp.offsetHeight;
+  // Scale so the line fills ~84% of viewport width
+  sc = (vw * 0.84) / TL_W;
+  sc = Math.min(sc, 1.4); // cap — never blow up on ultra-wide
+  sc = Math.max(sc, 0.3); // floor
+  // Center line horizontally and vertically
+  tx = vw / 2 - (TL_X + TL_W / 2) * sc;
+  ty = vh / 2 - TL_Y * sc;
+  applyT();
+}
+
+function zoomAt(cx, cy, factor) {
+  const ns = Math.min(5, Math.max(0.1, sc * factor));
+  const r = ns / sc;
+  tx = cx - (cx - tx) * r;
+  ty = cy - (cy - ty) * r;
+  sc = ns;
+  applyT();
+}
+
+document.getElementById('z-in').addEventListener('click', () => {
+  const r = $vp.getBoundingClientRect();
+  zoomAt(r.width / 2, r.height / 2, 1.25);
+});
+document.getElementById('z-out').addEventListener('click', () => {
+  const r = $vp.getBoundingClientRect();
+  zoomAt(r.width / 2, r.height / 2, 1 / 1.25);
+});
+document.getElementById('z-fit').addEventListener('click', fitView);
+
+$vp.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = $vp.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.1 : 0.91);
+}, { passive: false });
+
+/* ── Mouse pan ── */
+$vp.addEventListener('mousedown', e => {
+  downX = e.clientX; downY = e.clientY; wasDrag = false;
+  if (e.target.closest('.seg')) return;
+  isPanning = true;
+  pOffX = e.clientX - tx;
+  pOffY = e.clientY - ty;
+  $vp.classList.add('grabbing');
+});
+window.addEventListener('mousemove', e => {
+  if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) wasDrag = true;
+  if (!isPanning) return;
+  tx = e.clientX - pOffX;
+  ty = e.clientY - pOffY;
+  applyT();
+});
+window.addEventListener('mouseup', () => {
+  isPanning = false;
+  $vp.classList.remove('grabbing');
+  // wasDrag intentionally NOT reset here — reset on next mousedown only
+});
+
+/* ── Touch pan (single finger) ── */
+let touchId = null, touchOffX = 0, touchOffY = 0, touchDownX = 0, touchDownY = 0;
+$vp.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchId = t.identifier;
+    touchDownX = t.clientX; touchDownY = t.clientY;
+    wasDrag = false;
+    if (!e.target.closest('.seg')) {
+      touchOffX = t.clientX - tx;
+      touchOffY = t.clientY - ty;
+      isPanning = true;
+    }
+  }
+}, { passive: true });
+$vp.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === touchId) {
+      if (Math.hypot(t.clientX - touchDownX, t.clientY - touchDownY) > 4) wasDrag = true;
+      if (isPanning) {
+        tx = t.clientX - touchOffX;
+        ty = t.clientY - touchOffY;
+        applyT();
+      }
+    }
+  }
+}, { passive: false });
+$vp.addEventListener('touchend', () => { isPanning = false; touchId = null; });
+
+/* ── Touch pinch-zoom ── */
+let pinchDist = 0;
+$vp.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    isPanning = false;
+    pinchDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+  }
+}, { passive: true });
+$vp.addEventListener('touchmove', e => {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    const d = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const r = $vp.getBoundingClientRect();
+    if (pinchDist > 0) zoomAt(cx - r.left, cy - r.top, d / pinchDist);
+    pinchDist = d;
+  }
+}, { passive: false });
+
+/* ══════════════════════════════════════════════════
+   INTRO
+══════════════════════════════════════════════════ */
+let projType = '';
+const $inpTitle = document.getElementById('inp-title');
+const $btnBegin = document.getElementById('btn-begin');
+
+const checkReady = () => { $btnBegin.disabled = !($inpTitle.value.trim() && projType); };
+$inpTitle.addEventListener('input', checkReady);
+
+document.querySelectorAll('.chip').forEach(c => {
+  c.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(x => x.classList.remove('on'));
+    c.classList.add('on');
+    projType = c.dataset.v;
+    checkReady();
+  });
+});
+
+$btnBegin.addEventListener('click', () => {
+  const title = $inpTitle.value.trim() || 'Untitled';
+  document.getElementById('tb-title').textContent = title;
+  const $b = document.getElementById('tb-badge');
+  $b.textContent = projType; $b.style.display = 'inline';
+
+  document.getElementById('intro').classList.add('out');
+  document.getElementById('app').classList.add('on');
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    fitView();
+    setTimeout(() => {
+      document.getElementById('tl-line').classList.add('go');
+      document.getElementById('tl-arrow').classList.add('go');
+      document.getElementById('tl-tick').classList.add('go');
+    }, 120);
+  }));
+});
+
+/* ══════════════════════════════════════════════════
+   MODAL
+══════════════════════════════════════════════════ */
+let chosenN = 0;
+const $modal = document.getElementById('modal');
+const $mOk   = document.getElementById('m-ok');
+
+document.getElementById('btn-start').addEventListener('click', () => $modal.classList.add('on'));
+$modal.addEventListener('click', e => { if (e.target === $modal) closeModal(); });
+
+function closeModal() {
+  $modal.classList.remove('on');
+  document.querySelectorAll('.mcard').forEach(c => c.classList.remove('on'));
+  chosenN = 0; $mOk.disabled = true;
+}
+
+document.querySelectorAll('.mcard').forEach(c => {
+  c.addEventListener('click', () => {
+    document.querySelectorAll('.mcard').forEach(x => x.classList.remove('on'));
+    c.classList.add('on');
+    chosenN = parseInt(c.dataset.n);
+    $mOk.disabled = false;
+  });
+});
+
+$mOk.addEventListener('click', () => {
+  if (!chosenN) return;
+  const n = chosenN;
+  closeModal();
+  buildSegments(n);
+  document.getElementById('btn-start').classList.add('out');
+  document.getElementById('status-txt').textContent = n === 4 ? '3-Act Structure · Act 1 / 2A / 2B / 3' : '8-Beat Sequence · Save the Cat + Hero\'s Journey';
+  setTimeout(() => document.getElementById('status').classList.add('on'), 500);
+  document.getElementById('z-rebuild').style.display = 'flex';
+});
+
+/* Rebuild button */
+document.getElementById('z-rebuild').addEventListener('click', () => {
+  // Clear existing segments, close panel, reopen modal
+  $tl.querySelectorAll('.seg').forEach(s => s.remove());
+  document.getElementById('tl-hint').classList.remove('go');
+  document.getElementById('status').classList.remove('on');
+  closePanel();
+  document.getElementById('btn-start').classList.remove('out');
+  document.getElementById('z-rebuild').style.display = 'none';
+  // Small delay so button-start is visible before modal opens
+  setTimeout(() => $modal.classList.add('on'), 50);
+});
+
+/* ══════════════════════════════════════════════════
+   BUILD SEGMENTS
+══════════════════════════════════════════════════ */
+function buildSegments(n) {
+  $tl.querySelectorAll('.seg').forEach(s => s.remove());
+  const data = n === 4 ? DATA4 : DATA8;
+  const segW = TL_W / n;
+
+  data.forEach((d, i) => {
+    const el = document.createElement('div');
+    el.className = 'seg';
+    el.style.left  = (i * segW) + 'px';
+    el.style.width = segW + 'px';
+    el.innerHTML = `
+      <div class="seg-num">${d.num}</div>
+      <div class="seg-act">${d.act}</div>
+      <div class="seg-label">${d.short}</div>`;
+
+    el.addEventListener('mouseenter', () => {
+      if (el.classList.contains('active')) return;
+      const all = $tl.querySelectorAll('.seg');
+      d.rel.forEach(ri => { if (all[ri]) all[ri].classList.add('lit'); });
+    });
+    el.addEventListener('mouseleave', () => {
+      $tl.querySelectorAll('.seg').forEach(s => s.classList.remove('lit'));
+    });
+    el.addEventListener('click', () => { if (!wasDrag) openPanel(d, el); });
+    // Touch tap
+    el.addEventListener('touchend', e => {
+      if (!wasDrag) { e.preventDefault(); openPanel(d, el); }
+    });
+
+    $tl.appendChild(el);
+    setTimeout(() => requestAnimationFrame(() => el.classList.add('go')), i * 80 + 80);
+  });
+
+  setTimeout(() => document.getElementById('tl-hint').classList.add('go'), n * 80 + 700);
+}
+
+/* ══════════════════════════════════════════════════
+   PANEL
+══════════════════════════════════════════════════ */
+let curSeg = null;
+const $panel  = document.getElementById('panel');
+const $pBody  = document.getElementById('p-body');
+const notes   = {};
+
+function openPanel(d, el) {
+  saveNotes();
+  $tl.querySelectorAll('.seg').forEach(s => s.classList.remove('active', 'lit'));
+  el.classList.add('active');
+  curSeg = d;
+
+  // Render fn with \n\n as paragraphs, handle <strong> tags
+  const fnHtml = d.fn.split('\n\n').map(p => `<p>${p}</p>`).join('');
+
+  $pBody.innerHTML = `
+    <div>
+      <div class="p-num">Segment ${d.num} · ${d.act}</div>
+      <div class="p-title">${d.label}</div>
+    </div>
+    <div class="p-tags">
+      <span class="p-tag">${d.pos}</span>
+      <span class="p-tag">${d.pages}</span>
+    </div>
+    <div class="p-blk">
+      <div class="p-blk-lbl">Structural Function</div>
+      <div class="p-text">${fnHtml}</div>
+    </div>
+    <div class="p-blk">
+      <div class="p-blk-lbl">Key Questions</div>
+      <div class="p-qs">${d.qs.map(q => `
+        <div class="p-q"><span class="p-q-d">—</span><span class="p-q-t">${q}</span></div>`).join('')}
+      </div>
+    </div>
+    <div class="p-blk">
+      <div class="p-blk-lbl">${d.ref ? 'Structure Reference' : 'System References'}</div>
+      <div class="p-refs">
+        ${d.ref
+          ? `<div class="p-ref"><span class="p-ref-s">Syd Field</span><span class="p-ref-v">${d.ref}</span></div>`
+          : `<div class="p-ref"><span class="p-ref-s">Save the Cat</span><span class="p-ref-v">${d.snyder}</span></div>
+             <div class="p-ref"><span class="p-ref-s">Hero's Journey</span><span class="p-ref-v">${d.journey}</span></div>`}
+      </div>
+    </div>
+    <div class="p-blk">
+      <div class="p-blk-lbl">Systemic Connection</div>
+      <div class="p-conn">${d.conn}</div>
+    </div>
+    <div class="p-blk">
+      <div class="p-blk-lbl">Your Notes</div>
+      <textarea class="p-note" id="p-note" placeholder="Write your thoughts for this segment…"></textarea>
+    </div>`;
+
+  const ta = document.getElementById('p-note');
+  if (notes[d.num]) ta.value = notes[d.num];
+  $panel.classList.add('on');
+  $pBody.scrollTop = 0;
+}
+
+function saveNotes() {
+  if (!curSeg) return;
+  const ta = document.getElementById('p-note');
+  if (ta) notes[curSeg.num] = ta.value;
+}
+
+function closePanel() {
+  saveNotes();
+  $panel.classList.remove('on');
+  $tl.querySelectorAll('.seg').forEach(s => s.classList.remove('active'));
+  curSeg = null;
+}
+
+document.getElementById('p-close').addEventListener('click', closePanel);
+
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($panel.classList.contains('on')) closePanel();
+  else if ($modal.classList.contains('on')) closeModal();
+});
+</script>
+</body>
+</html>
