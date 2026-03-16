@@ -6964,18 +6964,20 @@ AFRAME.registerComponent('pbr-carpet', {
     } catch (e) {}
   }
 
+  let __skipPollDone = false;
+
   function startSkipReadyPolling(){
     if (__skipPollRAF) return;
-    // Fallback: if AYA never signals ready within this many ms, show the skip
-    // button anyway. waitForAyaReadyThenNavigate() handles the "not ready yet"
-    // case on navigation, so this is safe.
-    const SKIP_SHOW_TIMEOUT_MS = 5000;
+    // Only show skip as a last resort if AYA never signals within this window.
+    // 25 s keeps it under waitForAyaReadyThenNavigate's 30 s hard cap.
+    const SKIP_SHOW_TIMEOUT_MS = 25000;
     const pollStart = performance.now();
     const tick = () => {
       __skipPollRAF = 0;
       const ready = (window.__ayaIsReady && window.__ayaIsReady());
       const timedOut = (performance.now() - pollStart) >= SKIP_SHOW_TIMEOUT_MS;
       if (ready || timedOut){
+        __skipPollDone = true;
         __skipEnabled = !!ready;
         // If the user already tried to skip, complete the action now.
         if (__skipPressed){
@@ -7026,18 +7028,42 @@ AFRAME.registerComponent('pbr-carpet', {
     if (e && e.preventDefault) e.preventDefault();
     if (__elevatorRideFinished) return;
 
+    const ready = (window.__ayaIsReady && window.__ayaIsReady());
+
+    if (ready){
+      // AYA is ready — go immediately.
+      setSkipUI('loading');
+      finishElevatorRide();
+      return;
+    }
+
+    // AYA not ready yet.
     __skipPressed = true;
+    __skipEnabled = false;
 
-    // Cancel any in-flight skip-ready polling loop so it doesn't
-    // race with the finishElevatorRide() call below.
-    if (__skipPollRAF) { cancelAnimationFrame(__skipPollRAF); __skipPollRAF = 0; }
+    if (!__skipPollDone){
+      // Poll is still running — just mark __skipPressed and hide the button.
+      // The poll will call finishElevatorRide() as soon as AYA signals ready.
+      setSkipUI('hidden');
+      return;
+    }
 
-    // Proceed immediately regardless of AYA readiness.
-    // waitForAyaReadyThenNavigate() (called inside finishElevatorRide) already
-    // waits up to 30 s for AYA and then navigates, so the "not ready yet" case
-    // is handled there — no need to hold the elevator video open any longer.
+    // Poll has already ended without AYA being ready (25 s fallback expired).
+    // Show 'loading', keep the elevator video running, and check with a lightweight
+    // interval so the user sees feedback rather than a frozen black screen.
     setSkipUI('loading');
-    finishElevatorRide();
+    const waitInt = setInterval(() => {
+      if (window.__ayaIsReady && window.__ayaIsReady()) {
+        clearInterval(waitInt);
+        clearTimeout(waitFallback);
+        finishElevatorRide();
+      }
+    }, 300);
+    // Hard fallback: give up waiting after another 5 s and navigate anyway.
+    const waitFallback = setTimeout(() => {
+      clearInterval(waitInt);
+      finishElevatorRide();
+    }, 5000);
   }
 
   if (skipElevatorBtn){
@@ -7052,6 +7078,7 @@ function startOverlayVideo(){
     __elevatorRideFinished = false;
     __skipPressed = false;
     __skipEnabled = false;
+    __skipPollDone = false;
     // Hide the skip control until AYA preload has finished (prevents "stuck" black screen).
     setSkipUI('hidden');
 
@@ -7091,7 +7118,7 @@ function startOverlayVideo(){
       rideVideo.muted = false;
       // The 'playing' event already fired 680ms ago, so we trigger preload directly
       // now that the scene is paused (safe to load without competing with 3D rendering).
-      setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
+      setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 3500);
     } else {
       // Fallback: pre-play was blocked (e.g. very strict autoplay policy).
       if (!rideVideo.__warmed) { try { rideVideo.load(); } catch(e){} rideVideo.__warmed = true; }
@@ -7106,7 +7133,7 @@ function startOverlayVideo(){
       }
       // Preload next room once video is confirmed running (scene is already paused above).
       rideVideo.addEventListener('playing', () => {
-        setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
+        setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 3500);
       }, { once: true });
     }
 
