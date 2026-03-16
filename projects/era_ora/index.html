@@ -7044,8 +7044,32 @@ AFRAME.registerComponent('pbr-carpet', {
     overlay.style.opacity = '1';
     overlay.style.zIndex = '99999';
 
-    // Navigate. AYA is already ready (or we timed out) — no further waiting needed.
-    setTimeout(waitForAyaReadyThenNavigate, 0);
+    // Navigate. AYA is already ready (or we timed out).
+    // Before navigating: tear down the iframe's audio fully so the browser does not
+    // have two concurrent aya.dev audio sessions during the main-frame page load.
+    // That concurrency is what silences nde_dome / sphere_dome in the destination page.
+    if (window.__ayaIframeMuteTimer){ clearInterval(window.__ayaIframeMuteTimer); window.__ayaIframeMuteTimer = 0; }
+    try {
+      const f = document.getElementById('ayaPreloadFrame');
+      if (f) {
+        // Final mute + close the iframe's AudioContext (close is permanent, unlike suspend).
+        try {
+          const doc = f.contentDocument;
+          if (doc) doc.querySelectorAll('audio,video').forEach(m => { try { m.muted = true; m.pause(); } catch(e){} });
+          const iwin = f.contentWindow;
+          if (iwin && iwin.THREE && iwin.THREE.AudioContext &&
+              typeof iwin.THREE.AudioContext.getContext === 'function') {
+            const ctx = iwin.THREE.AudioContext.getContext();
+            if (ctx) ctx.close();
+          }
+        } catch(e){}
+        // Blank the iframe to fully unload aya.dev's page and destroy its audio context.
+        f.src = 'about:blank';
+      }
+    } catch(e){}
+    // 200 ms gap lets the browser finish tearing down the iframe document before the
+    // main frame begins loading aya.dev, eliminating the concurrent-session race.
+    setTimeout(waitForAyaReadyThenNavigate, 200);
   }
 
   function startVideo(){
@@ -7112,6 +7136,31 @@ AFRAME.registerComponent('pbr-carpet', {
 
     // Start AYA preloading immediately — doors are closing, user sees the load bar.
     if (window.preloadAyaFragment) window.preloadAyaFragment();
+
+    // Mute the iframe's audio on a recurring interval.
+    // aya.dev creates its audio nodes asynchronously as A-Frame loads assets, so
+    // a one-time onload handler would miss them. We poll every 300 ms and silence
+    // everything we find. This prevents aya.dev from being audible during the load
+    // screen, and prevents the browser from having two concurrent audio sessions for
+    // the same origin at navigation time (which silences nde_dome / sphere_dome).
+    window.__ayaIframeMuteTimer = setInterval(()=>{
+      try {
+        const f = document.getElementById('ayaPreloadFrame');
+        if (!f) return;
+        const doc = f.contentDocument;
+        if (doc) {
+          doc.querySelectorAll('audio,video').forEach(m => {
+            try { m.muted = true; m.volume = 0; } catch(e){}
+          });
+        }
+        const iwin = f.contentWindow;
+        if (iwin && iwin.THREE && iwin.THREE.AudioContext &&
+            typeof iwin.THREE.AudioContext.getContext === 'function') {
+          const ctx = iwin.THREE.AudioContext.getContext();
+          if (ctx && ctx.state !== 'suspended') ctx.suspend();
+        }
+      } catch(e){}
+    }, 300);
 
     // Show the load screen.
     showLoadScreen();
