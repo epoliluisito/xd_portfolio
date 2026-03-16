@@ -2469,7 +2469,7 @@ const far = this.data.avoidDist;
     background: #000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 300ms ease;
+    transition: opacity 600ms ease;
     z-index: 1;
   }
   #elevatorLoadScreen.show{ opacity: 1; }
@@ -2497,6 +2497,13 @@ const far = this.data.avoidDist;
     width: 0%;
     background: rgba(255,255,255,0.82);
     transition: width 350ms ease;
+  }
+  #elevatorLoadBody{
+    margin-top: 32px;
+    font-size: 13px;
+    line-height: 1.75;
+    color: rgba(255,255,255,0.52);
+    letter-spacing: 0.02em;
   }
 
   /* Skip Elevator (only during elevator ride video) */
@@ -2608,8 +2615,13 @@ const far = this.data.avoidDist;
   </video>
   <div id="elevatorLoadScreen" aria-hidden="true">
     <div id="elevatorLoadInner">
-      <div id="elevatorLoadLabel">PREPARING DESCENT</div>
+      <div id="elevatorLoadLabel">preparing descent</div>
       <div id="elevatorLoadBarWrap"><div id="elevatorLoadBar"></div></div>
+      <div id="elevatorLoadBody">
+        You entered a space shaped by shared anxiety — the uncertainty of what technological change does to work, to roles, to what we thought was stable.<br><br>
+        What follows asks something different: not to confront the fear, but to go underneath it.<br><br>
+        Toward what has always been human.
+      </div>
     </div>
   </div>
   <div id="skipElevatorShell" aria-hidden="true">
@@ -6995,7 +7007,13 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function showLoadScreen(){
-    try { loadScreen.classList.add('show'); } catch(e){}
+    // requestAnimationFrame ensures the browser has painted opacity:0 before we
+    // transition to 1 — without this the fade is skipped and it cuts hard.
+    requestAnimationFrame(()=>{
+      try { overlay.style.transition = 'opacity 600ms ease'; } catch(e){}
+      try { overlay.style.opacity = '1'; } catch(e){}
+      try { loadScreen.classList.add('show'); } catch(e){}
+    });
   }
 
   function hideLoadScreen(){
@@ -7044,32 +7062,15 @@ AFRAME.registerComponent('pbr-carpet', {
     overlay.style.opacity = '1';
     overlay.style.zIndex = '99999';
 
-    // Navigate. AYA is already ready (or we timed out).
-    // Before navigating: tear down the iframe's audio fully so the browser does not
-    // have two concurrent aya.dev audio sessions during the main-frame page load.
-    // That concurrency is what silences nde_dome / sphere_dome in the destination page.
+    // Navigate directly. The load poll already resolved (either AYA signalled ready,
+    // or the 30s hard cap expired). Calling waitForAyaReadyThenNavigate here would
+    // start a fresh 30s wait cycle — producing a freeze when skip is clicked after
+    // a timeout. We have nothing left to wait for.
     if (window.__ayaIframeMuteTimer){ clearInterval(window.__ayaIframeMuteTimer); window.__ayaIframeMuteTimer = 0; }
-    try {
-      const f = document.getElementById('ayaPreloadFrame');
-      if (f) {
-        // Final mute + close the iframe's AudioContext (close is permanent, unlike suspend).
-        try {
-          const doc = f.contentDocument;
-          if (doc) doc.querySelectorAll('audio,video').forEach(m => { try { m.muted = true; m.pause(); } catch(e){} });
-          const iwin = f.contentWindow;
-          if (iwin && iwin.THREE && iwin.THREE.AudioContext &&
-              typeof iwin.THREE.AudioContext.getContext === 'function') {
-            const ctx = iwin.THREE.AudioContext.getContext();
-            if (ctx) ctx.close();
-          }
-        } catch(e){}
-        // Blank the iframe to fully unload aya.dev's page and destroy its audio context.
-        f.src = 'about:blank';
-      }
-    } catch(e){}
-    // 200 ms gap lets the browser finish tearing down the iframe document before the
-    // main frame begins loading aya.dev, eliminating the concurrent-session race.
-    setTimeout(waitForAyaReadyThenNavigate, 200);
+    // 50ms before navigating: gives the browser one paint cycle to actually render
+    // the black overlay before page teardown begins. Without this the video frame
+    // can remain visible during unload, which reads as a freeze to the user.
+    setTimeout(()=>{ window.location.href = './rooms/aya.dev/'; }, 50);
   }
 
   function startVideo(){
@@ -7077,17 +7078,34 @@ AFRAME.registerComponent('pbr-carpet', {
     state = STATE.VIDEO;
     hideLoadScreen();
 
-    // Video was pre-played muted in onSecondF to preserve Safari gesture trust.
-    // It has been paused (muted, position 0) since then. Unmute and play.
+    // ---- CRITICAL: tear down the iframe BEFORE starting the video ----
+    // AYA_READY fires when aya.dev finishes its shader warmup, but the iframe's
+    // WebGL context is still fully alive at that point. Starting the video while
+    // the iframe context is running causes GPU competition → stutter, and having
+    // three concurrent WebGL contexts (fear_room paused, aya.dev iframe, video
+    // decoder) can overwhelm GPU memory and crash the tab.
+    // We blank the iframe here, wait 150 ms for the browser to actually release
+    // the GPU context, then start the video into clean GPU headroom.
+    if (window.__ayaIframeMuteTimer){ clearInterval(window.__ayaIframeMuteTimer); window.__ayaIframeMuteTimer = 0; }
     try {
-      rideVideo.currentTime = 0;
-      rideVideo.muted = false;
+      const f = document.getElementById('ayaPreloadFrame');
+      if (f) {
+        try {
+          const iwin = f.contentWindow;
+          if (iwin && iwin.THREE && iwin.THREE.AudioContext &&
+              typeof iwin.THREE.AudioContext.getContext === 'function') {
+            const ctx = iwin.THREE.AudioContext.getContext();
+            if (ctx) ctx.close();
+          }
+        } catch(e){}
+        f.src = 'about:blank';
+      }
     } catch(e){}
 
-    const alreadyPlaying = !rideVideo.paused;
-    if (alreadyPlaying){
-      rideVideo.muted = false;
-    } else {
+    setTimeout(()=>{
+      // Video was gesture-primed (muted play+pause) in onSecondF.
+      // Now play for real — GPU is clear.
+      try { rideVideo.currentTime = 0; } catch(e){}
       rideVideo.muted = false;
       const p = rideVideo.play();
       if (p && typeof p.catch === 'function'){
@@ -7096,12 +7114,12 @@ AFRAME.registerComponent('pbr-carpet', {
           rideVideo.play().catch(()=>{});
         });
       }
-    }
 
-    // Show skip button now that AYA is confirmed ready.
-    showSkipBtn();
+      // Show skip button — AYA is ready and iframe is gone, navigation is instant.
+      showSkipBtn();
 
-    rideVideo.onended = finishElevatorRide;
+      rideVideo.onended = finishElevatorRide;
+    }, 150);
   }
 
   function startLoadingScreen(){
@@ -7120,11 +7138,11 @@ AFRAME.registerComponent('pbr-carpet', {
     // Stop Fear Room audio.
     hardStopAllAudio(rideVideo);
 
-    // Show the overlay (black + load bar). Do NOT add 'active' yet — that's for
-    // the video phase and controls the skip button's CSS visibility.
+    // Show the overlay, fading in from transparent so the transition from the
+    // fear_room is not abrupt. The load screen fades in over 600ms (see CSS).
     overlay.style.pointerEvents = 'auto';
     overlay.style.visibility = 'visible';
-    overlay.style.opacity = '1';
+    overlay.style.opacity = '0';
     overlay.style.background = 'rgba(0,0,0,1)';
     overlay.style.zIndex = '99999';
 
@@ -7229,6 +7247,11 @@ AFRAME.registerComponent('pbr-carpet', {
       state = STATE.READY_CONFIRM;
       setGuideHtml('Press <span class="keycap keycap-ask">F</span> again to confirm descent.');
       flashHint('Ready', 800);
+      // Begin AYA HTTP downloads + scene init now, while the user reads the prompt.
+      // This uses the waiting time before the second F press. Safe because
+      // pauseSceneRendering() fires before AYA reaches shader warmup (the GPU phase).
+      // The call in startLoadingScreen() remains as a fallback.
+      if (window.preloadAyaFragment) window.preloadAyaFragment();
     }).catch(()=>{
       // Safety: reset if something goes wrong
       window.__autopilotActive = false; // Clear autopilot flag
