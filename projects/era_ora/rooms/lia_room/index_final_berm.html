@@ -1691,15 +1691,17 @@ AFRAME.registerComponent('rig-walk', {
         const fRough = mkTex(rockPath + 'moon_rough.png', 7.8, false);
         const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
 
-        // Berm dimensions declared here so they're available to both the alpha
-        // map computation and the skirt construction below.
+        // ── Rocky berm around the pool ────────────────────────────────────────
         const bermW = 42.0, bermD = 32.0, bermSeg = 220;
 
         // ── Height-based alpha map ────────────────────────────────────────────
-        // Alpha is derived from primalOverlayHeight at each texel — opaque where
-        // the berm rises meaningfully above base ground, transparent where it
-        // would z-fight. This is topology-accurate, not geometric, so the gap
-        // opening and all low-overlay zones fade correctly.
+        // The primal_scene entity sits at Y=-0.04, rock_ground at Y=-0.002.
+        // Z-fighting occurs exactly when primalOverlayHeight ≈ 0.038 (the gap
+        // between the two entity origins). The alpha map discards all berm
+        // fragments where overlay < 0.04, fades to fully opaque at overlay=0.10.
+        // This is topology-accurate: the gap mouth, approach slopes, and any
+        // other near-zero overlay zone are all masked precisely and permanently,
+        // regardless of view angle.
         const alphaRes = 256;
         const alphaCV  = document.createElement('canvas');
         alphaCV.width  = alphaCV.height = alphaRes;
@@ -1708,13 +1710,14 @@ AFRAME.registerComponent('rig-walk', {
         const ad = alphaImg.data;
         for (let py = 0; py < alphaRes; py++) {
           for (let px = 0; px < alphaRes; px++) {
-            // UV → local coords relative to CX/CZ (same space primalOverlayHeight expects)
+            // Map texel to local coords that primalOverlayHeight expects
+            // (local = world - CX/CZ, same as berm vertex local space)
             const lx = ((px / (alphaRes - 1)) - 0.5) * bermW;
             const lz = ((py / (alphaRes - 1)) - 0.5) * bermD;
             const ov = primalOverlayHeight(lx, lz, sn);
-            // Smoothstep: transparent below 0.025, fully opaque above 0.10
-            const t = Math.max(0, Math.min(1, (ov - 0.025) / 0.075));
-            const a = t * t * (3 - 2 * t);
+            // Fade band: 0.04→0.10. Below 0.04 = z-fight danger zone, discard.
+            const t = Math.max(0, Math.min(1, (ov - 0.04) / 0.06));
+            const a = t * t * (3 - 2 * t); // smoothstep
             const idx = (py * alphaRes + px) * 4;
             const v = Math.floor(a * 255);
             ad[idx] = ad[idx+1] = ad[idx+2] = v; ad[idx+3] = 255;
@@ -1754,80 +1757,6 @@ AFRAME.registerComponent('rig-walk', {
         bermMesh.name = 'primal-rock-berm';
         bermMesh.position.set(CX, 0, CZ);
         this._root.add(bermMesh); this._meshes.push(bermMesh);
-
-        // ── Skirt: vertical rock walls from berm perimeter into ground ────────
-        // Top edge = berm surface height (matches top mesh exactly).
-        // Bottom edge buried at SKIRT_BOTTOM — well below all rock-ground terrain.
-        // Replaces the coplanar seam with a visible 3D rock formation edge.
-        // DoubleSide so winding direction doesn't matter.
-        const SKIRT_BOTTOM = -0.45;
-        const skirtMat = new THREE.MeshStandardMaterial({
-          color: 0xd7dde4,
-          map: bDiff, normalMap: bNorm, roughnessMap: bRough, aoMap: bAO,
-          roughness: 0.96, metalness: 0, aoMapIntensity: 0.92,
-          normalScale: new THREE.Vector2(1.85, 1.85),
-          side: THREE.DoubleSide,
-          depthWrite: true,
-        });
-        this._materials.push(skirtMat);
-
-        // Walk the rectangle perimeter: bottom → right → top → left
-        const SL = 84, SS = 64;
-        const perim = [];
-        for (let i = 0; i <= SL; i++) perim.push([-bermW/2 + (i/SL)*bermW, -bermD/2]);
-        for (let i = 1; i <= SS; i++) perim.push([ bermW/2, -bermD/2 + (i/SS)*bermD]);
-        for (let i = 1; i <= SL; i++) perim.push([ bermW/2 - (i/SL)*bermW, bermD/2]);
-        for (let i = 1; i <  SS; i++) perim.push([-bermW/2, bermD/2 - (i/SS)*bermD]);
-
-        const NP = perim.length;
-
-        // Arc-length parameterisation for natural texture U
-        const arcLens = [0];
-        for (let i = 1; i < NP; i++) {
-          const dx = perim[i][0] - perim[i-1][0], dz = perim[i][1] - perim[i-1][1];
-          arcLens.push(arcLens[i-1] + Math.sqrt(dx*dx + dz*dz));
-        }
-
-        const sVerts = new Float32Array(NP * 2 * 3);
-        const sUVs   = new Float32Array(NP * 2 * 2);
-        const sIdx   = [];
-
-        // Texture repeat on bDiff is 2.3; we want ~1 tile per 3 world units of arc.
-        // effectiveU = myU * repeat = myU * 2.3 → myU = arcLen / (3 * 2.3) = arcLen / 6.9
-        // V: top = 0, bottom = 1/2.3 ≈ 0.43 → ~1 tile over the berm height range
-        const UV_U_SCALE = 1 / 6.9;
-        const UV_V_BOT   = 1 / 2.3;
-
-        for (let i = 0; i < NP; i++) {
-          const [lx, lz] = perim[i];
-          const wx = CX + lx, wz = CZ + lz;
-          const topY = primalSceneHeight(wx, wz, sn);
-          const u = arcLens[i] * UV_U_SCALE;
-          // top vertex
-          sVerts[i*6+0] = lx;  sVerts[i*6+1] = topY;        sVerts[i*6+2] = lz;
-          sUVs  [i*4+0] = u;   sUVs  [i*4+1] = 0.0;
-          // bottom vertex
-          sVerts[i*6+3] = lx;  sVerts[i*6+4] = SKIRT_BOTTOM; sVerts[i*6+5] = lz;
-          sUVs  [i*4+2] = u;   sUVs  [i*4+3] = UV_V_BOT;
-        }
-
-        for (let i = 0; i < NP; i++) {
-          const j = (i + 1) % NP;
-          const t0 = i*2, b0 = i*2+1, t1 = j*2, b1 = j*2+1;
-          sIdx.push(t0, b0, t1,  t1, b0, b1);
-        }
-
-        const skirtGeom = new THREE.BufferGeometry();
-        skirtGeom.setAttribute('position', new THREE.BufferAttribute(sVerts, 3));
-        skirtGeom.setAttribute('uv', new THREE.BufferAttribute(sUVs, 2));
-        skirtGeom.setIndex(sIdx);
-        skirtGeom.computeVertexNormals();
-        skirtGeom.setAttribute('uv2', new THREE.BufferAttribute(sUVs.slice(), 2));
-
-        const skirtMesh = new THREE.Mesh(skirtGeom, skirtMat);
-        skirtMesh.name = 'primal-rock-skirt';
-        skirtMesh.position.set(CX, 0, CZ);
-        this._root.add(skirtMesh); this._meshes.push(skirtMesh);
 
 
 
