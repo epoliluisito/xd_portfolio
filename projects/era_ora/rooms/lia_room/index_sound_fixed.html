@@ -2974,156 +2974,112 @@ AFRAME.registerComponent('hand-clamp', {
 
 
 <script>
-/* ── Spatial Audio: proximity-weighted, direct video source ─────────────────
-   Routes WebAudio directly from each <video> element (same element that
-   drives the texture) into a GainNode. No separate audio element = no drift.
-   muted stays on the video so the browser doesn't double-output.
+/* ── Spatial Audio ───────────────────────────────────────────────────────────
+   Creates its own AudioContext on first user gesture (reliable, not borrowed
+   from A-Frame). Routes each video directly through a GainNode. Distance is
+   measured horizontally from the rig to each monolith a-box — both are direct
+   children of a-scene so object3D.position is already world-space.
 ────────────────────────────────────────────────────────────────────────────*/
-(function(){
+(function () {
   const cfg = {
-    maxGain:   0.80,   // volume at closest distance
-    minGain:   0.0,    // volume at far distance
-    near:      3.0,    // units — full volume inside this radius
-    far:       30.0,   // units — silent beyond this radius
-    curve:     1.85,   // falloff exponent (higher = sharper drop)
-    smoothing: 0.08    // lerp factor per frame (lower = slower fade)
+    maxGain:   0.85,  // gain when standing next to a monolith
+    near:      3.0,   // units — full volume within this radius
+    far:       22.0,  // units — silent beyond this radius
+    curve:     2.2,   // falloff exponent (higher = sharper drop)
+    smoothing: 0.06   // lerp per frame (lower = slower fade in/out)
   };
 
+  let ctx      = null;
+  let built    = false;
+  const sources = []; // { box, gainNode, currentGain }
 
-  let audioCtx  = null;
-  let activated = false;
-  let built     = false;
-  const sources  = [];
-  const tmpCam   = new THREE.Vector3();
-  const tmpSrc   = new THREE.Vector3();
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  function getAudioContext() {
-    const scene = document.querySelector('a-scene');
-    return (scene && scene.audioListener && scene.audioListener.context)
-      ? scene.audioListener.context : null;
-  }
-
+  // ── Gain curve ─────────────────────────────────────────────────────────────
   function mapGain(dist) {
     if (dist <= cfg.near) return cfg.maxGain;
-    if (dist >= cfg.far)  return cfg.minGain;
+    if (dist >= cfg.far)  return 0;
     const t = (dist - cfg.near) / (cfg.far - cfg.near);
     return cfg.maxGain * Math.pow(1 - t, cfg.curve);
   }
 
-  // ── Build: wire each video → GainNode once ─────────────────────────────────
-  function buildAll() {
+  // ── Wire every monolith video into a gain node ─────────────────────────────
+  function build() {
     if (built) return;
-    audioCtx = getAudioContext();
-    if (!audioCtx) return;
+    built = true;
 
-    document.querySelectorAll('a-box[id^="monolith_"]').forEach(box => {
-      // Find the a-video child and resolve its source video element
+    // Own AudioContext — created inside user gesture, always works
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    document.querySelectorAll('a-box[id^="monolith_"]').forEach(function (box) {
       const aVideo = box.querySelector('a-video');
       if (!aVideo) return;
-      const srcSel = aVideo.getAttribute('src');
-      if (!srcSel || srcSel.charAt(0) !== '#') return;
-      const video = document.querySelector(srcSel);
-      if (!video) return;
+      const sel = aVideo.getAttribute('src');
+      if (!sel || sel.charAt(0) !== '#') return;
+      const video = document.querySelector(sel);
+      if (!video || video.__spatialBuilt) return;
+      video.__spatialBuilt = true;
 
-      // Guard: createMediaElementSource may only be called once per element
-      if (video.__spatialAudioBuilt) {
-        sources.push(video.__spatialAudioBuilt);
-        return;
-      }
-
-      // Must be unmuted before createMediaElementSource — Chrome skips audio
-      // decoding on muted elements. Once the WebAudio source node is created,
-      // the browser routes audio exclusively through the WebAudio graph and
-      // disconnects native speaker output, so there is no double-play.
+      // Unmute before createMediaElementSource — Chrome skips audio decoding
+      // on muted elements. Once the source node exists, the browser routes
+      // audio exclusively through the WebAudio graph (no native double-play).
       video.muted = false;
       video.loop  = true;
-      video.playsInline = true;
-      const p = video.play();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
+      video.play().catch(function () {});
 
       try {
-        const node = audioCtx.createMediaElementSource(video);
-        const gain = audioCtx.createGain();
-        gain.gain.value = 0;
-        node.connect(gain);
-        gain.connect(audioCtx.destination);
-
-        const entry = { box, gain, currentGain: 0 };
-        video.__spatialAudioBuilt = entry;
-        sources.push(entry);
-      } catch (err) {
-        console.warn('[spatial-audio] skipped', srcSel, err.message);
+        const srcNode  = ctx.createMediaElementSource(video);
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0; // start silent; tick ramps to correct level
+        srcNode.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        sources.push({ box: box, gainNode: gainNode, currentGain: 0 });
+      } catch (e) {
+        console.warn('[spatial-audio]', sel, e.message);
       }
     });
-
-    built = true;
   }
 
-  // ── Per-frame gain update ──────────────────────────────────────────────────
+  // ── Per-frame distance → gain update ──────────────────────────────────────
+  // Both rig and monolith a-boxes are direct children of a-scene, so
+  // object3D.position is world-space — no getWorldPosition() needed.
   function tick() {
-    if (activated && built && sources.length > 0) {
-      // Prefer playerCam for head position; fall back to rig
-      const camEl = document.getElementById('playerCam') || document.getElementById('rig');
-      if (camEl && camEl.object3D) {
-        camEl.object3D.getWorldPosition(tmpCam);
+    if (ctx && sources.length > 0) {
+      const rig = document.getElementById('rig');
+      if (rig && rig.object3D) {
+        const rx = rig.object3D.position.x;
+        const rz = rig.object3D.position.z;
 
-        for (const src of sources) {
-          if (!src.box || !src.box.object3D) continue;
-          src.box.object3D.getWorldPosition(tmpSrc);
-          const dist   = tmpCam.distanceTo(tmpSrc);
+        for (var i = 0; i < sources.length; i++) {
+          const s  = sources[i];
+          const bp = s.box.object3D.position;
+          const dx = rx - bp.x;
+          const dz = rz - bp.z;
+          const dist   = Math.sqrt(dx * dx + dz * dz);
           const target = mapGain(dist);
-          // Smooth lerp toward target gain
-          src.currentGain += (target - src.currentGain) * cfg.smoothing;
-          src.gain.gain.value = src.currentGain;
+          s.currentGain += (target - s.currentGain) * cfg.smoothing;
+          s.gainNode.gain.value = s.currentGain;
         }
       }
     }
     requestAnimationFrame(tick);
   }
 
-  // ── Activation: triggered by first user gesture (autoplay policy) ──────────
+  // ── Activate on first user gesture ────────────────────────────────────────
+  var activated = false;
   function activate() {
     if (activated) return;
     activated = true;
-    audioCtx = getAudioContext();
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-    if (!built) buildAll();
-    // Ensure all source videos are playing (unmuted — WebAudio owns the output)
-    document.querySelectorAll('video[id^="lia_video_monolith_"]').forEach(v => {
-      v.muted = false;
-      const p = v.play();
-      if (p && typeof p.catch === 'function') p.catch(() => {});
-    });
+    build();
   }
 
-  // ── Init: build as soon as A-Frame scene is ready ──────────────────────────
-  function init() {
-    const scene = document.querySelector('a-scene');
-    if (!scene) return;
-    const tryBuild = () => {
-      audioCtx = getAudioContext();
-      if (audioCtx) buildAll();
-    };
-    if (scene.hasLoaded) tryBuild();
-    else scene.addEventListener('loaded', tryBuild, { once: true });
-  }
-
-  // Listen for first user gesture on any interaction type
-  ['click', 'touchstart', 'keydown'].forEach(evt => {
-    window.addEventListener(evt, activate, { once: true, passive: true });
+  ['click', 'touchstart', 'keydown'].forEach(function (e) {
+    window.addEventListener(e, activate, { once: true, passive: true });
   });
-
-  if (document.readyState === 'loading')
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  else
-    init();
 
   requestAnimationFrame(tick);
 
-  // Expose for debugging: window.__spatialAudio.sources
-  window.__spatialAudio = { sources, cfg };
-})();
+  // Debug: window.__spatialAudio.sources
+  window.__spatialAudio = { sources: sources, cfg: cfg };
+}());
 
 </script>
 </body>
