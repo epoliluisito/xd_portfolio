@@ -12,17 +12,63 @@
     /* Flash fix: cover the canvas immediately at the CSS level before JS runs */
     a-scene { background: #000; }
 
-    /* Fade-in overlay: starts opaque black, fades out once scene is ready */
+    /* Loading overlay: covers the initial black frame and shows progress */
     #fadeIn {
       position: fixed;
       inset: 0;
       background: #000;
       opacity: 1;
-      pointer-events: none;
+      pointer-events: auto;
       transition: opacity 900ms ease;
       z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
     #fadeIn.done { opacity: 0; }
+    #loadingCard {
+      width: min(420px, calc(100vw - 56px));
+      padding: 18px 18px 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.03);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      backdrop-filter: blur(8px);
+      color: rgba(255,255,255,0.92);
+    }
+    #loadingTitle {
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      opacity: 0.84;
+      margin-bottom: 10px;
+    }
+    #loadingBar {
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.10);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+    #loadingBarFill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, rgba(255,255,255,0.60), rgba(255,255,255,0.95));
+      transition: width 180ms ease;
+    }
+    #loadingMeta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 9px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.68);
+    }
 
     /* ── Quit button — matches aya.dev exactly ── */
     #quitShell {
@@ -194,7 +240,7 @@
     // IBL: scene-level env map driving all PBR metalness/roughness — must match aya.dev
     // aya.dev uses simple-ibl="intensity: 0.35; color: #e4ebf4" on the a-scene
     AFRAME.registerComponent('simple-ibl', {
-      schema: { intensity: { type: 'number', default: 1.25 }, color: { type: 'color', default: '#dfe6ef' } },
+      schema: { intensity: { type: 'number', default: 0.95 }, color: { type: 'color', default: '#dfe6ef' } },
       init: function () {
         const sceneObj = this.el.sceneEl.object3D;
         const mkCanvas = () => {
@@ -307,6 +353,41 @@ AFRAME.registerComponent('rig-walk', {
         this._tmpBox = new THREE.Box3();
         this._tmpV3 = new THREE.Vector3();
 
+        this._smoothstep = (a, b, x) => {
+          const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+          return t * t * (3 - 2 * t);
+        };
+        this._angleDelta = (a, b) => {
+          let d = a - b;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          return d;
+        };
+        this._primalBermHeightAt = (x, z) => {
+          const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+          return primalSceneHeight(x, z, sn);
+        };
+        this._primalOverlayAt = (x, z) => {
+          const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+          return primalOverlayHeight(x - PRIMAL_SCENE_CFG.CX, z - PRIMAL_SCENE_CFG.CZ, sn);
+        };
+        this._primalBermBlocksAt = (x, z) => {
+          const threshold = 0.24;
+          const r = this.data.radius + 0.08;
+          const samples = [
+            [0, 0],
+            [r, 0], [-r, 0], [0, r], [0, -r],
+            [r * 0.707, r * 0.707], [r * 0.707, -r * 0.707],
+            [-r * 0.707, r * 0.707], [-r * 0.707, -r * 0.707]
+          ];
+          for (let i = 0; i < samples.length; i++) {
+            const sx = x + samples[i][0];
+            const sz = z + samples[i][1];
+            if (this._primalOverlayAt(sx, sz) >= threshold) return true;
+          }
+          return false;
+        };
+
         this._refreshColliders = () => {
           const scene = this.el.sceneEl;
           if (!scene) return;
@@ -338,6 +419,8 @@ AFRAME.registerComponent('rig-walk', {
 
           if (this._tmpBox.intersectsBox(this._playerBox)) return true;
         }
+
+        if (this._primalBermBlocksAt(x, z)) return true;
         return false;
       },
 
@@ -748,10 +831,14 @@ AFRAME.registerComponent('rig-walk', {
         const sn = window._snoise.simplex2;
         this._meshes = [];
 
-        const RADIUS = 130;
-        const SEG = 500;
-        const GROUND_Y = 0.09;
-        const HIDDEN_Y = 0.084;
+        const FIELD_CX = 0;
+        const FIELD_CZ = -75;
+        const FIELD_HALF_W = 32;
+        const FIELD_HALF_D = 28;
+        const SEG_X = 260;
+        const SEG_Z = 228;
+        const GROUND_Y = 0.125;
+        const HIDDEN_Y = 0.119;
 
         // ── Interior volumes ──
         // Extended to 0.15–0.20m BEYOND the outer wall face so that vertices inside the
@@ -957,7 +1044,8 @@ AFRAME.registerComponent('rig-walk', {
         // ══════════════════════════════════════════════════════════════
         //  LAYER 1 — FROST
         // ══════════════════════════════════════════════════════════════
-        const FROST_EXT=200;
+        const FROST_HALF_W=34;
+        const FROST_HALF_D=30;
         const ftS=512;
         const fCv=document.createElement('canvas');fCv.width=ftS;fCv.height=ftS;
         const fCtx=fCv.getContext('2d');
@@ -965,8 +1053,8 @@ AFRAME.registerComponent('rig-walk', {
         for(let py=0;py<ftS;py++){
           for(let px=0;px<ftS;px++){
             const idx=(py*ftS+px)*4;
-            const wx=(px/ftS-0.5)*FROST_EXT*2;
-            const wz=(py/ftS-0.5)*FROST_EXT*2;
+            const wx=FIELD_CX + (px/ftS-0.5)*FROST_HALF_W*2;
+            const wz=FIELD_CZ + (py/ftS-0.5)*FROST_HALF_D*2;
             let fm=frostMask(wx,wz);
             fm*=0.6+0.4*(sn(wx*0.08+50,wz*0.08-50)*0.5+0.5);
             fm*=0.85+0.15*(sn(wx*0.5+200,wz*0.5-200)*0.5+0.5);
@@ -1006,18 +1094,24 @@ AFRAME.registerComponent('rig-walk', {
           envMapIntensity:0.2,blending:THREE.NormalBlending,
           polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-2
         });
-        const frostGeom=new THREE.PlaneGeometry(FROST_EXT*2,FROST_EXT*2,1,1);
+        const frostGeom=new THREE.PlaneGeometry(FROST_HALF_W*2,FROST_HALF_D*2,1,1);
         frostGeom.rotateX(-Math.PI/2);
         const frostMesh=new THREE.Mesh(frostGeom,frostMat);
         frostMesh.position.y=GROUND_Y+0.004;
         frostMesh.frustumCulled=false;
-        this.el.sceneEl.object3D.add(frostMesh);
-        this._meshes.push(frostMesh);
+
+        const frostEntity=document.createElement('a-entity');
+        frostEntity.setAttribute('id','frost-underlayer');
+        frostEntity.setAttribute('class','clickable');
+        frostEntity.object3D.position.set(FIELD_CX,0,FIELD_CZ);
+        frostEntity.setObject3D('mesh', frostMesh);
+        this.el.sceneEl.appendChild(frostEntity);
+        this._frostEntity=frostEntity;
 
         // ══════════════════════════════════════════════════════════════
         //  LAYER 2 — SNOW (smooth displaced mesh)
         // ══════════════════════════════════════════════════════════════
-        const snowGeom=new THREE.PlaneGeometry(RADIUS*2,RADIUS*2,SEG,SEG);
+        const snowGeom=new THREE.PlaneGeometry(FIELD_HALF_W*2,FIELD_HALF_D*2,SEG_X,SEG_Z);
         snowGeom.rotateX(-Math.PI/2);
         const pos=snowGeom.getAttribute('position');
 
@@ -1025,30 +1119,34 @@ AFRAME.registerComponent('rig-walk', {
 
         for(let i=0;i<pos.count;i++){
           const x=pos.getX(i),z=pos.getZ(i);
-          const edgeR=Math.sqrt(x*x+z*z);
-          if(edgeR>RADIUS*0.985){pos.setY(i,-1.5);continue;}
+          const worldX = x + FIELD_CX;
+          const worldZ = z + FIELD_CZ;
+          const edgeU = Math.abs(x) / FIELD_HALF_W;
+          const edgeV = Math.abs(z) / FIELD_HALF_D;
+          const edgeN = Math.max(edgeU, edgeV);
+          if(edgeN>0.992){pos.setY(i,-1.5);continue;}
 
-          const m=snowMask(x,z);
+          const m=snowMask(worldX,worldZ);
 
           // ── Drift height: gentle rolling (visual detail via normal map) ──
           let drift=0;
           // Very large gentle terrain rolls
-          drift+=(sn(x*0.012+3,z*0.012-5)*0.5+0.5)*0.25;
+          drift+=(sn(worldX*0.012+3,worldZ*0.012-5)*0.5+0.5)*0.25;
           // Medium undulations
-          drift+=(sn(x*0.032+20,z*0.032-8)*0.5+0.5)*0.14;
+          drift+=(sn(worldX*0.032+20,worldZ*0.032-8)*0.5+0.5)*0.14;
           // Gentle sastrugi
-          const saX=x*wdX+z*wdZ,saZ=-x*wdZ+z*wdX;
+          const saX=worldX*wdX+worldZ*wdZ,saZ=-worldX*wdZ+worldZ*wdX;
           drift+=(sn(saX*0.07,saZ*0.025)*0.5+0.5)*0.07;
           // Subtle fine variation (won't cause visible faceting)
-          drift+=(sn(x*0.1+3,z*0.1-2)*0.5+0.5)*0.03;
+          drift+=(sn(worldX*0.1+3,worldZ*0.1-2)*0.5+0.5)*0.03;
 
           // ── Wall accumulation: snow banks against outer building surfaces ──
-          if(!isIndoor(x,z)){
-            const dw=distToWalls(x,z);
+          if(!isIndoor(worldX,worldZ)){
+            const dw=distToWalls(worldX,worldZ);
             // Drift tapering over 12m, thickest right at wall
             const wallDrift=smootherstep(12,0,dw);
             // Organic variation along wall face
-            const wallNoise=0.5+0.5*(sn(x*0.15+4,z*0.15-6)*0.5+0.5);
+            const wallNoise=0.5+0.5*(sn(worldX*0.15+4,worldZ*0.15-6)*0.5+0.5);
             drift+=wallDrift*0.78*wallNoise;
             // Extra bank right at base (0-1.2m)
             const baseDrift=smootherstep(1.2,0,dw);
@@ -1060,10 +1158,10 @@ AFRAME.registerComponent('rig-walk', {
           {
             // North corridor: berm peaks at ±(hw+1.0) from lane centre, fades inward & outward
             const cx=4.5, hw=1.8, zEntry=-56.5;
-            const dz=z-zEntry;
+            const dz=worldZ-zEntry;
             if(dz>0 && dz<10.0){
               const pathLen=smootherstep(10.0,0.0,dz);
-              const xAbs=Math.abs(x-cx);
+              const xAbs=Math.abs(worldX-cx);
               const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
               drift+=0.22*berm*pathLen;
             }
@@ -1071,10 +1169,10 @@ AFRAME.registerComponent('rig-walk', {
           {
             // South exit: same logic, lane grows southward
             const cx=-4.5, hw=1.1, zEntry=-81.5;
-            const dz=zEntry-z;
+            const dz=zEntry-worldZ;
             if(dz>0 && dz<10.0){
               const pathLen=smootherstep(10.0,0.0,dz);
-              const xAbs=Math.abs(x-cx);
+              const xAbs=Math.abs(worldX-cx);
               const berm=Math.exp(-((xAbs-(hw+0.9))*(xAbs-(hw+0.9)))/(2*0.7*0.7));
               drift+=0.22*berm*pathLen;
             }
@@ -1090,20 +1188,26 @@ AFRAME.registerComponent('rig-walk', {
             drift *= edgeTaper;
           }
 
-          drift*=(1-smootherstep(RADIUS*0.80,RADIUS*0.96,edgeR));
+          // ── Coverage lift ──
+          // Keep the localized snow convincingly above the rock surface so the rock
+          // does not poke through in the main accumulation zone. This is strongest in
+          // the filled snow mass and fades toward the irregular perimeter.
+          drift += 0.12 * smoothstep(0.22, 0.92, m);
+
+          drift*=(1-smootherstep(0.78,0.97,edgeN));
 
           // ── Canyon channel: carve a slot at ground level through the snow field ──
           // chSup = 0 in the channel centre (drift zeroed → flat snow floor at GROUND_Y)
           //       = 1 everywhere else (full drift, natural walls)
           // mFinal boosted to 1.0 in channel ONLY for outdoor points — indoor vertices
           // must stay at HIDDEN_Y or the corridor floor z-fights at GROUND_Y.
-          const chSup=channelDriftSuppress(x,z);
+          const chSup=channelDriftSuppress(worldX,worldZ);
           drift*=chSup;
-          const mFinal = isIndoor(x,z) ? m : Math.max(m, 1.0-chSup);
+          const mFinal = isIndoor(worldX,worldZ) ? m : Math.max(m, 1.0-chSup);
 
           // ── Continuous blend: hidden → ground → snow ──
           const snowSurface=GROUND_Y+Math.max(0,drift);
-          const northSink=smootherstep(-45,-32,z);
+          const northSink=smootherstep(-45,-32,worldZ);
           const effectiveHiddenY=HIDDEN_Y-northSink*0.2;
           const y=effectiveHiddenY+(snowSurface-effectiveHiddenY)*mFinal;
           pos.setY(i,y);
@@ -1145,12 +1249,234 @@ AFRAME.registerComponent('rig-walk', {
           aoMapIntensity:0.35,
           envMapIntensity:0.07,
           side:THREE.FrontSide,
-          depthWrite:true
+          depthWrite:true,
+          polygonOffset:true,
+          polygonOffsetFactor:-2,
+          polygonOffsetUnits:-2
         });
         const snowMesh=new THREE.Mesh(snowGeom,snowMat);
-        snowMesh.receiveShadow=true;snowMesh.frustumCulled=false;
-        this.el.sceneEl.object3D.add(snowMesh);
-        this._meshes.push(snowMesh);
+        snowMesh.receiveShadow=true;
+        snowMesh.frustumCulled=false;
+
+        const snowEntity=document.createElement('a-entity');
+        snowEntity.setAttribute('id','snow-ground-field');
+        snowEntity.setAttribute('class','clickable');
+        snowEntity.object3D.position.set(FIELD_CX,0,FIELD_CZ);
+        snowEntity.setObject3D('mesh', snowMesh);
+        this.el.sceneEl.appendChild(snowEntity);
+
+        const FIELD_MIN_X = FIELD_CX - FIELD_HALF_W;
+        const FIELD_MAX_X = FIELD_CX + FIELD_HALF_W;
+        const FIELD_MIN_Z = FIELD_CZ - FIELD_HALF_D;
+        const FIELD_MAX_Z = FIELD_CZ + FIELD_HALF_D;
+
+        const makeExtensionPatch = (cfg) => {
+          const patchRes = cfg.res || 180;
+          const alphaSize = 512;
+          const alphaCv = document.createElement('canvas');
+          alphaCv.width = alphaSize;
+          alphaCv.height = alphaSize;
+          const alphaCtx = alphaCv.getContext('2d');
+          const alphaImg = alphaCtx.createImageData(alphaSize, alphaSize);
+          const ap = alphaImg.data;
+
+          const geom = new THREE.PlaneGeometry(cfg.w, cfg.d, patchRes, patchRes);
+          geom.rotateX(-Math.PI / 2);
+          const pos = geom.attributes.position;
+          const uv = geom.attributes.uv;
+          const seamOverlap = cfg.seamOverlap || 2.6;
+          const seamBlend = cfg.seamBlend || 2.8;
+          const sideFade = cfg.sideFade || 0.22;
+          const outerFadeStart = cfg.outerFadeStart || 0.82;
+          const outerFadeEnd = cfg.outerFadeEnd || 1.02;
+          const rockClearance = cfg.rockClearance || 0.05;
+          const seamDrop = cfg.seamDrop || 0.014;
+          const perimeterSoftness = cfg.perimeterSoftness || 0.22;
+          const silhouetteInset = cfg.silhouetteInset || 0.15;
+
+          function getPatchAxes(u, v) {
+            let outward, lateral;
+            if (cfg.dir === 'north') { outward = 1 - v; lateral = Math.abs(u - 0.5) * 2; }
+            else if (cfg.dir === 'south') { outward = v; lateral = Math.abs(u - 0.5) * 2; }
+            else if (cfg.dir === 'east') { outward = u; lateral = Math.abs(v - 0.5) * 2; }
+            else { outward = 1 - u; lateral = Math.abs(v - 0.5) * 2; }
+            return { outward, lateral };
+          }
+
+          function getSeamDistance(worldX, worldZ) {
+            if (cfg.dir === 'north') return worldZ - FIELD_MAX_Z;
+            if (cfg.dir === 'south') return FIELD_MIN_Z - worldZ;
+            if (cfg.dir === 'east') return worldX - FIELD_MAX_X;
+            return FIELD_MIN_X - worldX;
+          }
+
+          function patchMask(worldX, worldZ, u, v) {
+            const axes = getPatchAxes(u, v);
+            const outward = axes.outward;
+            const lateral = axes.lateral;
+            const seamDist = getSeamDistance(worldX, worldZ);
+
+            const nShapeA = sn(worldX * 0.040 + cfg.seedA * 1.37, worldZ * 0.040 - cfg.seedB * 1.11) * 0.5 + 0.5;
+            const nShapeB = sn(worldX * 0.090 - cfg.seedB * 0.73, worldZ * 0.090 + cfg.seedA * 0.91) * 0.5 + 0.5;
+            const nShapeC = sn(worldX * 0.16 + cfg.seedB * 0.29, worldZ * 0.16 - cfg.seedA * 0.33) * 0.5 + 0.5;
+            const laneNoise = sn(
+              (cfg.dir === 'north' || cfg.dir === 'south' ? worldX : worldZ) * 0.055 + cfg.seedA * 0.61,
+              (cfg.dir === 'north' || cfg.dir === 'south' ? worldZ : worldX) * 0.022 - cfg.seedB * 0.37
+            ) * 0.5 + 0.5;
+            const breakup = 0.90 + 0.10 * nShapeB;
+
+            const outerNoise = (nShapeA - 0.5) * 0.10 + (nShapeB - 0.5) * 0.06;
+            const sideNoise = (nShapeB - 0.5) * 0.09 + (nShapeC - 0.5) * 0.05 + (laneNoise - 0.5) * 0.08;
+            const tipNoise = (nShapeA - 0.5) * 0.09 + (nShapeC - 0.5) * 0.07;
+            const perimeterNoise =
+              (nShapeA - 0.5) * 0.11 +
+              (nShapeB - 0.5) * 0.08 +
+              (nShapeC - 0.5) * 0.05 +
+              (laneNoise - 0.5) * 0.06;
+
+            const sidePull = Math.pow(Math.max(0, outward), 1.05) * (0.18 + 0.11 * nShapeA + 0.05 * laneNoise);
+            const sideThreshold = Math.max(
+              0.34,
+              1.0 - sideFade - silhouetteInset + perimeterSoftness - sidePull + sideNoise - 0.06
+            );
+            const sideCore = 1 - smootherstep(sideThreshold, sideThreshold + 0.22, lateral);
+
+            const roundnessWarp =
+              outward +
+              lateral * (0.16 + 0.08 * nShapeA) +
+              Math.pow(lateral, 2.0) * (0.24 + 0.12 * nShapeB);
+            const tipThreshold = outerFadeStart - 0.03 + outerNoise + tipNoise * 0.42;
+            const core = 1 - smootherstep(tipThreshold, outerFadeEnd + outerNoise + 0.11, roundnessWarp);
+
+            const bulb = 1 - smootherstep(
+              0.68 + outerNoise * 0.22,
+              0.98 + outerNoise * 0.28,
+              outward + lateral * (0.13 + 0.06 * nShapeA) + Math.pow(lateral, 2.0) * (0.19 + 0.09 * nShapeC)
+            );
+            const capWarp = Math.sqrt(
+              Math.pow(outward * (0.98 + 0.10 * nShapeA), 2.0) +
+              Math.pow(lateral * (0.78 + 0.12 * nShapeB), 2.0)
+            );
+            const roundedCap = 1 - smootherstep(0.88 + outerNoise * 0.10, 1.08 + outerNoise * 0.12, capWarp);
+
+            const radialOut = outward * 2.0 - 1.0;
+            const radialLat = lateral * 2.0 - 1.0;
+            const ellipse = Math.sqrt(
+              Math.pow(radialOut * (0.92 + 0.06 * nShapeA), 2.0) +
+              Math.pow(radialLat * (0.88 + 0.08 * nShapeB), 2.0)
+            );
+            const circularEdge = 1 - smootherstep(0.86 + perimeterNoise * 0.12, 1.03 + perimeterNoise * 0.16, ellipse);
+
+            const scallop = sn(
+              (cfg.dir === 'north' || cfg.dir === 'south' ? worldX : worldZ) * 0.11 + cfg.seedA * 0.37,
+              (cfg.dir === 'north' || cfg.dir === 'south' ? worldZ : worldX) * 0.11 - cfg.seedB * 0.29
+            ) * 0.5 + 0.5;
+            const scallopBand = 1 - smootherstep(0.58, 0.96, Math.max(outward, lateral));
+            const irregularFeather = 1 - smootherstep(0.90 + (scallop - 0.5) * 0.22, 1.03 + (scallop - 0.5) * 0.24, ellipse + (scallop - 0.5) * 0.12 * scallopBand);
+
+            const seamSolid = 1 - smootherstep(seamOverlap + 0.35, seamOverlap + seamBlend + 1.25, seamDist);
+            const innerSideClamp = 1 - smootherstep(0.94, 1.02, lateral);
+
+            let m = Math.max(
+              core * sideCore * breakup * Math.max(bulb, roundedCap) * Math.max(circularEdge, irregularFeather),
+              seamSolid * innerSideClamp
+            );
+            m *= 0.92 + 0.08 * snowMask(worldX, worldZ);
+            return Math.max(0, Math.min(1, m));
+          }
+
+          for (let i = 0; i < pos.count; i++) {
+            const lx = pos.getX(i);
+            const lz = pos.getZ(i);
+            const worldX = cfg.cx + lx;
+            const worldZ = cfg.cz + lz;
+            const u = uv.getX(i);
+            const v = uv.getY(i);
+            const axes = getPatchAxes(u, v);
+            const outward = axes.outward;
+            const baseMask = patchMask(worldX, worldZ, u, v);
+            const seamDist = getSeamDistance(worldX, worldZ);
+            const seamUnderlap = 1 - smootherstep(0.0, seamOverlap + seamBlend, seamDist);
+            const nBig = sn(worldX * 0.05 + cfg.seedA, worldZ * 0.05 - cfg.seedB) * 0.5 + 0.5;
+            const nMid = sn(worldX * 0.14 - cfg.seedB, worldZ * 0.14 + cfg.seedA) * 0.5 + 0.5;
+            const nSmall = sn(worldX * 0.24 + cfg.seedB, worldZ * 0.24 - cfg.seedA) * 0.5 + 0.5;
+
+            const innerBias = 1 - smootherstep(0.0, 0.78, outward);
+            const bodyLift = (0.10 + 0.16 * innerBias) * baseMask;
+            const shoulderLift = (0.038 + 0.018 * nBig) * (1 - smootherstep(0.05, 0.52, outward)) * baseMask;
+            const edgeFeatherLift = 0.020 * (1 - smootherstep(0.48, 0.96, outward)) * baseMask;
+            let y = GROUND_Y + bodyLift + shoulderLift + edgeFeatherLift + nBig * 0.024 + nMid * 0.015 + nSmall * 0.008;
+            y -= smootherstep(0.72, 1.02, outward) * (0.012 + 0.008 * nMid);
+            y += (channelDriftSuppress(worldX, worldZ) - 1.0) * 0.012;
+
+            const edgeSupport = 1 - smootherstep(0.55, 1.02, outward);
+            const seamSupport = 1 - smootherstep(seamOverlap + 0.15, seamOverlap + seamBlend + 0.9, seamDist);
+            const lateralSupport = 1 - smootherstep(0.62, 1.02, Math.abs(axes.lateral));
+            const perimeterSupport = Math.max(edgeSupport, lateralSupport);
+            const minSnowSurface = GROUND_Y + (rockClearance + 0.050 * perimeterSupport + 0.032 * seamSupport) * baseMask;
+            y = Math.max(y, minSnowSurface);
+
+            if (seamUnderlap > 0.0) {
+              const buriedY = GROUND_Y + rockClearance * 0.25 - seamDrop;
+              y = y * (1 - seamUnderlap) + buriedY * seamUnderlap;
+            }
+
+            if (baseMask < 0.008) y = HIDDEN_Y;
+            pos.setY(i, y);
+          }
+          pos.needsUpdate = true;
+          geom.computeVertexNormals();
+          geom.computeBoundingSphere();
+
+          for (let py = 0; py < alphaSize; py++) {
+            for (let px = 0; px < alphaSize; px++) {
+              const idx = (py * alphaSize + px) * 4;
+              const u = px / (alphaSize - 1);
+              const v = py / (alphaSize - 1);
+              const worldX = cfg.cx + (u - 0.5) * cfg.w;
+              const worldZ = cfg.cz + (v - 0.5) * cfg.d;
+              const m = patchMask(worldX, worldZ, u, v);
+              const a = Math.floor(Math.max(0, Math.min(255, m * 255)));
+              ap[idx] = 255; ap[idx+1] = 255; ap[idx+2] = 255; ap[idx+3] = a;
+            }
+          }
+          alphaCtx.putImageData(alphaImg, 0, 0);
+          const alphaTex = new THREE.CanvasTexture(alphaCv);
+          alphaTex.wrapS = alphaTex.wrapT = THREE.ClampToEdgeWrapping;
+          alphaTex.magFilter = THREE.LinearFilter;
+          alphaTex.minFilter = THREE.LinearMipmapLinearFilter;
+
+          const mat = snowMat.clone();
+          mat.transparent = true;
+          mat.alphaMap = alphaTex;
+          mat.depthWrite = true;
+          mat.alphaTest = 0.10;
+          mat.polygonOffset = true;
+          mat.polygonOffsetFactor = -3;
+          mat.polygonOffsetUnits = -3;
+          mat.needsUpdate = true;
+
+          const mesh = new THREE.Mesh(geom, mat);
+          mesh.receiveShadow = true;
+          mesh.frustumCulled = false;
+
+          const entity = document.createElement('a-entity');
+          entity.setAttribute('id', cfg.id);
+          entity.setAttribute('class', 'clickable');
+          entity.object3D.position.set(cfg.cx, 0, cfg.cz);
+          entity.setObject3D('mesh', mesh);
+          this.el.sceneEl.appendChild(entity);
+          this._meshes.push(mesh);
+          this._extensionEntities = this._extensionEntities || [];
+          this._extensionEntities.push(entity);
+        };
+
+        makeExtensionPatch({ id:'snow-ground-north', dir:'north', cx:0, cz:-35.0, w:67.5, d:27.0, seedA:11, seedB:29, sideFade:0.08, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.135, perimeterSoftness:0.40, silhouetteInset:0.06, outerFadeStart:0.76, outerFadeEnd:1.02, res:224 });
+        makeExtensionPatch({ id:'snow-ground-south', dir:'south', cx:0, cz:-115.0, w:67.5, d:27.5, seedA:37, seedB:7, sideFade:0.08, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.135, perimeterSoftness:0.40, silhouetteInset:0.06, outerFadeStart:0.76, outerFadeEnd:1.03, res:224 });
+        makeExtensionPatch({ id:'snow-ground-east', dir:'east', cx:44.75, cz:-75, w:29.5, d:64.5, seedA:19, seedB:41, sideFade:0.08, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.135, perimeterSoftness:0.39, silhouetteInset:0.06, outerFadeStart:0.76, outerFadeEnd:1.02, res:224 });
+        makeExtensionPatch({ id:'snow-ground-west', dir:'west', cx:-44.75, cz:-75, w:29.5, d:64.5, seedA:53, seedB:17, sideFade:0.08, seamOverlap:3.9, seamBlend:4.8, rockClearance:0.135, perimeterSoftness:0.39, silhouetteInset:0.06, outerFadeStart:0.76, outerFadeEnd:1.02, res:224 });
+
+        this._snowEntity=snowEntity;
       },
       remove: function(){
         this._meshes.forEach(function(m){
@@ -1162,30 +1488,49 @@ AFRAME.registerComponent('rig-walk', {
           if(m.material.aoMap)m.material.aoMap.dispose();
           m.material.dispose();
         });
+        if(this._frostEntity){
+          this._frostEntity.removeObject3D('mesh');
+          if(this._frostEntity.parentNode)this._frostEntity.parentNode.removeChild(this._frostEntity);
+          this._frostEntity=null;
+        }
+        if(this._snowEntity){
+          this._snowEntity.removeObject3D('mesh');
+          if(this._snowEntity.parentNode)this._snowEntity.parentNode.removeChild(this._snowEntity);
+          this._snowEntity=null;
+        }
+        if(this._extensionEntities){
+          this._extensionEntities.forEach(function(ent){
+            if(ent){
+              ent.removeObject3D('mesh');
+              if(ent.parentNode)ent.parentNode.removeChild(ent);
+            }
+          });
+          this._extensionEntities=null;
+        }
       }
     });
 
-    // ── Primal Scene ─────────────────────────────────────────────────────────
-    AFRAME.registerComponent('primal-scene', {
-      init: function () {
-        const sceneObj = this.el.sceneEl.object3D;
-        const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
-        this._meshes = [];
-        this._materials = [];
-        this._textures = [];
 
-        const CX = 25, CZ = 0;
-        const GY = 0.07;
+    // ── Main rock ground (selectable A-Frame entity) ───────────────────────────
+    AFRAME.registerComponent('rock-ground', {
+      schema: {
+        x: {type: 'number', default: 25},
+        y: {type: 'number', default: -0.002},
+        z: {type: 'number', default: 0}
+      },
+      init: function () {
+        const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+        this._textures = [];
+        this._materials = [];
+        this._mesh = null;
+
+        const CX = this.data.x;
+        const CZ = this.data.z;
+        const GY = 0.055;
 
         const smoothstep = (a, b, x) => {
           const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
           return t * t * (3 - 2 * t);
-        };
-        const angleDelta = (a, b) => {
-          let d = a - b;
-          while (d > Math.PI) d -= Math.PI * 2;
-          while (d < -Math.PI) d += Math.PI * 2;
-          return d;
         };
         const ridged = (x, y) => {
           const n = sn(x, y);
@@ -1202,7 +1547,15 @@ AFRAME.registerComponent('rig-walk', {
         const officeSnowBoxes = [
           { x1:-7.00, x2:7.00, z1:-81.50, z2:-68.50 },
           { x1: 2.18, x2:6.82, z1:-68.68, z2:-56.32 },
-          { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 }
+          { x1:-6.82, x2:-2.18, z1:-94.00, z2:-81.30 },
+          { x1:-38.5, x2:38.5, z1:-53.5, z2:-13.0 },
+          { x1:-38.5, x2:38.5, z1:-137.0, z2:-96.5 },
+          { x1:27.0, x2:69.5, z1:-112.0, z2:-38.0 },
+          { x1:-69.5, x2:-27.0, z1:-112.0, z2:-38.0 },
+          { x1:-42.0, x2:42.0, z1:-56.5, z2:-10.5 },
+          { x1:-42.0, x2:42.0, z1:-139.5, z2:-93.5 },
+          { x1:24.5, x2:72.5, z1:-115.0, z2:-35.0 },
+          { x1:-72.5, x2:-24.5, z1:-115.0, z2:-35.0 }
         ];
         const officeSnowSuppression = (x, z) => {
           let d = Infinity;
@@ -1212,8 +1565,101 @@ AFRAME.registerComponent('rig-walk', {
             d = Math.min(d, distToBoxOuter2D(x, z, b));
           }
           if (inside) return 1.0;
-          return smoothstep(9.5, 1.5, d);
+          return smoothstep(18.0, 1.5, d);
         };
+
+        const tl = new THREE.TextureLoader();
+        const mkTex = (path, repeat, isColor) => {
+          const t = tl.load(path);
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(repeat, repeat);
+          t.anisotropy = 4;
+          if (isColor) t.colorSpace = THREE.SRGBColorSpace;
+          this._textures.push(t);
+          return t;
+        };
+
+        const rockPath = './assets/cave_wall/';
+        const rockRepeat = 21.0;
+        const diff  = mkTex(rockPath + 'moon_diffuse.webp', rockRepeat, true);
+        const norm  = mkTex(rockPath + 'moon_normal.webp', rockRepeat, false);
+        const rough = mkTex(rockPath + 'moon_rough.png', rockRepeat, false);
+        const ao    = mkTex(rockPath + 'moon_ao.png', rockRepeat, false);
+
+        const fieldW = 500, fieldD = 500, fieldSeg = 320;
+        const geom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
+        geom.rotateX(-Math.PI / 2);
+        const pos = geom.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) {
+          const lx = pos.getX(i), lz = pos.getZ(i);
+          const wx = CX + lx, wz = CZ + lz;
+          const ex = Math.abs(lx) / (fieldW * 0.5);
+          const ez = Math.abs(lz) / (fieldD * 0.5);
+          const edge = smoothstep(1.0, 0.82, Math.max(ex, ez));
+
+          let h = 0;
+          h += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
+          h += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
+          h += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
+          h += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
+
+          const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
+          h *= 1.0 - approachSoftener * 0.45;
+
+          const poolEx = (lx - 1.5) / 23.0;
+          const poolEz = lz / 16.0;
+          const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
+          h *= 1.0 - poolBlend * 0.65;
+
+          const officeKeepSnow = officeSnowSuppression(wx, wz);
+          h *= 1.0 - officeKeepSnow * 0.98;
+
+          pos.setY(i, GY + h * edge * 0.9);
+        }
+        pos.needsUpdate = true;
+        geom.computeVertexNormals();
+        const uv = geom.getAttribute('uv');
+        geom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
+
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xd7dde4,
+          map: diff, normalMap: norm, roughnessMap: rough, aoMap: ao,
+          roughness: 0.965, metalness: 0, aoMapIntensity: 0.94,
+          normalScale: new THREE.Vector2(1.95, 1.95),
+          polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2,
+        });
+        this._materials.push(mat);
+
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+        this._mesh = mesh;
+        this.el.setObject3D('mesh', mesh);
+        this.el.object3D.position.set(CX, this.data.y, CZ);
+      },
+      remove: function () {
+        this.el.removeObject3D('mesh');
+        if (this._mesh) {
+          if (this._mesh.geometry) this._mesh.geometry.dispose();
+          this._mesh = null;
+        }
+        this._materials.forEach((m) => m.dispose());
+        this._textures.forEach((t) => t.dispose());
+      }
+    });
+
+    // ── Primal Scene ─────────────────────────────────────────────────────────
+    AFRAME.registerComponent('primal-scene', {
+      init: function () {
+        const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+        this._meshes = [];
+        this._materials = [];
+        this._textures = [];
+        this._root = new THREE.Group();
+        this._root.name = 'primal-scene-root';
+        this.el.setObject3D('mesh', this._root);
+
+        const CX = PRIMAL_SCENE_CFG.CX, CZ = PRIMAL_SCENE_CFG.CZ;
 
         const tl = new THREE.TextureLoader();
         const mkTex = (path, repeat, isColor) => {
@@ -1245,89 +1691,7 @@ AFRAME.registerComponent('rig-walk', {
         const fRough = mkTex(rockPath + 'moon_rough.png', 7.8, false);
         const fAO    = mkTex(rockPath + 'moon_ao.png', 7.8, false);
 
-        // ── Extended rocky underfield (same stack role as lunar ground) ───────
-        const fieldW = 190, fieldD = 170, fieldSeg = 260;
-        const fieldGeom = new THREE.PlaneGeometry(fieldW, fieldD, fieldSeg, fieldSeg);
-        fieldGeom.rotateX(-Math.PI / 2);
-        const fp = fieldGeom.getAttribute('position');
-        for (let i = 0; i < fp.count; i++) {
-          const lx = fp.getX(i), lz = fp.getZ(i);
-          const wx = CX + lx, wz = CZ + lz;
-          const ex = Math.abs(lx) / (fieldW * 0.5);
-          const ez = Math.abs(lz) / (fieldD * 0.5);
-          const edge = smoothstep(1.0, 0.82, Math.max(ex, ez));
-
-          let h = 0;
-          h += (sn(wx * 0.020 + 14.0, wz * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
-          h += (sn(wx * 0.050 - 2.0, wz * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
-          h += ridged(wx * 0.095 + 7.0, wz * 0.095 - 5.0) * 0.07;
-          h += ridged(wx * 0.180 - 4.0, wz * 0.180 + 6.0) * 0.035;
-
-          // Keep the approach / interior side more subdued so this stays a base layer.
-          const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
-          h *= 1.0 - approachSoftener * 0.45;
-
-          // Broad central flattening around the pool so the local berm still does the heavy lifting.
-          const poolEx = (lx - 1.5) / 23.0;
-          const poolEz = lz / 16.0;
-          const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
-          h *= 1.0 - poolBlend * 0.65;
-
-          // Keep the office and corridor surroundings snow-dominant: suppress the rocky underfield
-          // inside the protected architecture envelopes and through a broader exterior falloff zone.
-          const officeKeepSnow = officeSnowSuppression(wx, wz);
-          h *= 1.0 - officeKeepSnow * 0.98;
-
-          // Fade to the base ring at the outer edge to avoid a hard boundary.
-          fp.setY(i, GY + h * edge * 0.9);
-        }
-        fp.needsUpdate = true;
-        fieldGeom.computeVertexNormals();
-        const fuv = fieldGeom.getAttribute('uv');
-        fieldGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(fuv.array), 2));
-        const fieldMat = new THREE.MeshStandardMaterial({
-          color: 0xd7dde4,
-          map: fDiff, normalMap: fNorm, roughnessMap: fRough, aoMap: fAO,
-          roughness: 0.965, metalness: 0, aoMapIntensity: 0.94,
-          normalScale: new THREE.Vector2(1.95, 1.95),
-          polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-        });
-        this._materials.push(fieldMat);
-        const fieldMesh = new THREE.Mesh(fieldGeom, fieldMat);
-        fieldMesh.position.set(CX, -0.002, CZ);
-        sceneObj.add(fieldMesh); this._meshes.push(fieldMesh);
-
-        // ── Terrain patch (kept local and subtle; additive only) ───────────────
-        const TW = 20, TD = 16, SEG = 100;
-        const terrGeom = new THREE.PlaneGeometry(TW, TD, SEG, SEG);
-        terrGeom.rotateX(-Math.PI / 2);
-        const tp = terrGeom.getAttribute('position');
-        for (let i = 0; i < tp.count; i++) {
-          const lx = tp.getX(i), lz = tp.getZ(i);
-          const wx = CX + lx, wz = CZ + lz;
-          let h = (sn(wx*0.22, wz*0.22)*0.5+0.5)*0.18
-                + (sn(wx*0.55+7, wz*0.55-3)*0.5+0.5)*0.09
-                + (sn(wx*1.30+2, wz*1.30+9)*0.5+0.5)*0.045
-                + (sn(wx*3.00-5, wz*3.00+1)*0.5+0.5)*0.02;
-          const ex = Math.abs(lx)/(TW*0.5), ez = Math.abs(lz)/(TD*0.5);
-          const edge = Math.max(0, 1-Math.pow(Math.max(ex,ez)/0.82, 3));
-          tp.setY(i, GY + h * edge);
-        }
-        tp.needsUpdate = true;
-        terrGeom.computeVertexNormals();
-        const tuv = terrGeom.getAttribute('uv');
-        terrGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(tuv.array), 2));
-        const terrMat = new THREE.MeshStandardMaterial({
-          color: 0xd7dde4,
-          map: tDiff, normalMap: tNorm, roughnessMap: tRough, aoMap: tAO,
-          roughness: 0.98, metalness: 0, normalScale: new THREE.Vector2(1.6, 1.6), aoMapIntensity: 0.82,
-          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
-        });
-        this._materials.push(terrMat);
-        const terrMesh = new THREE.Mesh(terrGeom, terrMat);
-        terrMesh.position.set(CX, 0.012, CZ);
-        terrMesh.visible = false;
-        sceneObj.add(terrMesh); this._meshes.push(terrMesh);
+        // Primal floor now derives directly from the shared base terrain + berm height field.
 
         // ── Rocky berm around the pool: emergent terrain, not object-boulders ──
         const boulderMat = new THREE.MeshStandardMaterial({
@@ -1335,6 +1699,7 @@ AFRAME.registerComponent('rig-walk', {
           map: bDiff, normalMap: bNorm, roughnessMap: bRough, aoMap: bAO,
           roughness: 0.96, metalness: 0, aoMapIntensity: 0.92,
           normalScale: new THREE.Vector2(1.85, 1.85),
+          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
         });
         this._materials.push(boulderMat);
 
@@ -1342,79 +1707,22 @@ AFRAME.registerComponent('rig-walk', {
         const bermGeom = new THREE.PlaneGeometry(bermW, bermD, bermSeg, bermSeg);
         bermGeom.rotateX(-Math.PI / 2);
         const bp = bermGeom.getAttribute('position');
-        const poolLX = 1.5, poolLZ = 0.0;
-        const bermRadiusX = 14.8, bermRadiusZ = 9.4;
-        const poolRadiusX = 7.4, poolRadiusZ = 4.6;
-        const gapCenter = Math.PI;
-        const gapHalf = 0.42;
 
         for (let i = 0; i < bp.count; i++) {
           const lx = bp.getX(i), lz = bp.getZ(i);
-          const px = lx - poolLX;
-          const pz = lz - poolLZ;
+          const wx = CX + lx, wz = CZ + lz;
+          let y = primalSceneHeight(wx, wz, sn);
 
-          const ex = px / bermRadiusX;
-          const ez = pz / bermRadiusZ;
-          const er = Math.sqrt(ex * ex + ez * ez);
-          const ang = Math.atan2(pz, px);
-          const gapDelta = Math.abs(angleDelta(ang, gapCenter));
-          const gapMask = smoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
-          const sideBoost = smoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
+          // Bury the berm perimeter slightly under the shared rock ground so the
+          // overlay mesh cannot reveal its triangulated boundary or z-fight seam.
+          const edgeDistX = bermW * 0.5 - Math.abs(lx);
+          const edgeDistZ = bermD * 0.5 - Math.abs(lz);
+          const edgeDist = Math.min(edgeDistX, edgeDistZ);
+          const t = Math.max(0, Math.min(1, 1.0 - edgeDist / 4.2));
+          const bury = t * t * (3 - 2 * t);
+          y -= bury * 0.22;
 
-          const ringNoiseA = (sn(px*0.080 + 4.0, pz*0.080 - 9.0) * 0.5 + 0.5);
-          const ringNoiseB = ridged(px*0.120 - 8.0, pz*0.120 + 3.0);
-          const ringNoiseC = (sn(px*0.220 + 1.0, pz*0.220 - 6.0) * 0.5 + 0.5);
-          const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
-          const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
-          const ringWidth = 0.12 + ringNoiseC * 0.035;
-
-          const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
-          const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
-          const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
-          const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
-
-          let h = 0;
-          h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
-          h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
-          h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
-
-          const cragA = ridged(px*0.22 + 11.0, pz*0.22 - 2.0) * 0.34;
-          const cragB = ridged(px*0.38 - 7.0, pz*0.38 + 5.0) * 0.18;
-          const facets = Math.max(0, sn(px*0.42 + 2.0, pz*0.42 - 4.0)) * 0.12;
-          h += bermCore * (cragA + cragB + facets) * gapMask;
-
-          // lift the two sides of the opening so the berm feels terrain-formed, not cut out
-          const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
-          const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
-          const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
-          const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
-          const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
-          h += mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24;
-          h += sideBoost * bermCore * 0.22;
-
-          // basin shaping: broad walkable floor with a distinct central water depression
-          h -= basinFalloff * 0.10;
-
-          const poolEx = px / poolRadiusX;
-          const poolEz = pz / poolRadiusZ;
-          const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
-          const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
-          const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
-          h += walkShelf * 0.06;
-          h += poolLip * 0.05;
-          h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.17;
-
-          // terrain fade so it emerges from the lunar ground instead of ending as a hard patch
-          const fadeX = smoothstep(20.6, 15.4, Math.abs(lx));
-          const fadeZ = smoothstep(15.4, 11.2, Math.abs(lz));
-          const terrainFade = Math.min(fadeX, fadeZ);
-          h *= terrainFade;
-
-          // keep only the actual water footprint flat
-          const waterMask = smoothstep(0.98, 1.10, poolEr);
-          h *= waterMask;
-
-          bp.setY(i, GY + h);
+          bp.setY(i, y);
         }
 
         bp.needsUpdate = true;
@@ -1422,61 +1730,72 @@ AFRAME.registerComponent('rig-walk', {
         const buv = bermGeom.getAttribute('uv');
         bermGeom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(buv.array), 2));
         const bermMesh = new THREE.Mesh(bermGeom, boulderMat);
-        bermMesh.position.set(CX, 0.012, CZ);
-        sceneObj.add(bermMesh); this._meshes.push(bermMesh);
+        bermMesh.name = 'primal-rock-berm';
+        bermMesh.position.set(CX, 0, CZ);
+        this._root.add(bermMesh); this._meshes.push(bermMesh);
 
-        // ── Water pool ─────────────────────────────────────────────────────────
-        const poolGeom = new THREE.PlaneGeometry(14.8, 9.2);
-        poolGeom.rotateX(-Math.PI / 2);
-        const poolMat = new THREE.MeshBasicMaterial({ color: 0x0d2535 });
-        this._materials.push(poolMat);
-        const poolMesh = new THREE.Mesh(poolGeom, poolMat);
-        poolMesh.position.set(CX + poolLX, GY + 0.05, CZ + poolLZ);
-        poolMesh.renderOrder = 5;
-        sceneObj.add(poolMesh); this._meshes.push(poolMesh);
 
-        const sheenGeom = new THREE.PlaneGeometry(14.8, 9.2);
-        sheenGeom.rotateX(-Math.PI / 2);
-        const sheenMat = new THREE.MeshStandardMaterial({
-          color: 0x0a1820,
-          emissive: new THREE.Color(0x1a3a50),
-          emissiveIntensity: 0.45,
-          roughness: 0.02,
-          metalness: 0.95,
-          transparent: true,
-          opacity: 0.85,
-          depthWrite: false,
+
+      },
+
+      remove: function () {
+        this._meshes.forEach(m => {
+          if (m.parent) m.parent.remove(m);
+          if (m.geometry) m.geometry.dispose();
         });
-        this._materials.push(sheenMat);
-        const sheenMesh = new THREE.Mesh(sheenGeom, sheenMat);
-        sheenMesh.position.set(CX + poolLX, GY + 0.06, CZ + poolLZ);
-        sheenMesh.renderOrder = 6;
-        sceneObj.add(sheenMesh); this._meshes.push(sheenMesh);
+        if (this._root) {
+          this.el.removeObject3D('mesh');
+          this._root = null;
+        }
+        (this._materials || []).forEach(m => m && m.dispose && m.dispose());
+        (this._textures || []).forEach(t => t && t.dispose && t.dispose());
+      }
+    });
 
-        // ── Bones ──────────────────────────────────────────────────────────────
-        const boneMat = new THREE.MeshStandardMaterial({ color:0xb2aa92, roughness:0.88, metalness:0 });
-        this._materials.push(boneMat);
-        const addBone = (lx,lz,len,ry,tx,tz) => {
-          const m = new THREE.Mesh(new THREE.CylinderGeometry(0.024,0.034,len,6), boneMat);
-          m.position.set(CX+lx, GY+0.04, CZ+lz);
-          m.rotation.set(tx||0.08, ry, tz||0.05);
-          sceneObj.add(m); this._meshes.push(m);
-        };
-        const addFrag = (lx,lz,len,ry) => {
-          const m = new THREE.Mesh(new THREE.CylinderGeometry(0.016,0.020,len,5), boneMat);
-          m.position.set(CX+lx, GY+0.025, CZ+lz);
-          m.rotation.set(0.12, ry, 0.07);
-          sceneObj.add(m); this._meshes.push(m);
-        };
-        addBone( 1.5,-1.5,0.75,0.8,0.10,0.05); addBone( 1.2, 1.2,0.85,2.1,0.08,0.12);
-        addBone( 0.3,-2.8,0.65,1.5,0.12,0.06); addBone( 2.2, 2.2,0.70,3.3,0.09,0.07);
-        addBone(-0.8,-2.0,0.80,0.3,0.11,0.09); addBone(-1.5, 0.8,0.60,2.7,0.07,0.11);
-        addBone( 3.0,-0.5,0.90,1.2,0.13,0.05); addBone(-0.3, 3.0,0.55,0.6,0.10,0.08);
-        addFrag( 2.0,-1.0,0.30,1.1); addFrag( 1.5, 0.8,0.25,2.4);
-        addFrag( 0.5,-2.5,0.32,0.7); addFrag( 2.8, 1.8,0.28,3.1);
-        addFrag(-1.5,-0.5,0.35,1.6); addFrag(-0.8, 1.8,0.27,2.8);
 
-        // ── Distant mountain terrain: more irregular, less ring-like ─────────
+    AFRAME.registerComponent('primal-mountains', {
+      init: function () {
+        const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+        this._meshes = [];
+        this._materials = [];
+        this._textures = [];
+        this._root = new THREE.Group();
+        this._root.name = 'primal-mountains-root';
+        this.el.setObject3D('mesh', this._root);
+
+        const smoothstep = (a, b, x) => {
+          const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+          return t * t * (3 - 2 * t);
+        };
+        const angleDelta = (a, b) => {
+          let d = a - b;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          return d;
+        };
+        const ridged = (x, y) => {
+          const n = sn(x, y);
+          const r = 1 - Math.abs(n);
+          return r * r;
+        };
+
+        const tl = new THREE.TextureLoader();
+        const mkTex = (path, repeat, isColor) => {
+          const t = tl.load(path);
+          t.wrapS = t.wrapT = THREE.RepeatWrapping;
+          t.repeat.set(repeat, repeat);
+          t.anisotropy = 4;
+          if (isColor) t.colorSpace = THREE.SRGBColorSpace;
+          this._textures.push(t);
+          return t;
+        };
+
+        const rockPath = './assets/cave_wall/';
+        const mDiff  = mkTex(rockPath + 'moon_diffuse.webp', 10.5, true);
+        const mNorm  = mkTex(rockPath + 'moon_normal.webp', 10.5, false);
+        const mRough = mkTex(rockPath + 'moon_rough.png', 10.5, false);
+        const mAO    = mkTex(rockPath + 'moon_ao.png', 10.5, false);
+
         const mtnMat = new THREE.MeshStandardMaterial({
           color: 0xd5dbe2,
           map: mDiff, normalMap: mNorm, roughnessMap: mRough, aoMap: mAO,
@@ -1486,8 +1805,8 @@ AFRAME.registerComponent('rig-walk', {
         });
         this._materials.push(mtnMat);
 
-        const GAP_CENTER = Math.PI * 0.5;   // keep landing view open
-        const GAP_SIZE = 1.08;              // ~62° clear sector
+        const GAP_CENTER = Math.PI * 0.5;
+        const GAP_SIZE = 1.08;
         const OVERLAP = 0.09;
         const TOTAL_START = GAP_CENTER + GAP_SIZE * 0.5;
         const TOTAL_END = GAP_CENTER + Math.PI * 2 - GAP_SIZE * 0.5;
@@ -1516,7 +1835,6 @@ AFRAME.registerComponent('rig-walk', {
             const gapFade = smoothstep(GAP_SIZE * 0.5 + 0.03, GAP_SIZE * 0.5 + 0.34, Math.abs(angleDelta(angle, GAP_CENTER)));
             const sideFade = smoothstep(0.0, 0.09, u) * smoothstep(0.0, 0.09, 1 - u);
 
-            // irregular inward advance so the basin no longer reads as a neat ring
             const angleFieldA = sn(angleX * 1.8 + 1.7, angleZ * 1.8 - 2.4) * 0.5 + 0.5;
             const angleFieldB = sn(angleX * 3.7 - 8.0, angleZ * 3.7 + 5.0) * 0.5 + 0.5;
             const inwardAdvance = (angleFieldA * 34.0 + angleFieldB * 18.0) * gapFade;
@@ -1551,7 +1869,9 @@ AFRAME.registerComponent('rig-walk', {
           const uv = geom.getAttribute('uv');
           geom.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(uv.array), 2));
           const mesh = new THREE.Mesh(geom, mtnMat);
-          sceneObj.add(mesh); this._meshes.push(mesh);
+          mesh.name = `primal-mountain-sector-${s}`;
+          this._root.add(mesh);
+          this._meshes.push(mesh);
         }
       },
 
@@ -1560,6 +1880,10 @@ AFRAME.registerComponent('rig-walk', {
           if (m.parent) m.parent.remove(m);
           if (m.geometry) m.geometry.dispose();
         });
+        if (this._root) {
+          this.el.removeObject3D('mesh');
+          this._root = null;
+        }
         (this._materials || []).forEach(m => m && m.dispose && m.dispose());
         (this._textures || []).forEach(t => t && t.dispose && t.dispose());
       }
@@ -1568,7 +1892,13 @@ AFRAME.registerComponent('rig-walk', {
 </head>
 <body>
 <!-- Flash fix: black overlay present before any paint -->
-<div id="fadeIn"></div>
+<div id="fadeIn" aria-live="polite" aria-label="Loading scene">
+<div id="loadingCard">
+<div id="loadingTitle">Loading scene</div>
+<div id="loadingBar"><div id="loadingBarFill"></div></div>
+<div id="loadingMeta"><span id="loadingStatus">Preparing assets</span><span id="loadingPercent">0%</span></div>
+</div>
+</div>
 <!-- Quit button — matches aya.dev position (bottom-left) and style -->
 <div id="quitShell">
 <button id="quitBtn" type="button">QUIT</button>
@@ -1599,7 +1929,7 @@ AFRAME.registerComponent('rig-walk', {
 <div id="terminalGuide" aria-hidden="true"><div class="tg-card"><div id="terminalGuideMain" class="tg-main"></div><div id="terminalGuideSub" class="tg-sub"></div></div></div>
 <div id="liaOverlay" aria-hidden="true"><iframe id="liaOverlayFrame" allow="fullscreen" src="about:blank"></iframe></div>
 <a-scene fog="type: none" loading-screen="enabled: false" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance" simple-ibl="intensity: 0.35; color: #e4ebf4" tabindex="0" vr-mode-ui="enabled: false" snow-ground="" snow="count: 65000; areaWidth: 100; areaDepth: 100; ceiling: 30; fallSpeed: 1.75; fallVar: 0.9; windX: 1.05; windZ: 0.45; gustStr: 0.75; size: 0.06; rampTime: 5">
-<a-assets timeout="30000">
+<a-assets id="sceneAssets" timeout="30000">
 <img crossorigin="anonymous" id="earthTex" src="./assets/earth_skin.jpg"/>
 <img crossorigin="anonymous" id="moonDiffuse" src="./assets/cave_wall/moon_diffuse.webp"/>
 <img crossorigin="anonymous" id="moonNormal" src="./assets/cave_wall/moon_normal.webp"/>
@@ -1623,6 +1953,19 @@ AFRAME.registerComponent('rig-walk', {
     <a-asset-item id="david_sitting_glb" src="../../characters/david_sitting.glb"></a-asset-item>
     <a-asset-item id="jenny_typing_glb" src="../../characters/jenny_typing.glb"></a-asset-item>
     <a-asset-item id="astra_typing_glb" src="../../characters/astra_typing.glb"></a-asset-item>
+    <a-asset-item id="monkey_agreeing_glb" src="./assets/monkeys/monkey_agreeing.glb"></a-asset-item>
+    <a-asset-item id="monkey_idle_glb" src="./assets/monkeys/monkey_idle.glb"></a-asset-item>
+    <a-asset-item id="monkey_warrior_glb" src="./assets/monkeys/monkey_warrior.glb"></a-asset-item>
+    <a-asset-item id="monkey_dancing_glb" src="./assets/monkeys/monkey_dancing.glb"></a-asset-item>
+    <video id="lia_video_monolith_04" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_04.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_01" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_01.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_02" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_02.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_03" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_03.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_05" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_05.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_06" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_06.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_07" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_07.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_08" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_08.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
+    <video id="lia_video_monolith_09" crossorigin="anonymous" src="./assets/videos/lia_video_monolith_09.mp4" autoplay="true" loop="true" playsinline webkit-playsinline preload="auto" muted></video>
 
   </a-assets>
 <!-- ── Sky ──────────────────────────────────────────────────────── -->
@@ -1632,20 +1975,18 @@ AFRAME.registerComponent('rig-walk', {
 <a-entity light="type: ambient; color: #0b1220; intensity: 0.035"></a-entity>
 <!-- Directional moonlight from earth direction — same values as lia_lunar_light in aya.dev -->
 <a-entity id="lia_earthshine_target" position="0 0 0"></a-entity>
-<a-entity id="lia_lunar_light" light="type: directional; color: #d9f1ff; intensity: 0.22; castShadow: false; target: #lia_earthshine_target" position="0 35 -220">
+<a-entity id="lia_lunar_light" light="type: directional; color: #d9f1ff; intensity: 0.22; castShadow: false; target: #lia_earthshine_target" position="0 47 -420">
 </a-entity>
 <!-- Hemisphere sky fill — same values as lia_lunar_skyfill in aya.dev -->
-<a-entity id="lia_lunar_skyfill" light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.14" position="0 18 0">
+<a-entity id="lia_lunar_skyfill" light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.10" position="0 18 0">
 </a-entity>
 <!-- ── Earth — same position/material as aya.dev lia_earth ─────── -->
-<a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.9" no-fog="" position="0 35 -220" radius="9" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
+<a-sphere earth-texture-quality="" id="lia_earth" material="shader: flat; src: #earthTex; transparent: true; opacity: 0.9" no-fog="" position="0 47 -420" radius="9" rotation="0 180 0" segments-height="256" segments-width="256"></a-sphere>
 <!-- Earth atmospheric halo -->
-<a-sphere id="lia_earth_atmo" position="0 35 -220" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
-<a-sphere id="lia_earth_glow" position="0 35 -220" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
-<!-- ── Lunar ground ─────────────────────────────────────────────── -->
-<a-ring id="lia_lunar_ground" lunar-ground-quality="" material="shader: standard; color: #d7dde4; src: #moonDiffuse; normalMap: #moonNormal; aoMap: #moonAO; roughnessMap: #moonRough; metalness: 0; roughness: 0.95; repeat: 180 180; normalScale: 2.35 2.35; aoMapIntensity: 1.0; side: front; polygonOffset: true; polygonOffsetFactor: 2; polygonOffsetUnits: 2; opacity: 0.9" position="0 0.066 0" radius-inner="1.555" radius-outer="600" rotation="-90 0 0" segments-theta="256" shadow="cast:false; receive:true"></a-ring>
+<a-sphere id="lia_earth_atmo" position="0 47 -420" radius="9.45" segments-width="128" segments-height="128" material="shader: standard; color: #000000; emissive: #4d8fcc; emissiveIntensity: 0.35; transparent: true; opacity: 0.12; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
+<a-sphere id="lia_earth_glow" position="0 47 -420" radius="10.2" segments-width="64" segments-height="64" material="shader: standard; color: #000000; emissive: #6aaad4; emissiveIntensity: 0.2; transparent: true; opacity: 0.06; side: front; depthWrite: false; blending: 2" no-fog=""></a-sphere>
 <!-- ── Platform ─────────────────────────────────────────────────── -->
-<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0 0" radius="1.55" shadow="cast:false; receive:true">
+<a-cylinder height="0.14" id="endchamber_platform" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true" position="0 0.12 0" radius="1.55" shadow="cast:false; receive:true">
 <a-ring id="endchamber_handrail_top" material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6" position="0 0.58 0" radius-inner="1.42" radius-outer="1.52" rotation="-90 0 0" segments-theta="256" theta-length="310" theta-start="25"></a-ring>
 <a-entity id="endchamber_handrail_colliders">
 <a-box class="solid" width="0.70" height="0.28" depth="0.20" position="1.188 0.580 -0.866" rotation="0 -36.1 0" visible="false"></a-box>
@@ -1671,15 +2012,53 @@ AFRAME.registerComponent('rig-walk', {
 </a-entity>
 </a-cylinder>
 <!-- Seam trim ring -->
-<a-entity id="lia_seam_trim" position="0 0.0715 0">
+<a-entity id="lia_seam_trim" position="0 0.1915 0">
 <a-ring id="lia_seam_flange" material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" radius-inner="1.555" radius-outer="1.62" rotation="-90 0 0" segments-theta="128" shadow="cast:false; receive:true"></a-ring>
 </a-entity>
 <!-- Shaft collar (visible when looking down into hole) -->
-<a-cylinder height="1.50" id="lia_shaft_collar" material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double" open-ended="true" position="0 -0.68 0" radius="1.60" segments-radial="64" shadow="cast:false; receive:true"></a-cylinder>
+<a-cylinder height="1.50" id="lia_shaft_collar" material="shader: standard; color: #cfcfcf; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; envMapIntensity: 0; repeat: 8 6; normalScale: 1.25 1.25; side: double" open-ended="true" position="0 -0.56 0" radius="1.60" segments-radial="64" shadow="cast:false; receive:true"></a-cylinder>
 <!-- Black cap so shaft doesn't show void -->
-<a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.43 0" radius="1.60" rotation="-90 0 0"></a-circle>
+<a-circle id="lia_shaft_cap" material="shader: flat; color: #000000; side: front" position="0 -1.31 0" radius="1.60" rotation="-90 0 0"></a-circle>
 <!-- ── TEST: Concrete PBR wall (2m x 5m x 0.3m) placed behind user (10m) ── -->
-<a-box depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="0 2.5 -30" shadow="cast:false; receive:true" width="2"></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_01" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="42.087 3.408 -0.119" primal-anchor="x: 42.087; z: -0.119; yOffset: 2.2980255761" rotation="0 270 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_01_video" src="#lia_video_monolith_04" width="2.813" height="5" position="0 0 0.158" material="shader: flat; side: front; transparent: false"></a-video>
+</a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_02" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="24.000 3.000 -24.000" primal-anchor="x: 24.000; z: -24.000; yOffset: 2.24" rotation="0 207.165 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_02_video" src="#lia_video_monolith_05" width="2.813" height="5" position="0 0 -0.158" rotation="0 180 0" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_03" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="12.000 3.000 -30.000" primal-anchor="x: 12.000; z: -30.000; yOffset: 2.24" rotation="0 193.191 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_03_video" src="#lia_video_monolith_06" width="2.813" height="5" position="0 0 -0.158" rotation="0 180 0" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_04" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="-4.000 3.000 -34.000" primal-anchor="x: -4.000; z: -34.000; yOffset: 2.24" rotation="0 163.113 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_04_video" src="#lia_video_monolith_08" width="2.813" height="5" position="0 0 0.158" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_05" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="20.000 3.000 -44.000" primal-anchor="x: 20.000; z: -44.000; yOffset: 2.24" rotation="0 220.732 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_05_video" src="#lia_video_monolith_09" width="2.813" height="5" position="0 0 0.158" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_06" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="-12.000 3.000 -50.000" primal-anchor="x: -12.000; z: -50.000; yOffset: 2.24" rotation="0 182.386 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_06_video" src="#lia_video_monolith_03" width="2.813" height="5" position="0 0 -0.158" rotation="0 180 0" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_07" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="-29.506 2.647 -55.760" primal-anchor="x: -29.506; z: -55.760; yOffset: 2.647" rotation="0.000 180.000 0.000" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_07_video" src="#lia_video_monolith_07" width="2.813" height="5" position="0 0 -0.158" rotation="0 180 0" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_08" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="16.000 3.000 -62.000" primal-anchor="x: 16.000; z: -62.000; yOffset: 2.24" rotation="0 270.000 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_08_video" src="#lia_video_monolith_01" width="2.813" height="5" position="0 0 0.158" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-box class="solid" depth="0.3" height="5" id="monolith_09" material="shader: standard; color: #000000; src: assets/concrete_wall/concrete_basecolor.webp; normalMap: assets/concrete_wall/concrete_normal.webp; roughnessMap: assets/concrete_wall/concrete_roughness.webp; metalness: 0; roughness: 1; normalScale: 1 1" position="-19.154 2.475 -28.804" primal-anchor="x: -19.154; z: -28.804; yOffset: 2.475" rotation="0 69.146 0" shadow="cast:false; receive:true" width="2.813">
+  <a-video id="monolith_09_video" src="#lia_video_monolith_02" width="2.813" height="5" position="0 0 0.158" material="shader: flat; side: front; transparent: false"></a-video></a-box>
+<a-entity id="primal_monkeys">
+  <a-entity id="monkey_agreeing_01" class="npc" mixamo-mat-fix gltf-model="#monkey_agreeing_glb" play-gltf-clip="randomStart: true; seed: 0.17" scale="4 4 4" primal-anchor="x: 24.9; z: 7.95; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.85" height="1.25" depth="0.85" position="0 0.63 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_agreeing_02" class="npc" mixamo-mat-fix gltf-model="#monkey_agreeing_glb" play-gltf-clip="randomStart: true; seed: 0.63" scale="4 4 4" primal-anchor="x: 28.1; z: -4.85; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.85" height="1.25" depth="0.85" position="0 0.63 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_idle_01" class="npc" mixamo-mat-fix gltf-model="#monkey_idle_glb" play-gltf-clip="randomStart: true; seed: 0.31" scale="4 4 4" primal-anchor="x: 22.55; z: 3.35; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.82" height="1.2" depth="0.82" position="0 0.6 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_idle_02" class="npc" mixamo-mat-fix gltf-model="#monkey_idle_glb" play-gltf-clip="randomStart: true; seed: 0.81" scale="4 4 4" primal-anchor="x: 24.7; z: -7.85; yOffset: 0.08" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.82" height="1.2" depth="0.82" position="0 0.6 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_warrior_01" class="npc" mixamo-mat-fix gltf-model="#monkey_warrior_glb" play-gltf-clip="randomStart: true; seed: 0.49" scale="4 4 4" primal-anchor="x: 25.35; z: 0.95; yOffset: 0.050" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="0.9" height="1.35" depth="0.9" position="0 0.68 0" visible="false"></a-box>
+  </a-entity>
+  <a-entity id="monkey_dancing_01" class="npc" mixamo-mat-fix gltf-model="#monkey_dancing_glb" play-gltf-clip="randomStart: false; seed: 0.05" primal-anchor="x: 31.4; z: 0.15; yOffset: 0.063" face-point-y="x: 42.087; z: -0.119">
+    <a-box class="solid" width="1.15" height="1.45" depth="1.15" position="0 0.73 0" visible="false"></a-box>
+  </a-entity>
+</a-entity>
 <!-- ── Player rig ────────────────────────────────────────────────── -->
 <!-- Spawns on platform top facing -Z (toward earth/away from labyrinth) -->
 <!-- ── Imported office + corridors from index.html ─────────────────────── --><a-entity id="transition_corridor" position="4.5 0.07 -62.5">
@@ -1833,7 +2212,9 @@ AFRAME.registerComponent('rig-walk', {
 <a-plane height="12" id="corridor_floor" material="shader: standard; color: #101010; roughness: 1; metalness: 0; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0 0.02 0" rotation="-90 0 0" width="4.2"></a-plane>
 <a-box class="solid" depth="12" height="5" id="corridor_wall_left" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="-2.1 2.5 0" width="0.30"></a-box>
 <a-box class="solid" depth="12" height="5" id="corridor_wall_right" material="shader: standard; color: #151515; roughness: 1; metalness: 0.0" position="2.1 2.5 0" width="0.30"></a-box>
-</a-entity><a-entity id="primal_scene" primal-scene=""></a-entity>
+</a-entity><a-entity id="rock_ground" rock-ground="x: 25; y: -0.002; z: 0"></a-entity>
+<a-entity id="primal_scene" primal-scene="" position="0 -0.04 0" visible="true"></a-entity>
+<a-entity id="primal_mountains" primal-mountains="" position="0 0 0" visible="true"></a-entity>
 <a-entity id="rig" position="0 0.07 0" rig-walk="speed: 2.6; radius: 0.28" rotation="0 180 0">
 <a-entity camera="fov: 60; near: 0.1; far: 500; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity cursor="rayOrigin: mouse"></a-entity>
@@ -1844,6 +2225,248 @@ AFRAME.registerComponent('rig-walk', {
 
 
 
+const PRIMAL_SCENE_CFG = {
+  CX: 25,
+  CZ: 0,
+  GY: 0.055,
+  poolLX: 1.5,
+  poolLZ: 0.0,
+  bermRadiusX: 14.8,
+  bermRadiusZ: 9.4,
+  gapCenter: Math.PI,
+  gapHalf: 0.42,
+};
+
+function primalSmoothstep(a, b, x) {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+function primalAngleDelta(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function primalRidged(sn, x, y) {
+  const n = sn(x, y);
+  const r = 1 - Math.abs(n);
+  return r * r;
+}
+
+function primalBaseGroundHeight(worldX, worldZ, sn) {
+  const { GY, CX, CZ } = PRIMAL_SCENE_CFG;
+  const lx = worldX - CX;
+  const lz = worldZ - CZ;
+
+  let h = 0;
+  h += (sn(worldX * 0.020 + 14.0, worldZ * 0.020 - 9.0) * 0.5 + 0.5) * 0.22;
+  h += (sn(worldX * 0.050 - 2.0, worldZ * 0.050 + 11.0) * 0.5 + 0.5) * 0.10;
+  h += primalRidged(sn, worldX * 0.095 + 7.0, worldZ * 0.095 - 5.0) * 0.07;
+  h += primalRidged(sn, worldX * 0.180 - 4.0, worldZ * 0.180 + 6.0) * 0.035;
+
+  const approachSoftener = Math.exp(-(((lx + 12.0) / 18.0) ** 2 + (lz / 13.0) ** 2));
+  h *= 1.0 - approachSoftener * 0.45;
+
+  const poolEx = (lx - 1.5) / 23.0;
+  const poolEz = lz / 16.0;
+  const poolBlend = Math.exp(-(poolEx * poolEx + poolEz * poolEz));
+  h *= 1.0 - poolBlend * 0.65;
+
+  return GY + h * 0.9;
+}
+
+function primalOverlayRawHeight(localX, localZ, sn) {
+  const { poolLX, poolLZ, bermRadiusX, bermRadiusZ, gapCenter, gapHalf } = PRIMAL_SCENE_CFG;
+  const px = localX - poolLX;
+  const pz = localZ - poolLZ;
+
+  const ex = px / bermRadiusX;
+  const ez = pz / bermRadiusZ;
+  const er = Math.sqrt(ex * ex + ez * ez);
+  const ang = Math.atan2(pz, px);
+  const gapDelta = Math.abs(primalAngleDelta(ang, gapCenter));
+  const gapMask = primalSmoothstep(gapHalf - 0.10, gapHalf + 0.16, gapDelta);
+  const sideBoost = primalSmoothstep(gapHalf + 0.02, gapHalf + 0.18, gapDelta);
+
+  const ringNoiseA = (sn(px * 0.080 + 4.0, pz * 0.080 - 9.0) * 0.5 + 0.5);
+  const ringNoiseB = primalRidged(sn, px * 0.120 - 8.0, pz * 0.120 + 3.0);
+  const ringNoiseC = (sn(px * 0.220 + 1.0, pz * 0.220 - 6.0) * 0.5 + 0.5);
+  const angularBias = 0.72 + 0.24 * Math.cos(ang - 0.30) + 0.10 * Math.cos(ang * 2.0 + 1.1);
+  const ringCenter = 1.02 + angularBias * 0.12 + (ringNoiseA - 0.5) * 0.10;
+  const ringWidth = 0.12 + ringNoiseC * 0.035;
+
+  const bermCore = Math.exp(-Math.pow((er - ringCenter) / ringWidth, 2.0));
+  const bermOuter = Math.exp(-Math.pow((er - (ringCenter + 0.12 + ringNoiseB * 0.05)) / (0.18 + ringNoiseA * 0.05), 2.0));
+  const innerShelf = Math.exp(-Math.pow((er - 0.84) / 0.18, 2.0));
+  const basinFalloff = Math.exp(-Math.pow(er / 0.92, 2.4));
+
+  let h = 0;
+  h += bermCore * (1.10 + ringNoiseB * 0.42) * gapMask;
+  h += bermOuter * (0.44 + ringNoiseA * 0.16) * gapMask;
+  h += innerShelf * (0.12 + ringNoiseC * 0.06) * gapMask;
+
+  const landingMask = Math.exp(-(((px - 0.35) / 7.2) ** 2 + (pz / 4.9) ** 2));
+  const cragDamp = 1.0 - landingMask * 0.78;
+  const approachDamp = 1.0 - landingMask * 0.58;
+
+  const cragA = primalRidged(sn, px * 0.22 + 11.0, pz * 0.22 - 2.0) * 0.34 * cragDamp;
+  const cragB = primalRidged(sn, px * 0.38 - 7.0, pz * 0.38 + 5.0) * 0.18 * cragDamp;
+  const facets = Math.max(0, sn(px * 0.42 + 2.0, pz * 0.42 - 4.0)) * 0.12 * cragDamp;
+  h += bermCore * (cragA + cragB + facets) * gapMask;
+
+  const mouthNorth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz - 5.7) / 2.2) ** 2));
+  const mouthSouth = Math.exp(-(((px + 12.0) / 3.8) ** 2 + ((pz + 5.7) / 2.2) ** 2));
+  const flankNorth = Math.exp(-(((px - 1.5) / 7.2) ** 2 + ((pz - 10.2) / 2.8) ** 2));
+  const flankSouth = Math.exp(-(((px - 1.2) / 7.0) ** 2 + ((pz + 10.0) / 2.8) ** 2));
+  const backRise = Math.exp(-(((px - 13.0) / 4.2) ** 2 + (pz / 5.2) ** 2));
+  h += (mouthNorth * 0.78 + mouthSouth * 0.78 + flankNorth * 0.36 + flankSouth * 0.34 + backRise * 0.24) * approachDamp;
+  h += sideBoost * bermCore * 0.22;
+
+  h -= basinFalloff * 0.10;
+
+  const poolRadiusX = 7.4, poolRadiusZ = 4.6;
+  const poolEx = px / poolRadiusX;
+  const poolEz = pz / poolRadiusZ;
+  const poolEr = Math.sqrt(poolEx * poolEx + poolEz * poolEz);
+  const poolLip = Math.exp(-Math.pow((poolEr - 1.0) / 0.12, 2.0));
+  const walkShelf = Math.exp(-Math.pow((er - 0.66) / 0.16, 2.0));
+  const beamClear = Math.exp(-(((px - 0.15) / 5.8) ** 2 + (pz / 3.7) ** 2));
+  h += walkShelf * 0.05;
+  h += poolLip * 0.035;
+  h *= 1.0 - beamClear * 0.18;
+  h -= beamClear * 0.035;
+  h -= Math.exp(-Math.pow(poolEr / 0.92, 2.6)) * 0.15;
+
+  const fadeX = primalSmoothstep(20.6, 15.4, Math.abs(localX));
+  const fadeZ = primalSmoothstep(15.4, 11.2, Math.abs(localZ));
+  const terrainFade = Math.min(fadeX, fadeZ);
+
+  return h * terrainFade;
+}
+
+function primalOverlayHeight(localX, localZ, sn) {
+  const raw = primalOverlayRawHeight(localX, localZ, sn);
+  const px = localX - PRIMAL_SCENE_CFG.poolLX;
+  const pz = localZ - PRIMAL_SCENE_CFG.poolLZ;
+  const warpGuard = Math.exp(-(((px - 0.35) / 6.8) ** 2 + (pz / 4.6) ** 2));
+  if (warpGuard < 0.001) return raw;
+
+  const step = 0.34;
+  const avg = (
+    raw * 4.0 +
+    primalOverlayRawHeight(localX - step, localZ, sn) +
+    primalOverlayRawHeight(localX + step, localZ, sn) +
+    primalOverlayRawHeight(localX, localZ - step, sn) +
+    primalOverlayRawHeight(localX, localZ + step, sn)
+  ) / 8.0;
+
+  return raw * (1.0 - warpGuard * 0.72) + avg * (warpGuard * 0.72);
+}
+
+function primalSceneHeight(worldX, worldZ, sn) {
+  const localX = worldX - PRIMAL_SCENE_CFG.CX;
+  const localZ = worldZ - PRIMAL_SCENE_CFG.CZ;
+  return primalBaseGroundHeight(worldX, worldZ, sn) + primalOverlayHeight(localX, localZ, sn);
+}
+
+AFRAME.registerComponent('primal-anchor', {
+  schema: {
+    x: { type: 'number', default: 0 },
+    z: { type: 'number', default: 0 },
+    yOffset: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this._place = this._place.bind(this);
+    this.el.sceneEl.addEventListener('loaded', this._place);
+    this._place();
+  },
+  update: function () {
+    this._place();
+  },
+  _place: function () {
+    const sn = (window._snoise && window._snoise.simplex2) ? window._snoise.simplex2 : () => 0;
+    const y = primalSceneHeight(this.data.x, this.data.z, sn) + this.data.yOffset;
+    this.el.object3D.position.set(this.data.x, y, this.data.z);
+  },
+  remove: function () {
+    if (this.el.sceneEl) this.el.sceneEl.removeEventListener('loaded', this._place);
+  }
+});
+
+AFRAME.registerComponent('face-point-y', {
+  schema: {
+    x: { type: 'number', default: 0 },
+    z: { type: 'number', default: 0 },
+    yawOffset: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this._face = this._face.bind(this);
+    this.el.sceneEl.addEventListener('loaded', this._face);
+    this.el.addEventListener('model-loaded', this._face);
+    this._face();
+  },
+  update: function () {
+    this._face();
+  },
+  _face: function () {
+    const pos = this.el.object3D.position;
+    const dx = this.data.x - pos.x;
+    const dz = this.data.z - pos.z;
+    const yaw = THREE.MathUtils.radToDeg(Math.atan2(dx, dz)) + this.data.yawOffset;
+    this.el.object3D.rotation.set(0, THREE.MathUtils.degToRad(yaw), 0);
+  },
+  remove: function () {
+    if (!this.el.sceneEl) return;
+    this.el.sceneEl.removeEventListener('loaded', this._face);
+    this.el.removeEventListener('model-loaded', this._face);
+  }
+});
+
+AFRAME.registerComponent('play-gltf-clip', {
+  schema: {
+    clip: { type: 'string', default: '' },
+    clipIndex: { type: 'int', default: 0 },
+    randomStart: { type: 'boolean', default: true },
+    seed: { type: 'number', default: 0 }
+  },
+  init: function () {
+    this.mixer = null;
+    this.action = null;
+    this._onModelLoaded = (e) => {
+      const model = this.el.getObject3D('mesh');
+      if (!model) return;
+      const clips = (model.animations && model.animations.length) ? model.animations : ((e.detail && e.detail.model && e.detail.model.animations) || []);
+      if (!clips || !clips.length) return;
+      let clip = null;
+      if (this.data.clip) clip = clips.find((c) => c && c.name === this.data.clip) || null;
+      if (!clip) clip = clips[Math.max(0, Math.min(clips.length - 1, this.data.clipIndex))] || clips[0];
+      if (!clip) return;
+      this.mixer = new THREE.AnimationMixer(model);
+      this.action = this.mixer.clipAction(clip);
+      this.action.reset();
+      this.action.setLoop(THREE.LoopRepeat, Infinity);
+      this.action.play();
+      if (this.data.randomStart && clip.duration > 0) {
+        const normalizedSeed = Math.abs(this.data.seed % 1);
+        this.action.time = normalizedSeed * clip.duration;
+      }
+    };
+    this.el.addEventListener('model-loaded', this._onModelLoaded);
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update((dt || 0) / 1000);
+  },
+  remove: function () {
+    this.el.removeEventListener('model-loaded', this._onModelLoaded);
+    if (this.action) {
+      this.action.stop();
+      this.action = null;
+    }
+    this.mixer = null;
+  }
+});
 
 AFRAME.registerComponent('play-gltf-anim', {
   init: function () {
@@ -1920,28 +2543,164 @@ AFRAME.registerComponent('hand-clamp', {
 });
 
 
-// ── Fade in from black ────────────────────────────────────────────────────────
-// Flash fix: overlay is already covering everything via CSS (opacity:1 in <style>).
-// We wait for the scene `loaded` event so the first rendered frame is the real scene.
+// ── Loading overlay with progress bar ────────────────────────────────────────
 (function () {
   const overlay = document.getElementById('fadeIn');
-  if (!overlay) return;
+  const fill = document.getElementById('loadingBarFill');
+  const status = document.getElementById('loadingStatus');
+  const percent = document.getElementById('loadingPercent');
+  const scene = document.querySelector('a-scene');
+  const assets = document.getElementById('sceneAssets');
+  if (!overlay || !fill || !status || !percent) return;
 
-  const fade = () => {
-    // Two rAF passes ensure at least one real frame has been drawn before fading
+  const MIN_VISIBLE_MS = 1200;
+  const ASSET_PORTION = 88;
+  const startedAt = performance.now();
+  let faded = false;
+  let sceneInitReady = false;
+  let assetsReady = false;
+  let firstFrameReady = false;
+  let displayProgress = 0;
+  let targetProgress = 0;
+
+  const trackedAssets = assets ? Array.from(assets.children).filter(el => {
+    if (!el || !el.tagName) return false;
+    const tag = el.tagName.toLowerCase();
+    return tag === 'img' || tag === 'audio' || tag === 'video' || tag === 'a-asset-item';
+  }) : [];
+  const total = Math.max(trackedAssets.length, 1);
+  let done = 0;
+  const seen = new WeakSet();
+
+  function renderProgress(label){
+    const clamped = Math.max(0, Math.min(100, displayProgress));
+    fill.style.width = clamped + '%';
+    percent.textContent = Math.round(clamped) + '%';
+    if (label) status.textContent = label;
+  }
+
+  function animateProgress(){
+    if (Math.abs(displayProgress - targetProgress) < 0.1) {
+      displayProgress = targetProgress;
+      renderProgress();
+      return;
+    }
+    displayProgress += (targetProgress - displayProgress) * 0.12;
+    renderProgress();
+    requestAnimationFrame(animateProgress);
+  }
+
+  function setTargetProgress(value, label){
+    targetProgress = Math.max(0, Math.min(100, value));
+    renderProgress(label);
+    requestAnimationFrame(animateProgress);
+  }
+
+  function updateProgress(label){
+    const assetRatio = done / total;
+    const gatedRatio = (sceneInitReady ? 0.34 : 0) + (assetsReady ? 0.33 : 0) + (firstFrameReady ? 0.33 : 0);
+    const next = (assetRatio * ASSET_PORTION) + (gatedRatio * (100 - ASSET_PORTION));
+    setTargetProgress(next, label || (done >= total ? 'Finalizing scene' : `Loading assets ${done}/${total}`));
+    maybeFinish();
+  }
+
+  function markDone(el){
+    if (!el || seen.has(el)) return;
+    seen.add(el);
+    done += 1;
+    updateProgress();
+  }
+
+  function watchAsset(el){
+    if (!el) return;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'img' && el.complete) return markDone(el);
+    if ((tag === 'audio' || tag === 'video') && el.readyState >= 3) return markDone(el);
+    if (tag === 'a-asset-item' && el.hasLoaded) return markDone(el);
+
+    const onReady = () => markDone(el);
+    if (tag === 'video' || tag === 'audio') {
+      el.addEventListener('canplay', onReady, { once: true });
+      el.addEventListener('canplaythrough', onReady, { once: true });
+    } else {
+      el.addEventListener('load', onReady, { once: true });
+      el.addEventListener('loaded', onReady, { once: true });
+    }
+    el.addEventListener('error', onReady, { once: true });
+  }
+
+  function fade(){
+    if (faded) return;
+    faded = true;
+    setTargetProgress(100, 'Ready');
     requestAnimationFrame(() => requestAnimationFrame(() => {
       overlay.classList.add('done');
       setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 1100);
     }));
-  };
-
-  const scene = document.querySelector('a-scene');
-  if (scene) {
-    if (scene.hasLoaded) fade();
-    else scene.addEventListener('loaded', fade, { once: true });
-  } else {
-    window.addEventListener('load', fade, { once: true });
   }
+
+  function maybeFinish(){
+    if (!sceneInitReady || !assetsReady || !firstFrameReady || done < total) return;
+    const elapsed = performance.now() - startedAt;
+    const wait = Math.max(0, MIN_VISIBLE_MS - elapsed);
+    window.setTimeout(fade, wait);
+  }
+
+  setTargetProgress(0, 'Preparing assets');
+  trackedAssets.forEach(watchAsset);
+  if (!trackedAssets.length) done = total;
+
+  if (assets) {
+    if (assets.hasLoaded) assetsReady = true;
+    else assets.addEventListener('loaded', () => {
+      assetsReady = true;
+      updateProgress('Building scene');
+    }, { once: true });
+  } else {
+    assetsReady = true;
+  }
+
+  if (scene) {
+    if (scene.hasLoaded) sceneInitReady = true;
+    else scene.addEventListener('loaded', () => {
+      sceneInitReady = true;
+      updateProgress('Initializing scene');
+    }, { once: true });
+
+    scene.addEventListener('renderstart', () => {
+      requestAnimationFrame(() => {
+        firstFrameReady = true;
+        updateProgress('Starting scene');
+      });
+    }, { once: true });
+  } else {
+    window.addEventListener('load', () => {
+      sceneInitReady = true;
+      assetsReady = true;
+      firstFrameReady = true;
+      updateProgress('Starting scene');
+    }, { once: true });
+  }
+
+  window.setTimeout(() => {
+    if (done < total || !assetsReady) updateProgress('Still loading large assets');
+  }, 2500);
+
+  window.setTimeout(() => {
+    if (!sceneInitReady) sceneInitReady = true;
+    if (!assetsReady) assetsReady = true;
+    if (done < total) done = total;
+    updateProgress(firstFrameReady ? 'Starting scene' : 'Preparing first frame');
+  }, 45000);
+
+  window.setTimeout(() => {
+    if (!firstFrameReady) {
+      firstFrameReady = true;
+      updateProgress('Starting scene');
+    }
+  }, 47000);
+
+  maybeFinish();
 })();
 
 // ── Quit UI — matches aya.dev ─────────────────────────────────────────────────
@@ -2193,5 +2952,193 @@ AFRAME.registerComponent('hand-clamp', {
 })();
 </script>
 
+
+
+<script>
+(function(){
+  const cfg = {
+    maxGain: 0.34,
+    minGain: 0.0,
+    near: 2.4,
+    far: 34.0,
+    curve: 1.85,
+    smoothing: 0.12,
+    syncTolerance: 0.45
+  };
+
+  const sources = [];
+  const tmpCam = new THREE.Vector3();
+  const tmpSrc = new THREE.Vector3();
+
+  let booted = false;
+  let activated = false;
+  let rafId = 0;
+
+  function sceneEl(){ return document.querySelector('a-scene'); }
+  function rigEl(){ return document.getElementById('rig'); }
+  function camEl(){ return document.getElementById('playerCam'); }
+  function audioContext(){
+    const s = sceneEl();
+    return s && s.audioListener && s.audioListener.context ? s.audioListener.context : null;
+  }
+
+  function ensureVideoSilent(videoEl){
+    if (!videoEl) return;
+    videoEl.loop = true;
+    videoEl.crossOrigin = 'anonymous';
+    videoEl.preload = 'auto';
+    videoEl.playsInline = true;
+    videoEl.defaultMuted = true;
+    videoEl.muted = true;
+    videoEl.volume = 0;
+    videoEl.setAttribute('muted', 'muted');
+    videoEl.setAttribute('playsinline', 'playsinline');
+    videoEl.setAttribute('webkit-playsinline', 'webkit-playsinline');
+    const p = videoEl.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  }
+
+  function makeHiddenAudio(src){
+    const audio = document.createElement('audio');
+    audio.src = src;
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.loop = true;
+    audio.playsInline = true;
+    audio.setAttribute('playsinline', 'playsinline');
+    audio.setAttribute('webkit-playsinline', 'webkit-playsinline');
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    return audio;
+  }
+
+  function mapDistanceToGain(distance){
+    if (distance <= cfg.near) return cfg.maxGain;
+    if (distance >= cfg.far) return cfg.minGain;
+    const t = (distance - cfg.near) / (cfg.far - cfg.near);
+    return cfg.maxGain * Math.pow(1 - t, cfg.curve);
+  }
+
+  function buildSource(vPlane){
+    if (!vPlane || vPlane.__distanceAudioBuilt) return vPlane.__distanceAudioBuilt;
+    const srcSel = vPlane.getAttribute('src');
+    if (!srcSel || srcSel.charAt(0) !== '#') return null;
+
+    const videoEl = document.querySelector(srcSel);
+    if (!videoEl) return null;
+    ensureVideoSilent(videoEl);
+
+    const ctx = audioContext();
+    if (!ctx) return null;
+
+    const audioEl = makeHiddenAudio(videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src'));
+    const node = ctx.createMediaElementSource(audioEl);
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    node.connect(gain);
+    gain.connect(ctx.destination);
+
+    const data = {
+      plane: vPlane,
+      videoEl,
+      audioEl,
+      gain,
+      currentGain: 0,
+      started: false
+    };
+
+    vPlane.__distanceAudioBuilt = data;
+    sources.push(data);
+    return data;
+  }
+
+  function buildAll(){
+    document.querySelectorAll('a-video[id^="monolith_"]').forEach(buildSource);
+    booted = true;
+  }
+
+  function trySync(source){
+    if (!source || !source.videoEl || !source.audioEl) return;
+    const v = source.videoEl;
+    const a = source.audioEl;
+    if (!Number.isFinite(v.currentTime)) return;
+    if (!Number.isFinite(a.currentTime)) return;
+    const delta = Math.abs(v.currentTime - a.currentTime);
+    if (delta > cfg.syncTolerance) {
+      try { a.currentTime = v.currentTime; } catch (_) {}
+    }
+  }
+
+  function startAll(){
+    const ctx = audioContext();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+
+    sources.forEach(source => {
+      ensureVideoSilent(source.videoEl);
+      if (!source.started) {
+        trySync(source);
+        const p = source.audioEl.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+        source.started = true;
+      }
+    });
+  }
+
+  function getListenerObject(){
+    const cam = camEl();
+    if (cam && cam.object3D) return cam.object3D;
+    const rig = rigEl();
+    if (rig && rig.object3D) return rig.object3D;
+    return null;
+  }
+
+  function updateGains(){
+    const listenerObj = getListenerObject();
+    if (!listenerObj) return;
+    listenerObj.getWorldPosition(tmpCam);
+
+    for (const source of sources) {
+      if (!source.plane || !source.plane.object3D) continue;
+      source.plane.object3D.getWorldPosition(tmpSrc);
+      const distance = tmpCam.distanceTo(tmpSrc);
+      const targetGain = activated ? mapDistanceToGain(distance) : 0;
+      source.currentGain += (targetGain - source.currentGain) * cfg.smoothing;
+      source.gain.gain.value = source.currentGain;
+    }
+  }
+
+  function tick(){
+    updateGains();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function boot(){
+    if (booted) return;
+    buildAll();
+    if (!rafId) tick();
+  }
+
+  function activate(){
+    activated = true;
+    if (!booted) boot();
+    startAll();
+  }
+
+  function init(){
+    document.querySelectorAll('video[id^="lia_video_monolith_"]').forEach(ensureVideoSilent);
+    const s = sceneEl();
+    if (!s) return;
+    if (s.hasLoaded) boot();
+    else s.addEventListener('loaded', boot, { once: true });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+  else init();
+
+  ['click','touchstart','keydown'].forEach(evt => {
+    window.addEventListener(evt, activate, { passive: true });
+  });
+})();
+</script>
 </body>
 </html>
