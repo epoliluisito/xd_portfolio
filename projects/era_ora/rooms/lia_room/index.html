@@ -2955,190 +2955,155 @@ AFRAME.registerComponent('hand-clamp', {
 
 
 <script>
+/* ── Spatial Audio: proximity-weighted, direct video source ─────────────────
+   Routes WebAudio directly from each <video> element (same element that
+   drives the texture) into a GainNode. No separate audio element = no drift.
+   muted stays on the video so the browser doesn't double-output.
+────────────────────────────────────────────────────────────────────────────*/
 (function(){
   const cfg = {
-    maxGain: 0.34,
-    minGain: 0.0,
-    near: 2.4,
-    far: 34.0,
-    curve: 1.85,
-    smoothing: 0.12,
-    syncTolerance: 0.45
+    maxGain:   0.80,   // volume at closest distance
+    minGain:   0.0,    // volume at far distance
+    near:      3.0,    // units — full volume inside this radius
+    far:       30.0,   // units — silent beyond this radius
+    curve:     1.85,   // falloff exponent (higher = sharper drop)
+    smoothing: 0.08    // lerp factor per frame (lower = slower fade)
   };
 
-  const sources = [];
-  const tmpCam = new THREE.Vector3();
-  const tmpSrc = new THREE.Vector3();
 
-  let booted = false;
+  let audioCtx  = null;
   let activated = false;
-  let rafId = 0;
+  let built     = false;
+  const sources  = [];
+  const tmpCam   = new THREE.Vector3();
+  const tmpSrc   = new THREE.Vector3();
 
-  function sceneEl(){ return document.querySelector('a-scene'); }
-  function rigEl(){ return document.getElementById('rig'); }
-  function camEl(){ return document.getElementById('playerCam'); }
-  function audioContext(){
-    const s = sceneEl();
-    return s && s.audioListener && s.audioListener.context ? s.audioListener.context : null;
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function getAudioContext() {
+    const scene = document.querySelector('a-scene');
+    return (scene && scene.audioListener && scene.audioListener.context)
+      ? scene.audioListener.context : null;
   }
 
-  function ensureVideoSilent(videoEl){
-    if (!videoEl) return;
-    videoEl.loop = true;
-    videoEl.crossOrigin = 'anonymous';
-    videoEl.preload = 'auto';
-    videoEl.playsInline = true;
-    videoEl.defaultMuted = true;
-    videoEl.muted = true;
-    videoEl.volume = 0;
-    videoEl.setAttribute('muted', 'muted');
-    videoEl.setAttribute('playsinline', 'playsinline');
-    videoEl.setAttribute('webkit-playsinline', 'webkit-playsinline');
-    const p = videoEl.play();
-    if (p && typeof p.catch === 'function') p.catch(() => {});
-  }
-
-  function makeHiddenAudio(src){
-    const audio = document.createElement('audio');
-    audio.src = src;
-    audio.crossOrigin = 'anonymous';
-    audio.preload = 'auto';
-    audio.loop = true;
-    audio.playsInline = true;
-    audio.setAttribute('playsinline', 'playsinline');
-    audio.setAttribute('webkit-playsinline', 'webkit-playsinline');
-    audio.style.display = 'none';
-    document.body.appendChild(audio);
-    return audio;
-  }
-
-  function mapDistanceToGain(distance){
-    if (distance <= cfg.near) return cfg.maxGain;
-    if (distance >= cfg.far) return cfg.minGain;
-    const t = (distance - cfg.near) / (cfg.far - cfg.near);
+  function mapGain(dist) {
+    if (dist <= cfg.near) return cfg.maxGain;
+    if (dist >= cfg.far)  return cfg.minGain;
+    const t = (dist - cfg.near) / (cfg.far - cfg.near);
     return cfg.maxGain * Math.pow(1 - t, cfg.curve);
   }
 
-  function buildSource(vPlane){
-    if (!vPlane || vPlane.__distanceAudioBuilt) return vPlane.__distanceAudioBuilt;
-    const srcSel = vPlane.getAttribute('src');
-    if (!srcSel || srcSel.charAt(0) !== '#') return null;
+  // ── Build: wire each video → GainNode once ─────────────────────────────────
+  function buildAll() {
+    if (built) return;
+    audioCtx = getAudioContext();
+    if (!audioCtx) return;
 
-    const videoEl = document.querySelector(srcSel);
-    if (!videoEl) return null;
-    ensureVideoSilent(videoEl);
+    document.querySelectorAll('a-box[id^="monolith_"]').forEach(box => {
+      // Find the a-video child and resolve its source video element
+      const aVideo = box.querySelector('a-video');
+      if (!aVideo) return;
+      const srcSel = aVideo.getAttribute('src');
+      if (!srcSel || srcSel.charAt(0) !== '#') return;
+      const video = document.querySelector(srcSel);
+      if (!video) return;
 
-    const ctx = audioContext();
-    if (!ctx) return null;
-
-    const audioEl = makeHiddenAudio(videoEl.currentSrc || videoEl.src || videoEl.getAttribute('src'));
-    const node = ctx.createMediaElementSource(audioEl);
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    node.connect(gain);
-    gain.connect(ctx.destination);
-
-    const data = {
-      plane: vPlane,
-      videoEl,
-      audioEl,
-      gain,
-      currentGain: 0,
-      started: false
-    };
-
-    vPlane.__distanceAudioBuilt = data;
-    sources.push(data);
-    return data;
-  }
-
-  function buildAll(){
-    document.querySelectorAll('a-video[id^="monolith_"]').forEach(buildSource);
-    booted = true;
-  }
-
-  function trySync(source){
-    if (!source || !source.videoEl || !source.audioEl) return;
-    const v = source.videoEl;
-    const a = source.audioEl;
-    if (!Number.isFinite(v.currentTime)) return;
-    if (!Number.isFinite(a.currentTime)) return;
-    const delta = Math.abs(v.currentTime - a.currentTime);
-    if (delta > cfg.syncTolerance) {
-      try { a.currentTime = v.currentTime; } catch (_) {}
-    }
-  }
-
-  function startAll(){
-    const ctx = audioContext();
-    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
-
-    sources.forEach(source => {
-      ensureVideoSilent(source.videoEl);
-      if (!source.started) {
-        trySync(source);
-        const p = source.audioEl.play();
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-        source.started = true;
+      // Guard: createMediaElementSource may only be called once per element
+      if (video.__spatialAudioBuilt) {
+        sources.push(video.__spatialAudioBuilt);
+        return;
       }
+
+      // Keep video muted — WebAudio captures the track regardless,
+      // muted just prevents the browser's own speaker output (avoids doubling)
+      video.muted = true;
+      video.loop  = true;
+      video.playsInline = true;
+      const p = video.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+
+      try {
+        const node = audioCtx.createMediaElementSource(video);
+        const gain = audioCtx.createGain();
+        gain.gain.value = 0;
+        node.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        const entry = { box, gain, currentGain: 0 };
+        video.__spatialAudioBuilt = entry;
+        sources.push(entry);
+      } catch (err) {
+        console.warn('[spatial-audio] skipped', srcSel, err.message);
+      }
+    });
+
+    built = true;
+  }
+
+  // ── Per-frame gain update ──────────────────────────────────────────────────
+  function tick() {
+    if (activated && built && sources.length > 0) {
+      // Prefer playerCam for head position; fall back to rig
+      const camEl = document.getElementById('playerCam') || document.getElementById('rig');
+      if (camEl && camEl.object3D) {
+        camEl.object3D.getWorldPosition(tmpCam);
+
+        for (const src of sources) {
+          if (!src.box || !src.box.object3D) continue;
+          src.box.object3D.getWorldPosition(tmpSrc);
+          const dist   = tmpCam.distanceTo(tmpSrc);
+          const target = mapGain(dist);
+          // Smooth lerp toward target gain
+          src.currentGain += (target - src.currentGain) * cfg.smoothing;
+          src.gain.gain.value = src.currentGain;
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ── Activation: triggered by first user gesture (autoplay policy) ──────────
+  function activate() {
+    if (activated) return;
+    activated = true;
+    audioCtx = getAudioContext();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    if (!built) buildAll();
+    // Ensure all source videos are playing
+    document.querySelectorAll('video[id^="lia_video_monolith_"]').forEach(v => {
+      v.muted = true;
+      const p = v.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
     });
   }
 
-  function getListenerObject(){
-    const cam = camEl();
-    if (cam && cam.object3D) return cam.object3D;
-    const rig = rigEl();
-    if (rig && rig.object3D) return rig.object3D;
-    return null;
+  // ── Init: build as soon as A-Frame scene is ready ──────────────────────────
+  function init() {
+    const scene = document.querySelector('a-scene');
+    if (!scene) return;
+    const tryBuild = () => {
+      audioCtx = getAudioContext();
+      if (audioCtx) buildAll();
+    };
+    if (scene.hasLoaded) tryBuild();
+    else scene.addEventListener('loaded', tryBuild, { once: true });
   }
 
-  function updateGains(){
-    const listenerObj = getListenerObject();
-    if (!listenerObj) return;
-    listenerObj.getWorldPosition(tmpCam);
-
-    for (const source of sources) {
-      if (!source.plane || !source.plane.object3D) continue;
-      source.plane.object3D.getWorldPosition(tmpSrc);
-      const distance = tmpCam.distanceTo(tmpSrc);
-      const targetGain = activated ? mapDistanceToGain(distance) : 0;
-      source.currentGain += (targetGain - source.currentGain) * cfg.smoothing;
-      source.gain.gain.value = source.currentGain;
-    }
-  }
-
-  function tick(){
-    updateGains();
-    rafId = requestAnimationFrame(tick);
-  }
-
-  function boot(){
-    if (booted) return;
-    buildAll();
-    if (!rafId) tick();
-  }
-
-  function activate(){
-    activated = true;
-    if (!booted) boot();
-    startAll();
-  }
-
-  function init(){
-    document.querySelectorAll('video[id^="lia_video_monolith_"]').forEach(ensureVideoSilent);
-    const s = sceneEl();
-    if (!s) return;
-    if (s.hasLoaded) boot();
-    else s.addEventListener('loaded', boot, { once: true });
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
-  else init();
-
-  ['click','touchstart','keydown'].forEach(evt => {
-    window.addEventListener(evt, activate, { passive: true });
+  // Listen for first user gesture on any interaction type
+  ['click', 'touchstart', 'keydown'].forEach(evt => {
+    window.addEventListener(evt, activate, { once: true, passive: true });
   });
+
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  else
+    init();
+
+  requestAnimationFrame(tick);
+
+  // Expose for debugging: window.__spatialAudio.sources
+  window.__spatialAudio = { sources, cfg };
 })();
+
 </script>
 </body>
 </html>
