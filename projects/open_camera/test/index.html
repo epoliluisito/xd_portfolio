@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clarity Builder</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #060810; }
+canvas { display: block; }
+
+#ui {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  font-family: 'DM Mono', monospace;
+}
+
+/* ── Top left ── */
+#top-left {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#mode-btn {
+  pointer-events: all;
+  background: rgba(10, 12, 20, 0.75);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: #fff;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 9px 18px;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: all 0.2s;
+  width: fit-content;
+}
+#mode-btn:hover { background: rgba(255,255,255,0.08); }
+#mode-btn.walk { border-color: #e8c547; color: #e8c547; }
+
+#mode-hint {
+  color: rgba(255,255,255,0.28);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding-left: 2px;
+}
+
+/* ── Top right ── */
+#top-right {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  text-align: right;
+  color: rgba(255,255,255,0.22);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  line-height: 2;
+}
+#top-right span { color: rgba(232, 197, 71, 0.5); }
+
+/* ── Lens bar ── */
+#lenses {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  pointer-events: all;
+  align-items: center;
+}
+
+#lenses-label {
+  color: rgba(255,255,255,0.2);
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-right: 6px;
+}
+
+.lens-btn {
+  background: rgba(6,8,16,0.8);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.45);
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 7px 13px;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: all 0.2s;
+}
+.lens-btn:hover { border-color: rgba(255,255,255,0.35); color: rgba(255,255,255,0.8); }
+.lens-btn.active {
+  border-color: #e8c547;
+  color: #e8c547;
+  background: rgba(232,197,71,0.08);
+}
+
+/* ── D-pad ── */
+#dpad {
+  position: absolute;
+  bottom: 32px;
+  right: 32px;
+  display: none;
+  pointer-events: all;
+}
+#dpad.visible { display: block; }
+
+.dpad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 48px);
+  grid-template-rows: repeat(3, 48px);
+  gap: 3px;
+}
+
+.dpad-btn {
+  background: rgba(6,8,16,0.85);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.7);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  user-select: none;
+  transition: all 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.dpad-btn:active, .dpad-btn.pressed {
+  background: rgba(232,197,71,0.15);
+  border-color: rgba(232,197,71,0.6);
+  color: #e8c547;
+}
+.dpad-center {
+  background: rgba(232,197,71,0.06);
+  border: 1px solid rgba(232,197,71,0.15);
+  border-radius: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(232,197,71,0.3);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+.dpad-empty {
+  background: transparent;
+  border: none;
+  pointer-events: none;
+}
+
+/* ── Loading ── */
+#loading {
+  position: fixed;
+  inset: 0;
+  background: #060810;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  font-family: 'DM Mono', monospace;
+  z-index: 100;
+  transition: opacity 0.6s;
+}
+#loading-title {
+  color: rgba(255,255,255,0.7);
+  font-size: 11px;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+}
+#loading-sub {
+  color: rgba(232,197,71,0.5);
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+}
+#loading-bar {
+  width: 180px;
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  position: relative;
+  overflow: hidden;
+}
+#loading-fill {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: #e8c547;
+  width: 0%;
+  transition: width 0.4s ease;
+}
+#loading-status {
+  color: rgba(255,255,255,0.2);
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div id="loading-title">Clarity Builder</div>
+  <div id="loading-sub">Berlin · Kreuzberg</div>
+  <div id="loading-bar"><div id="loading-fill"></div></div>
+  <div id="loading-status">Generating city...</div>
+</div>
+
+<div id="ui">
+
+  <div id="top-left">
+    <button id="mode-btn">⊙&nbsp;&nbsp;Camera Mode</button>
+    <div id="mode-hint">Drag to orbit &nbsp;·&nbsp; Scroll to zoom</div>
+  </div>
+
+  <div id="top-right">
+    Clarity Builder<br>
+    <span>Berlin · Kreuzberg</span><br>
+    Dawn
+  </div>
+
+  <div id="lenses">
+    <div id="lenses-label">Lens</div>
+    <button class="lens-btn" data-fov="74">24mm</button>
+    <button class="lens-btn active" data-fov="54">35mm</button>
+    <button class="lens-btn" data-fov="40">50mm</button>
+    <button class="lens-btn" data-fov="24">85mm</button>
+    <button class="lens-btn" data-fov="15">135mm</button>
+  </div>
+
+  <div id="dpad">
+    <div class="dpad-grid">
+      <div class="dpad-empty"></div>
+      <div class="dpad-btn" id="btn-forward">↑</div>
+      <div class="dpad-empty"></div>
+      <div class="dpad-btn" id="btn-left">←</div>
+      <div class="dpad-center">W</div>
+      <div class="dpad-btn" id="btn-right">→</div>
+      <div class="dpad-empty"></div>
+      <div class="dpad-btn" id="btn-back">↓</div>
+      <div class="dpad-empty"></div>
+    </div>
+  </div>
+
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+// ── Renderer ─────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+document.body.appendChild(renderer.domElement);
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x080c18);
+scene.fog = new THREE.FogExp2(0x080c18, 0.016);
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 6, 14);
+
+// ── Orbit Controls ───────────────────────────────────────────────────────────
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.target.set(0, 1.2, 0);
+orbit.enableDamping = true;
+orbit.dampingFactor = 0.06;
+orbit.minDistance = 1.5;
+orbit.maxDistance = 60;
+orbit.maxPolarAngle = Math.PI / 2 - 0.04;
+orbit.update();
+
+// ── Lighting — Dawn ──────────────────────────────────────────────────────────
+// Low warm sun from east
+const sun = new THREE.DirectionalLight(0xff8855, 1.4);
+sun.position.set(-50, 18, -20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 250;
+sun.shadow.camera.left = -100;
+sun.shadow.camera.right = 100;
+sun.shadow.camera.top = 100;
+sun.shadow.camera.bottom = -100;
+sun.shadow.bias = -0.0005;
+scene.add(sun);
+
+// Sky ambient — blue-grey dawn
+const ambient = new THREE.AmbientLight(0x1a2840, 1.0);
+scene.add(ambient);
+
+// Soft fill from opposite side
+const fill = new THREE.DirectionalLight(0x445577, 0.5);
+fill.position.set(30, 15, 30);
+scene.add(fill);
+
+// Subtle rim
+const rim = new THREE.HemisphereLight(0x334466, 0x111118, 0.4);
+scene.add(rim);
+
+// ── City Generation ──────────────────────────────────────────────────────────
+const ROAD = 9;
+const BLOCK = 30;
+const GRID = 6;
+const CELL = BLOCK + ROAD;
+const HALF = (GRID * CELL) / 2;
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+
+// Materials
+const groundMat  = new THREE.MeshLambertMaterial({ color: 0x12141c });
+const roadMat    = new THREE.MeshLambertMaterial({ color: 0x0e1014 });
+const paveMat    = new THREE.MeshLambertMaterial({ color: 0x1a1c24 });
+const lineMat    = new THREE.MeshBasicMaterial({ color: 0x2a2820 });
+
+const buildingPalette = [
+  new THREE.MeshLambertMaterial({ color: 0x1e2130 }),
+  new THREE.MeshLambertMaterial({ color: 0x252838 }),
+  new THREE.MeshLambertMaterial({ color: 0x1a1e2a }),
+  new THREE.MeshLambertMaterial({ color: 0x2a2d3e }),
+  new THREE.MeshLambertMaterial({ color: 0x1c2035 }),
+  new THREE.MeshLambertMaterial({ color: 0x23263a }),
+];
+
+const glassMat = new THREE.MeshLambertMaterial({
+  color: 0x3a5566,
+  transparent: true,
+  opacity: 0.65,
+});
+
+const glassWarmMat = new THREE.MeshLambertMaterial({
+  color: 0x6b4422,
+  transparent: true,
+  opacity: 0.5,
+});
+
+// Ground base
+const groundGeo = new THREE.PlaneGeometry(GRID * CELL + ROAD * 4, GRID * CELL + ROAD * 4);
+const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.receiveShadow = true;
+scene.add(groundMesh);
+
+// Roads (horizontal strips)
+for (let i = 0; i <= GRID; i++) {
+  const z = i * CELL - HALF;
+
+  // Horizontal road
+  const rh = new THREE.Mesh(
+    new THREE.PlaneGeometry(GRID * CELL + ROAD, ROAD),
+    roadMat
+  );
+  rh.rotation.x = -Math.PI / 2;
+  rh.position.set(0, 0.01, z);
+  rh.receiveShadow = true;
+  scene.add(rh);
+
+  // Vertical road
+  const rv = new THREE.Mesh(
+    new THREE.PlaneGeometry(ROAD, GRID * CELL + ROAD),
+    roadMat
+  );
+  rv.rotation.x = -Math.PI / 2;
+  rv.position.set(z, 0.01, 0);
+  rv.receiveShadow = true;
+  scene.add(rv);
+
+  // Centre line dashes
+  for (let d = 0; d < GRID; d++) {
+    const dx = -HALF + d * CELL + CELL / 2;
+    const dashH = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.25), lineMat);
+    dashH.rotation.x = -Math.PI / 2;
+    dashH.position.set(dx, 0.02, z);
+    scene.add(dashH);
+
+    const dashV = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 3), lineMat);
+    dashV.rotation.x = -Math.PI / 2;
+    dashV.position.set(z, 0.02, dx);
+    scene.add(dashV);
+  }
+}
+
+// Blocks + buildings
+for (let gx = 0; gx < GRID; gx++) {
+  for (let gz = 0; gz < GRID; gz++) {
+    const bx = gx * CELL - HALF + ROAD;
+    const bz = gz * CELL - HALF + ROAD;
+    const cx = bx + BLOCK / 2;
+    const cz = bz + BLOCK / 2;
+
+    // Pavement block
+    const pave = new THREE.Mesh(new THREE.BoxGeometry(BLOCK, 0.12, BLOCK), paveMat);
+    pave.position.set(cx, 0.06, cz);
+    pave.receiveShadow = true;
+    scene.add(pave);
+
+    // Street lights at corners
+    [ [bx, bz], [bx + BLOCK, bz], [bx, bz + BLOCK], [bx + BLOCK, bz + BLOCK] ].forEach(([lx, lz]) => {
+      // Pole
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.06, 4, 6),
+        new THREE.MeshLambertMaterial({ color: 0x333340 })
+      );
+      pole.position.set(lx, 2, lz);
+      scene.add(pole);
+
+      // Light
+      const bulb = new THREE.PointLight(0xff9944, 1.2, 14);
+      bulb.position.set(lx, 4.2, lz);
+      scene.add(bulb);
+    });
+
+    // Buildings
+    const numB = randInt(3, 7);
+    for (let b = 0; b < numB; b++) {
+      const bw = rand(4, 10);
+      const bd = rand(4, 10);
+      const bh = rand(5, 24);
+      const px = bx + rand(0.5, BLOCK - bw - 0.5);
+      const pz = bz + rand(0.5, BLOCK - bd - 0.5);
+      const mat = buildingPalette[randInt(0, buildingPalette.length - 1)];
+
+      const building = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), mat);
+      building.position.set(px + bw / 2, bh / 2, pz + bd / 2);
+      building.castShadow = true;
+      building.receiveShadow = true;
+      scene.add(building);
+
+      // Window band
+      if (bh > 7) {
+        const wh = bh * rand(0.3, 0.5);
+        const wy = bh * rand(0.3, 0.55);
+        const winMat = Math.random() > 0.5 ? glassMat : glassWarmMat;
+        const win = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.06, wh, bd + 0.06), winMat);
+        win.position.set(px + bw / 2, wy, pz + bd / 2);
+        scene.add(win);
+      }
+
+      // Rooftop structure
+      if (bh > 12 && Math.random() > 0.4) {
+        const rw = bw * rand(0.2, 0.4);
+        const rd = bd * rand(0.2, 0.4);
+        const rh2 = rand(1.5, 5);
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(rw, rh2, rd), mat);
+        roof.position.set(px + bw / 2, bh + rh2 / 2, pz + bd / 2);
+        roof.castShadow = true;
+        scene.add(roof);
+      }
+
+      // Antenna on tall buildings
+      if (bh > 18 && Math.random() > 0.5) {
+        const ant = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.04, 0.04, rand(2, 5), 4),
+          new THREE.MeshLambertMaterial({ color: 0x222230 })
+        );
+        ant.position.set(px + bw / 2 + rand(-1, 1), bh + ant.geometry.parameters.height / 2, pz + bd / 2 + rand(-1, 1));
+        scene.add(ant);
+      }
+    }
+  }
+}
+
+// ── Character ────────────────────────────────────────────────────────────────
+let character = null;
+let mixer = null;
+let idleAction = null;
+let walkAction = null;
+let isWalking = false;
+
+const loadFill   = document.getElementById('loading-fill');
+const loadStatus = document.getElementById('loading-status');
+
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(draco);
+
+loadFill.style.width = '30%';
+loadStatus.textContent = 'Loading character...';
+
+gltfLoader.load(
+  'clarity_builder.glb',
+  (gltf) => {
+    character = gltf.scene;
+    scene.add(character);
+
+    character.traverse(child => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    // Place feet on ground
+    const box = new THREE.Box3().setFromObject(character);
+    character.position.y = -box.min.y;
+
+    // Animations
+    if (gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(character);
+      const clips = gltf.animations;
+      const idleClip = clips.find(c => c.name.toLowerCase().includes('idle')) || clips[0];
+      const walkClip = clips.find(c => c.name.toLowerCase().includes('walk')) || (clips.length > 1 ? clips[1] : null);
+
+      if (idleClip) {
+        idleAction = mixer.clipAction(idleClip);
+        idleAction.play();
+      }
+      if (walkClip) {
+        walkAction = mixer.clipAction(walkClip);
+        walkAction.setEffectiveWeight(0);
+        walkAction.play();
+      }
+    }
+
+    // Orbit targets character centre
+    const box2 = new THREE.Box3().setFromObject(character);
+    const charHeight = box2.max.y - box2.min.y;
+    orbit.target.set(0, charHeight * 0.5, 0);
+    orbit.update();
+
+    finishLoading();
+  },
+  (prog) => {
+    if (prog.total > 0) {
+      loadFill.style.width = (30 + (prog.loaded / prog.total) * 65) + '%';
+    }
+  },
+  () => {
+    // Fallback: yellow capsule placeholder
+    const geo = new THREE.CapsuleGeometry(0.35, 1.3, 4, 8);
+    const mat = new THREE.MeshLambertMaterial({ color: 0xe8c547 });
+    character = new THREE.Mesh(geo, mat);
+    character.position.set(0, 1.0, 0);
+    character.castShadow = true;
+    scene.add(character);
+    finishLoading();
+  }
+);
+
+function finishLoading() {
+  loadFill.style.width = '100%';
+  loadStatus.textContent = 'Ready';
+  setTimeout(() => {
+    const el = document.getElementById('loading');
+    el.style.opacity = '0';
+    setTimeout(() => el.style.display = 'none', 600);
+  }, 300);
+}
+
+// ── Mode ─────────────────────────────────────────────────────────────────────
+let mode = 'camera';
+const modeBtn  = document.getElementById('mode-btn');
+const modeHint = document.getElementById('mode-hint');
+const dpad     = document.getElementById('dpad');
+
+function setMode(m) {
+  mode = m;
+  if (m === 'camera') {
+    modeBtn.textContent = '⊙\u00a0\u00a0Camera Mode';
+    modeBtn.classList.remove('walk');
+    modeHint.textContent = 'Drag to orbit \u00a0·\u00a0 Scroll to zoom';
+    dpad.classList.remove('visible');
+    orbit.enabled = true;
+  } else {
+    modeBtn.textContent = '◈\u00a0\u00a0Walk Mode';
+    modeBtn.classList.add('walk');
+    modeHint.textContent = 'WASD or D-pad \u00a0·\u00a0 C to switch mode';
+    dpad.classList.add('visible');
+    orbit.enabled = false;
+  }
+}
+
+modeBtn.addEventListener('click', () => setMode(mode === 'camera' ? 'walk' : 'camera'));
+
+// ── Lens ─────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.lens-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.lens-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    camera.fov = parseFloat(btn.dataset.fov);
+    camera.updateProjectionMatrix();
+  });
+});
+
+// ── Keys ─────────────────────────────────────────────────────────────────────
+const keys = { forward: false, back: false, left: false, right: false };
+
+window.addEventListener('keydown', e => {
+  if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp')    keys.forward = true;
+  if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown')  keys.back    = true;
+  if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft')  keys.left    = true;
+  if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') keys.right   = true;
+  if (e.key === 'c' || e.key === 'C') setMode(mode === 'camera' ? 'walk' : 'camera');
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp')    keys.forward = false;
+  if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown')  keys.back    = false;
+  if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft')  keys.left    = false;
+  if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') keys.right   = false;
+});
+
+// D-pad buttons
+function dpadBtn(id, key) {
+  const el = document.getElementById(id);
+  ['pointerdown','touchstart'].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); keys[key] = true;  el.classList.add('pressed'); }, { passive: false }));
+  ['pointerup','touchend','pointerleave'].forEach(ev => el.addEventListener(ev, () => { keys[key] = false; el.classList.remove('pressed'); }));
+}
+dpadBtn('btn-forward', 'forward');
+dpadBtn('btn-back',    'back');
+dpadBtn('btn-left',    'left');
+dpadBtn('btn-right',   'right');
+
+// ── Animation blend ──────────────────────────────────────────────────────────
+function setWalking(w) {
+  if (!mixer || !idleAction || !walkAction || w === isWalking) return;
+  isWalking = w;
+  if (w) {
+    idleAction.crossFadeTo(walkAction, 0.25, true);
+    walkAction.setEffectiveWeight(1);
+  } else {
+    walkAction.crossFadeTo(idleAction, 0.25, true);
+    idleAction.setEffectiveWeight(1);
+  }
+}
+
+// ── Walk / follow camera ─────────────────────────────────────────────────────
+const WALK_SPEED = 5.5;
+const _camDir    = new THREE.Vector3();
+const _camRight  = new THREE.Vector3();
+const _moveDir   = new THREE.Vector3();
+const _idealPos  = new THREE.Vector3();
+const _lookAt    = new THREE.Vector3();
+
+// ── Resize ───────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── Loop ─────────────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+
+(function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (mixer) mixer.update(dt);
+
+  if (mode === 'walk' && character) {
+    const moving = keys.forward || keys.back || keys.left || keys.right;
+    setWalking(moving);
+
+    if (moving) {
+      camera.getWorldDirection(_camDir);
+      _camDir.y = 0;
+      _camDir.normalize();
+      _camRight.crossVectors(_camDir, new THREE.Vector3(0, 1, 0)).normalize();
+
+      _moveDir.set(0, 0, 0);
+      if (keys.forward) _moveDir.add(_camDir);
+      if (keys.back)    _moveDir.sub(_camDir);
+      if (keys.right)   _moveDir.add(_camRight);
+      if (keys.left)    _moveDir.sub(_camRight);
+
+      if (_moveDir.lengthSq() > 0) {
+        _moveDir.normalize();
+        character.position.addScaledVector(_moveDir, WALK_SPEED * dt);
+        // Face direction of travel
+        const targetY = Math.atan2(_moveDir.x, _moveDir.z);
+        character.rotation.y = THREE.MathUtils.lerp(character.rotation.y, targetY, 0.12);
+      }
+    }
+
+    // Smooth follow camera behind character
+    const cp = character.position;
+    const fwd = new THREE.Vector3(
+      Math.sin(character.rotation.y), 0, Math.cos(character.rotation.y)
+    );
+    _idealPos.copy(cp).sub(fwd.multiplyScalar(7)).add(new THREE.Vector3(0, 4.5, 0));
+    camera.position.lerp(_idealPos, 0.06);
+
+    _lookAt.copy(cp).add(new THREE.Vector3(0, 1.4, 0));
+    orbit.target.lerp(_lookAt, 0.08);
+  }
+
+  orbit.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
