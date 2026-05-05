@@ -33,7 +33,34 @@ canvas { display:block; }
 }
 .mode-opt.active { color:#e8c547; background:rgba(232,197,71,0.08); }
 .mode-opt:hover:not(.active) { color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.04); }
-#hint { color:rgba(255,255,255,0.22); font-size:8px; letter-spacing:0.18em; text-transform:uppercase; padding-left:2px; }
+#hint { display:none; } /* replaced by side panel */
+
+#controls-panel {
+  position:absolute; top:50%; right:20px; transform:translateY(-50%);
+  background:rgba(6,8,16,0.82); border:1px solid rgba(255,255,255,0.1);
+  backdrop-filter:blur(14px); padding:16px 18px; width:190px;
+  pointer-events:none;
+}
+#controls-panel h3 {
+  color:rgba(232,197,71,0.7); font-size:8px; letter-spacing:0.25em;
+  text-transform:uppercase; margin-bottom:12px; font-weight:400;
+}
+.ctrl-row {
+  display:flex; align-items:flex-start; gap:10px; margin-bottom:9px;
+}
+.ctrl-key {
+  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+  color:rgba(255,255,255,0.7); font-family:'DM Mono',monospace;
+  font-size:8px; letter-spacing:0.05em; padding:3px 6px;
+  white-space:nowrap; flex-shrink:0; min-width:54px; text-align:center;
+}
+.ctrl-desc {
+  color:rgba(255,255,255,0.3); font-size:8px; letter-spacing:0.1em;
+  text-transform:uppercase; line-height:1.5;
+}
+.ctrl-divider {
+  height:1px; background:rgba(255,255,255,0.07); margin:10px 0;
+}
 #drag-hint {
   position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
   color:rgba(232,197,71,0.7); font-size:9px; letter-spacing:0.25em; text-transform:uppercase;
@@ -129,8 +156,8 @@ canvas { display:block; }
       <button class="mode-opt active" id="opt-camera">Camera</button>
       <button class="mode-opt" id="opt-walk">Walk</button>
     </div>
-    <div id="hint">Drag to orbit &nbsp;&middot;&nbsp; Scroll to zoom</div>
-    <div id="pointer-hint">Click scene to look around &nbsp;&middot;&nbsp; ESC to release</div>
+    <div id="hint"></div>
+    <div id="pointer-hint"></div>
   </div>
 
   <div id="top-right">
@@ -582,9 +609,8 @@ function setMode(m) {
   if (m === 'camera') {
     optCamera.classList.add('active');
     optWalk.classList.remove('active');
-    hintEl.textContent = 'Drag to orbit \u00b7 Scroll to zoom';
-    hintEl.style.display = 'block';
-    pointerHint.classList.remove('visible');
+    document.getElementById('panel-camera').style.display = 'block';
+    document.getElementById('panel-walk').style.display = 'none';
     dpad.classList.remove('visible');
     if (document.pointerLockElement) document.exitPointerLock();
     // Restore orbit target to character
@@ -596,8 +622,8 @@ function setMode(m) {
   } else {
     optWalk.classList.add('active');
     optCamera.classList.remove('active');
-    hintEl.style.display = 'none';
-    pointerHint.classList.add('visible');
+    document.getElementById('panel-camera').style.display = 'none';
+    document.getElementById('panel-walk').style.display = 'block';
     dpad.classList.add('visible');
     // Init yaw to face away from current camera
     if (character) {
@@ -645,7 +671,7 @@ document.getElementById('quality-btn').addEventListener('click', function() {
 });
 
 // ---- Keys -------------------------------------------------------------------
-var keys = {forward:false, back:false, left:false, right:false, camUp:false, camDown:false};
+var keys = {forward:false, back:false, left:false, right:false, camUp:false, camDown:false, camLeft:false, camRight:false};
 window.addEventListener('keydown', function(e) {
   if (e.key==='w'||e.key==='W') keys.forward=true;
   if (e.key==='s'||e.key==='S') keys.back=true;
@@ -653,6 +679,8 @@ window.addEventListener('keydown', function(e) {
   if (e.key==='d'||e.key==='D') keys.right=true;
   if (e.key==='ArrowUp')    keys.camUp=true;
   if (e.key==='ArrowDown')  keys.camDown=true;
+  if (e.key==='ArrowLeft')  keys.camLeft=true;
+  if (e.key==='ArrowRight') keys.camRight=true;
   if (e.key==='c'||e.key==='C') setMode(mode==='camera'?'walk':'camera');
   if (e.key==='Escape' && mode==='walk') setMode('camera');
 });
@@ -663,6 +691,8 @@ window.addEventListener('keyup', function(e) {
   if (e.key==='d'||e.key==='D') keys.right=false;
   if (e.key==='ArrowUp')    keys.camUp=false;
   if (e.key==='ArrowDown')  keys.camDown=false;
+  if (e.key==='ArrowLeft')  keys.camLeft=false;
+  if (e.key==='ArrowRight') keys.camRight=false;
 });
 
 function dBtn(id, key) {
@@ -867,8 +897,16 @@ var UP     = new THREE.Vector3(0,1,0);
   // Arrow keys: vertical camera pan in camera mode
   if (mode === 'camera') {
     var panSpeed = 5 * dt;
-    if (keys.camUp)   { orbit.target.y += panSpeed; camera.position.y += panSpeed; }
-    if (keys.camDown) { orbit.target.y -= panSpeed; camera.position.y -= panSpeed; orbit.target.y = Math.max(0.1, orbit.target.y); }
+    if (keys.camUp)    { orbit.target.y += panSpeed; camera.position.y += panSpeed; }
+    if (keys.camDown)  { orbit.target.y -= panSpeed; camera.position.y -= panSpeed; orbit.target.y = Math.max(0.1, orbit.target.y); }
+    if (keys.camLeft || keys.camRight) {
+      // Pan left/right: shift target and camera along the camera's right axis
+      var camRightVec = new THREE.Vector3();
+      camRightVec.crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
+      var lr = keys.camLeft ? -panSpeed : panSpeed;
+      orbit.target.addScaledVector(camRightVec, lr);
+      camera.position.addScaledVector(camRightVec, lr);
+    }
     orbit.update();
   }
   renderer.render(scene, camera);
