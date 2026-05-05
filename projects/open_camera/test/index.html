@@ -34,6 +34,13 @@ canvas { display:block; }
 .mode-opt.active { color:#e8c547; background:rgba(232,197,71,0.08); }
 .mode-opt:hover:not(.active) { color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.04); }
 #hint { color:rgba(255,255,255,0.22); font-size:8px; letter-spacing:0.18em; text-transform:uppercase; padding-left:2px; }
+#drag-hint {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  color:rgba(232,197,71,0.7); font-size:9px; letter-spacing:0.25em; text-transform:uppercase;
+  background:rgba(6,8,16,0.75); border:1px solid rgba(232,197,71,0.3);
+  padding:8px 16px; pointer-events:none; display:none; backdrop-filter:blur(10px);
+}
+#drag-hint.visible { display:block; }
 #pointer-hint {
   color:rgba(232,197,71,0.5); font-size:8px; letter-spacing:0.15em; text-transform:uppercase;
   padding-left:2px; display:none;
@@ -114,6 +121,7 @@ canvas { display:block; }
   <div id="load-bar"><div id="load-fill"></div></div>
   <div id="load-msg">Building city...</div>
 </div>
+<div id="drag-hint">Drag to reposition</div>
 
 <div id="ui">
   <div id="top-left">
@@ -635,6 +643,85 @@ function dBtn(id, key) {
 }
 dBtn('btn-forward','forward'); dBtn('btn-back','back');
 dBtn('btn-left','left');       dBtn('btn-right','right');
+
+// ---- Character drag (camera mode) ------------------------------------------
+var raycaster   = new THREE.Raycaster();
+var mouse2d     = new THREE.Vector2();
+var groundPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
+var dragHint    = document.getElementById('drag-hint');
+var isDragging  = false;
+var dragOffset  = new THREE.Vector3(); // offset from character origin to hit point
+
+renderer.domElement.addEventListener('pointermove', function(e) {
+  if (mode !== 'camera') return;
+  mouse2d.set(
+    (e.clientX / window.innerWidth)  * 2 - 1,
+   -(e.clientY / window.innerHeight) * 2 + 1
+  );
+
+  if (isDragging && character) {
+    // Project mouse onto ground plane and move character
+    raycaster.setFromCamera(mouse2d, camera);
+    var hit = new THREE.Vector3();
+    raycaster.ray.intersectPlane(groundPlane, hit);
+    if (hit) {
+      character.position.x = hit.x - dragOffset.x;
+      character.position.z = hit.z - dragOffset.z;
+      // Keep feet on ground
+      var b = new THREE.Box3().setFromObject(character);
+      character.position.y = -b.min.y + character.position.y;
+    }
+    return;
+  }
+
+  // Hover detection -- change cursor when over character
+  if (character) {
+    raycaster.setFromCamera(mouse2d, camera);
+    var hits = raycaster.intersectObject(character, true);
+    renderer.domElement.style.cursor = hits.length ? 'grab' : 'default';
+  }
+});
+
+renderer.domElement.addEventListener('pointerdown', function(e) {
+  if (mode !== 'camera' || !character) return;
+  mouse2d.set(
+    (e.clientX / window.innerWidth)  * 2 - 1,
+   -(e.clientY / window.innerHeight) * 2 + 1
+  );
+  raycaster.setFromCamera(mouse2d, camera);
+  var hits = raycaster.intersectObject(character, true);
+  if (hits.length > 0) {
+    isDragging = true;
+    orbit.enabled = false;
+    renderer.domElement.style.cursor = 'grabbing';
+    dragHint.classList.add('visible');
+    // Store offset so character doesn't jump to cursor centre
+    var groundHit = new THREE.Vector3();
+    raycaster.ray.intersectPlane(groundPlane, groundHit);
+    dragOffset.set(
+      groundHit.x - character.position.x,
+      0,
+      groundHit.z - character.position.z
+    );
+    e.stopPropagation();
+  }
+});
+
+window.addEventListener('pointerup', function() {
+  if (isDragging) {
+    isDragging = false;
+    if (mode === 'camera') orbit.enabled = true;
+    renderer.domElement.style.cursor = 'default';
+    dragHint.classList.remove('visible');
+    // Re-centre orbit on new character position
+    if (character) {
+      var b = new THREE.Box3().setFromObject(character);
+      var charH = b.max.y - b.min.y;
+      orbit.target.set(character.position.x, charH*0.5 + character.position.y, character.position.z);
+      orbit.update();
+    }
+  }
+});
 
 // ---- Loop -------------------------------------------------------------------
 var clock = new THREE.Clock();
