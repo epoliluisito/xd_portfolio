@@ -16,15 +16,29 @@ canvas { display:block; }
   display:flex; flex-direction:column; gap:8px;
   pointer-events:all;
 }
-#mode-btn {
-  background:rgba(6,8,16,0.85); border:1px solid rgba(255,255,255,0.15);
-  color:#fff; font-family:'DM Mono',monospace; font-size:10px;
-  letter-spacing:0.18em; text-transform:uppercase;
-  padding:9px 16px; cursor:pointer; backdrop-filter:blur(14px); transition:all 0.2s;
+#mode-toggle {
+  display:flex; gap:0;
+  background:rgba(6,8,16,0.85); border:1px solid rgba(255,255,255,0.12);
+  backdrop-filter:blur(14px); overflow:hidden;
 }
-#mode-btn:hover { background:rgba(255,255,255,0.06); }
-#mode-btn.walk { border-color:#e8c547; color:#e8c547; }
+.mode-opt {
+  color:rgba(255,255,255,0.3); font-family:'DM Mono',monospace; font-size:9px;
+  letter-spacing:0.18em; text-transform:uppercase;
+  padding:9px 14px; cursor:pointer; transition:all 0.2s; border:none; background:transparent;
+  position:relative;
+}
+.mode-opt + .mode-opt::before {
+  content:''; position:absolute; left:0; top:20%; height:60%; width:1px;
+  background:rgba(255,255,255,0.1);
+}
+.mode-opt.active { color:#e8c547; background:rgba(232,197,71,0.08); }
+.mode-opt:hover:not(.active) { color:rgba(255,255,255,0.6); background:rgba(255,255,255,0.04); }
 #hint { color:rgba(255,255,255,0.22); font-size:8px; letter-spacing:0.18em; text-transform:uppercase; padding-left:2px; }
+#pointer-hint {
+  color:rgba(232,197,71,0.5); font-size:8px; letter-spacing:0.15em; text-transform:uppercase;
+  padding-left:2px; display:none;
+}
+#pointer-hint.visible { display:block; }
 
 #top-right {
   position:absolute; top:20px; right:20px; text-align:right;
@@ -103,8 +117,12 @@ canvas { display:block; }
 
 <div id="ui">
   <div id="top-left">
-    <button id="mode-btn">Camera Mode</button>
+    <div id="mode-toggle">
+      <button class="mode-opt active" id="opt-camera">Camera</button>
+      <button class="mode-opt" id="opt-walk">Walk</button>
+    </div>
     <div id="hint">Drag to orbit &nbsp;&middot;&nbsp; Scroll to zoom</div>
+    <div id="pointer-hint">Click scene to look around &nbsp;&middot;&nbsp; ESC to release</div>
   </div>
 
   <div id="top-right">
@@ -350,7 +368,7 @@ for (var gx=0; gx<GRID; gx++) for (var gz=0; gz<GRID; gz++) {
 scene.add(paveInst);
 
 // Buildings -- instanced per colour
-var palColors = [0x1e2130,0x252838,0x1a1e2a,0x2a2d3e,0x1c2035,0x23263a];
+var palColors = [0x8a8e9a,0x9a9ea8,0x7a7e8a,0xa0a4ae,0x888c98,0x9498a2];
 var batches = palColors.map(function(c){ return {mat:new THREE.MeshLambertMaterial({color:c}), mats:[]}; });
 var unitBox = new THREE.BoxGeometry(1,1,1);
 
@@ -489,28 +507,72 @@ function finishLoading() {
   applyTime(parseFloat(document.getElementById('time-slider').value));
 }
 
+// ---- Pointer lock (walk mouse-look) ----------------------------------------
+var walkYaw   = Math.PI; // start facing camera
+var walkPitch = -0.3;    // slight downward angle
+var WALK_CAM_DIST = 7;
+var WALK_CAM_HEIGHT = 1.8;
+var pointerLocked = false;
+
+document.addEventListener('pointerlockchange', function() {
+  pointerLocked = !!document.pointerLockElement;
+  document.getElementById('pointer-hint').classList.toggle('visible', mode==='walk' && !pointerLocked);
+});
+
+renderer.domElement.addEventListener('click', function() {
+  if (mode === 'walk' && !pointerLocked) {
+    renderer.domElement.requestPointerLock();
+  }
+});
+
+document.addEventListener('mousemove', function(e) {
+  if (!pointerLocked || mode !== 'walk') return;
+  walkYaw   -= e.movementX * 0.003;
+  walkPitch -= e.movementY * 0.003;
+  walkPitch  = Math.max(-0.6, Math.min(0.5, walkPitch));
+});
+
 // ---- Mode -------------------------------------------------------------------
 var mode = 'camera';
-var modeBtn = document.getElementById('mode-btn');
-var hintEl  = document.getElementById('hint');
-var dpad    = document.getElementById('dpad');
+var hintEl       = document.getElementById('hint');
+var pointerHint  = document.getElementById('pointer-hint');
+var dpad         = document.getElementById('dpad');
+var optCamera    = document.getElementById('opt-camera');
+var optWalk      = document.getElementById('opt-walk');
 
 function setMode(m) {
   mode = m;
   orbit.enabled = (m === 'camera');
   if (m === 'camera') {
-    modeBtn.textContent = 'Camera Mode';
-    modeBtn.classList.remove('walk');
+    optCamera.classList.add('active');
+    optWalk.classList.remove('active');
     hintEl.textContent = 'Drag to orbit \u00b7 Scroll to zoom';
+    hintEl.style.display = 'block';
+    pointerHint.classList.remove('visible');
     dpad.classList.remove('visible');
+    if (document.pointerLockElement) document.exitPointerLock();
+    // Restore orbit target to character
+    if (character) {
+      var b = new THREE.Box3().setFromObject(character);
+      orbit.target.set(character.position.x, (b.max.y-b.min.y)*0.5 + character.position.y, character.position.z);
+      orbit.update();
+    }
   } else {
-    modeBtn.textContent = 'Walk Mode';
-    modeBtn.classList.add('walk');
-    hintEl.textContent = 'WASD or D-pad \u00b7 C to switch';
+    optWalk.classList.add('active');
+    optCamera.classList.remove('active');
+    hintEl.style.display = 'none';
+    pointerHint.classList.add('visible');
     dpad.classList.add('visible');
+    // Init yaw to face away from current camera
+    if (character) {
+      var dx = character.position.x - camera.position.x;
+      var dz = character.position.z - camera.position.z;
+      walkYaw = Math.atan2(dx, dz);
+    }
   }
 }
-modeBtn.addEventListener('click', function(){ setMode(mode==='camera'?'walk':'camera'); });
+optCamera.addEventListener('click', function(){ setMode('camera'); });
+optWalk.addEventListener('click',   function(){ setMode('walk');   });
 
 // ---- Lenses -----------------------------------------------------------------
 document.querySelectorAll('.lens-btn').forEach(function(btn) {
@@ -554,6 +616,7 @@ window.addEventListener('keydown', function(e) {
   if (e.key==='a'||e.key==='A'||e.key==='ArrowLeft')  keys.left=true;
   if (e.key==='d'||e.key==='D'||e.key==='ArrowRight') keys.right=true;
   if (e.key==='c'||e.key==='C') setMode(mode==='camera'?'walk':'camera');
+  if (e.key==='Escape' && mode==='walk') setMode('camera');
 });
 window.addEventListener('keyup', function(e) {
   if (e.key==='w'||e.key==='W'||e.key==='ArrowUp')    keys.forward=false;
@@ -601,7 +664,7 @@ var UP     = new THREE.Vector3(0,1,0);
   if (mode === 'walk' && character) {
     var moving2 = keys.forward || keys.back || keys.left || keys.right;
     if (moving2) {
-      camera.getWorldDirection(cDir); cDir.y=0; cDir.normalize();
+      cDir.set(Math.sin(walkYaw), 0, Math.cos(walkYaw)).normalize();
       cRight.crossVectors(cDir, UP).normalize();
       move.set(0,0,0);
       if (keys.forward) move.add(cDir);
@@ -616,16 +679,20 @@ var UP     = new THREE.Vector3(0,1,0);
       }
     }
 
-    // Follow camera
+    // Follow camera with mouse-look orbit
     var cp = character.position;
-    var fwd = new THREE.Vector3(Math.sin(character.rotation.y), 0, Math.cos(character.rotation.y));
-    ideal.copy(cp).sub(fwd.multiplyScalar(7)).add(new THREE.Vector3(0, 4.5, 0));
-    camera.position.lerp(ideal, 0.06);
-    lookAt.copy(cp).add(new THREE.Vector3(0, 1.4, 0));
-    orbit.target.lerp(lookAt, 0.08);
+    var sinY = Math.sin(walkYaw),   cosY = Math.cos(walkYaw);
+    var sinP = Math.sin(walkPitch), cosP = Math.cos(walkPitch);
+    var camOffX = sinY * cosP * WALK_CAM_DIST;
+    var camOffY = -sinP * WALK_CAM_DIST + WALK_CAM_HEIGHT;
+    var camOffZ = cosY * cosP * WALK_CAM_DIST;
+    var targetPos = new THREE.Vector3(cp.x + camOffX, cp.y + camOffY, cp.z + camOffZ);
+    camera.position.lerp(targetPos, 0.12);
+    lookAt.set(cp.x, cp.y + 1.4, cp.z);
+    camera.lookAt(lookAt);
   }
 
-  orbit.update();
+  if (mode === 'camera') orbit.update();
   renderer.render(scene, camera);
 })();
 
