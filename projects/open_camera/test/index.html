@@ -423,7 +423,7 @@ var character = null;
 var mixer = null;
 var idleAction = null, walkAction = null;
 var isWalking = false;
-var walkWeight = 0; // smooth blend 0=idle, 1=walk
+var animState = 'idle'; // 'idle' or 'walk'
 
 var loadFill = document.getElementById('load-fill');
 var loadMsg  = document.getElementById('load-msg');
@@ -446,15 +446,16 @@ gltfLoader.load('clarity_builder.glb',
     character.position.y = -box.min.y;
     scene.add(character);
 
-    // Animations -- both always playing, blend via weight
+    // Animations -- state machine: idle or walk, crossfade between
     if (g.animations && g.animations.length > 0) {
       mixer = new THREE.AnimationMixer(character);
       var clips = g.animations;
 
       var idleClip = null, walkClip = null;
       clips.forEach(function(c) {
-        if (c.name.toLowerCase().indexOf('idle') >= 0) idleClip = c;
-        else if (c.name.toLowerCase().indexOf('walk') >= 0) walkClip = c;
+        var n = c.name.toLowerCase();
+        if (n.indexOf('idle') >= 0) idleClip = c;
+        else if (n.indexOf('walk') >= 0) walkClip = c;
       });
       if (!idleClip) idleClip = clips[0];
       if (!walkClip && clips.length > 1) walkClip = clips[1];
@@ -463,15 +464,13 @@ gltfLoader.load('clarity_builder.glb',
         idleAction = mixer.clipAction(idleClip);
         idleAction.setLoop(THREE.LoopRepeat);
         idleAction.clampWhenFinished = false;
-        idleAction.setEffectiveWeight(1);
-        idleAction.play();
+        idleAction.play(); // only idle plays at start
       }
       if (walkClip) {
         walkAction = mixer.clipAction(walkClip);
         walkAction.setLoop(THREE.LoopRepeat);
         walkAction.clampWhenFinished = false;
-        walkAction.setEffectiveWeight(0);
-        walkAction.play();
+        // walkAction starts stopped -- will be faded in when needed
       }
     }
 
@@ -650,13 +649,20 @@ var UP     = new THREE.Vector3(0,1,0);
   requestAnimationFrame(loop);
   var dt = Math.min(clock.getDelta(), 0.05);
 
-  // Animation weight blending -- smooth lerp, no crossFadeTo
+  // Animation state machine -- clean fade between idle and walk
   if (mixer) {
-    var moving = keys.forward || keys.back || keys.left || keys.right;
-    var targetW = (mode === 'walk' && moving) ? 1.0 : 0.0;
-    walkWeight = THREE.MathUtils.lerp(walkWeight, targetW, dt * 6);
-    if (idleAction) idleAction.setEffectiveWeight(1 - walkWeight);
-    if (walkAction) walkAction.setEffectiveWeight(walkWeight);
+    var shouldWalk = mode === 'walk' && (keys.forward || keys.back || keys.left || keys.right);
+    var newState = shouldWalk ? 'walk' : 'idle';
+    if (newState !== animState) {
+      animState = newState;
+      if (newState === 'walk' && idleAction && walkAction) {
+        idleAction.fadeOut(0.2);
+        walkAction.reset().fadeIn(0.2).play();
+      } else if (newState === 'idle' && idleAction && walkAction) {
+        walkAction.fadeOut(0.2);
+        idleAction.reset().fadeIn(0.2).play();
+      }
+    }
     mixer.update(dt);
   }
 
