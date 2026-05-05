@@ -452,9 +452,33 @@ gltfLoader.load('clarity_builder.glb',
     character = g.scene;
     character.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
 
-    // Place character at origin -- continuous grounding handled in render loop
+    // Spawn character at nearest road intersection (guaranteed clear of buildings)
+    // Roads are at i*CELL-HALF: -90,-54,-18,18,54,90
+    // Nearest intersection to camera origin: (-18, 0, -18)
     scene.add(character);
-    character.position.y = 0;
+    character.position.set(-18, 0, -18);
+
+    // Push character out of any building at spawn (safety check)
+    (function resolveSpawnCollision() {
+      var CHAR_R = 0.45;
+      for (var iter=0; iter<10; iter++) {
+        var moved = false;
+        for (var ci=0; ci<buildingBoxes.length; ci++) {
+          var bb = buildingBoxes[ci];
+          var cx3 = character.position.x, cz3 = character.position.z;
+          var ex3 = Math.max(bb.minX, Math.min(cx3, bb.maxX));
+          var ez3 = Math.max(bb.minZ, Math.min(cz3, bb.maxZ));
+          var dx3 = cx3-ex3, dz3 = cz3-ez3;
+          var dd3 = Math.sqrt(dx3*dx3+dz3*dz3);
+          if (dd3 < CHAR_R) {
+            if (dd3 < 0.0001) { character.position.x += CHAR_R; }
+            else { var p3=(CHAR_R-dd3)/dd3; character.position.x+=dx3*p3; character.position.z+=dz3*p3; }
+            moved = true;
+          }
+        }
+        if (!moved) break;
+      }
+    })();
 
     // Animations -- state machine: idle or walk, crossfade between
     if (g.animations && g.animations.length > 0) {
@@ -780,7 +804,7 @@ var UP     = new THREE.Vector3(0,1,0);
       }
     });
     if (lowestFootY < Infinity) {
-      character.position.y -= lowestFootY;
+      character.position.y -= (lowestFootY - 0.08); // 0.08 = ankle-to-sole gap
     }
   }
 
