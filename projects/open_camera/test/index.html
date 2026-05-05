@@ -452,12 +452,9 @@ gltfLoader.load('clarity_builder.glb',
     character = g.scene;
     character.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
 
-    // Fix feet on ground
+    // Place character at origin -- continuous grounding handled in render loop
     scene.add(character);
-    // Must be added to scene first for world matrix to be correct
-    character.updateMatrixWorld(true);
-    var box = new THREE.Box3().setFromObject(character);
-    character.position.y = -box.min.y;
+    character.position.y = 0;
 
     // Animations -- state machine: idle or walk, crossfade between
     if (g.animations && g.animations.length > 0) {
@@ -763,6 +760,28 @@ var UP     = new THREE.Vector3(0,1,0);
       }
     }
     mixer.update(dt);
+
+    // Continuous grounding: every frame, find lowest foot bone world Y
+    // and snap character to floor. Works regardless of skeleton structure.
+    var footNames = ['foot','toe','ankle'];
+    var lowestFootY = Infinity;
+    character.updateMatrixWorld(true);
+    character.traverse(function(node) {
+      if (node.isBone) {
+        var n = node.name.toLowerCase();
+        for (var fi=0; fi<footNames.length; fi++) {
+          if (n.indexOf(footNames[fi]) >= 0) {
+            var wp2 = new THREE.Vector3();
+            node.getWorldPosition(wp2);
+            if (wp2.y < lowestFootY) lowestFootY = wp2.y;
+            break;
+          }
+        }
+      }
+    });
+    if (lowestFootY < Infinity) {
+      character.position.y -= lowestFootY;
+    }
   }
 
   // Character movement
