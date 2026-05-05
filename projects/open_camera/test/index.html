@@ -204,7 +204,7 @@ scene.fog = new THREE.Fog(0x8ab0d8, 80, 200);
 // ---- Camera -----------------------------------------------------------------
 // Start behind and above character, looking at it
 const camera = new THREE.PerspectiveCamera(54, window.innerWidth/window.innerHeight, 0.1, 400);
-camera.position.set(0, 4, 10);
+camera.position.set(0, 3, 8);
 
 // ---- Orbit ------------------------------------------------------------------
 const orbit = new OrbitControls(camera, renderer.domElement);
@@ -357,15 +357,15 @@ for (var i=0; i<=GRID; i++) {
   var rv = new THREE.PlaneGeometry(ROAD, GRID*CELL+ROAD); rv.rotateX(-Math.PI/2); rv.translate(p,0.01,0); roadGeos.push(rv);
 }
 
-var groundMesh = new THREE.Mesh(BGU.mergeGeometries(groundGeos), new THREE.MeshLambertMaterial({color:0x111318}));
+var groundMesh = new THREE.Mesh(BGU.mergeGeometries(groundGeos), new THREE.MeshLambertMaterial({color:0x555558}));
 groundMesh.receiveShadow = true; scene.add(groundMesh);
 
-var roadMesh = new THREE.Mesh(BGU.mergeGeometries(roadGeos), new THREE.MeshLambertMaterial({color:0x0a0c10}));
+var roadMesh = new THREE.Mesh(BGU.mergeGeometries(roadGeos), new THREE.MeshLambertMaterial({color:0x3a3a3c}));
 roadMesh.receiveShadow = true; scene.add(roadMesh);
 
 // Pavement -- instanced
 var dummy = new THREE.Object3D();
-var paveInst = new THREE.InstancedMesh(new THREE.BoxGeometry(BLOCK,0.1,BLOCK), new THREE.MeshLambertMaterial({color:0x181a22}), GRID*GRID);
+var paveInst = new THREE.InstancedMesh(new THREE.BoxGeometry(BLOCK,0.1,BLOCK), new THREE.MeshLambertMaterial({color:0x484848}), GRID*GRID);
 paveInst.receiveShadow = true;
 var pi2 = 0;
 for (var gx=0; gx<GRID; gx++) for (var gz=0; gz<GRID; gz++) {
@@ -376,6 +376,7 @@ for (var gx=0; gx<GRID; gx++) for (var gz=0; gz<GRID; gz++) {
 scene.add(paveInst);
 
 // Buildings -- instanced per colour
+var buildingBoxes = []; // AABB colliders for each building {minX,maxX,minZ,maxZ}
 var palColors = [0x8a8e9a,0x9a9ea8,0x7a7e8a,0xa0a4ae,0x888c98,0x9498a2];
 var batches = palColors.map(function(c){ return {mat:new THREE.MeshLambertMaterial({color:c}), mats:[]}; });
 var unitBox = new THREE.BoxGeometry(1,1,1);
@@ -390,6 +391,8 @@ for (var gx=0; gx<GRID; gx++) for (var gz=0; gz<GRID; gz++) {
     dummy.position.set(px+bw/2, bh/2, pz3+bd/2);
     dummy.scale.set(bw,bh,bd); dummy.updateMatrix();
     batches[bi].mats.push(dummy.matrix.clone());
+    // Store flat AABB collider for this building
+    buildingBoxes.push({minX:px, maxX:px+bw, minZ:pz3, maxZ:pz3+bd});
   }
 }
 batches.forEach(function(batch) {
@@ -450,9 +453,11 @@ gltfLoader.load('clarity_builder.glb',
     character.traverse(function(c){ if(c.isMesh){ c.castShadow=true; c.receiveShadow=true; } });
 
     // Fix feet on ground
+    scene.add(character);
+    // Must be added to scene first for world matrix to be correct
+    character.updateMatrixWorld(true);
     var box = new THREE.Box3().setFromObject(character);
     character.position.y = -box.min.y;
-    scene.add(character);
 
     // Animations -- state machine: idle or walk, crossfade between
     if (g.animations && g.animations.length > 0) {
@@ -482,10 +487,13 @@ gltfLoader.load('clarity_builder.glb',
       }
     }
 
-    // Point orbit at chest height
+    // Point orbit at chest height and position camera to see character
     var b2 = new THREE.Box3().setFromObject(character);
     var charH = b2.max.y - b2.min.y;
-    orbit.target.set(0, charH * 0.5, 0);
+    var chestH = charH * 0.55;
+    orbit.target.set(character.position.x, chestH, character.position.z);
+    // Place camera in front at a good angle
+    camera.position.set(character.position.x, chestH + 1.5, character.position.z + 6);
     orbit.update();
 
     finishLoading();
@@ -616,20 +624,24 @@ document.getElementById('quality-btn').addEventListener('click', function() {
 });
 
 // ---- Keys -------------------------------------------------------------------
-var keys = {forward:false, back:false, left:false, right:false};
+var keys = {forward:false, back:false, left:false, right:false, camUp:false, camDown:false};
 window.addEventListener('keydown', function(e) {
-  if (e.key==='w'||e.key==='W'||e.key==='ArrowUp')    keys.forward=true;
-  if (e.key==='s'||e.key==='S'||e.key==='ArrowDown')  keys.back=true;
-  if (e.key==='a'||e.key==='A'||e.key==='ArrowLeft')  keys.left=true;
-  if (e.key==='d'||e.key==='D'||e.key==='ArrowRight') keys.right=true;
+  if (e.key==='w'||e.key==='W') keys.forward=true;
+  if (e.key==='s'||e.key==='S') keys.back=true;
+  if (e.key==='a'||e.key==='A') keys.left=true;
+  if (e.key==='d'||e.key==='D') keys.right=true;
+  if (e.key==='ArrowUp')    keys.camUp=true;
+  if (e.key==='ArrowDown')  keys.camDown=true;
   if (e.key==='c'||e.key==='C') setMode(mode==='camera'?'walk':'camera');
   if (e.key==='Escape' && mode==='walk') setMode('camera');
 });
 window.addEventListener('keyup', function(e) {
-  if (e.key==='w'||e.key==='W'||e.key==='ArrowUp')    keys.forward=false;
-  if (e.key==='s'||e.key==='S'||e.key==='ArrowDown')  keys.back=false;
-  if (e.key==='a'||e.key==='A'||e.key==='ArrowLeft')  keys.left=false;
-  if (e.key==='d'||e.key==='D'||e.key==='ArrowRight') keys.right=false;
+  if (e.key==='w'||e.key==='W') keys.forward=false;
+  if (e.key==='s'||e.key==='S') keys.back=false;
+  if (e.key==='a'||e.key==='A') keys.left=false;
+  if (e.key==='d'||e.key==='D') keys.right=false;
+  if (e.key==='ArrowUp')    keys.camUp=false;
+  if (e.key==='ArrowDown')  keys.camDown=false;
 });
 
 function dBtn(id, key) {
@@ -757,7 +769,7 @@ var UP     = new THREE.Vector3(0,1,0);
   if (mode === 'walk' && character) {
     var moving2 = keys.forward || keys.back || keys.left || keys.right;
     if (moving2) {
-      cDir.set(Math.sin(walkYaw), 0, Math.cos(walkYaw)).normalize();
+      cDir.set(-Math.sin(walkYaw), 0, -Math.cos(walkYaw)).normalize();
       cRight.crossVectors(cDir, UP).normalize();
       move.set(0,0,0);
       if (keys.forward) move.add(cDir);
@@ -769,6 +781,30 @@ var UP     = new THREE.Vector3(0,1,0);
         character.position.addScaledVector(move, 5.5 * dt);
         var targetY = Math.atan2(move.x, move.z);
         character.rotation.y = THREE.MathUtils.lerp(character.rotation.y, targetY, 0.12);
+      }
+
+      // Collision resolution -- push character out of building AABBs
+      var CHAR_R = 0.45;
+      var cx2 = character.position.x;
+      var cz2 = character.position.z;
+      for (var ci = 0; ci < buildingBoxes.length; ci++) {
+        var bb = buildingBoxes[ci];
+        // Expand box by char radius for circle-AABB test
+        var ex = Math.max(bb.minX, Math.min(cx2, bb.maxX));
+        var ez = Math.max(bb.minZ, Math.min(cz2, bb.maxZ));
+        var ddx = cx2 - ex, ddz = cz2 - ez;
+        var dd = Math.sqrt(ddx*ddx + ddz*ddz);
+        if (dd < CHAR_R) {
+          // Push character out along shortest separation vector
+          if (dd < 0.0001) {
+            // Exactly on edge -- push out on X
+            character.position.x = bb.maxX + CHAR_R;
+          } else {
+            var push = (CHAR_R - dd) / dd;
+            character.position.x += ddx * push;
+            character.position.z += ddz * push;
+          }
+        }
       }
     }
 
@@ -785,7 +821,13 @@ var UP     = new THREE.Vector3(0,1,0);
     camera.lookAt(lookAt);
   }
 
-  if (mode === 'camera') orbit.update();
+  // Arrow keys: vertical camera pan in camera mode
+  if (mode === 'camera') {
+    var panSpeed = 5 * dt;
+    if (keys.camUp)   { orbit.target.y += panSpeed; camera.position.y += panSpeed; }
+    if (keys.camDown) { orbit.target.y -= panSpeed; camera.position.y -= panSpeed; orbit.target.y = Math.max(0.1, orbit.target.y); }
+    orbit.update();
+  }
   renderer.render(scene, camera);
 })();
 
