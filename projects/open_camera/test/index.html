@@ -384,13 +384,11 @@ function applyTime(t) {
   if (typeof windowMeshes !== 'undefined') {
     windowMeshes.forEach(function(w) {
       if (w.isLamp) {
-        w.mesh.material.emissive = streetLightsOn ? new THREE.Color(0xffcc44) : new THREE.Color(0x000000);
-        w.mesh.material.emissiveIntensity = streetLightsOn ? 2.5 : 0;
-        w.mesh.material.color.setHex(streetLightsOn ? 0xffee99 : 0x555540);
+        w.mesh.material.emissive.setHex(streetLightsOn ? 0xffcc44 : 0x000000);
+        w.mesh.material.emissiveIntensity = streetLightsOn ? 3.5 : 0;
       } else {
-        w.mesh.material.emissive = streetLightsOn ? new THREE.Color(0xff8822) : new THREE.Color(0x000000);
+        w.mesh.material.emissive.setHex(streetLightsOn ? 0xff8822 : 0x000000);
         w.mesh.material.emissiveIntensity = streetLightsOn ? 1.8 : 0;
-        w.mesh.material.color.setHex(streetLightsOn ? 0xffcc88 : 0x3a5566);
       }
       w.mesh.material.needsUpdate = true;
     });
@@ -488,26 +486,38 @@ for (var gx=0; gx<=GRID; gx++) {
     var lpx = gx*CELL-HALF;
     var lpz = gz*CELL-HALF;
 
-    // Pole
+    // Pole + arm go into scene directly (always visible)
     var poleMesh = new THREE.Mesh(poleGeo, poleMat);
     poleMesh.position.set(lpx, 2.4, lpz);
-    streetLightGroup.add(poleMesh);
+    scene.add(poleMesh);
 
-    // Horizontal arm
     var armMesh = new THREE.Mesh(armGeo, poleMat);
     armMesh.rotation.z = Math.PI/2;
     armMesh.position.set(lpx+0.45, 4.75, lpz);
-    streetLightGroup.add(armMesh);
+    scene.add(armMesh);
 
-    // Globe (emissive when on)
-    var globe = new THREE.Mesh(globeGeo, lampOffMat.clone());
+    // Globe with emissive material -- in streetLightGroup (toggleable)
+    var globeMat = new THREE.MeshStandardMaterial({
+      color:0xffee99,
+      emissive:new THREE.Color(0xffcc44),
+      emissiveIntensity:0,  // off by default, set by applyTime
+      roughness:0.3, metalness:0.0
+    });
+    var globe = new THREE.Mesh(globeGeo, globeMat);
     globe.position.set(lpx+0.9, 4.75, lpz);
     globe.userData.isLamp = true;
     streetLightGroup.add(globe);
     windowMeshes.push({mesh:globe, isLamp:true});
 
-    // Point light at globe position
-    var pl = new THREE.PointLight(0xffcc55, 6.0, 18, 1.5);
+    // SpotLight pointing down from lamp head -- strong, visible pool of light
+    var spot = new THREE.SpotLight(0xffdd88, 8.0, 20, Math.PI*0.35, 0.4, 1.2);
+    spot.position.set(lpx+0.9, 4.75, lpz);
+    spot.target.position.set(lpx+0.9, 0, lpz);
+    scene.add(spot.target);
+    streetLightGroup.add(spot);
+
+    // Ambient fill light (soft, wide radius)
+    var pl = new THREE.PointLight(0xffcc55, 3.0, 14, 1.0);
     pl.position.set(lpx+0.9, 4.75, lpz);
     streetLightGroup.add(pl);
   }
@@ -542,8 +552,7 @@ for (var wi=0; wi<buildingBoxes.length; wi++) {
   }
 }
 
-// Start with lights hidden
-streetLightGroup.visible = false;
+// Lights visibility handled by applyTime in finishLoading
 
 // ---- Character --------------------------------------------------------------
 var character = null;
@@ -638,14 +647,10 @@ gltfLoader.load('clarity_builder.glb',
   function(prog) {
     if (prog.total) loadFill.style.width = (40 + prog.loaded/prog.total*55) + '%';
   },
-  function() {
-    // Fallback placeholder
-    var geo = new THREE.CapsuleGeometry(0.35, 1.3, 4, 8);
-    character = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({color:0xe8c547}));
-    character.position.y = 0.65;
-    character.castShadow = true;
-    scene.add(character);
-    finishLoading();
+  function(err) {
+    console.error('GLB load failed:', err);
+    loadMsg.textContent = 'clarity_builder.glb not found';
+    loadFill.style.background = '#c04040';
   }
 );
 
