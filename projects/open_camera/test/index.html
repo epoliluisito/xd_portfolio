@@ -68,6 +68,14 @@ canvas { display:block; }
   padding:8px 16px; pointer-events:none; display:none; backdrop-filter:blur(10px);
 }
 #drag-hint.visible { display:block; }
+#hover-tooltip {
+  position:fixed; pointer-events:none; display:none;
+  background:rgba(6,8,16,0.88); border:1px solid rgba(232,197,71,0.35);
+  color:rgba(232,197,71,0.85); font-size:8px; letter-spacing:0.18em;
+  text-transform:uppercase; padding:5px 10px; backdrop-filter:blur(10px);
+  transform:translate(12px,-50%); white-space:nowrap;
+}
+#hover-tooltip.visible { display:block; }
 #pointer-hint {
   color:rgba(232,197,71,0.5); font-size:8px; letter-spacing:0.15em; text-transform:uppercase;
   padding-left:2px; display:none;
@@ -149,6 +157,7 @@ canvas { display:block; }
   <div id="load-msg">Building city...</div>
 </div>
 <div id="drag-hint">Drag to reposition</div>
+<div id="hover-tooltip">Click &amp; drag to reposition</div>
 
 <div id="ui">
   <div id="top-left">
@@ -352,12 +361,9 @@ function applyTime(t) {
   // Exposure
   renderer.toneMappingExposure = isNight ? 0.5 : 0.85 + dayF * 0.35;
 
-  // Street lights: on when sun is low
-  var needLights = elevation < 0.2;
-  streetLightGroup.visible = needLights && streetLightsOn;
-
-  // Button opacity hint
-  document.getElementById('lights-btn').style.opacity = needLights ? '1' : '0.4';
+  // Street lights: always on when toggle is active
+  streetLightGroup.visible = streetLightsOn;
+  document.getElementById('lights-btn').style.opacity = '1';
 
   // Clock
   var h = Math.floor(t * 24);
@@ -567,7 +573,7 @@ function finishLoading() {
     el.style.opacity = '0';
     setTimeout(function(){ el.style.display='none'; }, 600);
   }, 300);
-  applyTime(parseFloat(document.getElementById('time-slider').value));
+  streetLightGroup.visible = streetLightsOn;
 }
 
 // ---- Pointer lock (walk mouse-look) ----------------------------------------
@@ -737,11 +743,20 @@ renderer.domElement.addEventListener('pointermove', function(e) {
     return;
   }
 
-  // Hover detection -- change cursor when over character
+  // Hover detection -- change cursor and show tooltip when over character
   if (character) {
     raycaster.setFromCamera(mouse2d, camera);
     var hits = raycaster.intersectObject(character, true);
-    renderer.domElement.style.cursor = hits.length ? 'grab' : 'default';
+    var tooltip = document.getElementById('hover-tooltip');
+    if (hits.length) {
+      renderer.domElement.style.cursor = 'grab';
+      tooltip.style.left = e.clientX + 'px';
+      tooltip.style.top  = e.clientY + 'px';
+      tooltip.classList.add('visible');
+    } else {
+      renderer.domElement.style.cursor = 'default';
+      tooltip.classList.remove('visible');
+    }
   }
 });
 
@@ -758,6 +773,7 @@ renderer.domElement.addEventListener('pointerdown', function(e) {
     orbit.enabled = false;
     renderer.domElement.style.cursor = 'grabbing';
     dragHint.classList.add('visible');
+    document.getElementById('hover-tooltip').classList.remove('visible');
     // Store offset so character doesn't jump to cursor centre
     var groundHit = new THREE.Vector3();
     raycaster.ray.intersectPlane(groundPlane, groundHit);
