@@ -36,9 +36,8 @@ canvas { display:block; }
 #hint { display:none; } /* replaced by side panel */
 
 #controls-panel {
-  position:absolute; top:50%; right:20px; transform:translateY(-50%);
   background:rgba(6,8,16,0.82); border:1px solid rgba(255,255,255,0.1);
-  backdrop-filter:blur(14px); padding:16px 18px; width:190px;
+  backdrop-filter:blur(14px); padding:12px 14px; width:190px;
   pointer-events:none;
 }
 #controls-panel h3 {
@@ -62,10 +61,11 @@ canvas { display:block; }
   height:1px; background:rgba(255,255,255,0.07); margin:10px 0;
 }
 #drag-hint {
-  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
   color:rgba(232,197,71,0.7); font-size:9px; letter-spacing:0.25em; text-transform:uppercase;
   background:rgba(6,8,16,0.75); border:1px solid rgba(232,197,71,0.3);
   padding:8px 16px; pointer-events:none; display:none; backdrop-filter:blur(10px);
+  z-index:50;
 }
 #drag-hint.visible { display:block; }
 #hover-tooltip {
@@ -167,6 +167,22 @@ canvas { display:block; }
     </div>
     <div id="hint"></div>
     <div id="pointer-hint"></div>
+    <div id="controls-panel">
+      <div id="panel-camera">
+        <div class="ctrl-row"><span class="ctrl-key">Drag</span><span class="ctrl-desc">Orbit around character</span></div>
+        <div class="ctrl-row"><span class="ctrl-key">Scroll</span><span class="ctrl-desc">Zoom in / out</span></div>
+        <div class="ctrl-row"><span class="ctrl-key">&#8593;&#8595;&#8592;&#8594;</span><span class="ctrl-desc">Pan POV in any direction</span></div>
+        <div class="ctrl-row"><span class="ctrl-key">Drag char</span><span class="ctrl-desc">Reposition character</span></div>
+      </div>
+      <div id="panel-walk" style="display:none">
+        <div class="ctrl-row"><span class="ctrl-key">W A S D</span><span class="ctrl-desc">Move character</span></div>
+        <div class="ctrl-row"><span class="ctrl-key">Click</span><span class="ctrl-desc">Lock mouse &amp; look around</span></div>
+        <div class="ctrl-row"><span class="ctrl-key">Mouse</span><span class="ctrl-desc">Rotate camera freely</span></div>
+        <div class="ctrl-row"><span class="ctrl-key">ESC</span><span class="ctrl-desc">Release mouse / exit walk</span></div>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div class="ctrl-row"><span class="ctrl-key">C</span><span class="ctrl-desc">Toggle camera / walk</span></div>
+    </div>
   </div>
 
   <div id="top-right">
@@ -361,8 +377,24 @@ function applyTime(t) {
   // Exposure
   renderer.toneMappingExposure = isNight ? 0.5 : 0.85 + dayF * 0.35;
 
-  // Street lights: always on when toggle is active
+  // Street lights and building windows
   streetLightGroup.visible = streetLightsOn;
+  applyTime(parseFloat(document.getElementById('time-slider').value));
+  // Toggle window glow and lamp globe material
+  if (typeof windowMeshes !== 'undefined') {
+    windowMeshes.forEach(function(w) {
+      if (w.isLamp) {
+        w.mesh.material.emissive = streetLightsOn ? new THREE.Color(0xffcc44) : new THREE.Color(0x000000);
+        w.mesh.material.emissiveIntensity = streetLightsOn ? 1.2 : 0;
+        w.mesh.material.color.setHex(streetLightsOn ? 0xffee99 : 0x555540);
+      } else {
+        w.mesh.material.emissive = streetLightsOn ? new THREE.Color(0xff8822) : new THREE.Color(0x000000);
+        w.mesh.material.emissiveIntensity = streetLightsOn ? 0.8 : 0;
+        w.mesh.material.color.setHex(streetLightsOn ? 0xffcc88 : 0x3a5566);
+      }
+      w.mesh.material.needsUpdate = true;
+    });
+  }
   document.getElementById('lights-btn').style.opacity = '1';
 
   // Clock
@@ -437,29 +469,80 @@ batches.forEach(function(batch) {
   scene.add(inst);
 });
 
-// Poles (merged, visual only)
-var poleGeos = [];
-for (var gx=0; gx<=GRID; gx++) for (var gz=0; gz<=GRID; gz++) {
-  var px2=gx*CELL-HALF, pz4=gz*CELL-HALF;
-  var pg = new THREE.CylinderGeometry(0.06,0.06,4.5,5);
-  pg.translate(px2,2.25,pz4); poleGeos.push(pg);
-}
-scene.add(new THREE.Mesh(BGU.mergeGeometries(poleGeos), new THREE.MeshLambertMaterial({color:0x2a2a35})));
+// ---- Lampposts with real emissive lights ------------------------------------
+// Place at every road intersection: i*CELL-HALF for i=0..GRID on both axes
+var poleMat    = new THREE.MeshLambertMaterial({color:0x303035});
+var lampOffMat = new THREE.MeshLambertMaterial({color:0x555540});
+var lampOnMat  = new THREE.MeshLambertMaterial({color:0xffee99, emissive:new THREE.Color(0xffcc44), emissiveIntensity:1.2});
+var poleGeo    = new THREE.CylinderGeometry(0.055,0.07,4.8,6);
+var armGeo     = new THREE.CylinderGeometry(0.035,0.035,0.9,5);
+var globeGeo   = new THREE.SphereGeometry(0.18,8,6);
 
-// Street point lights -- placed at intersections
-var slPositions = [
-  [-HALF*0.5, 4.5, -HALF*0.5],
-  [ HALF*0.5, 4.5, -HALF*0.5],
-  [-HALF*0.5, 4.5,  HALF*0.5],
-  [ HALF*0.5, 4.5,  HALF*0.5],
-  [0, 4.5, 0]
-];
-slPositions.forEach(function(pos) {
-  var pl = new THREE.PointLight(0xff9944, 4.0, 35, 1.5);
-  pl.position.set(pos[0], pos[1], pos[2]);
-  streetLightGroup.add(pl);
-});
-// Start hidden (daytime)
+// Building window emissive material (warm glow)
+var winOnMat  = new THREE.MeshLambertMaterial({color:0xffcc88, emissive:new THREE.Color(0xff8822), emissiveIntensity:0.8, transparent:true, opacity:0.85});
+var winOffMat = new THREE.MeshLambertMaterial({color:0x3a5566, transparent:true, opacity:0.5});
+var windowMeshes = []; // to toggle on/off
+
+for (var gx=0; gx<=GRID; gx++) {
+  for (var gz=0; gz<=GRID; gz++) {
+    var lpx = gx*CELL-HALF;
+    var lpz = gz*CELL-HALF;
+
+    // Pole
+    var poleMesh = new THREE.Mesh(poleGeo, poleMat);
+    poleMesh.position.set(lpx, 2.4, lpz);
+    streetLightGroup.add(poleMesh);
+
+    // Horizontal arm
+    var armMesh = new THREE.Mesh(armGeo, poleMat);
+    armMesh.rotation.z = Math.PI/2;
+    armMesh.position.set(lpx+0.45, 4.75, lpz);
+    streetLightGroup.add(armMesh);
+
+    // Globe (emissive when on)
+    var globe = new THREE.Mesh(globeGeo, lampOffMat.clone());
+    globe.position.set(lpx+0.9, 4.75, lpz);
+    globe.userData.isLamp = true;
+    streetLightGroup.add(globe);
+    windowMeshes.push({mesh:globe, isLamp:true});
+
+    // Point light at globe position
+    var pl = new THREE.PointLight(0xffcc55, 3.5, 22, 1.8);
+    pl.position.set(lpx+0.9, 4.75, lpz);
+    streetLightGroup.add(pl);
+  }
+}
+
+// Add emissive windows to buildings
+// We add small window planes to each building face
+for (var wi=0; wi<buildingBoxes.length; wi++) {
+  var bb2 = buildingBoxes[wi];
+  var bww = bb2.maxX - bb2.minX;
+  var bdw = bb2.maxZ - bb2.minZ;
+  // Estimate height from average (we don't store it, use 8)
+  var bhw = 8;
+  var numWinRows = Math.max(1, Math.floor(bhw/3));
+  var cx4 = (bb2.minX+bb2.maxX)/2, cz5 = (bb2.minZ+bb2.maxZ)/2;
+
+  for (var row=0; row<numWinRows; row++) {
+    var wy = 1.5 + row*2.8;
+    // Front and back faces
+    var wg = new THREE.PlaneGeometry(Math.min(bww*0.55,2.5), 1.0);
+    var wm = new THREE.Mesh(wg, winOffMat.clone());
+    wm.position.set(cx4, wy, bb2.minZ-0.05);
+    scene.add(wm);
+    windowMeshes.push({mesh:wm, isLamp:false});
+
+    var wg2 = new THREE.PlaneGeometry(Math.min(bww*0.55,2.5), 1.0);
+    var wm2 = new THREE.Mesh(wg2, winOffMat.clone());
+    wm2.rotation.y = Math.PI;
+    wm2.position.set(cx4, wy, bb2.maxZ+0.05);
+    scene.add(wm2);
+    windowMeshes.push({mesh:wm2, isLamp:false});
+  }
+}
+
+// Start with lights hidden
 streetLightGroup.visible = false;
 
 // ---- Character --------------------------------------------------------------
@@ -489,7 +572,7 @@ gltfLoader.load('clarity_builder.glb',
     // Roads are at i*CELL-HALF: -90,-54,-18,18,54,90
     // Nearest intersection to camera origin: (-18, 0, -18)
     scene.add(character);
-    character.position.set(-18, 0, -18);
+    character.position.set(0, 0, -18); // mid-road, away from lampposts
 
     // Push character out of any building at spawn (safety check)
     (function resolveSpawnCollision() {
@@ -716,7 +799,7 @@ dBtn('btn-left','left');       dBtn('btn-right','right');
 // ---- Character drag (camera mode) ------------------------------------------
 var raycaster   = new THREE.Raycaster();
 var mouse2d     = new THREE.Vector2();
-var groundPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
+var groundPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0); // Y=0 ground
 var dragHint    = document.getElementById('drag-hint');
 var isDragging  = false;
 var dragOffset  = new THREE.Vector3(); // offset from character origin to hit point
@@ -731,14 +814,11 @@ renderer.domElement.addEventListener('pointermove', function(e) {
   if (isDragging && character) {
     // Project mouse onto ground plane and move character
     raycaster.setFromCamera(mouse2d, camera);
-    var hit = new THREE.Vector3();
-    raycaster.ray.intersectPlane(groundPlane, hit);
-    if (hit) {
-      character.position.x = hit.x - dragOffset.x;
-      character.position.z = hit.z - dragOffset.z;
-      // Keep feet on ground
-      var b = new THREE.Box3().setFromObject(character);
-      character.position.y = -b.min.y + character.position.y;
+    var _hit = new THREE.Vector3();
+    var _hitResult = raycaster.ray.intersectPlane(groundPlane, _hit);
+    if (_hitResult) {
+      character.position.x = _hit.x - dragOffset.x;
+      character.position.z = _hit.z - dragOffset.z;
     }
     return;
   }
