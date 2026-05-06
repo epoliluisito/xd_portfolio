@@ -203,7 +203,7 @@ canvas { display:block; }
       <input type="range" id="time-slider" min="0" max="1" step="0.001" value="0.4">
     </div>
     <div class="bar-divider"></div>
-    <button class="icon-btn active" id="lights-btn">Lights ON</button>
+    <button class="icon-btn" id="lights-btn">Lights OFF</button>
     <div class="bar-divider"></div>
     <button class="icon-btn active" id="quality-btn">High</button>
   </div>
@@ -295,7 +295,7 @@ scene.add(sun);
 // Street lights group -- point lights
 const streetLightGroup = new THREE.Group();
 scene.add(streetLightGroup);
-let streetLightsOn = true;
+let streetLightsOn = false;
 
 // ---- Time of day ------------------------------------------------------------
 // t: 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk, 1=midnight
@@ -509,17 +509,7 @@ for (var gx=0; gx<=GRID; gx++) {
     streetLightGroup.add(globe);
     windowMeshes.push({mesh:globe, isLamp:true});
 
-    // SpotLight pointing down from lamp head -- strong, visible pool of light
-    var spot = new THREE.SpotLight(0xffdd88, 8.0, 20, Math.PI*0.35, 0.4, 1.2);
-    spot.position.set(lpx+0.9, 4.75, lpz);
-    spot.target.position.set(lpx+0.9, 0, lpz);
-    scene.add(spot.target);
-    streetLightGroup.add(spot);
-
-    // Ambient fill light (soft, wide radius)
-    var pl = new THREE.PointLight(0xffcc55, 3.0, 14, 1.0);
-    pl.position.set(lpx+0.9, 4.75, lpz);
-    streetLightGroup.add(pl);
+    // No per-lamp dynamic lights -- shared lights added after loop
   }
 }
 
@@ -802,7 +792,32 @@ function dBtn(id, key) {
 dBtn('btn-forward','forward'); dBtn('btn-back','back');
 dBtn('btn-left','left');       dBtn('btn-right','right');
 
+// 6 shared street point lights -- enough to light the streets, cheap on GPU
+// Placed at major intersections, wide radius
+var sharedLightPositions = [
+  [-HALF*0.5, 5, -HALF*0.5], [ HALF*0.5, 5, -HALF*0.5],
+  [-HALF*0.5, 5,  HALF*0.5], [ HALF*0.5, 5,  HALF*0.5],
+  [0, 5, 0], [0, 5, -HALF*0.5]
+];
+sharedLightPositions.forEach(function(p) {
+  var sl = new THREE.PointLight(0xffcc66, 5.0, 60, 0.8);
+  sl.position.set(p[0], p[1], p[2]);
+  streetLightGroup.add(sl);
+});
+
 // ---- Character drag (camera mode) ------------------------------------------
+// Helper: project character world position to screen pixels
+function charToScreen() {
+  var pos = new THREE.Vector3();
+  pos.copy(character.position);
+  pos.y += 0.9; // aim at roughly chest height
+  pos.project(camera);
+  return {
+    x: (pos.x * 0.5 + 0.5) * window.innerWidth,
+    y: (pos.y * -0.5 + 0.5) * window.innerHeight
+  };
+}
+
 var raycaster   = new THREE.Raycaster();
 var mouse2d     = new THREE.Vector2();
 var groundPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0); // Y=0 ground
@@ -829,12 +844,13 @@ renderer.domElement.addEventListener('pointermove', function(e) {
     return;
   }
 
-  // Hover detection -- change cursor and show tooltip when over character
+  // Hover detection -- use screen-space proximity (reliable for SkinnedMesh)
   if (character) {
-    raycaster.setFromCamera(mouse2d, camera);
-    var hits = raycaster.intersectObject(character, true);
     var tooltip = document.getElementById('hover-tooltip');
-    if (hits.length) {
+    var charScreen = charToScreen();
+    var dx2d = e.clientX - charScreen.x, dy2d = e.clientY - charScreen.y;
+    var screenDist = Math.sqrt(dx2d*dx2d + dy2d*dy2d);
+    if (screenDist < 60) {
       renderer.domElement.style.cursor = 'grab';
       tooltip.style.left = e.clientX + 'px';
       tooltip.style.top  = e.clientY + 'px';
@@ -852,22 +868,27 @@ renderer.domElement.addEventListener('pointerdown', function(e) {
     (e.clientX / window.innerWidth)  * 2 - 1,
    -(e.clientY / window.innerHeight) * 2 + 1
   );
-  raycaster.setFromCamera(mouse2d, camera);
-  var hits = raycaster.intersectObject(character, true);
-  if (hits.length > 0) {
+  var charScreen2 = charToScreen();
+  var pdx = e.clientX - charScreen2.x, pdy = e.clientY - charScreen2.y;
+  if (Math.sqrt(pdx*pdx + pdy*pdy) < 60) {
     isDragging = true;
     orbit.enabled = false;
     renderer.domElement.style.cursor = 'grabbing';
     dragHint.classList.add('visible');
     document.getElementById('hover-tooltip').classList.remove('visible');
-    // Store offset so character doesn't jump to cursor centre
-    var groundHit = new THREE.Vector3();
-    raycaster.ray.intersectPlane(groundPlane, groundHit);
-    dragOffset.set(
-      groundHit.x - character.position.x,
-      0,
-      groundHit.z - character.position.z
-    );
+    // Drag offset: zero so character snaps under cursor via ground projection
+    raycaster.setFromCamera(mouse2d, camera);
+    var groundHit2 = new THREE.Vector3();
+    var hitResult2 = raycaster.ray.intersectPlane(groundPlane, groundHit2);
+    if (hitResult2) {
+      dragOffset.set(
+        groundHit2.x - character.position.x,
+        0,
+        groundHit2.z - character.position.z
+      );
+    } else {
+      dragOffset.set(0, 0, 0);
+    }
     e.stopPropagation();
   }
 });
