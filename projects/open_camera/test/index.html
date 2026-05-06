@@ -211,13 +211,13 @@ canvas { display:block; }
   <div id="dpad">
     <div class="dpad-grid">
       <div class="dpad-empty"></div>
-      <div class="dpad-btn" id="btn-forward">&#8593;</div>
+      <div class="dpad-btn" id="btn-forward">W</div>
       <div class="dpad-empty"></div>
-      <div class="dpad-btn" id="btn-left">&#8592;</div>
+      <div class="dpad-btn" id="btn-left">A</div>
       <div class="dpad-center">CB</div>
-      <div class="dpad-btn" id="btn-right">&#8594;</div>
+      <div class="dpad-btn" id="btn-right">D</div>
       <div class="dpad-empty"></div>
-      <div class="dpad-btn" id="btn-back">&#8595;</div>
+      <div class="dpad-btn" id="btn-back">S</div>
       <div class="dpad-empty"></div>
     </div>
   </div>
@@ -385,11 +385,11 @@ function applyTime(t) {
     windowMeshes.forEach(function(w) {
       if (w.isLamp) {
         w.mesh.material.emissive = streetLightsOn ? new THREE.Color(0xffcc44) : new THREE.Color(0x000000);
-        w.mesh.material.emissiveIntensity = streetLightsOn ? 1.2 : 0;
+        w.mesh.material.emissiveIntensity = streetLightsOn ? 2.5 : 0;
         w.mesh.material.color.setHex(streetLightsOn ? 0xffee99 : 0x555540);
       } else {
         w.mesh.material.emissive = streetLightsOn ? new THREE.Color(0xff8822) : new THREE.Color(0x000000);
-        w.mesh.material.emissiveIntensity = streetLightsOn ? 0.8 : 0;
+        w.mesh.material.emissiveIntensity = streetLightsOn ? 1.8 : 0;
         w.mesh.material.color.setHex(streetLightsOn ? 0xffcc88 : 0x3a5566);
       }
       w.mesh.material.needsUpdate = true;
@@ -457,7 +457,7 @@ for (var gx=0; gx<GRID; gx++) for (var gz=0; gz<GRID; gz++) {
     dummy.scale.set(bw,bh,bd); dummy.updateMatrix();
     batches[bi].mats.push(dummy.matrix.clone());
     // Store flat AABB collider for this building
-    buildingBoxes.push({minX:px, maxX:px+bw, minZ:pz3, maxZ:pz3+bd});
+    buildingBoxes.push({minX:px, maxX:px+bw, minZ:pz3, maxZ:pz3+bd, h:bh});
   }
 }
 batches.forEach(function(batch) {
@@ -472,14 +472,14 @@ batches.forEach(function(batch) {
 // ---- Lampposts with real emissive lights ------------------------------------
 // Place at every road intersection: i*CELL-HALF for i=0..GRID on both axes
 var poleMat    = new THREE.MeshLambertMaterial({color:0x303035});
-var lampOffMat = new THREE.MeshLambertMaterial({color:0x555540});
-var lampOnMat  = new THREE.MeshLambertMaterial({color:0xffee99, emissive:new THREE.Color(0xffcc44), emissiveIntensity:1.2});
+var lampOffMat = new THREE.MeshLambertMaterial({color:0x444438});
+var lampOnMat  = new THREE.MeshLambertMaterial({color:0xffee99, emissive:new THREE.Color(0xffcc44), emissiveIntensity:2.5});
 var poleGeo    = new THREE.CylinderGeometry(0.055,0.07,4.8,6);
 var armGeo     = new THREE.CylinderGeometry(0.035,0.035,0.9,5);
 var globeGeo   = new THREE.SphereGeometry(0.18,8,6);
 
 // Building window emissive material (warm glow)
-var winOnMat  = new THREE.MeshLambertMaterial({color:0xffcc88, emissive:new THREE.Color(0xff8822), emissiveIntensity:0.8, transparent:true, opacity:0.85});
+var winOnMat  = new THREE.MeshLambertMaterial({color:0xffee99, emissive:new THREE.Color(0xffaa22), emissiveIntensity:1.8, transparent:true, opacity:0.95});
 var winOffMat = new THREE.MeshLambertMaterial({color:0x3a5566, transparent:true, opacity:0.5});
 var windowMeshes = []; // to toggle on/off
 
@@ -507,7 +507,7 @@ for (var gx=0; gx<=GRID; gx++) {
     windowMeshes.push({mesh:globe, isLamp:true});
 
     // Point light at globe position
-    var pl = new THREE.PointLight(0xffcc55, 3.5, 22, 1.8);
+    var pl = new THREE.PointLight(0xffcc55, 6.0, 18, 1.5);
     pl.position.set(lpx+0.9, 4.75, lpz);
     streetLightGroup.add(pl);
   }
@@ -520,7 +520,7 @@ for (var wi=0; wi<buildingBoxes.length; wi++) {
   var bww = bb2.maxX - bb2.minX;
   var bdw = bb2.maxZ - bb2.minZ;
   // Estimate height from average (we don't store it, use 8)
-  var bhw = 8;
+  var bhw = bb2.h || 8;
   var numWinRows = Math.max(1, Math.floor(bhw/3));
   var cx4 = (bb2.minX+bb2.maxX)/2, cz5 = (bb2.minZ+bb2.maxZ)/2;
 
@@ -656,7 +656,8 @@ function finishLoading() {
     el.style.opacity = '0';
     setTimeout(function(){ el.style.display='none'; }, 600);
   }, 300);
-  streetLightGroup.visible = streetLightsOn;
+  // Apply time so lights, windows and sky all initialise correctly
+  applyTime(parseFloat(document.getElementById('time-slider').value));
 }
 
 // ---- Pointer lock (walk mouse-look) ----------------------------------------
