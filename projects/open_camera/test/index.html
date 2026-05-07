@@ -226,6 +226,24 @@ canvas { display:block; }
   padding:11px 32px; cursor:pointer; transition:all 0.35s ease; pointer-events:all;
 }
 #enter-btn:hover { background:rgba(242,47,70,0.07); border-color:#F22F46; color:#F22F46; letter-spacing:0.45em; }
+
+/* ---- Game timer ----------------------------------------------------------- */
+#game-timer-wrap {
+  display:flex; align-items:center; gap:12px; margin-bottom:10px;
+}
+#game-timer-bar-bg {
+  flex:1; height:2px; background:rgba(255,255,255,0.07); overflow:hidden;
+}
+#game-timer-fill {
+  height:100%; width:100%; background:rgba(232,197,71,0.7);
+  transition:background 0.5s ease;
+}
+#game-timer-text {
+  color:rgba(255,255,255,0.3); font-size:8px; letter-spacing:0.2em;
+  font-family:'DM Mono',monospace; flex-shrink:0; min-width:30px; text-align:right;
+}
+#game-timer-text.urgent { color:#F22F46; }
+#overlay-status.fail { color:rgba(242,47,70,0.7); }
 </style>
 </head>
 <body>
@@ -273,6 +291,10 @@ canvas { display:block; }
 
     <!-- Phase 2: game canvas (hidden until play) -->
     <div id="overlay-phase-game">
+      <div id="game-timer-wrap">
+        <div id="game-timer-bar-bg"><div id="game-timer-fill"></div></div>
+        <span id="game-timer-text">2:00</span>
+      </div>
       <div id="overlay-game-area">
         <canvas id="game-canvas"></canvas>
       </div>
@@ -447,6 +469,36 @@ const HOTSPOTS=[
    game:'memory',instruction:'Flip and match all customer data pairs to reconstruct Maria\'s journey',solved:false,mesh:null,light:null,beacon:null,beaconMat:null}
 ];
 
+// ---- Validate hotspot positions — push any that land inside a building to clear ground ----
+(function validateHotspotPositions(){
+  var MARGIN=2.2; // clearance around building walls
+  function isBlocked(x,z){
+    for(var j=0;j<buildingBoxes.length;j++){
+      var bb=buildingBoxes[j];
+      if(x>bb.minX-MARGIN&&x<bb.maxX+MARGIN&&z>bb.minZ-MARGIN&&z<bb.maxZ+MARGIN)return true;
+    }
+    return false;
+  }
+  HOTSPOTS.forEach(function(h){
+    if(!isBlocked(h.pos.x,h.pos.z))return; // already clear
+    // Spiral outward search for first clear point
+    var found=false;
+    for(var r=1.5;r<=16&&!found;r+=1.5){
+      var steps=Math.max(8,Math.floor(r*6));
+      for(var s=0;s<steps&&!found;s++){
+        var a=s/steps*Math.PI*2;
+        var tx=h.pos.x+Math.cos(a)*r, tz=h.pos.z+Math.sin(a)*r;
+        if(!isBlocked(tx,tz)){h.pos.x=tx;h.pos.z=tz;found=true;}
+      }
+    }
+    // Absolute fallback: snap to nearest road midpoint (guaranteed clear)
+    if(!found){
+      var nearestRoadX=Math.round((h.pos.x+HALF)/CELL)*CELL-HALF;
+      h.pos.x=nearestRoadX; // road centreline
+    }
+  });
+})();
+
 // Accurate Twilio logo: ring + 4 dots in 2×2 grid, transparent-ready materials
 function createTwilioMarker(){
   const g=new THREE.Group();
@@ -609,6 +661,56 @@ function openHotspot(id){
   document.getElementById('overlay').classList.add('visible');
 }
 
+// ---- 120-second game timer --------------------------------------------------
+var gameTimerInterval=null, gameTimerStart=0;
+var GAME_TIME=120;
+
+function startGameTimer(){
+  clearInterval(gameTimerInterval);
+  gameTimerStart=Date.now();
+  var fill=document.getElementById('game-timer-fill');
+  var text=document.getElementById('game-timer-text');
+  if(fill)fill.style.width='100%';
+  gameTimerInterval=setInterval(function(){
+    var elapsed=(Date.now()-gameTimerStart)/1000;
+    var remaining=Math.max(0,GAME_TIME-elapsed);
+    var frac=remaining/GAME_TIME;
+    if(fill){
+      fill.style.width=(frac*100)+'%';
+      fill.style.background=remaining<25?'#F22F46':(remaining<50?'rgba(242,180,47,0.8)':'rgba(232,197,71,0.7)');
+    }
+    if(text){
+      var m=Math.floor(remaining/60), s=Math.floor(remaining%60);
+      text.textContent=m+':'+String(s).padStart(2,'0');
+      text.classList.toggle('urgent',remaining<25);
+    }
+    if(remaining<=0){
+      clearInterval(gameTimerInterval);
+      onGameTimeout();
+    }
+  },200);
+}
+
+function stopGameTimer(){
+  clearInterval(gameTimerInterval);
+}
+
+function onGameTimeout(){
+  if(stopCurrentGame){stopCurrentGame();stopCurrentGame=null;}
+  var st=document.getElementById('overlay-status');
+  st.textContent='✗ Time expired — try again'; st.className='fail';
+  var fill=document.getElementById('game-timer-fill');
+  if(fill){fill.style.width='0%';fill.style.background='rgba(242,47,70,0.3)';}
+  // Return to story phase after a beat so user can retry
+  setTimeout(function(){
+    if(!gamePaused)return; // overlay already closed
+    st.textContent='';
+    document.getElementById('overlay-phase-game').style.display='none';
+    document.getElementById('overlay-phase-story').style.display='block';
+    document.getElementById('play-btn').textContent='— Try Again —';
+  },1400);
+}
+
 window.startCurrentGame=function(){
   if(pendingHotspotId===null)return;
   var h=HOTSPOTS[pendingHotspotId];
@@ -622,25 +724,28 @@ window.startCurrentGame=function(){
   else{canvas.width=524;canvas.height=300;}
 
   stopCurrentGame=startGame(h.game,canvas,function(){onGameWin(pendingHotspotId);});
+  startGameTimer();
 };
 
 function onGameWin(id){
   var h=HOTSPOTS[id]; h.solved=true;
   updateMissions(id);
+  stopGameTimer();
   var st=document.getElementById('overlay-status');
   st.textContent='✓ CX node restored — signal flowing'; st.className='win';
-  // Start dissolve immediately (visible in world behind overlay)
-  dissolveHotspot(h);
   setTimeout(function(){
     _closeOverlay();
-    if(HOTSPOTS.every(function(hh){return hh.solved;}))setTimeout(showEndState,700);
-  },2000);
+    dissolveHotspot(h); // user now sees logo turn blue and fade in the world
+    if(HOTSPOTS.every(function(hh){return hh.solved;}))setTimeout(showEndState,1800);
+  },1800);
 }
 
 function _closeOverlay(){
   pendingHotspotId=null;
+  stopGameTimer();
   if(stopCurrentGame){stopCurrentGame();stopCurrentGame=null;}
   document.getElementById('overlay').classList.remove('visible');
+  document.getElementById('play-btn').textContent='— Play —';
   keys.forward=keys.back=keys.left=keys.right=false;
   gamePaused=false;
 }
