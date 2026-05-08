@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   /* Use dynamic viewport height so browser chrome doesn't shrink the canvas */
   body.is-mobile canvas,
@@ -15,6 +18,22 @@
     height: 100dvh !important;
     max-height: 100dvh !important;
   }
+</style>
+<!-- iOS homescreen hint (shown briefly on Safari, hidden elsewhere) -->
+<style>
+#ios-hint {
+  display:none; position:fixed; bottom:0; left:0; right:0; z-index:600;
+  background:rgba(6,8,16,0.95); border-top:1px solid rgba(242,47,70,0.3);
+  padding:14px 20px; text-align:center;
+  color:rgba(255,255,255,0.5); font-family:'DM Mono',monospace;
+  font-size:10px; letter-spacing:0.15em;
+}
+#ios-hint strong { color:rgba(242,47,70,0.8); }
+#ios-hint-close {
+  position:absolute; right:16px; top:50%; transform:translateY(-50%);
+  background:transparent; border:none; color:rgba(255,255,255,0.3);
+  font-size:18px; cursor:pointer; pointer-events:all;
+}
 </style>
 <title>Clarity Builder — The CX Field</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -402,6 +421,12 @@ body.is-mobile #proximity-prompt { font-size:12px; padding:12px 24px; bottom:160
 </head>
 <body>
 
+<!-- iOS add-to-homescreen hint -->
+<div id="ios-hint">
+  <strong>&#8679; Add to Home Screen</strong> for true fullscreen on iOS
+  <button id="ios-hint-close" onclick="document.getElementById('ios-hint').style.display='none'">&#215;</button>
+</div>
+
 <!-- Rotate prompt (portrait only on mobile) -->
 <div id="rotate-prompt">
   <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
@@ -435,11 +460,7 @@ body.is-mobile #proximity-prompt { font-size:12px; padding:12px 24px; bottom:160
   &#9679;<br>Investigate
 </div>
 
-<!-- Node compass — always-on direction hint -->
-<div id="node-compass">
-  <div id="compass-arrow">&#8593;</div>
-  <div id="compass-label">Nearest Node</div>
-</div>
+<!-- Node compass removed -->
 
 <!-- Loading / intro -->
 <div id="loading">
@@ -865,10 +886,18 @@ document.getElementById('enter-btn').addEventListener('click',function(){
   setTimeout(function(){loadEl.style.display='none';},750);
   if(isMobile){
     applyTime(0.4);
-    // Request fullscreen to hide browser chrome
-    var el=document.documentElement;
-    if(el.requestFullscreen) el.requestFullscreen();
-    else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    var isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if(isIOS){
+      // iOS Safari can't requestFullscreen — show add-to-homescreen hint
+      var hint=document.getElementById('ios-hint');
+      if(hint) hint.style.display='block';
+      setTimeout(function(){if(hint)hint.style.display='none';},6000);
+    } else {
+      // Android Chrome — requestFullscreen works
+      var el=document.documentElement;
+      if(el.requestFullscreen) el.requestFullscreen();
+      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    }
   }
 });
 
@@ -1181,12 +1210,13 @@ window.addEventListener('keydown',function(e){
 window.addEventListener('keyup',function(e){switch(e.key){case 'w':case 'W':case 'ArrowUp':keys.forward=false;break;case 's':case 'S':case 'ArrowDown':keys.back=false;break;case 'a':case 'A':case 'ArrowLeft':keys.left=false;break;case 'd':case 'D':case 'ArrowRight':keys.right=false;break;}});
 function dBtn(id,key){var el=document.getElementById(id);['pointerdown','touchstart'].forEach(function(ev){el.addEventListener(ev,function(e){e.preventDefault();keys[key]=true;el.classList.add('pressed');},{passive:false});});['pointerup','touchend','pointerleave'].forEach(function(ev){el.addEventListener(ev,function(){keys[key]=false;el.classList.remove('pressed');});});}
 dBtn('btn-forward','forward');dBtn('btn-back','back');dBtn('btn-left','left');dBtn('btn-right','right');
-// Mobile dpad
+// Mobile dpad — pure touch events, no pointerleave (fires spuriously on slide)
 if(isMobile){
   function mdBtn(id,key){
     var el=document.getElementById(id); if(!el)return;
-    ['pointerdown','touchstart'].forEach(function(ev){el.addEventListener(ev,function(e){e.preventDefault();keys[key]=true;el.classList.add('pressed');},{passive:false});});
-    ['pointerup','touchend','pointerleave','touchcancel'].forEach(function(ev){el.addEventListener(ev,function(){keys[key]=false;el.classList.remove('pressed');});});
+    el.addEventListener('touchstart',function(e){e.preventDefault();keys[key]=true;el.classList.add('pressed');},{passive:false});
+    el.addEventListener('touchend',function(e){e.preventDefault();keys[key]=false;el.classList.remove('pressed');},{passive:false});
+    el.addEventListener('touchcancel',function(){keys[key]=false;el.classList.remove('pressed');});
   }
   mdBtn('mb-forward','forward');mdBtn('mb-back','back');mdBtn('mb-left','left');mdBtn('mb-right','right');
 }
