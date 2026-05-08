@@ -346,15 +346,15 @@ body.is-mobile #mobile-dpad { display:block; }
 body.is-mobile #mobile-investigate { display:flex; }
 #mobile-investigate.visible { opacity:1; pointer-events:all; }
 
-/* Gyro button — hidden once granted, specificity fix */
+/* Gyro button — small, top-left corner, only on iOS */
 #gyro-btn {
-  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
-  z-index:400; background:rgba(6,8,16,0.95); border:1px solid rgba(242,47,70,0.4);
-  color:rgba(242,47,70,0.85); font-family:'DM Mono',monospace; font-size:11px;
-  letter-spacing:0.3em; text-transform:uppercase; padding:18px 32px; cursor:pointer;
-  pointer-events:all; text-align:center; line-height:1.8;
+  display:none; position:fixed; top:20px; left:50%; transform:translateX(-50%);
+  z-index:90; background:rgba(6,8,16,0.92); border:1px solid rgba(242,47,70,0.4);
+  color:rgba(242,47,70,0.85); font-family:'DM Mono',monospace; font-size:9px;
+  letter-spacing:0.2em; text-transform:uppercase; padding:10px 20px; cursor:pointer;
+  pointer-events:all; text-align:center; white-space:nowrap;
 }
-body.is-mobile #gyro-btn { display:block; }
+body.is-mobile.ios-device #gyro-btn { display:block; }
 body.is-mobile #gyro-btn.done { display:none !important; }
 
 /* Node compass — top right on mobile, clear of D-pad */
@@ -592,21 +592,28 @@ const scene=new THREE.Scene(); scene.fog=new THREE.Fog(0x8ab0d8,80,200);
 
 // ---- Mobile detection & setup -----------------------------------------------
 var isMobile=/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)||('ontouchstart' in window&&window.innerWidth<1024);
+var isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
 if(isMobile){
   document.body.classList.add('is-mobile');
+  if(isIOS) document.body.classList.add('ios-device');
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.5));
   renderer.shadowMap.enabled=false;
 }
 
 // ---- Gyroscope --------------------------------------------------------------
 var gyroEnabled=false,gyroYawBase=null,gyroPitchBase=null;
+
+// Android: auto-enable gyro, no permission needed
+if(isMobile&&!isIOS){ gyroEnabled=true; }
+
 window.requestGyro=function(){
+  // iOS only
   var btn=document.getElementById('gyro-btn');
   if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
     DeviceOrientationEvent.requestPermission().then(function(s){
       if(s==='granted'){gyroEnabled=true;btn.classList.add('done');}
-      else btn.textContent='Permission denied';
-    }).catch(function(){btn.textContent='Not supported';});
+      else{btn.textContent='Denied';setTimeout(function(){btn.classList.add('done');},1500);}
+    }).catch(function(){btn.classList.add('done');});
   } else { gyroEnabled=true; btn.classList.add('done'); }
 };
 window.addEventListener('deviceorientation',function(e){
@@ -907,7 +914,6 @@ document.getElementById('enter-btn').addEventListener('click',function(){
 var walkYaw=Math.PI,walkPitch=-.15,WALK_CAM_DIST=isMobile?10:7,WALK_CAM_HEIGHT=isMobile?2.8:1.8;
 var pointerLocked=false;
 if(!isMobile){
-  document.getElementById('gyro-btn').classList.add('done'); // hide on desktop
   document.addEventListener('pointerlockchange',function(){pointerLocked=!!document.pointerLockElement;document.getElementById('pointer-hint').classList.toggle('locked',pointerLocked);});
   renderer.domElement.addEventListener('click',function(){if(!pointerLocked&&!gamePaused)renderer.domElement.requestPointerLock();});
   document.addEventListener('mousemove',function(e){if(!pointerLocked||gamePaused)return;walkYaw-=e.movementX*.003;walkPitch-=e.movementY*.003;walkPitch=Math.max(-.6,Math.min(.5,walkPitch));});
