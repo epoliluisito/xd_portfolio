@@ -1217,23 +1217,53 @@ window.addEventListener('keydown',function(e){
 window.addEventListener('keyup',function(e){switch(e.key){case 'w':case 'W':case 'ArrowUp':keys.forward=false;break;case 's':case 'S':case 'ArrowDown':keys.back=false;break;case 'a':case 'A':case 'ArrowLeft':keys.left=false;break;case 'd':case 'D':case 'ArrowRight':keys.right=false;break;}});
 function dBtn(id,key){var el=document.getElementById(id);['pointerdown','touchstart'].forEach(function(ev){el.addEventListener(ev,function(e){e.preventDefault();keys[key]=true;el.classList.add('pressed');},{passive:false});});['pointerup','touchend','pointerleave'].forEach(function(ev){el.addEventListener(ev,function(){keys[key]=false;el.classList.remove('pressed');});});}
 dBtn('btn-forward','forward');dBtn('btn-back','back');dBtn('btn-left','left');dBtn('btn-right','right');
-// Mobile dpad — pointer capture prevents browser scroll from cancelling up-swipe
+// Mobile dpad — single zone-based handler on container, nothing can intercept it
 if(isMobile){
-  function mdBtn(id,key){
-    var el=document.getElementById(id); if(!el)return;
-    el.addEventListener('pointerdown',function(e){
-      e.preventDefault();
-      try{el.setPointerCapture(e.pointerId);}catch(ex){}
-      keys[key]=true; el.classList.add('pressed');
-    },{passive:false});
-    el.addEventListener('pointerup',function(e){
-      keys[key]=false; el.classList.remove('pressed');
-    });
-    el.addEventListener('pointercancel',function(e){
-      keys[key]=false; el.classList.remove('pressed');
-    });
+  var mdpad=document.getElementById('mobile-dpad');
+  if(mdpad){
+    var mdpadKeys={};
+    function mdpadSetKey(k,val){
+      if(k&&mdpadKeys[k]!==val){
+        mdpadKeys[k]=val;keys[k]=val;
+        var ids={forward:'mb-forward',back:'mb-back',left:'mb-left',right:'mb-right'};
+        var el=document.getElementById(ids[k]);
+        if(el)el.classList.toggle('pressed',val);
+      }
+    }
+    function mdpadKeyFromTouch(t){
+      var rect=mdpad.getBoundingClientRect();
+      var x=t.clientX-rect.left, y=t.clientY-rect.top;
+      var col=Math.floor(x/(rect.width/3));
+      var row=Math.floor(y/(rect.height/3));
+      if(row===0&&col===1)return'forward';
+      if(row===2&&col===1)return'back';
+      if(row===1&&col===0)return'left';
+      if(row===1&&col===2)return'right';
+      return null;
+    }
+    var activeTouches={};
+    mdpad.addEventListener('touchstart',function(e){
+      e.preventDefault();e.stopPropagation();
+      for(var i=0;i<e.changedTouches.length;i++){
+        var t=e.changedTouches[i];
+        var k=mdpadKeyFromTouch(t);
+        activeTouches[t.identifier]=k;
+        mdpadSetKey(k,true);
+      }
+    },{passive:false,capture:true});
+    mdpad.addEventListener('touchend',function(e){
+      e.preventDefault();e.stopPropagation();
+      for(var i=0;i<e.changedTouches.length;i++){
+        var id=e.changedTouches[i].identifier;
+        mdpadSetKey(activeTouches[id],false);
+        delete activeTouches[id];
+      }
+    },{passive:false,capture:true});
+    mdpad.addEventListener('touchcancel',function(e){
+      for(var k in mdpadKeys)mdpadSetKey(k,false);
+      activeTouches={};
+    },{passive:false,capture:true});
   }
-  mdBtn('mb-forward','forward');mdBtn('mb-back','back');mdBtn('mb-left','left');mdBtn('mb-right','right');
 }
 
 document.getElementById('time-slider').addEventListener('input',function(e){applyTime(parseFloat(e.target.value));});
