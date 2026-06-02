@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Environment - Three.js</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: sans-serif;
+            background-color: #87CEEB; /* Sky blue background */
+        }
+        /* The UI overlay before you click into the game */
+        #ui-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #ui-container h1 { font-size: 40px; margin-bottom: 10px; }
+        #ui-container p { font-size: 18px; }
+    </style>
+</head>
+<body>
+
+    <!-- UI Overlay for Pointer Lock -->
+    <div id="ui-container">
+        <h1>Click to Play</h1>
+        <p><b>WASD / Arrows</b> to move | <b>Mouse</b> to look around</p>
+        <p style="font-size: 14px; margin-top:20px; color:#aaa;">Press ESC to show mouse</p>
+    </div>
+
+    <!-- Import Three.js and GLTFLoader directly from unpkg -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // ==========================================
+        // 1. SCENE SETUP
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002); // Adds atmospheric depth
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Lighting
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+        hemiLight.position.set(0, 200, 0);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(100, 200, 50);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // ==========================================
+        // 2. LOADERS & VARIABLES
+        // ==========================================
+        const loader = new GLTFLoader();
+        const collidableObjects = []; // For ground detection
+        
+        // --- SCALE ADJUSTMENTS ---
+        // OSM maps and Mixamo characters are usually 1 unit = 1 meter. 
+        // If one looks like a giant, change these numbers (e.g., 0.01 or 100)
+        const WORLD_SCALE = 1.0; 
+        const CHARACTER_SCALE = 1.0; 
+
+        // Player Variables
+        const playerPivot = new THREE.Object3D(); // Handles Left/Right turning (Yaw)
+        const cameraPivot = new THREE.Object3D(); // Handles Up/Down looking (Pitch)
+        scene.add(playerPivot);
+        playerPivot.add(cameraPivot);
+        cameraPivot.add(camera);
+
+        // Position camera behind and slightly above the character (3rd Person)
+        camera.position.set(0, 0, 3); 
+        cameraPivot.position.set(0, 1.5, 0); 
+
+        let characterMixer;
+        let walkAction;
+
+        // Load the Character
+        loader.load('./clarity_builder.glb', (gltf) => {
+            const character = gltf.scene;
+            character.scale.set(CHARACTER_SCALE, CHARACTER_SCALE, CHARACTER_SCALE);
+            
+            // Make character cast shadows
+            character.traverse((child) => {
+                if (child.isMesh) child.castShadow = true;
+            });
+
+            // Ensure character faces away from the camera
+            character.rotation.y = Math.PI;
+            playerPivot.add(character);
+            playerPivot.position.set(0, 5, 0); // Start high, drop to ground
+
+            // Setup Animations (If clarity_builder has a walking animation)
+            if (gltf.animations.length > 0) {
+                characterMixer = new THREE.AnimationMixer(character);
+                walkAction = characterMixer.clipAction(gltf.animations[0]); 
+                walkAction.play();
+            }
+        }, undefined, (error) => console.error("Error loading character:", error));
+
+        // Load the World
+        loader.load('./shoreditch_z19.glb', (gltf) => {
+            const world = gltf.scene;
+            world.scale.set(WORLD_SCALE, WORLD_SCALE, WORLD_SCALE);
+            
+            world.traverse((child) => {
+                if (child.isMesh) {
+                    child.receiveShadow = true;
+                    collidableObjects.push(child); // Add to ground collision array
+                }
+            });
+            scene.add(world);
+        }, undefined, (error) => console.error("Error loading world:", error));
+
+        // ==========================================
+        // 3. POINTER LOCK & MOUSE CONTROLS
+        // ==========================================
+        const uiContainer = document.getElementById('ui-container');
+        let isLocked = false;
+
+        uiContainer.addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            isLocked = document.pointerLockElement === document.body;
+            uiContainer.style.display = isLocked ? 'none' : 'flex';
+        });
+
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        document.addEventListener('mousemove', (event) => {
+            if (!isLocked) return;
+
+            // Adjust mouse sensitivity here
+            const sensitivity = 0.002;
+
+            euler.setFromQuaternion(cameraPivot.quaternion);
+            
+            // Look up/down (Pitch) applied to Camera Pivot
+            euler.x -= event.movementY * sensitivity;
+            // Clamp looking up and down so you don't break your neck
+            euler.x = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, euler.x));
+            cameraPivot.quaternion.setFromEuler(euler);
+
+            // Look left/right (Yaw) applied to entire Player Pivot
+            playerPivot.rotation.y -= event.movementX * sensitivity;
+        });
+
+        // ==========================================
+        // 4. MOVEMENT & KEYBOARD
+        // ==========================================
+        const keys = { w: false, a: false, s: false, d: false };
+
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || key === 'arrowup') keys.w = true;
+            if (key === 'a' || key === 'arrowleft') keys.a = true;
+            if (key === 's' || key === 'arrowdown') keys.s = true;
+            if (key === 'd' || key === 'arrowright') keys.d = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || key === 'arrowup') keys.w = false;
+            if (key === 'a' || key === 'arrowleft') keys.a = false;
+            if (key === 's' || key === 'arrowdown') keys.s = false;
+            if (key === 'd' || key === 'arrowright') keys.d = false;
+        });
+
+        // ==========================================
+        // 5. ANIMATION & PHYSICS LOOP
+        // ==========================================
+        const clock = new THREE.Clock();
+        const raycaster = new THREE.Raycaster();
+        const downVector = new THREE.Vector3(0, -1, 0);
+        const playerSpeed = 5.0; // Meters per second
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            // Handle Character Animation
+            if (characterMixer) characterMixer.update(delta);
+
+            // Handle Movement
+            const isMoving = keys.w || keys.a || keys.s || keys.d;
+            
+            // Pause/Play animation based on movement
+            if (walkAction) {
+                if (isMoving && walkAction.paused) walkAction.paused = false;
+                else if (!isMoving && !walkAction.paused) walkAction.paused = true;
+            }
+
+            if (isMoving && isLocked) {
+                // Calculate movement direction relative to where character is looking
+                const moveZ = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+                const moveX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+                
+                const direction = new THREE.Vector3(moveX, 0, moveZ).normalize();
+                direction.applyQuaternion(playerPivot.quaternion); // Align with camera yaw
+
+                // Move character
+                playerPivot.position.addScaledVector(direction, playerSpeed * delta);
+            }
+
+            // Handle Ground Detection (Gravity / Snapping)
+            if (collidableObjects.length > 0) {
+                // Cast a ray from slightly above the player's feet straight down
+                const rayOrigin = playerPivot.position.clone();
+                rayOrigin.y += 2.0; // Start 2 meters above ground
+                raycaster.set(rayOrigin, downVector);
+                
+                const intersects = raycaster.intersectObjects(collidableObjects, false);
+                if (intersects.length > 0) {
+                    // Snap the player's Y position to the ground terrain/building height
+                    playerPivot.position.y = intersects[0].point.y;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle Window Resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
