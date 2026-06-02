@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Environment - Textured World</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: sans-serif;
+            background-color: #87CEEB; 
+        }
+        #ui-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #ui-container h1 { font-size: 40px; margin-bottom: 10px; }
+        #ui-container p { font-size: 18px; }
+        #loading-text { color: #f39c12; font-weight: bold; margin-bottom: 20px;}
+    </style>
+</head>
+<body>
+
+    <!-- UI Overlay -->
+    <div id="ui-container">
+        <div id="loading-text">Loading 3D Models and Textures...</div>
+        <h1>Click to Play</h1>
+        <p><b>WASD / Arrows</b> to move | <b>Mouse</b> to look around</p>
+        <p style="font-size: 14px; margin-top:20px; color:#ccc;">Press ESC to show mouse cursor</p>
+    </div>
+
+    <!-- Import Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'; 
+
+        // ==========================================
+        // 1. SCENE SETUP
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        
+        // Use physically correct lighting to make textures look better
+        renderer.useLegacyLights = false; 
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows for textured maps
+        document.body.appendChild(renderer.domElement);
+
+        // Ambient light to ensure textures aren't pitch black in shadows
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(100, 200, 50);
+        dirLight.castShadow = true;
+        
+        // Increase shadow map resolution for detailed textured buildings
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        // ==========================================
+        // 2. LOADERS & DRACO SETUP
+        // ==========================================
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/gltf/');
+
+        const loader = new GLTFLoader();
+        loader.setDRACOLoader(dracoLoader);
+
+        const collidableObjects = []; 
+        
+        // --- SCALE ADJUSTMENTS ---
+        const WORLD_SCALE = 1.0; 
+        const CHARACTER_SCALE = 1.0; 
+
+        // Player Variables
+        const playerPivot = new THREE.Object3D(); 
+        const cameraPivot = new THREE.Object3D(); 
+        scene.add(playerPivot);
+        playerPivot.add(cameraPivot);
+        cameraPivot.add(camera);
+
+        // Position Camera
+        camera.position.set(0, 2, 6); 
+        cameraPivot.position.set(0, 1.5, 0); 
+
+        let characterMixer;
+        let walkAction;
+
+        // Load the Character
+        loader.load('./clarity_builder.glb', (gltf) => {
+            const character = gltf.scene;
+            character.scale.set(CHARACTER_SCALE, CHARACTER_SCALE, CHARACTER_SCALE);
+            
+            character.traverse((child) => {
+                if (child.isMesh) child.castShadow = true;
+            });
+
+            character.rotation.y = Math.PI;
+            playerPivot.add(character);
+            playerPivot.position.set(0, 5, 0); 
+
+            if (gltf.animations.length > 0) {
+                characterMixer = new THREE.AnimationMixer(character);
+                walkAction = characterMixer.clipAction(gltf.animations[0]); 
+                walkAction.play();
+                walkAction.paused = true; 
+            }
+        }, undefined, (error) => console.error("Error loading character:", error));
+
+        // Load the Textured World
+        loader.load('./shoreditch_textured.glb', (gltf) => {
+            const world = gltf.scene;
+            world.scale.set(WORLD_SCALE, WORLD_SCALE, WORLD_SCALE);
+            
+            world.traverse((child) => {
+                if (child.isMesh) {
+                    child.receiveShadow = true;
+                    // Optional: sometimes map exports have weird material shininess. 
+                    // This smooths them out slightly if they look like plastic:
+                    if(child.material) {
+                        child.material.roughness = 0.8; 
+                    }
+                    collidableObjects.push(child); 
+                }
+            });
+            scene.add(world);
+
+            // Hide loading text once the heavy world finishes loading
+            document.getElementById('loading-text').style.display = 'none';
+
+        }, undefined, (error) => console.error("Error loading world:", error));
+
+        // ==========================================
+        // 3. POINTER LOCK & MOUSE CONTROLS
+        // ==========================================
+        const uiContainer = document.getElementById('ui-container');
+        let isLocked = false;
+
+        uiContainer.addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            isLocked = document.pointerLockElement === document.body;
+            uiContainer.style.display = isLocked ? 'none' : 'flex';
+        });
+
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        document.addEventListener('mousemove', (event) => {
+            if (!isLocked) return;
+
+            const sensitivity = 0.002;
+
+            euler.setFromQuaternion(cameraPivot.quaternion);
+            
+            euler.x -= event.movementY * sensitivity;
+            euler.x = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, euler.x));
+            cameraPivot.quaternion.setFromEuler(euler);
+
+            playerPivot.rotation.y -= event.movementX * sensitivity;
+        });
+
+        // ==========================================
+        // 4. MOVEMENT CONTROLS
+        // ==========================================
+        const keys = { w: false, a: false, s: false, d: false };
+
+        document.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || key === 'arrowup') keys.w = true;
+            if (key === 'a' || key === 'arrowleft') keys.a = true;
+            if (key === 's' || key === 'arrowdown') keys.s = true;
+            if (key === 'd' || key === 'arrowright') keys.d = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || key === 'arrowup') keys.w = false;
+            if (key === 'a' || key === 'arrowleft') keys.a = false;
+            if (key === 's' || key === 'arrowdown') keys.s = false;
+            if (key === 'd' || key === 'arrowright') keys.d = false;
+        });
+
+        // ==========================================
+        // 5. ANIMATION & PHYSICS LOOP
+        // ==========================================
+        const clock = new THREE.Clock();
+        const raycaster = new THREE.Raycaster();
+        const downVector = new THREE.Vector3(0, -1, 0);
+        const playerSpeed = 5.0; 
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (characterMixer) characterMixer.update(delta);
+
+            const isMoving = keys.w || keys.a || keys.s || keys.d;
+            
+            if (walkAction) {
+                if (isMoving && walkAction.paused) walkAction.paused = false;
+                else if (!isMoving && !walkAction.paused) walkAction.paused = true;
+            }
+
+            if (isMoving && isLocked) {
+                const moveZ = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+                const moveX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+                
+                const direction = new THREE.Vector3(moveX, 0, moveZ).normalize();
+                direction.applyQuaternion(playerPivot.quaternion); 
+                playerPivot.position.addScaledVector(direction, playerSpeed * delta);
+            }
+
+            if (collidableObjects.length > 0) {
+                const rayOrigin = playerPivot.position.clone();
+                rayOrigin.y += 2.0; 
+                raycaster.set(rayOrigin, downVector);
+                
+                const intersects = raycaster.intersectObjects(collidableObjects, false);
+                if (intersects.length > 0) {
+                    playerPivot.position.y = intersects[0].point.y; 
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
