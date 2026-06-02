@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Environment - Textured World</title>
+    <title>3D Environment - Dynamic World</title>
     <style>
         body { 
             margin: 0; 
             overflow: hidden; 
             font-family: sans-serif;
-            background-color: #87CEEB; 
         }
+        /* Pre-game overlay */
         #ui-container {
             position: absolute;
             width: 100%;
@@ -27,19 +27,40 @@
         #ui-container h1 { font-size: 40px; margin-bottom: 10px; }
         #ui-container p { font-size: 18px; }
         #loading-text { color: #f39c12; font-weight: bold; margin-bottom: 20px;}
+        
+        /* In-game HUD */
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px 20px;
+            border-radius: 8px;
+            display: none; /* Hidden until game starts */
+            z-index: 5;
+            pointer-events: none;
+        }
+        #hud h3 { margin: 0 0 5px 0; font-size: 18px; color: #f39c12; }
+        #hud p { margin: 5px 0; font-size: 14px; }
     </style>
 </head>
 <body>
 
-    <!-- UI Overlay -->
+    <!-- Pre-game UI -->
     <div id="ui-container">
         <div id="loading-text">Loading 3D Models and Textures...</div>
         <h1>Click to Play</h1>
-        <p><b>WASD / Arrows</b> to move | <b>Mouse</b> to look around</p>
-        <p style="font-size: 14px; margin-top:20px; color:#ccc;">Press ESC to show mouse cursor</p>
+        <p><b>WASD / Arrows</b> to move | <b>Mouse</b> to look</p>
     </div>
 
-    <!-- Import Three.js -->
+    <!-- In-game UI -->
+    <div id="hud">
+        <h3 id="time-display">Time: Day</h3>
+        <p>Press <b>'T'</b> to toggle Time of Day</p>
+        <p>Press <b>ESC</b> to unlock mouse</p>
+    </div>
+
     <script type="importmap">
         {
             "imports": {
@@ -55,47 +76,67 @@
         import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'; 
 
         // ==========================================
-        // 1. SCENE SETUP
+        // 1. SCENE & DYNAMIC LIGHTING SETUP
         // ==========================================
         const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
         scene.fog = new THREE.FogExp2(0x87CEEB, 0.002);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        
-        // Use physically correct lighting to make textures look better
         renderer.useLegacyLights = false; 
         renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows for textured maps
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         document.body.appendChild(renderer.domElement);
 
-        // Ambient light to ensure textures aren't pitch black in shadows
+        // Core Lights
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
         scene.add(ambientLight);
 
         const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
         dirLight.position.set(100, 200, 50);
         dirLight.castShadow = true;
-        
-        // Increase shadow map resolution for detailed textured buildings
         dirLight.shadow.mapSize.width = 2048;
         dirLight.shadow.mapSize.height = 2048;
         scene.add(dirLight);
 
+        // --- TIME OF DAY SYSTEM ---
+        const timeCycles = [
+            { name: 'Day', sky: 0x87CEEB, amb: 0xffffff, sunCol: 0xffffff, sunInt: 1.5, sunPos: [100, 200, 50] },
+            { name: 'Sunset', sky: 0xff6347, amb: 0x886666, sunCol: 0xff4500, sunInt: 1.2, sunPos: [-100, 50, -50] },
+            { name: 'Dusk', sky: 0x2c1b4d, amb: 0x332244, sunCol: 0x8a2be2, sunInt: 0.5, sunPos: [-100, -10, -50] },
+            { name: 'Night (Dark)', sky: 0x020208, amb: 0x111122, sunCol: 0x444488, sunInt: 0.2, sunPos: [0, 100, 0] },
+            { name: 'Dawn', sky: 0xffa07a, amb: 0x665555, sunCol: 0xff8c00, sunInt: 0.9, sunPos: [100, 30, 50] }
+        ];
+        let currentTimeIndex = 0; // Starts at Day
+
+        function setTimeOfDay(index) {
+            const t = timeCycles[index];
+            // Update Colors
+            scene.background.set(t.sky);
+            scene.fog.color.set(t.sky);
+            ambientLight.color.set(t.amb);
+            dirLight.color.set(t.sunCol);
+            
+            // Update Intensities & Position
+            dirLight.intensity = t.sunInt;
+            dirLight.position.set(t.sunPos[0], t.sunPos[1], t.sunPos[2]);
+
+            // Update UI Text
+            document.getElementById('time-display').innerText = `Time: ${t.name}`;
+        }
+
         // ==========================================
-        // 2. LOADERS & DRACO SETUP
+        // 2. LOADERS & VARIABLES
         // ==========================================
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/gltf/');
-
         const loader = new GLTFLoader();
         loader.setDRACOLoader(dracoLoader);
 
         const collidableObjects = []; 
-        
-        // --- SCALE ADJUSTMENTS ---
         const WORLD_SCALE = 1.0; 
         const CHARACTER_SCALE = 1.0; 
 
@@ -105,15 +146,24 @@
         scene.add(playerPivot);
         playerPivot.add(cameraPivot);
         cameraPivot.add(camera);
-
-        // Position Camera
+        
         camera.position.set(0, 2, 6); 
         cameraPivot.position.set(0, 1.5, 0); 
 
+        // --- ANIMATION SYSTEM ---
         let characterMixer;
-        let walkAction;
+        let idleAction, walkAction;
+        let currentAction;
 
-        // Load the Character
+        // Blends smoothly from one animation to another
+        function fadeToAction(nextAction, duration = 0.2) {
+            if (currentAction === nextAction) return; // Already playing
+            nextAction.reset().fadeIn(duration).play();
+            if (currentAction) currentAction.fadeOut(duration);
+            currentAction = nextAction;
+        }
+
+        // Load Character
         loader.load('./clarity_builder.glb', (gltf) => {
             const character = gltf.scene;
             character.scale.set(CHARACTER_SCALE, CHARACTER_SCALE, CHARACTER_SCALE);
@@ -122,19 +172,31 @@
                 if (child.isMesh) child.castShadow = true;
             });
 
-            character.rotation.y = Math.PI;
+            character.rotation.y = Math.PI; // Face away
             playerPivot.add(character);
             playerPivot.position.set(0, 5, 0); 
 
+            // Setup Animations
             if (gltf.animations.length > 0) {
                 characterMixer = new THREE.AnimationMixer(character);
-                walkAction = characterMixer.clipAction(gltf.animations[0]); 
-                walkAction.play();
-                walkAction.paused = true; 
+                
+                // Smart search: Find animations by name (e.g. "idle", "walk", "run")
+                let idleAnim = gltf.animations.find(a => a.name.toLowerCase().includes('idle')) || gltf.animations[0];
+                let walkAnim = gltf.animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
+                
+                // Fallback: If only 1 animation exists or names don't match, use index 1 or fallback to idle
+                if (!walkAnim) walkAnim = gltf.animations.length > 1 ? gltf.animations[1] : idleAnim;
+
+                idleAction = characterMixer.clipAction(idleAnim);
+                walkAction = characterMixer.clipAction(walkAnim);
+
+                // Start in idle
+                idleAction.play();
+                currentAction = idleAction;
             }
         }, undefined, (error) => console.error("Error loading character:", error));
 
-        // Load the Textured World
+        // Load Textured World
         loader.load('./shoreditch_textured.glb', (gltf) => {
             const world = gltf.scene;
             world.scale.set(WORLD_SCALE, WORLD_SCALE, WORLD_SCALE);
@@ -142,25 +204,21 @@
             world.traverse((child) => {
                 if (child.isMesh) {
                     child.receiveShadow = true;
-                    // Optional: sometimes map exports have weird material shininess. 
-                    // This smooths them out slightly if they look like plastic:
-                    if(child.material) {
-                        child.material.roughness = 0.8; 
-                    }
+                    // Slightly reduce material shininess for map textures
+                    if(child.material) child.material.roughness = 0.8; 
                     collidableObjects.push(child); 
                 }
             });
             scene.add(world);
 
-            // Hide loading text once the heavy world finishes loading
             document.getElementById('loading-text').style.display = 'none';
-
         }, undefined, (error) => console.error("Error loading world:", error));
 
         // ==========================================
-        // 3. POINTER LOCK & MOUSE CONTROLS
+        // 3. UI, POINTER LOCK & INPUT CONTROLS
         // ==========================================
         const uiContainer = document.getElementById('ui-container');
+        const hud = document.getElementById('hud');
         let isLocked = false;
 
         uiContainer.addEventListener('click', () => {
@@ -170,14 +228,13 @@
         document.addEventListener('pointerlockchange', () => {
             isLocked = document.pointerLockElement === document.body;
             uiContainer.style.display = isLocked ? 'none' : 'flex';
+            hud.style.display = isLocked ? 'block' : 'none'; // Show HUD when playing
         });
 
         const euler = new THREE.Euler(0, 0, 0, 'YXZ');
         document.addEventListener('mousemove', (event) => {
             if (!isLocked) return;
-
             const sensitivity = 0.002;
-
             euler.setFromQuaternion(cameraPivot.quaternion);
             
             euler.x -= event.movementY * sensitivity;
@@ -188,7 +245,7 @@
         });
 
         // ==========================================
-        // 4. MOVEMENT CONTROLS
+        // 4. KEYBOARD LOGIC
         // ==========================================
         const keys = { w: false, a: false, s: false, d: false };
 
@@ -206,6 +263,12 @@
             if (key === 'a' || key === 'arrowleft') keys.a = false;
             if (key === 's' || key === 'arrowdown') keys.s = false;
             if (key === 'd' || key === 'arrowright') keys.d = false;
+
+            // TOGGLE TIME OF DAY
+            if (key === 't' && isLocked) {
+                currentTimeIndex = (currentTimeIndex + 1) % timeCycles.length;
+                setTimeOfDay(currentTimeIndex);
+            }
         });
 
         // ==========================================
@@ -220,15 +283,20 @@
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
 
+            // Update Animation Mixer
             if (characterMixer) characterMixer.update(delta);
 
+            // Handle Idle/Walk Transitions
             const isMoving = keys.w || keys.a || keys.s || keys.d;
-            
-            if (walkAction) {
-                if (isMoving && walkAction.paused) walkAction.paused = false;
-                else if (!isMoving && !walkAction.paused) walkAction.paused = true;
+            if (walkAction && idleAction) {
+                if (isMoving && currentAction !== walkAction) {
+                    fadeToAction(walkAction, 0.2); // 0.2 seconds fade to walk
+                } else if (!isMoving && currentAction !== idleAction) {
+                    fadeToAction(idleAction, 0.3); // 0.3 seconds fade to idle
+                }
             }
 
+            // Move Character Physics
             if (isMoving && isLocked) {
                 const moveZ = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
                 const moveX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
@@ -238,6 +306,7 @@
                 playerPivot.position.addScaledVector(direction, playerSpeed * delta);
             }
 
+            // Snap Character to Ground Floor
             if (collidableObjects.length > 0) {
                 const rayOrigin = playerPivot.position.clone();
                 rayOrigin.y += 2.0; 
