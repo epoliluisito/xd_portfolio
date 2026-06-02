@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Environment - Three.js</title>
+    <title>3D Environment - Third Person</title>
     <style>
         body { 
             margin: 0; 
@@ -16,7 +16,7 @@
             position: absolute;
             width: 100%;
             height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
+            background-color: rgba(0, 0, 0, 0.6);
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -35,10 +35,10 @@
     <div id="ui-container">
         <h1>Click to Play</h1>
         <p><b>WASD / Arrows</b> to move | <b>Mouse</b> to look around</p>
-        <p style="font-size: 14px; margin-top:20px; color:#aaa;">Press ESC to show mouse</p>
+        <p style="font-size: 14px; margin-top:20px; color:#ccc;">Press ESC to show mouse cursor</p>
     </div>
 
-    <!-- Import Three.js and GLTFLoader directly from unpkg -->
+    <!-- Import Three.js and Loaders directly from unpkg -->
     <script type="importmap">
         {
             "imports": {
@@ -51,12 +51,13 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js'; // <-- Added Draco
 
         // ==========================================
         // 1. SCENE SETUP
         // ==========================================
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002); // Adds atmospheric depth
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         
@@ -76,26 +77,33 @@
         scene.add(dirLight);
 
         // ==========================================
-        // 2. LOADERS & VARIABLES
+        // 2. LOADERS & DRACO DECODER SETUP
         // ==========================================
+        
+        // Setup Draco to decompress your optimized GLB files
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/gltf/');
+
+        // Attach Draco to the standard GLTF Loader
         const loader = new GLTFLoader();
+        loader.setDRACOLoader(dracoLoader);
+
         const collidableObjects = []; // For ground detection
         
         // --- SCALE ADJUSTMENTS ---
-        // OSM maps and Mixamo characters are usually 1 unit = 1 meter. 
-        // If one looks like a giant, change these numbers (e.g., 0.01 or 100)
+        // If your character is a giant, change CHARACTER_SCALE to 0.01
         const WORLD_SCALE = 1.0; 
         const CHARACTER_SCALE = 1.0; 
 
         // Player Variables
-        const playerPivot = new THREE.Object3D(); // Handles Left/Right turning (Yaw)
-        const cameraPivot = new THREE.Object3D(); // Handles Up/Down looking (Pitch)
+        const playerPivot = new THREE.Object3D(); // Handles Left/Right turning
+        const cameraPivot = new THREE.Object3D(); // Handles Up/Down looking
         scene.add(playerPivot);
         playerPivot.add(cameraPivot);
         cameraPivot.add(camera);
 
-        // Position camera behind and slightly above the character (3rd Person)
-        camera.position.set(0, 0, 3); 
+        // POSITION CAMERA: (X, Y, Z) - Pulled back 6 meters, up 2 meters
+        camera.position.set(0, 2, 6); 
         cameraPivot.position.set(0, 1.5, 0); 
 
         let characterMixer;
@@ -114,13 +122,14 @@
             // Ensure character faces away from the camera
             character.rotation.y = Math.PI;
             playerPivot.add(character);
-            playerPivot.position.set(0, 5, 0); // Start high, drop to ground
+            playerPivot.position.set(0, 5, 0); // Start slightly up in the air
 
-            // Setup Animations (If clarity_builder has a walking animation)
+            // Setup Animations 
             if (gltf.animations.length > 0) {
                 characterMixer = new THREE.AnimationMixer(character);
                 walkAction = characterMixer.clipAction(gltf.animations[0]); 
                 walkAction.play();
+                walkAction.paused = true; // Start paused until player moves
             }
         }, undefined, (error) => console.error("Error loading character:", error));
 
@@ -132,7 +141,7 @@
             world.traverse((child) => {
                 if (child.isMesh) {
                     child.receiveShadow = true;
-                    collidableObjects.push(child); // Add to ground collision array
+                    collidableObjects.push(child); // Add to ground collision
                 }
             });
             scene.add(world);
@@ -157,18 +166,16 @@
         document.addEventListener('mousemove', (event) => {
             if (!isLocked) return;
 
-            // Adjust mouse sensitivity here
             const sensitivity = 0.002;
 
             euler.setFromQuaternion(cameraPivot.quaternion);
             
-            // Look up/down (Pitch) applied to Camera Pivot
+            // Look up/down (Pitch)
             euler.x -= event.movementY * sensitivity;
-            // Clamp looking up and down so you don't break your neck
-            euler.x = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, euler.x));
+            euler.x = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, euler.x)); // Clamp neck
             cameraPivot.quaternion.setFromEuler(euler);
 
-            // Look left/right (Yaw) applied to entire Player Pivot
+            // Look left/right (Yaw)
             playerPivot.rotation.y -= event.movementX * sensitivity;
         });
 
@@ -205,41 +212,37 @@
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
 
-            // Handle Character Animation
+            // Handle Character Animation update
             if (characterMixer) characterMixer.update(delta);
 
-            // Handle Movement
+            // Check if user is pressing movement keys
             const isMoving = keys.w || keys.a || keys.s || keys.d;
             
-            // Pause/Play animation based on movement
+            // Play or Pause animation
             if (walkAction) {
                 if (isMoving && walkAction.paused) walkAction.paused = false;
                 else if (!isMoving && !walkAction.paused) walkAction.paused = true;
             }
 
+            // Move the player
             if (isMoving && isLocked) {
-                // Calculate movement direction relative to where character is looking
                 const moveZ = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
                 const moveX = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
                 
                 const direction = new THREE.Vector3(moveX, 0, moveZ).normalize();
-                direction.applyQuaternion(playerPivot.quaternion); // Align with camera yaw
-
-                // Move character
+                direction.applyQuaternion(playerPivot.quaternion); 
                 playerPivot.position.addScaledVector(direction, playerSpeed * delta);
             }
 
-            // Handle Ground Detection (Gravity / Snapping)
+            // Snap Player to Ground
             if (collidableObjects.length > 0) {
-                // Cast a ray from slightly above the player's feet straight down
                 const rayOrigin = playerPivot.position.clone();
-                rayOrigin.y += 2.0; // Start 2 meters above ground
+                rayOrigin.y += 2.0; // Cast ray from 2 meters above feet
                 raycaster.set(rayOrigin, downVector);
                 
                 const intersects = raycaster.intersectObjects(collidableObjects, false);
                 if (intersects.length > 0) {
-                    // Snap the player's Y position to the ground terrain/building height
-                    playerPivot.position.y = intersects[0].point.y;
+                    playerPivot.position.y = intersects[0].point.y; // Snap to ground height
                 }
             }
 
