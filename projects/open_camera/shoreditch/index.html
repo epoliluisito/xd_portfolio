@@ -63,7 +63,7 @@
     transition:opacity .5s ease; }
   #startMsg.ready { opacity:1; animation:pulse 2.2s infinite; }
   @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.18)} 50%{box-shadow:0 0 0 12px rgba(255,255,255,0)} }
-  #glbWarn { color:#e8a13d; font-size:11px; letter-spacing:.14em; max-width:420px; text-align:center; line-height:1.8; display:none; }
+  #glbWarn { color:#e8a13d; font-size:10px; letter-spacing:.14em; max-width:420px; text-align:center; line-height:1.8; display:none; }
 </style>
 </head>
 <body>
@@ -103,6 +103,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /* =====================================================================
    SHOREDITCH WALKABLE — single-file build
+   Layout (metres, world XZ):
+     Shoreditch High Street : N–S road, x = 0, width 13
+     Bethnal Green Road     : E–W road, z = 0, width 11
+     Redchurch Street       : E–W road, z = 78, width 8
+     Brick Lane             : N–S road, x = 84, width 7
+     Overground viaduct     : E–W brick viaduct crossing at z = -52
+     Boxpark                : black containers, west side, z 8..60
 ===================================================================== */
 
 const TAU = Math.PI*2;
@@ -148,6 +155,7 @@ function tex(canvas, repX=1, repY=1, srgb=true){
   return t;
 }
 
+// --- London stock brick (yellow/brown) & red Victorian brick ---
 function brickCanvas(base, mortar, jitter=18, sootAmount=0.15){
   const c = makeCanvas(512,512), x = c.getContext('2d');
   x.fillStyle = mortar; x.fillRect(0,0,512,512);
@@ -158,12 +166,13 @@ function brickCanvas(base, mortar, jitter=18, sootAmount=0.15){
       const r = base[0]+rand(-jitter,jitter), gr = base[1]+rand(-jitter,jitter), b = base[2]+rand(-jitter,jitter);
       x.fillStyle = `rgb(${r|0},${gr|0},${b|0})`;
       x.fillRect(col*bw+off+g/2, row*bh+g/2, bw-g, bh-g);
-      if(Math.random()<0.18){
+      if(Math.random()<0.18){ // weathered brick
         x.fillStyle = `rgba(40,32,28,${rand(.1,.35)})`;
         x.fillRect(col*bw+off+g/2, row*bh+g/2, bw-g, bh-g);
       }
     }
   }
+  // soot streaks / grime
   x.globalAlpha = sootAmount;
   for(let i=0;i<26;i++){
     const gx = rand(0,512);
@@ -174,12 +183,13 @@ function brickCanvas(base, mortar, jitter=18, sootAmount=0.15){
   x.globalAlpha = 1;
   return c;
 }
-const stockBrick = brickCanvas([176,148,108], '#8d8270', 22, .22);
-const redBrick   = brickCanvas([146,72,56],  '#9a8d7c', 16, .18);
-const darkBrick  = brickCanvas([88,70,62],   '#6e655c', 14, .3);
-const paintedBrickW = brickCanvas([228,224,214], '#b9b4a8', 8, .1);
-const paintedBrickK = brickCanvas([38,38,42],  '#2c2c30', 6, .08);
+const stockBrick = brickCanvas([176,148,108], '#8d8270', 22, .22);   // London stock
+const redBrick   = brickCanvas([146,72,56],  '#9a8d7c', 16, .18);    // Victorian red
+const darkBrick  = brickCanvas([88,70,62],   '#6e655c', 14, .3);     // sooted viaduct brick
+const paintedBrickW = brickCanvas([228,224,214], '#b9b4a8', 8, .1);  // white-painted brick
+const paintedBrickK = brickCanvas([38,38,42],  '#2c2c30', 6, .08);   // black-painted brick
 
+// --- asphalt with patches ---
 function asphaltCanvas(){
   const c = makeCanvas(512,512), x=c.getContext('2d');
   x.fillStyle='#2a2a2c'; x.fillRect(0,0,512,512);
@@ -187,7 +197,7 @@ function asphaltCanvas(){
     const v=randi(28,62); x.fillStyle=`rgba(${v},${v},${v+2},.5)`;
     x.fillRect(rand(0,512),rand(0,512),rand(1,2.5),rand(1,2.5));
   }
-  for(let i=0;i<10;i++){
+  for(let i=0;i<10;i++){ // tar patches & cracks
     x.strokeStyle='rgba(12,12,14,.55)'; x.lineWidth=rand(2,5); x.beginPath();
     let px=rand(0,512), py=rand(0,512); x.moveTo(px,py);
     for(let s=0;s<6;s++){ px+=rand(-60,60); py+=rand(-60,60); x.lineTo(px,py); }
@@ -197,6 +207,7 @@ function asphaltCanvas(){
 }
 const asphalt = asphaltCanvas();
 
+// --- pavement: London concrete slabs ---
 function pavingCanvas(){
   const c=makeCanvas(512,512), x=c.getContext('2d');
   x.fillStyle='#76736c'; x.fillRect(0,0,512,512);
@@ -209,17 +220,21 @@ function pavingCanvas(){
   }
   for(let i=0;i<3000;i++){ const v=randi(80,140);
     x.fillStyle=`rgba(${v},${v},${v},.35)`; x.fillRect(rand(0,512),rand(0,512),1.5,1.5); }
+  // chewing gum — peak Shoreditch realism
   for(let i=0;i<40;i++){ x.fillStyle=`rgba(${randi(50,80)},${randi(48,76)},${randi(46,70)},.8)`;
     x.beginPath(); x.arc(rand(0,512),rand(0,512),rand(2,4),0,TAU); x.fill(); }
   return c;
 }
 const paving = pavingCanvas();
 
+// --- graffiti / street-art mural generator ---
 const SPRAY = ['#ff3b6b','#27d3f5','#ffd23f','#9b5bff','#3bf08a','#ff7a1a','#ffffff','#1ad1ff','#ff2e9a'];
 function muralCanvas(w=512,h=512){
   const c=makeCanvas(w,h), x=c.getContext('2d');
+  // base wall colour
   x.fillStyle = pick(['#1c1d22','#26282e','#3a2f2c','#14161a']);
   x.fillRect(0,0,w,h);
+  // huge colour fields
   for(let i=0;i<randi(3,5);i++){
     x.fillStyle = pick(SPRAY); x.globalAlpha = rand(.55,.9);
     x.beginPath();
@@ -227,6 +242,7 @@ function muralCanvas(w=512,h=512){
     x.fill();
   }
   x.globalAlpha = 1;
+  // bold wildstyle strokes
   for(let i=0;i<randi(8,14);i++){
     x.strokeStyle = pick(SPRAY); x.lineWidth = rand(8,26); x.lineCap='round'; x.beginPath();
     let px=rand(0,w), py=rand(0,h); x.moveTo(px,py);
@@ -235,18 +251,21 @@ function muralCanvas(w=512,h=512){
     }
     x.stroke();
   }
+  // black outline pass
   for(let i=0;i<randi(4,7);i++){
     x.strokeStyle = 'rgba(8,8,10,.85)'; x.lineWidth = rand(4,9); x.beginPath();
     let px=rand(0,w), py=rand(0,h); x.moveTo(px,py);
     for(let s=0;s<3;s++) x.lineTo(px+=rand(-180,180), py+=rand(-140,140));
     x.stroke();
   }
+  // drips
   for(let i=0;i<60;i++){
     x.fillStyle = pick(SPRAY); x.globalAlpha=rand(.25,.7);
     const dx=rand(0,w), dy=rand(0,h);
     x.fillRect(dx,dy,rand(1.5,3),rand(8,50));
   }
   x.globalAlpha=1;
+  // tags
   x.font = `italic 700 ${randi(28,44)}px Helvetica`;
   for(let i=0;i<randi(3,6);i++){
     x.fillStyle = pick(SPRAY);
@@ -258,7 +277,7 @@ function muralCanvas(w=512,h=512){
 }
 
 /* =====================================================================
-   FACADE GENERATOR
+   FACADE GENERATOR — windows baked into brick texture + emissive map
 ===================================================================== */
 function facadeMaps(floors, bays, brickSrc, opts={}){
   const W=512, H=512;
@@ -269,7 +288,7 @@ function facadeMaps(floors, bays, brickSrc, opts={}){
 
   const shopfront = opts.shopfront !== false;
   const groundH = shopfront ? H*0.24 : 0;
-  const upperH = H - groundH;
+  const upperH = H - groundH;                    // canvas Y grows downward; ground floor at bottom
   const fH = upperH / floors;
   const bayW = W / bays;
   const winW = bayW*0.46, winH = fH*0.58;
@@ -280,11 +299,14 @@ function facadeMaps(floors, bays, brickSrc, opts={}){
       if(Math.random()<(opts.skip||0.04)) continue;
       const wx = b*bayW + (bayW-winW)/2;
       const wy = f*fH + (fH-winH)/2;
+      // stone lintel + sill
       dx.fillStyle = opts.lintel||'#b8ad98';
       dx.fillRect(wx-4, wy-7, winW+8, 6);
       dx.fillRect(wx-5, wy+winH+1, winW+10, 5);
+      // frame
       dx.fillStyle = opts.frame||'#dcd8cf';
       dx.fillRect(wx-2, wy-2, winW+4, winH+4);
+      // glass — sky reflection gradient
       const g = dx.createLinearGradient(wx,wy,wx,wy+winH);
       g.addColorStop(0,'#5b6e80'); g.addColorStop(.5,'#34414f'); g.addColorStop(1,'#222b35');
       dx.fillStyle = g; dx.fillRect(wx,wy,winW,winH);
@@ -293,10 +315,11 @@ function facadeMaps(floors, bays, brickSrc, opts={}){
         dx.fillRect(wx, wy+winH/2-1.5, winW, 3);
         dx.fillRect(wx+winW/2-1.5, wy, 3, winH);
       }
+      // lit at night? warm interior
       if(Math.random() < (opts.litChance ?? 0.42)){
         const warm = pick(['#ffb45e','#ffc97e','#ffd9a0','#f0e6c8']);
         nx.fillStyle = warm; nx.fillRect(wx+1,wy+1,winW-2,winH-2);
-        if(Math.random()<.5){ nx.fillStyle='rgba(0,0,0,.55)';
+        if(Math.random()<.5){ nx.fillStyle='rgba(0,0,0,.55)';      // curtains / furniture
           nx.fillRect(wx+1, wy+winH*rand(.3,.6), winW-2, winH*.4); }
       }
     }
@@ -304,6 +327,7 @@ function facadeMaps(floors, bays, brickSrc, opts={}){
 
   if(shopfront){
     const sy = upperH;
+    // fascia
     const fascia = pick(['#15161a','#27343d','#3d2430','#1d2b24','#2e2118']);
     dx.fillStyle = fascia; dx.fillRect(0, sy, W, H*0.07);
     dx.fillStyle = pick(['#e8e3d6','#ffd23f','#ff7a1a','#7fd6c2','#e8e3d6']);
@@ -311,16 +335,18 @@ function facadeMaps(floors, bays, brickSrc, opts={}){
     const name = pick(['ALBION','CURATED','PRESS & CO','ATELIER','OCRA','FLAT IRON','KIOSK','MONO','LABOUR & WAIT','VINYL']);
     dx.fillText(name, W/2, sy+H*0.05);
     dx.textAlign='left';
-    const gz = sy + H*0.07;
-    dx.fillStyle = '#11161c'; dx.fillRect(0,gz,W,H-gz);
+    // glazing
+    const gy = sy + H*0.07;
+    dx.fillStyle = '#11161c'; dx.fillRect(0,gy,W,H-gy);
     const panes = 4;
     for(let p=0;p<panes;p++){
       const px = p*(W/panes)+8;
-      const g2 = dx.createLinearGradient(px,gz,px,H);
+      const g2 = dx.createLinearGradient(px,gy,px,H);
       g2.addColorStop(0,'#37434f'); g2.addColorStop(1,'#1a2129');
-      dx.fillStyle=g2; dx.fillRect(px,gz+8,(W/panes)-16,H-gz-16);
+      dx.fillStyle=g2; dx.fillRect(px,gy+8,(W/panes)-16,H-gy-16);
+      // shop glow at night
       nx.fillStyle = 'rgba(255,190,110,.95)';
-      nx.fillRect(px,gz+8,(W/panes)-16,H-gz-16);
+      nx.fillRect(px,gy+8,(W/panes)-16,H-gy-16);
     }
   }
   const map = tex(day,1,1);
@@ -344,7 +370,8 @@ const MAT = {
   white:   new THREE.MeshStandardMaterial({ color:0xe7e4dc, roughness:.8 }),
   glassDark:new THREE.MeshStandardMaterial({ color:0x141c24, roughness:.15, metalness:.6 }),
 };
-const glowMats = [];
+// materials whose emissiveIntensity tracks the lighting state
+const glowMats = [];      // {mat, max}
 function regGlow(mat, max=1){ glowMats.push({mat,max}); return mat; }
 
 /* =====================================================================
@@ -360,6 +387,7 @@ function roadStrip(cx,cz,w,len,alongZ=true){
   const m = new THREE.Mesh(new THREE.PlaneGeometry(alongZ?w:len, alongZ?len:w), MAT.asphalt);
   m.rotation.x=-Math.PI/2; m.position.set(cx,0.02,cz); m.receiveShadow=true;
   cityRoot.add(m);
+  // kerbs
   const kGeo = new THREE.BoxGeometry(alongZ?0.3:len, 0.14, alongZ?len:0.3);
   [-1,1].forEach(s=>{
     const k = new THREE.Mesh(kGeo, MAT.kerb);
@@ -367,6 +395,7 @@ function roadStrip(cx,cz,w,len,alongZ=true){
     else k.position.set(cx,0.07,cz+s*(w/2+0.15));
     k.receiveShadow=k.castShadow=true; cityRoot.add(k);
   });
+  // centre line — double yellow near kerbs (London) + dashed white centre
   const lineC = makeCanvas(64,512), lx=lineC.getContext('2d');
   lx.clearRect(0,0,64,512);
   lx.fillStyle='#cfc9b8'; for(let i=0;i<8;i++) lx.fillRect(28,i*64+10,8,36);
@@ -376,6 +405,7 @@ function roadStrip(cx,cz,w,len,alongZ=true){
   lm.rotation.set(-Math.PI/2, 0, alongZ?0:Math.PI/2);
   lm.position.set(cx,0.035,cz);
   cityRoot.add(lm);
+  // double yellows
   const yMat = new THREE.MeshBasicMaterial({ color:0xc8a428, transparent:true, opacity:.55 });
   [-1,1].forEach(s=>{
     [0,0.28].forEach(off=>{
@@ -387,13 +417,13 @@ function roadStrip(cx,cz,w,len,alongZ=true){
     });
   });
 }
-roadStrip(0,   0, 13, 460, true );
-roadStrip(84,  0,  7, 460, true );
-roadStrip(0,   0, 11, 460, false);
-roadStrip(0,  78,  8, 460, false);
+roadStrip(0,   0, 13, 460, true );   // Shoreditch High Street
+roadStrip(84,  0,  7, 460, true );   // Brick Lane
+roadStrip(0,   0, 11, 460, false);   // Bethnal Green Road
+roadStrip(0,  78,  8, 460, false);   // Redchurch Street
 
 /* =====================================================================
-   BUILDINGS
+   BUILDINGS — facades baked per building, Shoreditch block plan
 ===================================================================== */
 function building(cx, cz, w, h, d, brickSrc, opts={}){
   const floors = Math.max(2, Math.round(h/3.1) - (opts.shopfront!==false?1:0));
@@ -403,15 +433,18 @@ function building(cx, cz, w, h, d, brickSrc, opts={}){
     map, emissiveMap:emi, emissive:0xffffff, emissiveIntensity:0, roughness:.88
   });
   regGlow(faceMat, opts.glowMax ?? 1.0);
+  // side faces: plain brick (or mural)
   const sideMat = new THREE.MeshStandardMaterial({ map:tex(brickSrc, Math.max(1,d/7), Math.max(1,h/7)), roughness:.9 });
-  const mats = [sideMat, sideMat, MAT.roof, MAT.roof, faceMat, faceMat];
+  const mats = [sideMat, sideMat, MAT.roof, MAT.roof, faceMat, faceMat]; // +x,-x,+y,-y,+z,-z
   const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mats);
   b.position.set(cx, h/2, cz);
   b.castShadow = b.receiveShadow = true;
   cityRoot.add(b);
   addCollider(cx,cz,w,d);
+  // parapet
   const p = new THREE.Mesh(new THREE.BoxGeometry(w+0.3,0.6,d+0.3), sideMat);
   p.position.set(cx,h+0.3,cz); p.castShadow=true; cityRoot.add(p);
+  // chimney pots — very London roofline
   if(Math.random()<.7){
     const ch = new THREE.Mesh(new THREE.BoxGeometry(1.2,rand(1.2,2),1.2), sideMat);
     ch.position.set(cx+rand(-w/3,w/3), h+0.9, cz+rand(-d/3,d/3));
@@ -423,11 +456,12 @@ function building(cx, cz, w, h, d, brickSrc, opts={}){
       cityRoot.add(pot);
     }
   }
+  // mural on a side wall sometimes
   if(opts.mural){
     const mw = Math.min(d*0.92, 16), mh = Math.min(h*0.8, 12);
     const mp = new THREE.Mesh(new THREE.PlaneGeometry(mw,mh),
       new THREE.MeshStandardMaterial({ map:tex(muralCanvas(),1,1), roughness:.85 }));
-    const side = opts.mural;
+    const side = opts.mural; // 'left' (-x) or 'right'(+x)
     mp.position.set(cx + (side==='right'? w/2+0.06 : -w/2-0.06), mh/2+1.2, cz);
     mp.rotation.y = side==='right' ? Math.PI/2 : -Math.PI/2;
     cityRoot.add(mp);
@@ -435,6 +469,10 @@ function building(cx, cz, w, h, d, brickSrc, opts={}){
   return b;
 }
 
+// ---- block plan: buildings face the streets, varied heights ----
+// West side of Shoreditch High St (facing +x → rotate? facades on ±z; we orient by placing depth along x)
+// Simpler: our facade is on ±z faces; for N–S streets we need facades on ±x.
+// Trick: build with w↔d swapped and rotate group 90°.
 function buildingFacingX(cx,cz,w,h,d,brick,opts={}){
   const g = new THREE.Group();
   const floors = Math.max(2, Math.round(h/3.1) - (opts.shopfront!==false?1:0));
@@ -462,7 +500,8 @@ function buildingFacingX(cx,cz,w,h,d,brick,opts={}){
   return g;
 }
 
-buildingFacingX(  20,  20, 18, 22, 28, redBrick,  { mural:false, litChance:.5 });
+/* ---- east side of Shoreditch High Street (Tea Building corner etc.) ---- */
+buildingFacingX(  20,  20, 18, 22, 28, redBrick,  { mural:false, litChance:.5 });   // Tea Building stand-in
 buildingFacingX(  19,  46, 16, 13, 18, stockBrick,{ });
 buildingFacingX(  19,  64, 16, 16, 14, paintedBrickK, { frame:'#888', litChance:.6 });
 buildingFacingX(  20,  96, 18, 12, 26, stockBrick,{ });
@@ -471,12 +510,14 @@ buildingFacingX(  19, -16, 16, 15, 18, stockBrick,{ mural:'front' });
 buildingFacingX(  19, -90, 16, 17, 22, redBrick,  { });
 buildingFacingX(  19,-115, 16, 11, 20, paintedBrickW, { });
 
+/* ---- west side of Shoreditch High Street ---- */
 buildingFacingX( -20, -18, 18, 16, 24, redBrick,  { });
 buildingFacingX( -19, -88, 16, 14, 20, stockBrick,{ mural:'front' });
 buildingFacingX( -19,-112, 16, 18, 18, darkBrick, { frame:'#777' });
 buildingFacingX( -20,  96, 18, 15, 24, stockBrick,{ });
 buildingFacingX( -19, 120, 16, 12, 18, paintedBrickW, { });
 
+/* ---- Redchurch Street, both sides (low boutiques, painted brick) ---- */
 building( -34, 67, 18, 10, 12, paintedBrickK, { frame:'#999', litChance:.7, glowMax:1.2 });
 building( -56, 67, 20, 12, 12, redBrick, { mural:'right' });
 building(  34, 67, 18,  9, 12, paintedBrickW, { litChance:.6 });
@@ -485,6 +526,7 @@ building( -34, 89, 18, 11, 12, stockBrick, { });
 building(  34, 89, 18, 13, 12, redBrick, { });
 building(  58, 89, 22, 10, 12, paintedBrickK, { frame:'#aaa' });
 
+/* ---- Bethnal Green Road frontage ---- */
 building( -36, -14, 26, 14, 14, stockBrick, { mural:'right' });
 building( -70, -14, 30, 17, 14, redBrick, { });
 building(  38, -14, 24, 13, 14, stockBrick, { });
@@ -492,6 +534,7 @@ building(  38,  14, 24, 15, 14, redBrick, { mural:'left' });
 building( -36,  14, 26, 12, 14, paintedBrickW, { });
 building( -70,  14, 30, 19, 14, darkBrick, { frame:'#888' });
 
+/* ---- Brick Lane, both sides — tight, tall, graffiti-heavy ---- */
 buildingFacingX( 72,  30, 14, 12, 16, redBrick,  { mural:'front', litChance:.55 });
 buildingFacingX( 72,  50, 14, 10, 14, stockBrick,{ });
 buildingFacingX( 96,  30, 14, 11, 16, stockBrick,{ });
@@ -501,6 +544,7 @@ buildingFacingX( 96, -26, 14, 10, 16, paintedBrickW, { mural:'front' });
 buildingFacingX( 72, 100, 14, 11, 16, stockBrick, { });
 buildingFacingX( 96, 100, 14, 12, 16, redBrick,  { });
 
+/* ---- mid-block infill between High St and Brick Lane ---- */
 building( 45, 40, 22, 16, 20, stockBrick, { mural:'left' });
 building( 45,-50, 24, 14, 22, redBrick, { });
 building(-45, 40, 22, 15, 20, redBrick, { mural:'right' });
@@ -512,6 +556,7 @@ building( 120,-40, 26, 12, 22, stockBrick, { });
 building(-120, 40, 26, 15, 24, redBrick, { });
 building(-120,-40, 28, 13, 24, stockBrick, { });
 
+/* far skyline — City of London towers to the south-west, low-res silhouettes */
 (function skyline(){
   const m = regGlow(new THREE.MeshStandardMaterial({ color:0x2b3038, roughness:.6, metalness:.4,
     emissive:0x9fb6cc, emissiveIntensity:0 }), .35);
@@ -522,15 +567,17 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
     const t = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m);
     t.position.set(x,h/2,z); cityRoot.add(t);
   });
+  // the Gherkin-ish profile
   const gh = new THREE.Mesh(new THREE.CylinderGeometry(2,11,95,12), m);
   gh.position.set(-215,-47+95/2,-250); gh.position.y=95/2; cityRoot.add(gh);
 })();
 
 /* =====================================================================
-   OVERGROUND VIADUCT
+   OVERGROUND VIADUCT — dark brick arches crossing at z = -52
 ===================================================================== */
 (function viaduct(){
   const z = -52, H = 8.5, W = 9;
+  // arch texture painted onto long wall
   function archWall(len){
     const c = makeCanvas(1024,256), x=c.getContext('2d');
     x.drawImage(darkBrick,0,0,512,256); x.drawImage(darkBrick,512,0,512,256);
@@ -542,11 +589,13 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
       x.moveTo(ax, 256); x.lineTo(ax, 256-ah+aw/2*0.9);
       x.arc(ax+ (aw-40)/2, 256-ah+ (aw-40)/2*0.9, (aw-40)/2, Math.PI, 0);
       x.lineTo(ax+aw-40, 256); x.closePath(); x.fill();
+      // some arches bricked up / shuttered (Shoreditch arch businesses)
       if(Math.random()<.5){
         x.fillStyle = pick(['#3d444c','#5b4636','#2c3e46']);
         x.fillRect(ax+12, 256-ah*0.62, aw-64, ah*0.62);
       }
     }
+    // graffiti throw-ups along the base
     for(let i=0;i<10;i++){
       x.fillStyle=pick(SPRAY); x.globalAlpha=rand(.5,.85);
       x.font=`italic 700 ${randi(26,40)}px Helvetica`;
@@ -555,6 +604,7 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
     x.globalAlpha=1;
     return tex(c, len/40, 1);
   }
+  // two long wall segments either side of the High St gap, both faces
   function wallSeg(cx,len){
     const m = new THREE.MeshStandardMaterial({ map:archWall(len), roughness:.92 });
     const wMesh = new THREE.Mesh(new THREE.BoxGeometry(len,H,W), [
@@ -563,14 +613,16 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
     cityRoot.add(wMesh); addCollider(cx,z,len,W);
   }
   wallSeg(-13/2-2-110, 220);
-  wallSeg( 42.75, 68.5 );
-  wallSeg( 160,   138  );
+  wallSeg( 42.75, 68.5 );          // east wall, High St -> Brick Lane gap
+  wallSeg( 160,   138  );          // east wall beyond Brick Lane
+  // bridge deck over the High Street — rusted steel girder with billboard
   const deck = new THREE.Mesh(new THREE.BoxGeometry(26,1.6,W+1), MAT.rustSteel);
   deck.position.set(0,H-0.8,z); deck.castShadow=true; cityRoot.add(deck);
   [-1,1].forEach(s=>{
     const girder = new THREE.Mesh(new THREE.BoxGeometry(26,2.6,0.5), MAT.rustSteel);
     girder.position.set(0,H+0.5,z+s*(W/2+0.3)); girder.castShadow=true; cityRoot.add(girder);
   });
+  // billboard on south face of the bridge — Shoreditch icon
   const bbC = makeCanvas(1024,256), bx=bbC.getContext('2d');
   bx.fillStyle='#101216'; bx.fillRect(0,0,1024,256);
   bx.fillStyle='#ffd23f'; bx.font='800 120px Helvetica'; bx.textAlign='center';
@@ -581,17 +633,18 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
     emissive:0xffffff, emissiveIntensity:0, roughness:.6 }), .9);
   const bb = new THREE.Mesh(new THREE.PlaneGeometry(22,5.2), bbMat);
   bb.position.set(0,H+1,z+W/2+0.65); cityRoot.add(bb);
+  // parapet brick over arches
   const rail = new THREE.Mesh(new THREE.BoxGeometry(460,1,0.4), MAT.darkBrick);
   rail.position.set(0,H+0.5,z-W/2); cityRoot.add(rail);
 })();
 
 /* =====================================================================
-   BOXPARK
+   BOXPARK — black shipping containers, west side, z 6..62
 ===================================================================== */
 (function boxpark(){
   const corr = makeCanvas(256,256), cx2=corr.getContext('2d');
   cx2.fillStyle='#15161a'; cx2.fillRect(0,0,256,256);
-  for(let i=0;i<16;i++){
+  for(let i=0;i<16;i++){ // corrugation
     cx2.fillStyle = i%2? '#1c1e23' : '#101116';
     cx2.fillRect(i*16,0,16,256);
   }
@@ -605,6 +658,7 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
       c2.position.set(baseX, unitH/2+lvl*unitH, baseZ + i*(unitW+0.4) + unitW/2);
       c2.castShadow=c2.receiveShadow=true; cityRoot.add(c2);
       if(lvl===0) addCollider(baseX, c2.position.z, unitD, unitW);
+      // glazed front on ground level + signage strip
       if(lvl===0){
         const sC=makeCanvas(512,128), sx=sC.getContext('2d');
         sx.fillStyle='#0c0d10'; sx.fillRect(0,0,512,128);
@@ -626,10 +680,10 @@ building(-120,-40, 28, 13, 24, stockBrick, { });
 })();
 
 /* =====================================================================
-   STREET FURNITURE
+   STREET FURNITURE — lamps, bollards, phone box, bins, bus stop, signs
 ===================================================================== */
-const lampHeads = [];
-const lampLights = [];
+const lampHeads = [];   // emissive lantern materials
+const lampLights = [];  // actual PointLights (budgeted)
 function lampPost(x,z, withLight){
   const g = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(.07,.1,5.6,8), MAT.blackMetal);
@@ -648,6 +702,7 @@ function lampPost(x,z, withLight){
   g.position.set(x,0,z); cityRoot.add(g);
   addCollider(x,z,.4,.4,.1);
 }
+// lamps along the High Street (real lights budgeted near spawn) and side streets
 const lampDefs = [
   [ 8.2, 20, true],[ -8.2, -8, true],[ 8.2,-34, true],[ -8.2, 48, true],
   [ 8.2, 64, true],[ -8.2, 90, false],[ 8.2,108, false],[ -8.2,-70, false],
@@ -658,6 +713,7 @@ const lampDefs = [
 ];
 lampDefs.forEach(([x,z,l])=>lampPost(x,z,l));
 
+// bollards — instanced, lining the High St pavements
 (function bollards(){
   const geo = new THREE.CylinderGeometry(.09,.12,.95,8);
   const inst = new THREE.InstancedMesh(geo, MAT.blackMetal, 80);
@@ -668,6 +724,7 @@ lampDefs.forEach(([x,z,l])=>lampPost(x,z,l));
   inst.count=n; inst.castShadow=true; cityRoot.add(inst);
 })();
 
+// K6 red phone box (graffitied, obviously)
 (function phoneBox(x,z){
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.BoxGeometry(1,2.5,1), MAT.phoneRed);
@@ -685,6 +742,7 @@ lampDefs.forEach(([x,z,l])=>lampPost(x,z,l));
   g.position.set(x,0,z); cityRoot.add(g); addCollider(x,z,1.1,1.1);
 })(-9.6, 40);
 
+// bus stop shelter + stationary red double-decker
 (function busStop(x,z){
   const g = new THREE.Group();
   const roof = new THREE.Mesh(new THREE.BoxGeometry(4.4,.12,1.6), MAT.blackMetal);
@@ -704,6 +762,7 @@ lampDefs.forEach(([x,z,l])=>lampPost(x,z,l));
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.5,4.2,10.5), red);
   body.position.y=2.35; body.castShadow=true; g.add(body);
+  // window bands
   const winM = regGlow(new THREE.MeshStandardMaterial({ color:0x131b22, roughness:.15, metalness:.5,
     emissive:0xffe6b8, emissiveIntensity:0 }), .7);
   [1.6,3.6].forEach(y=>{
@@ -720,6 +779,7 @@ lampDefs.forEach(([x,z,l])=>lampPost(x,z,l));
   g.position.set(x,0.25,z); cityRoot.add(g); addCollider(x,z,2.7,10.7);
 })(-3.2, -26);
 
+// wheelie bins + crates (alley clutter)
 (function clutter(){
   const binM = new THREE.MeshStandardMaterial({ color:0x2a3b2e, roughness:.8 });
   [[9.5,52],[ -9.8,84],[ 79.8,40],[ 12,-44],[-12,30],[88.3,64]].forEach(([x,z])=>{
@@ -729,6 +789,7 @@ lampDefs.forEach(([x,z,l])=>lampPost(x,z,l));
   });
 })();
 
+// street name signs on building walls
 function streetSign(text, x,y,z, ry){
   const c=makeCanvas(512,96), sx=c.getContext('2d');
   sx.fillStyle='#f2efe6'; sx.fillRect(0,0,512,96);
@@ -746,7 +807,7 @@ streetSign('BRICK LANE E1', 79.06, 3.2, 26, Math.PI/2);
 streetSign('BETHNAL GREEN ROAD E2', 32, 3.2, 6.94, Math.PI);
 
 /* =====================================================================
-   SKY
+   SKY — gradient dome shader + stars + sun/moon light rig
 ===================================================================== */
 const skyUni = {
   topColor:    { value:new THREE.Color(0x3b6fb5) },
@@ -768,6 +829,7 @@ const sky = new THREE.Mesh(
 );
 scene.add(sky);
 
+// stars
 const starGeo = new THREE.BufferGeometry();
 {
   const N=900, pos=new Float32Array(N*3);
@@ -780,6 +842,7 @@ const starGeo = new THREE.BufferGeometry();
 const starMat = new THREE.PointsMaterial({ color:0xcdd8ff, size:1.6, transparent:true, opacity:0, sizeAttenuation:false });
 scene.add(new THREE.Points(starGeo, starMat));
 
+// light rig
 const hemi = new THREE.HemisphereLight(0xbfd5ee, 0x3a3630, 0.6); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.6);
 sun.castShadow = true;
@@ -790,6 +853,7 @@ sun.shadow.camera.far=400; sun.shadow.bias=-0.0004;
 scene.add(sun); scene.add(sun.target);
 scene.fog = new THREE.FogExp2(0xcfd8df, 0.004);
 
+// sun/moon disc
 const discMat = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0, fog:false });
 const disc = new THREE.Mesh(new THREE.CircleGeometry(22,24), discMat);
 scene.add(disc);
@@ -813,8 +877,8 @@ const STATES = [
   st('EVENING','\u263D', 0x101a33,0x4a3a55, -1.5,-0.04, 0x9988bb,0.12, 0.16, 0x1c1a28,0.0058, 0.92, 1, 0.95, 0.6, 0xe8e0ff,0.5),
   st('DUSK','\u263D',    0x0a1020,0x232a40, 0.7,-0.02, 0x8899cc,0.07, 0.12, 0x10141f,0.0062, 0.88, 1, 1.0, 0.8, 0xdfe8ff,0.7),
 ];
-let stateIdx = 3;
-let blend = 1;
+let stateIdx = 3;             // start in full daylight
+let blend = 1;                // 0..1 transition progress
 let fromS = STATES[3], toS = STATES[3];
 
 function applyBlend(a,b,t){
@@ -858,13 +922,13 @@ applyBlend(STATES[3],STATES[3],1);
 const player = {
   obj: new THREE.Group(),
   vel: new THREE.Vector3(),
-  yaw: Math.PI,
+  yaw: Math.PI,                // facing
   camYaw: Math.PI, camPitch: -0.12,
   speedWalk: 3.1, speedRun: 6.4,
   mixer: null, actions: {}, current: null,
   radius: 0.45,
 };
-player.obj.position.set(0, 0, 30);
+player.obj.position.set(0, 0, 30);   // spawn on Shoreditch High St, looking north
 scene.add(player.obj);
 
 const loadFill = document.getElementById('loadFill');
@@ -876,72 +940,46 @@ function markReady(){
   startMsg.classList.add('ready');
 }
 
-// Reusable parser logic for handling the gltf model architecture
-function handleGltfSetup(gltf) {
-  const model = gltf.scene;
-  const box = new THREE.Box3().setFromObject(model);
-  const size = box.getSize(new THREE.Vector3());
-  const s = 1.8 / Math.max(size.y, 0.001);
-  model.scale.setScalar(s);
-  box.setFromObject(model);
-  model.position.y -= box.min.y;
-  model.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; }});
-  player.obj.add(model);
-  if(gltf.animations.length){
-    player.mixer = new THREE.AnimationMixer(model);
-    const find = re => gltf.animations.find(a=>re.test(a.name));
-    const idleClip = find(/idle|stand|breath/i) || gltf.animations[0];
-    const walkClip = find(/walk/i) || gltf.animations[Math.min(1,gltf.animations.length-1)];
-    const runClip  = find(/run|sprint|jog/i) || walkClip;
-    player.actions.idle = player.mixer.clipAction(idleClip);
-    player.actions.walk = player.mixer.clipAction(walkClip);
-    player.actions.run  = player.mixer.clipAction(runClip);
-    Object.values(player.actions).forEach(a=>{ a.enabled=true; a.setLoop(THREE.LoopRepeat); });
-    player.actions.idle.play(); player.current='idle';
-  }
-}
-
-// 1. Initial attempt using your exact relative path
-new GLTFLoader().load('./clarity_builder.glb',
+new GLTFLoader().load('https://raw.githubusercontent.com/epoliluisito/xd_portfolio/tree/main/projects/open_camera/shoreditch/clarity_builder.glb',
   gltf=>{
-    handleGltfSetup(gltf);
+    const model = gltf.scene;
+    // normalise to ~1.8m tall, feet at y=0
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const s = 1.8 / Math.max(size.y, 0.001);
+    model.scale.setScalar(s);
+    box.setFromObject(model);
+    model.position.y -= box.min.y;
+    model.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; }});
+    player.obj.add(model);
+    if(gltf.animations.length){
+      player.mixer = new THREE.AnimationMixer(model);
+      const find = re => gltf.animations.find(a=>re.test(a.name));
+      const idleClip = find(/idle|stand|breath/i) || gltf.animations[0];
+      const walkClip = find(/walk/i) || gltf.animations[Math.min(1,gltf.animations.length-1)];
+      const runClip  = find(/run|sprint|jog/i) || walkClip;
+      player.actions.idle = player.mixer.clipAction(idleClip);
+      player.actions.walk = player.mixer.clipAction(walkClip);
+      player.actions.run  = player.mixer.clipAction(runClip);
+      Object.values(player.actions).forEach(a=>{ a.enabled=true; a.setLoop(THREE.LoopRepeat); });
+      player.actions.idle.play(); player.current='idle';
+    }
     markReady();
   },
   xhr=>{ if(xhr.total) loadFill.style.width = (xhr.loaded/xhr.total*90)+'%'; },
   err=>{
-    console.warn('CORS restriction on file:// URL detected. Injecting direct file selection safety logic.', err);
+    console.warn('clarity_builder.glb not found — using stand-in.', err);
     glbWarn.style.display='block';
-    glbWarn.innerHTML = 'Browsers block automatic local GLB loading over file:// paths.<br>'+
-      'To load <b>clarity_builder.glb</b> from next to index.html safely, select it here:<br>'+
-      '<input type="file" id="glbPicker" accept=".glb" style="margin-top:10px; color:#fff; cursor:pointer;">';
-    
-    // Inject stand-in mannequin shapes so the environment stays stable until selection
+    glbWarn.innerHTML = 'clarity_builder.glb not found next to index.html.<br>'+
+      'Using a stand-in figure. Note: browsers block local GLB loading over file:// — '+
+      'serve the folder (e.g. <b>python3 -m http.server</b>) and open via localhost.';
+    // stand-in mannequin
     const m = new THREE.MeshStandardMaterial({ color:0xd8d2c4, roughness:.6 });
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(.26,.95,6,12), m);
     body.position.y=0.95; body.castShadow=true; player.obj.add(body);
     const head = new THREE.Mesh(new THREE.SphereGeometry(.17,12,10), m);
     head.position.y=1.72; head.castShadow=true; player.obj.add(head);
     markReady();
-
-    // Hook up local file selection layer to read directly from folder via Blob matching
-    const picker = document.getElementById('glbPicker');
-    if(picker){
-      picker.addEventListener('click', e => e.stopPropagation()); // Prevents overlay context from closing
-      picker.addEventListener('change', e => {
-        const file = e.target.files[0];
-        if(file){
-          // Wipe out stand-in mannequin elements
-          while(player.obj.children.length > 0) {
-            player.obj.remove(player.obj.children[0]);
-          }
-          // Safely bridge hard drive file inside browser runtime using Object URLs
-          const blobUrl = URL.createObjectURL(file);
-          new GLTFLoader().load(blobUrl, gltf => {
-            handleGltfSetup(gltf);
-          }, undefined, error => console.error("Error reading selected .glb structure:", error));
-        }
-      });
-    }
   }
 );
 
@@ -982,6 +1020,7 @@ function collide(pos){
   for(const c of colliders){
     if(pos.x>c.minX-player.radius && pos.x<c.maxX+player.radius &&
        pos.z>c.minZ-player.radius && pos.z<c.maxZ+player.radius){
+      // push out along smallest penetration axis
       const dxL = pos.x-(c.minX-player.radius), dxR=(c.maxX+player.radius)-pos.x;
       const dzT = pos.z-(c.minZ-player.radius), dzB=(c.maxZ+player.radius)-pos.z;
       const m = Math.min(dxL,dxR,dzT,dzB);
@@ -991,6 +1030,7 @@ function collide(pos){
       else pos.z=c.maxZ+player.radius;
     }
   }
+  // world bounds
   pos.x = Math.max(-150, Math.min(150, pos.x));
   pos.z = Math.max(-130, Math.min(150, pos.z));
 }
@@ -1004,11 +1044,13 @@ function animate(){
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
+  // time-of-day transition
   if(blend < 1){
     blend = Math.min(1, blend + dt/2.2);
     applyBlend(fromS, toS, blend*blend*(3-2*blend));
   }
 
+  // movement input relative to camera yaw
   let ix=0, iz=0;
   if(keys.KeyW||keys.ArrowUp) iz+=1;
   if(keys.KeyS||keys.ArrowDown) iz-=1;
@@ -1023,6 +1065,7 @@ function animate(){
     const tx = Math.sin(ang), tz = Math.cos(ang);
     player.vel.x += (tx*speed - player.vel.x)*Math.min(1,dt*10);
     player.vel.z += (tz*speed - player.vel.z)*Math.min(1,dt*10);
+    // face movement direction smoothly
     let target = Math.atan2(player.vel.x, player.vel.z);
     let dy = target - player.yaw;
     while(dy> Math.PI) dy-=TAU; while(dy<-Math.PI) dy+=TAU;
@@ -1037,6 +1080,7 @@ function animate(){
   player.obj.position.copy(next);
   player.obj.rotation.y = player.yaw;
 
+  // animation state
   const spd = Math.hypot(player.vel.x, player.vel.z);
   if(player.mixer){
     if(spd>4.2) fadeTo('run');
@@ -1044,10 +1088,12 @@ function animate(){
     else fadeTo('idle');
     player.mixer.update(dt);
   } else if(player.obj.children.length){
+    // stand-in bob
     player.obj.children.forEach(ch=> ch.position.y = (ch.geometry?.type==='CapsuleGeometry'?0.95:1.72)
       + (spd>0.3 ? Math.sin(performance.now()*0.012)*0.04 : 0));
   }
 
+  // third-person camera: orbit behind, soft follow
   const dist = 4.6, height = 1.9;
   camTarget.set(player.obj.position.x, player.obj.position.y+1.45, player.obj.position.z);
   camPos.set(
@@ -1059,6 +1105,7 @@ function animate(){
   camera.position.lerp(camPos, Math.min(1, dt*9));
   camera.lookAt(camTarget);
 
+  // sun shadow follows player
   sun.target.position.copy(player.obj.position);
   const sd = sun.position.clone().normalize().multiplyScalar(220);
   sun.position.copy(player.obj.position).add(sd);
