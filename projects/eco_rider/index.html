@@ -24,7 +24,10 @@
 
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     text-align:center;padding:14px;background:radial-gradient(circle at 50% 30%,rgba(20,40,28,.82),rgba(6,12,9,.96));
-    backdrop-filter:blur(2px);z-index:20;overflow:auto;}
+    backdrop-filter:blur(2px);z-index:20;overflow:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;}
+  .screen>*{flex:none;}                     /* keep top content reachable when overflowing */
+  .screen{justify-content:flex-start;}      /* safe default when content is taller than screen */
+  .screen::before,.screen::after{content:'';flex:1 0 0;min-height:0;}  /* center when it fits */
   .hidden{display:none!important;}
   .logo{font-size:clamp(13px,3.2vw,28px);line-height:1.5;letter-spacing:1px;}
   .logo .a{color:var(--eco);text-shadow:3px 3px 0 #0a3a1d;}
@@ -90,6 +93,7 @@
     padding:8px 11px;line-height:2;text-align:center;transition:opacity .8s;pointer-events:none;}
   .intro .k{color:var(--gold);}
   body.touch .intro{font-size:6px;max-width:64%;padding:6px 9px;}
+  body.touch .hudMode{bottom:16px;}
 
   #touch{position:absolute;inset:0;z-index:15;pointer-events:none;}
   .tbtn{position:absolute;pointer-events:auto;font-family:var(--pix);border:3px solid;
@@ -101,7 +105,8 @@
     width:clamp(52px,12vh,72px);height:clamp(52px,12vh,72px);border-color:var(--gold);color:var(--gold);font-size:7px;}
   .tbtn:active{background:rgba(28,224,196,.3);}
   /* how-to-play guide */
-  .gcard{background:var(--panel);border:3px solid var(--cyan);padding:16px 18px;max-width:560px;}
+  .gcard{background:var(--panel);border:3px solid var(--cyan);padding:16px 18px;max-width:560px;
+    max-height:calc(100dvh - 40px);overflow:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;}
   .gttl{font-size:11px;color:var(--cyan);margin-bottom:10px;}
   .grow{display:flex;align-items:center;gap:10px;font-size:6.5px;color:#bfe9cf;line-height:1.9;text-align:left;margin:6px 0;}
   .grow .ic{width:26px;text-align:center;font-size:13px;flex:none;}
@@ -110,6 +115,10 @@
   .tcOnly{display:none;} body.touch .tcOnly{display:block;} body.touch .kbOnly{display:none;}
   body.touch .mchip{bottom:calc(16px + env(safe-area-inset-bottom) + clamp(64px,16vh,92px) + 8px);}
   .pausebadge{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:15px;color:#fff;z-index:18;display:none;}
+  .tpause{display:none;position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(calc(-50% + 118px));
+    z-index:16;width:30px;height:30px;border-radius:8px;border:2px solid #2f5c3f;background:rgba(8,16,11,.6);
+    color:#9fd9b8;font-size:11px;padding:0;font-family:var(--pix);}
+  body.touch .tpause.on{display:block;}
 
   @media (max-height:430px){
     .batBar{width:84px;} .progWrap{width:92px;}
@@ -119,6 +128,20 @@
     .card{width:146px;padding:9px 8px 11px;} .card canvas{width:120px;height:70px;}
     .cstyle{min-height:18px;} .logo{font-size:13px;} .pick{margin:8px 0 8px;}
     .btn{font-size:8px;padding:10px 12px;}
+    .screen{padding:8px;}
+    .tag{margin-top:4px;} .controls-hint,.touch-hint{margin-top:8px;}
+    .stat{margin-top:4px;} .cname{margin:6px 0 2px;}
+    /* guide compact */
+    .gcard{padding:9px 11px;max-height:calc(100dvh - 16px);}
+    .gttl{font-size:9px;margin-bottom:5px;}
+    .grow{font-size:6px;line-height:1.7;margin:3px 0;gap:7px;}
+    .grow .ic{width:18px;font-size:10px;}
+    .gctrl{margin-top:6px;padding-top:5px;line-height:1.8;}
+    #ready{margin-top:7px !important;padding:9px 12px;}
+    /* end compact */
+    .endcard{padding:10px 12px;}
+    .big{margin:7px 0;} .endline{line-height:1.9;margin:2px 0;}
+    .equiv{margin-top:6px;line-height:1.7;}
   }
   #rotate{display:none;position:fixed;inset:0;z-index:60;background:#070a09;color:#eafff2;
     flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:18px;}
@@ -168,6 +191,7 @@
     <button class="tbtn tjump" id="tJump">JUMP</button>
     <button class="tbtn tduck" id="tDuck">DUCK</button>
   </div>
+  <button class="tpause" id="tPause">⏸</button>
   <div class="pausebadge" id="pauseBadge">⏸ PAUSED</div>
 
   <div class="screen" id="menu">
@@ -176,7 +200,7 @@
     <div class="pick">▼ CHOOSE YOUR E-BIKE ▼</div>
     <div class="cards" id="cards"></div>
     <div class="controls-hint"><kbd>SPACE</kbd>/<kbd>↑</kbd> jump (hold=higher) &nbsp; <kbd>E</kbd>/<kbd>↓</kbd> ECO⇄TURBO &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>H</kbd> hitboxes</div>
-    <div class="touch-hint">TAP A BIKE TO START · RIGHT BUTTON JUMPS · LEFT BUTTON SWITCHES ECO/TURBO</div>
+    <div class="touch-hint">TAP A BIKE TO START · RIGHT: JUMP + DUCK · LEFT: ECO/TURBO</div>
   </div>
 
   <div class="screen hidden" id="guide">
@@ -662,6 +686,9 @@ tJ.addEventListener('pointerdown',e=>{e.preventDefault();pressJump();});
 tJ.addEventListener('pointerup',e=>{e.preventDefault();releaseJump();});
 tJ.addEventListener('pointercancel',releaseJump);
 tM.addEventListener('pointerdown',e=>{e.preventDefault();toggleMode();});
+const tP=document.getElementById('tPause');
+tP.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();
+  if(G){ if(G.state==='play')G.state='pause'; else if(G.state==='pause')G.state='play'; togglePause(); }});
 const tD=document.getElementById('tDuck');
 tD.addEventListener('pointerdown',e=>{e.preventDefault();if(G)G.duck=true;});
 tD.addEventListener('pointerup',e=>{e.preventDefault();if(G)G.duck=false;});
@@ -1150,6 +1177,8 @@ function finishRace(g){
     '<span style="font-size:6px;color:#7fb89a">(metres\u00d7eco '+co2g+' \u2212 damage '+Math.round(g.damage)+' + battery '+batBonus+')</span>';
   document.getElementById('endEquiv').textContent='That\u2019s ~'+km.toFixed(1)+' km of clean riding through city, coast and eco-city.';
   show('end'); document.getElementById('hud').classList.add('hidden');
+  document.getElementById('tPause').classList.remove('on');
+  document.querySelectorAll('.tbtn').forEach(b=>b.style.display='none');
 }
 
 /* ============ HUD ============ */
@@ -1211,7 +1240,8 @@ function beginRun(k){
   document.getElementById('menu').classList.add('hidden'); document.getElementById('end').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   document.getElementById('introHint').style.opacity='1';
-  if(isTouch){ document.querySelectorAll('.tbtn').forEach(b=>b.style.display='block'); }
+  if(isTouch){ document.querySelectorAll('.tbtn').forEach(b=>b.style.display='block');
+    document.getElementById('tPause').classList.add('on'); }
   updateModeBadge();
   G.state='count'; G.cd=194;
 }
@@ -1220,6 +1250,7 @@ document.getElementById('ready').addEventListener('click',()=>{
 document.getElementById('retry').addEventListener('click',()=>{ show('menu');
   document.getElementById('guide').classList.add('hidden');
   document.getElementById('hud').classList.add('hidden');
+  document.getElementById('tPause').classList.remove('on');
   document.querySelectorAll('.tbtn').forEach(b=>b.style.display='none'); G=null; });
 document.getElementById('cta').addEventListener('click',()=>{ const e=document.getElementById('cta'); e.textContent='🔗 (Demo) opens brand store'; setTimeout(()=>e.textContent='⚡ FIND YOUR E-BIKE — GET 10% OFF',1400); });
 
