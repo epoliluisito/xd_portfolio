@@ -1248,9 +1248,9 @@ function drawWheelProc(c,wx,wy,wr,color,spin){
   c.fillStyle='#0e0e12'; circle(c,wx,wy,Math.max(1.5,wr*0.09));
   c.fillStyle='rgba(255,255,255,.5)'; c.fillRect(wx-1,wy-3,2,2);
 }
-function drawAssetBike(c,b,t,moving,mode,lowBat,crouch){
+function drawAssetBike(c,b,t,moving,mode,lowBat,crouch,noRider){
   const a=b.art;
-  if(!a||!a.body||!a.wb){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch); }
+  if(!a||!a.body||!a.wb){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch,noRider); }
   const wr=a.wheelR, wy=-wr+2, half=a.wb/2, back=-half, front=half, spin=moving?t*0.4:0;
   // logical position of an anchor (back axle sits at (-half,wy))
   const L=k=>[back+(a.P[k][0]-a.backPt[0]), wy+(a.P[k][1]-a.backPt[1])];
@@ -1266,27 +1266,29 @@ function drawAssetBike(c,b,t,moving,mode,lowBat,crouch){
   const ledOn=!lowBat||((t%20)<10);
   c.fillStyle=lowBat?(ledOn?'#ff5a4d':'#3a1410'):'#eafff2';
   c.fillRect(dtx-1,dty-3,2,2); c.fillRect(dtx-1,dty+1,2,2);
-  // rider mounted on seat / bar / crank anchors
-  c.save(); c.translate(sx2,sy2);
-  if(crouch){ c.translate(0,7); c.scale(1,0.58); }
-  const ph=Math.sin(t*0.5)*4;
-  c.strokeStyle='#16307a'; c.lineWidth=5; c.lineCap='round';        // legs to crank
-  c.beginPath(); c.moveTo(0,-4); c.lineTo(kx-sx2-3,ky-sy2-ph*0.5); c.stroke();
-  c.strokeStyle='#1f48a8';
-  c.beginPath(); c.moveTo(2,-4); c.lineTo(kx-sx2+5,ky-sy2+ph*0.5); c.stroke();
-  c.fillStyle='#1a1a20';                                             // shoes
-  c.fillRect(kx-sx2-7,ky-sy2-ph*0.5-2,8,4); c.fillRect(kx-sx2+1,ky-sy2+ph*0.5-2,8,4);
-  c.save(); c.rotate(-0.22);                                         // leaned torso
-  c.fillStyle='#1f48a8'; c.fillRect(-5,-24,15,24);
-  c.fillStyle='#2a5cd0'; c.fillRect(-5,-24,11,24);
-  c.restore();
-  c.fillStyle='#ffd9a8'; c.fillRect(6,-34,11,11);                    // head
-  c.fillStyle='#e8b888'; c.fillRect(14,-34,3,11);
-  c.fillStyle=b.color; c.fillRect(6,-38,11,6);                       // helmet
-  c.fillStyle='rgba(255,255,255,.6)'; c.fillRect(7,-37,4,2);
-  c.strokeStyle='#2a5cd0'; c.lineWidth=4;                            // arm to bar
-  c.beginPath(); c.moveTo(7,-18); c.lineTo(hx2-sx2-1,hy2-sy2+3); c.stroke();
-  c.restore();
+  // rider mounted on seat / bar / crank anchors (skipped for menu previews)
+  if(!noRider){
+    c.save(); c.translate(sx2,sy2);
+    if(crouch){ c.translate(0,7); c.scale(1,0.58); }
+    const ph=Math.sin(t*0.5)*4;
+    c.strokeStyle='#16307a'; c.lineWidth=5; c.lineCap='round';        // legs to crank
+    c.beginPath(); c.moveTo(0,-4); c.lineTo(kx-sx2-3,ky-sy2-ph*0.5); c.stroke();
+    c.strokeStyle='#1f48a8';
+    c.beginPath(); c.moveTo(2,-4); c.lineTo(kx-sx2+5,ky-sy2+ph*0.5); c.stroke();
+    c.fillStyle='#1a1a20';                                             // shoes
+    c.fillRect(kx-sx2-7,ky-sy2-ph*0.5-2,8,4); c.fillRect(kx-sx2+1,ky-sy2+ph*0.5-2,8,4);
+    c.save(); c.rotate(-0.22);                                         // leaned torso
+    c.fillStyle='#1f48a8'; c.fillRect(-5,-24,15,24);
+    c.fillStyle='#2a5cd0'; c.fillRect(-5,-24,11,24);
+    c.restore();
+    c.fillStyle='#ffd9a8'; c.fillRect(6,-34,11,11);                    // head
+    c.fillStyle='#e8b888'; c.fillRect(14,-34,3,11);
+    c.fillStyle=b.color; c.fillRect(6,-38,11,6);                       // helmet
+    c.fillStyle='rgba(255,255,255,.6)'; c.fillRect(7,-37,4,2);
+    c.strokeStyle='#2a5cd0'; c.lineWidth=4;                            // arm to bar
+    c.beginPath(); c.moveTo(7,-18); c.lineTo(hx2-sx2-1,hy2-sy2+3); c.stroke();
+    c.restore();
+  }
   if(mode==='turbo'&&moving){
     const big=(t%8)<4;
     for(let i=0;i<4;i++){ c.globalAlpha=1-i*0.22; c.fillStyle='#ff5a4d';
@@ -1399,17 +1401,10 @@ function buildCards(){
     setInterval(()=>{
       pc.clearRect(0,0,152,90); pc.fillStyle='#16241b'; pc.fillRect(0,0,152,90);
       pc.fillStyle='#1a2a20'; pc.fillRect(0,76,152,14);
-      const mi=BIKES[k].menuImg;
-      if(mi){                                   // full bike hero shot (no rider)
-        const pad=10, availW=152-pad*2, availH=80;
-        const sc=Math.min(availW/mi.width, availH/mi.height);
-        const dw=mi.width*sc, dh=mi.height*sc;
-        pc.imageSmoothingEnabled=false;
-        pc.drawImage(mi,(152-dw)/2,(80-dh)/2+2,dw,dh);
-      } else {                                  // procedural bike, NO rider, gentle wheel spin
-        pc.save(); pc.translate(76,74); pc.scale(0.92,0.92);
-        drawBikeBody(pc,b,pt,true,'eco',false,false,true); pc.restore();
-      }
+      // identical to the in-game bike (asset body + moving procedural wheels), NO rider
+      pc.save(); pc.translate(76,74); pc.scale(0.92,0.92);
+      drawBikeBody(pc,b,pt,true,'eco',false,false,true);   // noRider=true
+      pc.restore();
       pt++;
     },55);
   });
@@ -1456,14 +1451,7 @@ function frame(){
   else { sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,W,H); }
   requestAnimationFrame(frame);
 }
-buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} buildCards(); requestAnimationFrame(frame);
-function loadMenuBike(){
-  if(typeof Image==='undefined') return;
-  let im; try{ im=new Image(); }catch(e){ return; }
-  im.onload=()=>{ BIKES.city.menuImg=im; };
-  im.onerror=()=>{};
-  im.src='city-full.png';
-}
+buildArt(); try{ loadBikeArt(); }catch(e){} buildCards(); requestAnimationFrame(frame);
 </script>
 </body>
 </html>
