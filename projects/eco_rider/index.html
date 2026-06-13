@@ -1389,7 +1389,7 @@ function buildCards(){
   const wrap=document.getElementById('cards'); wrap.innerHTML='';
   Object.keys(BIKES).forEach((k,idx)=>{
     const b=BIKES[k], card=document.createElement('div'); card.className='card'; card.tabIndex=0;
-    card.innerHTML='<canvas width="152" height="90"></canvas><div class="cname">'+(idx+1)+'. '+b.name+'</div><div class="cstyle">'+b.style+'</div>';
+    card.innerHTML='<canvas width="456" height="270"></canvas><div class="cname">'+(idx+1)+'. '+b.name+'</div><div class="cstyle">'+b.style+'</div>';
     STAT_ROWS.forEach(([lbl,key])=>{ const row=document.createElement('div'); row.className='stat';
       row.innerHTML='<span>'+lbl+'</span><div class="bar"><i></i></div>';
       const fill=row.querySelector('i'); fill.style.width=(b[key]*100)+'%';
@@ -1399,12 +1399,20 @@ function buildCards(){
     wrap.appendChild(card);
     const pc=card.querySelector('canvas').getContext('2d'); let pt=0;
     setInterval(()=>{
+      pc.setTransform(3,0,0,3,0,0);            // 3x backing -> crisp; logical card stays 152x90
       pc.clearRect(0,0,152,90); pc.fillStyle='#16241b'; pc.fillRect(0,0,152,90);
       pc.fillStyle='#1a2a20'; pc.fillRect(0,76,152,14);
-      // identical to the in-game bike (asset body + moving procedural wheels), NO rider
-      pc.save(); pc.translate(76,74); pc.scale(0.92,0.92);
-      drawBikeBody(pc,b,pt,true,'eco',false,false,true);   // noRider=true
-      pc.restore();
+      const hero=BIKES[k].menuImg;
+      if(hero){                                 // high-res recognizable product shot, NO rider
+        const pad=8, availW=152-pad*2, availH=78;
+        const sc=Math.min(availW/hero.width, availH/hero.height);
+        const dw=hero.width*sc, dh=hero.height*sc;
+        pc.imageSmoothingEnabled=true; pc.imageSmoothingQuality='high';
+        pc.drawImage(hero,(152-dw)/2,(80-dh)/2+1,dw,dh);
+      } else {                                  // procedural bike, NO rider, moving wheels
+        pc.save(); pc.translate(76,74); pc.scale(0.92,0.92);
+        drawBikeBody(pc,b,pt,true,'eco',false,false,true); pc.restore();
+      }
       pt++;
     },55);
   });
@@ -1451,7 +1459,14 @@ function frame(){
   else { sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,W,H); }
   requestAnimationFrame(frame);
 }
-buildArt(); try{ loadBikeArt(); }catch(e){} buildCards(); requestAnimationFrame(frame);
+buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} buildCards(); requestAnimationFrame(frame);
+function loadMenuBike(){
+  if(typeof Image==='undefined') return;
+  let im; try{ im=new Image(); }catch(e){ return; }
+  im.onload=()=>{ BIKES.city.menuImg=im; };   // high-res hero for the City selection card
+  im.onerror=()=>{};
+  im.src='city-full.png';
+}
 </script>
 </body>
 </html>
