@@ -651,18 +651,18 @@ function buildLevel(g){
 function bikeCircles(g){
   const wr=g.b.wheel, wy=-wr+2, topY=wy-22, cs=Math.cos(g.angle), sn=Math.sin(g.angle);
   const duck=g.duck&&g.onGround, asset=g.b.art&&g.b.art.ready;
-  const awr=asset?g.b.art.wheelR:wr, awy=-awr+2;
+  const awr=asset?g.b.art.wheelR:wr, awy=-awr+2, ah=asset?g.b.art.wb/2:28;
   let L;
   if(asset){
     const P=g.b.art.P, bp=g.b.art.backPt;
-    const seatX=-28+(P.seat[0]-bp[0]), seatY=awy+(P.seat[1]-bp[1]); // rider sits on seat anchor
-    L = duck ? [[-28,awy,awr],[28,awy,awr],[seatX+2,awy-8,12]]
-             : [[-28,awy,awr],[28,awy,awr],[seatX+4,seatY-20,12],[seatX+8,seatY-40,8]];
+    const seatX=-ah+(P.seat[0]-bp[0]), seatY=awy+(P.seat[1]-bp[1]); // rider sits on seat anchor
+    L = duck ? [[-ah,awy,awr],[ah,awy,awr],[seatX+2,awy-8,12]]
+             : [[-ah,awy,awr],[ah,awy,awr],[seatX+4,seatY-20,12],[seatX+8,seatY-40,8]];
   } else {
     L = duck ? [[-28,wy,wr],[28,wy,wr],[3,wy-8,12]]
              : [[-28,wy,wr],[28,wy,wr],[3,topY-9,13],[11,topY-26,8]];
   }
-  return L.map(([x,y,r])=>({x:g.riderX+x*cs-y*sn, y:g.y+x*sn+y*cs, r, wheel:(Math.abs(x+28)<0.1||Math.abs(x-28)<0.1)}));
+  return L.map(([x,y,r],idx)=>({x:g.riderX+x*cs-y*sn, y:g.y+x*sn+y*cs, r, wheel:(idx<2)}));
 }
 function circRect(c,rx,ry,rw,rh){
   const px=Math.max(rx,Math.min(c.x,rx+rw)), py=Math.max(ry,Math.min(c.y,ry+rh));
@@ -1161,7 +1161,9 @@ const CITY_ART={
   // image's alpha-bbox trim/padding; multiplied back by the live alpha bbox.
   ref:[1238,762], refOrigin:[3,3], refBBox:[1232,756],
   px:{back:[224,525],front:[1006,524],crank:[595,560],seat:[430,120],bar:[840,55]},
-  bodyWheelRadius:205            // wheel-well radius in body px -> sizes the wheel to the fenders
+  bodyWheelRadius:205,           // wheel-well radius in body px -> sizes procedural wheels to the fenders
+  targetWheelbase:74             // logical wheelbase: bumped above the 56 used by procedural bikes so the
+                                 // long, low city frame reads at a comparable size to Mini/Monster
 };
 function alphaBBox(img){               // may throw SecurityError on file://
   const c=mkCanvas(img.width,img.height), x=c.getContext('2d');
@@ -1176,10 +1178,11 @@ function alphaBBox(img){               // may throw SecurityError on file://
 function loadBikeArt(){
   const art={ready:false}; BIKES.city.art=art;
   if(typeof Image==='undefined') return;        // no image support -> procedural bikes
-  let bImg,wImg,got=0;
-  try{ bImg=new Image(); wImg=new Image(); }catch(e){ return; }
-  function tryBake(){ if(++got<2) return;
+  let bImg,got=false;
+  try{ bImg=new Image(); }catch(e){ return; }
+  function tryBake(){
     try{
+      const WB=CITY_ART.targetWheelbase;
       // --- anchors: exact px mapped through the live alpha bbox ---
       const O=CITY_ART.refOrigin, RB=CITY_ART.refBBox;
       let A, bodyWR;
@@ -1194,9 +1197,9 @@ function loadBikeArt(){
         bodyWR=CITY_ART.bodyWheelRadius*sxf;
       }
       const dx=A.front[0]-A.back[0], dy=A.front[1]-A.back[1];
-      const tilt=Math.atan2(dy,dx), scale=56/Math.hypot(dx,dy);
+      const tilt=Math.atan2(dy,dx), scale=WB/Math.hypot(dx,dy);
       const wheelR=bodyWR*scale;                 // logical wheel radius (matches the fenders)
-      // --- bake body: rotate -tilt around back axle, scale to wheelbase 56 ---
+      // --- bake body: rotate -tilt around back axle, scale to target wheelbase ---
       const cs=Math.cos(-tilt), sn=Math.sin(-tilt);
       const map=(px,py)=>{ const ox=px-A.back[0], oy=py-A.back[1];
         return [(ox*cs-oy*sn)*scale,(ox*sn+oy*cs)*scale]; };
@@ -1208,58 +1211,38 @@ function loadBikeArt(){
       bx.translate(-mnx,-mny); bx.scale(scale,scale); bx.rotate(-tilt);
       bx.translate(-A.back[0],-A.back[1]); bx.drawImage(bImg,0,0);
       const P={}; for(const k in A){ const m=map(A[k][0],A[k][1]); P[k]=[m[0]-mnx,m[1]-mny]; }
-      // --- bake wheel: trim (or fallback consts), scale tire radius -> 17 ---
-      let wc,wr2;
-      try{
-        // robust pivot: centroid of solid pixels (resists valve/tab/AA pulling the center off);
-        // radius from bbox average. centroid==bbox-center on a clean wheel, so no change there.
-        const wcv0=mkCanvas(wImg.width,wImg.height), wq=wcv0.getContext('2d');
-        wq.drawImage(wImg,0,0);
-        const wd=wq.getImageData(0,0,wImg.width,wImg.height).data;
-        let sx=0,sy=0,n=0,x0=wImg.width,y0=wImg.height,x1=0,y1=0;
-        for(let y=0;y<wImg.height;y++)for(let x=0;x<wImg.width;x++){
-          const al=wd[(y*wImg.width+x)*4+3];
-          if(al>8){ if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y; }
-          if(al>120){ sx+=x; sy+=y; n++; } }
-        if(n<10||x1<x0) throw new Error('empty');
-        wc=[sx/n, sy/n]; wr2=((x1-x0+1)+(y1-y0+1))/4;
-      }
-      catch(e){ const f=CITY_ART.wheelFull; wc=[f.cx*wImg.width,f.cy*wImg.height]; wr2=f.r*wImg.width; }
-      const ws=wheelR/wr2;
-      const FS=Math.ceil(wheelR*2)+6;                    // frame size fits the wheel + margin
-      const NF=32, S=2;                                  // 32 frames, 2x-rendered then downscaled = crisp, stable
-      const frames=[];
-      for(let fi=0;fi<NF;fi++){
-        const big=mkCanvas(FS*S,FS*S), bx2=big.getContext('2d'); bx2.imageSmoothingEnabled=false;
-        bx2.translate(FS*S/2,FS*S/2); bx2.rotate(fi/NF*Math.PI*2); bx2.scale(ws*S,ws*S);
-        bx2.translate(-wc[0],-wc[1]); bx2.drawImage(wImg,0,0);
-        const sm=mkCanvas(FS,FS), sx2=sm.getContext('2d'); sx2.imageSmoothingEnabled=false;
-        sx2.drawImage(big,0,0,FS,FS);                    // snap to wheel's own grid -> no per-frame boil
-        frames.push(sm);
-      }
-      art.body=bc; art.backPt=P.back; art.P=P; art.wheelFrames=frames; art.NF=NF;
-      art.wheelR=wheelR; art.frameSize=FS; art.ready=true;
+      // wheels are drawn procedurally (crisp at game size, no shimmer) — store geometry only
+      art.body=bc; art.backPt=P.back; art.P=P;
+      art.wheelR=wheelR; art.wb=WB; art.ready=true;
     }catch(e){ /* keep procedural fallback */ }
   }
-  bImg.onload=tryBake; wImg.onload=tryBake;
-  bImg.onerror=()=>{got++;}; wImg.onerror=()=>{got++;};
-  bImg.src=CITY_ART.body; wImg.src=CITY_ART.wheel;
+  bImg.onload=tryBake;
+  bImg.onerror=()=>{};
+  bImg.src=CITY_ART.body;
+}
+function drawWheelProc(c,wx,wy,wr,color,spin){
+  // consistent procedural wheel for all bikes: tire, rim sheen, spokes, hub
+  const spokes=Math.max(6,Math.round(wr/3));
+  c.fillStyle='#0e0e12'; circle(c,wx,wy,wr);
+  c.fillStyle='#26262e'; circle(c,wx,wy,wr-Math.max(2,wr*0.13));
+  c.strokeStyle='rgba(255,255,255,.16)'; c.lineWidth=Math.max(2,wr*0.12);
+  c.beginPath(); c.arc(wx,wy,wr-1.5,-2.6,-1.5); c.stroke();
+  const q=Math.PI/8, sp=Math.round(spin/q)*q;       // quantized -> stable, no boil
+  c.strokeStyle='#9aa0aa'; c.lineWidth=2;
+  for(let i=0;i<spokes;i++){ const a=sp+i*(6.2832/spokes);
+    c.beginPath(); c.moveTo(wx,wy); c.lineTo(wx+Math.cos(a)*(wr-4),wy+Math.sin(a)*(wr-4)); c.stroke(); }
+  c.fillStyle=color; circle(c,wx,wy,Math.max(3,wr*0.22));
+  c.fillStyle='#0e0e12'; circle(c,wx,wy,Math.max(1.5,wr*0.09));
+  c.fillStyle='rgba(255,255,255,.5)'; c.fillRect(wx-1,wy-3,2,2);
 }
 function drawAssetBike(c,b,t,moving,mode,lowBat,crouch){
   const a=b.art;
-  if(!a||!a.wheelFrames||!a.body){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch); }
-  const wr=a.wheelR, wy=-wr+2, back=-28, front=28, spin=moving?t*0.4:0;
-  const fh=a.frameSize/2;
-  // logical position of an anchor (back axle sits at (-28,wy))
+  if(!a||!a.body||!a.wb){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch); }
+  const wr=a.wheelR, wy=-wr+2, half=a.wb/2, back=-half, front=half, spin=moving?t*0.4:0;
+  // logical position of an anchor (back axle sits at (-half,wy))
   const L=k=>[back+(a.P[k][0]-a.backPt[0]), wy+(a.P[k][1]-a.backPt[1])];
-  // wheels (spinning sprites) behind the frame; front axle uses its own anchor Y
-  const frontPt=L('front');
-  for(const [wxp,wyp] of [[back,wy],[front,frontPt[1]]]){
-    const fi=((Math.round(spin/(Math.PI*2)*a.NF)%a.NF)+a.NF)%a.NF;
-    c.drawImage(a.wheelFrames[fi], Math.round(wxp)-fh, Math.round(wyp)-fh);   // integer placement
-    c.strokeStyle='rgba(255,255,255,.18)'; c.lineWidth=2;
-    c.beginPath(); c.arc(wxp,wyp,wr-1,0.55,1.55); c.stroke();
-  }
+  // procedural wheels behind the frame (frame/fenders occlude them on top)
+  for(const wxp of [back,front]) drawWheelProc(c,wxp,wy,wr,b.color,spin);
   // body
   c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]);
   // battery strip on the downtube: mode colour + low-battery blink
@@ -1304,15 +1287,7 @@ function drawBikeBody(c,b,t,moving,mode,lowBat,crouch){
   if(b.art&&b.art.ready) return drawAssetBike(c,b,t,moving,mode,lowBat,crouch);
   const wr=b.wheel, wy=-wr+2, back=-28, front=28, topY=wy-22, spin=moving?t*0.4:0;
   const dark=shade(b.color,.4);
-  for(const wx of[back,front]){
-    c.fillStyle='#0e0e12'; circle(c,wx,wy,wr);
-    c.fillStyle='#26262e'; circle(c,wx,wy,wr-4);
-    c.strokeStyle='rgba(255,255,255,.16)'; c.lineWidth=3;
-    c.beginPath(); c.arc(wx,wy,wr-1.5,-2.6,-1.5); c.stroke();
-    c.strokeStyle='#9aa0aa'; c.lineWidth=2;
-    for(let i=0;i<5;i++){ const a=spin+i*1.256; c.beginPath(); c.moveTo(wx,wy); c.lineTo(wx+Math.cos(a)*(wr-5),wy+Math.sin(a)*(wr-5)); c.stroke(); }
-    c.fillStyle=b.color; circle(c,wx,wy,4);
-    c.fillStyle='rgba(255,255,255,.5)'; c.fillRect(wx-1,wy-3,2,2); }
+  for(const wx of[back,front]) drawWheelProc(c,wx,wy,wr,b.color,spin);
   c.lineCap='round';
   c.strokeStyle=dark; c.lineWidth=6;
   c.beginPath(); c.moveTo(back,wy+2); c.lineTo(-4,topY+2); c.lineTo(14,topY+2); c.lineTo(front,wy+2);
