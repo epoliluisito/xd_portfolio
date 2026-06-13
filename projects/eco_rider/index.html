@@ -1198,17 +1198,31 @@ function loadBikeArt(){
       const dx=A.front[0]-A.back[0], dy=A.front[1]-A.back[1];
       const tilt=Math.atan2(dy,dx), scale=WB/Math.hypot(dx,dy);
       const wheelR=bodyWR*scale;                 // logical wheel radius (matches the fenders)
-      // --- bake body: rotate -tilt around back axle, scale to target wheelbase ---
+      // --- bake body: HIGH-QUALITY downscale, then level the (tiny) axle tilt ---
+      // The art is ~10x larger than its game size; nearest-neighbor would shred the
+      // thin frame tubes. Multi-step halving with smoothing = clean area-averaged result.
+      const tw=Math.max(1,Math.round(bImg.width*scale)), th=Math.max(1,Math.round(bImg.height*scale));
+      let src=bImg, cw=bImg.width, ch=bImg.height;
+      while(cw>tw*2 || ch>th*2){
+        cw=Math.max(tw,cw>>1); ch=Math.max(th,ch>>1);
+        const tc=mkCanvas(cw,ch), tcx=tc.getContext('2d');
+        tcx.imageSmoothingEnabled=true; tcx.imageSmoothingQuality='high';
+        tcx.drawImage(src,0,0,cw,ch); src=tc;
+      }
+      const small=mkCanvas(tw,th), smx=small.getContext('2d');
+      smx.imageSmoothingEnabled=true; smx.imageSmoothingQuality='high';
+      smx.drawImage(src,0,0,tw,th);
+      // bake in shrunk space (scale already applied); level tilt around the back axle
       const cs=Math.cos(-tilt), sn=Math.sin(-tilt);
-      const map=(px,py)=>{ const ox=px-A.back[0], oy=py-A.back[1];
-        return [(ox*cs-oy*sn)*scale,(ox*sn+oy*cs)*scale]; };
+      const Abx=A.back[0]*scale, Aby=A.back[1]*scale;
+      const map=(px,py)=>{ const ox=px*scale-Abx, oy=py*scale-Aby;
+        return [ox*cs-oy*sn, ox*sn+oy*cs]; };
       const corners=[[0,0],[bImg.width,0],[0,bImg.height],[bImg.width,bImg.height]].map(p=>map(p[0],p[1]));
       const mnx=Math.min(...corners.map(p=>p[0]))-1, mny=Math.min(...corners.map(p=>p[1]))-1;
       const mxx=Math.max(...corners.map(p=>p[0]))+1, mxy=Math.max(...corners.map(p=>p[1]))+1;
       const bc=mkCanvas(Math.ceil(mxx-mnx),Math.ceil(mxy-mny)), bx=bc.getContext('2d');
-      bx.imageSmoothingEnabled=false;
-      bx.translate(-mnx,-mny); bx.scale(scale,scale); bx.rotate(-tilt);
-      bx.translate(-A.back[0],-A.back[1]); bx.drawImage(bImg,0,0);
+      bx.imageSmoothingEnabled=true; bx.imageSmoothingQuality='high';
+      bx.translate(-mnx,-mny); bx.rotate(-tilt); bx.translate(-Abx,-Aby); bx.drawImage(small,0,0);
       const P={}; for(const k in A){ const m=map(A[k][0],A[k][1]); P[k]=[m[0]-mnx,m[1]-mny]; }
       // wheels are drawn procedurally (crisp at game size, no shimmer) — store geometry only
       art.body=bc; art.backPt=P.back; art.P=P;
