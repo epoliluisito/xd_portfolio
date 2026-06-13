@@ -645,9 +645,8 @@ function buildLevel(g){
 /* ============ Shaped colliders ============ */
 function bikeCircles(g){
   const wr=g.b.wheel, wy=-wr+2, topY=wy-22, cs=Math.cos(g.angle), sn=Math.sin(g.angle);
-  const duck=g.duck&&g.onGround, asset=g.b.art&&g.b.art.ready;
+  const duck=g.duck&&g.onGround;
   const L=duck? [[-28,wy,wr],[28,wy,wr],[3,wy-8,12]]
-       : asset? [[-28,wy,wr],[28,wy,wr],[-4,-38,13],[-2,-58,8]]
               : [[-28,wy,wr],[28,wy,wr],[3,topY-9,13],[11,topY-26,8]];
   return L.map(([x,y,r])=>({x:g.riderX+x*cs-y*sn, y:g.y+x*sn+y*cs, r, wheel:(x===-28||x===28)}));
 }
@@ -1131,128 +1130,9 @@ function drawDebug(g,c){
       c.arc(sx,groundY-o.off+Math.sin(g.t*0.07+o.bob)*6,o.type==='leaf'?18:19,0,7); c.stroke(); } }
 }
 
-/* ============ External bike art (repo'd next to index) ============
-   city-body.png + city-wheel.png are loaded, alpha-trimmed, leveled
-   (axle tilt) and baked to game scale. Anchors are stored as fractions
-   so export margins/resizes don't matter. Missing/unreadable files ->
-   silent fallback to the procedural bike. */
-const CITY_ART={
-  body:'city-body.png', wheel:'city-wheel.png',
-  // anchors as fractions of the alpha bounding box (preferred, margin-proof)
-  bboxFrac:{back:[0.21024,0.78165],front:[0.85535,0.80696],crank:[0.46721,0.79272],
-            seat:[0.36837,0.13608],bar:[0.71339,0.06171]},
-  // fallback: fractions of the full canvas (used if pixel access is blocked, e.g. file://)
-  fullFrac:{back:[0.22441,0.62899],front:[0.81245,0.64210],crank:[0.45864,0.63473],
-            seat:[0.36855,0.29484],bar:[0.68305,0.25635]},
-  wheelFull:{cx:0.51995,cy:0.50199,r:0.31410}
-};
-function alphaBBox(img){               // may throw SecurityError on file://
-  const c=mkCanvas(img.width,img.height), x=c.getContext('2d');
-  x.drawImage(img,0,0);
-  const d=x.getImageData(0,0,img.width,img.height).data;
-  let x0=img.width,y0=img.height,x1=0,y1=0;
-  for(let y=0;y<img.height;y++)for(let xx=0;xx<img.width;xx++){
-    if(d[(y*img.width+xx)*4+3]>8){ if(xx<x0)x0=xx; if(xx>x1)x1=xx; if(y<y0)y0=y; if(y>y1)y1=y; } }
-  if(x1<x0) throw new Error('empty');
-  return {x:x0,y:y0,w:x1-x0+1,h:y1-y0+1};
-}
-function loadBikeArt(){
-  const art={ready:false}; BIKES.city.art=art;
-  if(typeof Image==='undefined') return;        // no image support -> procedural bikes
-  let bImg,wImg,got=0;
-  try{ bImg=new Image(); wImg=new Image(); }catch(e){ return; }
-  function tryBake(){ if(++got<2) return;
-    try{
-      // --- anchors in source px ---
-      let A;
-      try{
-        const bb=alphaBBox(bImg), f=CITY_ART.bboxFrac;
-        A={}; for(const k in f) A[k]=[bb.x+f[k][0]*bb.w, bb.y+f[k][1]*bb.h];
-      }catch(e){
-        const f=CITY_ART.fullFrac;
-        A={}; for(const k in f) A[k]=[f[k][0]*bImg.width, f[k][1]*bImg.height];
-      }
-      const dx=A.front[0]-A.back[0], dy=A.front[1]-A.back[1];
-      const tilt=Math.atan2(dy,dx), scale=56/Math.hypot(dx,dy);
-      // --- bake body: rotate -tilt around back axle, scale to wheelbase 56 ---
-      const cs=Math.cos(-tilt), sn=Math.sin(-tilt);
-      const map=(px,py)=>{ const ox=px-A.back[0], oy=py-A.back[1];
-        return [(ox*cs-oy*sn)*scale,(ox*sn+oy*cs)*scale]; };
-      const corners=[[0,0],[bImg.width,0],[0,bImg.height],[bImg.width,bImg.height]].map(p=>map(p[0],p[1]));
-      const mnx=Math.min(...corners.map(p=>p[0]))-1, mny=Math.min(...corners.map(p=>p[1]))-1;
-      const mxx=Math.max(...corners.map(p=>p[0]))+1, mxy=Math.max(...corners.map(p=>p[1]))+1;
-      const bc=mkCanvas(Math.ceil(mxx-mnx),Math.ceil(mxy-mny)), bx=bc.getContext('2d');
-      bx.imageSmoothingEnabled=false;
-      bx.translate(-mnx,-mny); bx.scale(scale,scale); bx.rotate(-tilt);
-      bx.translate(-A.back[0],-A.back[1]); bx.drawImage(bImg,0,0);
-      const P={}; for(const k in A){ const m=map(A[k][0],A[k][1]); P[k]=[m[0]-mnx,m[1]-mny]; }
-      // --- bake wheel: trim (or fallback consts), scale tire radius -> 17 ---
-      let wc,wr2;
-      try{ const wb2=alphaBBox(wImg); wc=[wb2.x+wb2.w/2,wb2.y+wb2.h/2]; wr2=(wb2.w+wb2.h)/4; }
-      catch(e){ const f=CITY_ART.wheelFull; wc=[f.cx*wImg.width,f.cy*wImg.height]; wr2=f.r*wImg.width; }
-      const ws=17/wr2, wcv=mkCanvas(38,38), wx=wcv.getContext('2d');
-      wx.imageSmoothingEnabled=false;
-      wx.translate(19,19); wx.scale(ws,ws); wx.translate(-wc[0],-wc[1]); wx.drawImage(wImg,0,0);
-      art.body=bc; art.backPt=P.back; art.P=P; art.wheel=wcv; art.ready=true;
-    }catch(e){ /* keep procedural fallback */ }
-  }
-  bImg.onload=tryBake; wImg.onload=tryBake;
-  bImg.onerror=()=>{got++;}; wImg.onerror=()=>{got++;};
-  bImg.src=CITY_ART.body; wImg.src=CITY_ART.wheel;
-}
-function drawAssetBike(c,b,t,moving,mode,lowBat,crouch){
-  const a=b.art, wr=b.wheel, wy=-wr+2, back=-28, front=28, spin=moving?t*0.4:0;
-  // logical position of an anchor (back axle sits at (-28,wy))
-  const L=k=>[back+(a.P[k][0]-a.backPt[0]), wy+(a.P[k][1]-a.backPt[1])];
-  // wheels (spinning sprites) behind the frame
-  for(const wxp of[back,front]){
-    c.save(); c.translate(wxp,wy); c.rotate(spin); c.drawImage(a.wheel,-19,-19); c.restore();
-    // light catch on the lower tire arc (keeps dark tires readable on dark roads)
-    c.strokeStyle='rgba(255,255,255,.20)'; c.lineWidth=2;
-    c.beginPath(); c.arc(wxp,wy,wr-1,0.55,1.55); c.stroke();
-  }
-  // body
-  c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]);
-  // battery strip on the downtube: mode colour + low-battery blink
-  const [kx,ky]=L('crank'), [sx2,sy2]=L('seat'), [hx2,hy2]=L('bar');
-  const dtx=(kx+hx2)/2-2, dty=(ky+hy2)/2-4;
-  c.fillStyle=mode==='turbo'?'#ff5a4d':'#3ddc6f';
-  c.globalAlpha=.85; c.fillRect(dtx-2,dty-5,5,11); c.globalAlpha=1;
-  const ledOn=!lowBat||((t%20)<10);
-  c.fillStyle=lowBat?(ledOn?'#ff5a4d':'#3a1410'):'#eafff2';
-  c.fillRect(dtx-1,dty-3,2,2); c.fillRect(dtx-1,dty+1,2,2);
-  // rider mounted on seat / bar / crank anchors
-  c.save(); c.translate(sx2,sy2);
-  if(crouch){ c.translate(0,7); c.scale(1,0.58); }
-  const ph=Math.sin(t*0.5)*4;
-  c.strokeStyle='#16307a'; c.lineWidth=5; c.lineCap='round';        // legs to crank
-  c.beginPath(); c.moveTo(0,-4); c.lineTo(kx-sx2-3,ky-sy2-ph*0.5); c.stroke();
-  c.strokeStyle='#1f48a8';
-  c.beginPath(); c.moveTo(2,-4); c.lineTo(kx-sx2+5,ky-sy2+ph*0.5); c.stroke();
-  c.fillStyle='#1a1a20';                                             // shoes
-  c.fillRect(kx-sx2-7,ky-sy2-ph*0.5-2,8,4); c.fillRect(kx-sx2+1,ky-sy2+ph*0.5-2,8,4);
-  c.save(); c.rotate(-0.22);                                         // leaned torso
-  c.fillStyle='#1f48a8'; c.fillRect(-5,-24,15,24);
-  c.fillStyle='#2a5cd0'; c.fillRect(-5,-24,11,24);
-  c.restore();
-  c.fillStyle='#ffd9a8'; c.fillRect(6,-34,11,11);                    // head
-  c.fillStyle='#e8b888'; c.fillRect(14,-34,3,11);
-  c.fillStyle=b.color; c.fillRect(6,-38,11,6);                       // helmet
-  c.fillStyle='rgba(255,255,255,.6)'; c.fillRect(7,-37,4,2);
-  c.strokeStyle='#2a5cd0'; c.lineWidth=4;                            // arm to bar
-  c.beginPath(); c.moveTo(7,-18); c.lineTo(hx2-sx2-1,hy2-sy2+3); c.stroke();
-  c.restore();
-  if(mode==='turbo'&&moving){
-    const big=(t%8)<4;
-    for(let i=0;i<4;i++){ c.globalAlpha=1-i*0.22; c.fillStyle='#ff5a4d';
-      c.fillRect(back-12-i*(big?9:7), wy-(big?5:4), big?9:7, big?10:8); }
-    c.globalAlpha=.85; c.fillStyle='#ffd23f'; c.fillRect(back-11,wy-2,big?8:6,big?6:5); c.globalAlpha=1; }
-}
-
 /* ---- bike sprite ---- */
 function circle(c,x,y,r){c.beginPath();c.arc(x,y,r,0,7);c.fill();}
 function drawBikeBody(c,b,t,moving,mode,lowBat,crouch){
-  if(b.art&&b.art.ready) return drawAssetBike(c,b,t,moving,mode,lowBat,crouch);
   const wr=b.wheel, wy=-wr+2, back=-28, front=28, topY=wy-22, spin=moving?t*0.4:0;
   const dark=shade(b.color,.4);
   for(const wx of[back,front]){
@@ -1402,7 +1282,7 @@ function frame(){
   else { sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,W,H); }
   requestAnimationFrame(frame);
 }
-buildArt(); try{ loadBikeArt(); }catch(e){} buildCards(); requestAnimationFrame(frame);
+buildArt(); buildCards(); requestAnimationFrame(frame);
 </script>
 </body>
 </html>
