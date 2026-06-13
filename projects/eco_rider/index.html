@@ -1156,12 +1156,11 @@ function drawDebug(g,c){
    silent fallback to the procedural bike. */
 const CITY_ART={
   body:'city-body.png', wheel:'city-wheel.png',
-  // EXACT pixel anchors measured on the shipped city-body.png (1238x762).
-  // Expressed as fractions of that reference so the loader stays robust to the
-  // image's alpha-bbox trim/padding; multiplied back by the live alpha bbox.
-  ref:[1238,762], refOrigin:[3,3], refBBox:[1232,756],
-  px:{back:[224,525],front:[1006,524],crank:[595,560],seat:[430,120],bar:[840,55]},
-  bodyWheelRadius:205,           // wheel-well radius in body px -> sizes procedural wheels to the fenders
+  // EXACT pixel anchors measured on the shipped city-body.png (1113x636, wheels drawn procedurally).
+  // Mapped through the live alpha bbox so trim/padding on re-export stays robust.
+  ref:[1113,636], refOrigin:[3,3], refBBox:[1107,630],
+  px:{back:[200,498],front:[940,496],crank:[560,545],seat:[440,125],bar:[835,180]},
+  bodyWheelRadius:196,           // wheel-well radius in body px -> sizes procedural wheels to the fenders
   targetWheelbase:74             // logical wheelbase: bumped above the 56 used by procedural bikes so the
                                  // long, low city frame reads at a comparable size to Mini/Monster
 };
@@ -1283,7 +1282,7 @@ function drawAssetBike(c,b,t,moving,mode,lowBat,crouch){
 
 /* ---- bike sprite ---- */
 function circle(c,x,y,r){c.beginPath();c.arc(x,y,r,0,7);c.fill();}
-function drawBikeBody(c,b,t,moving,mode,lowBat,crouch){
+function drawBikeBody(c,b,t,moving,mode,lowBat,crouch,noRider){
   if(b.art&&b.art.ready) return drawAssetBike(c,b,t,moving,mode,lowBat,crouch);
   const wr=b.wheel, wy=-wr+2, back=-28, front=28, topY=wy-22, spin=moving?t*0.4:0;
   const dark=shade(b.color,.4);
@@ -1303,19 +1302,21 @@ function drawBikeBody(c,b,t,moving,mode,lowBat,crouch){
   c.strokeStyle=b.color; c.lineWidth=4; c.beginPath(); c.moveTo(front,wy); c.lineTo(22,topY-4); c.stroke();
   c.fillStyle='#1a1a20'; c.fillRect(-12,topY-2,12,5); c.fillStyle='#33333c'; c.fillRect(-12,topY-2,12,2);
   c.fillStyle='#1a1a20'; c.fillRect(18,topY-6,12,5);
-  c.save(); c.translate(4,topY);
-  if(crouch){ c.translate(0,7); c.scale(1,0.58); }   // tucked rider
-  c.fillStyle='#1f48a8'; c.fillRect(-10,-18,16,18);
-  c.fillStyle='#2a5cd0'; c.fillRect(-10,-18,12,18);
-  c.fillStyle='#ffd9a8'; c.fillRect(2,-30,12,12);
-  c.fillStyle='#e8b888'; c.fillRect(11,-30,3,12);
-  c.fillStyle=b.color; c.fillRect(2,-34,12,6);
-  c.fillStyle='rgba(255,255,255,.6)'; c.fillRect(3,-33,4,2);
-  c.fillStyle='#2a5cd0'; c.fillRect(6,-16,16,5);
-  const ph=Math.sin(t*0.5)*4;
-  c.fillStyle='#16307a'; c.fillRect(-6,-2,6,12+ph); c.fillRect(2,-2,6,12-ph);
-  c.fillStyle='#1a1a20'; c.fillRect(-7,9+ph,8,4); c.fillRect(1,9-ph,8,4);
-  c.restore();
+  if(!noRider){
+    c.save(); c.translate(4,topY);
+    if(crouch){ c.translate(0,7); c.scale(1,0.58); }   // tucked rider
+    c.fillStyle='#1f48a8'; c.fillRect(-10,-18,16,18);
+    c.fillStyle='#2a5cd0'; c.fillRect(-10,-18,12,18);
+    c.fillStyle='#ffd9a8'; c.fillRect(2,-30,12,12);
+    c.fillStyle='#e8b888'; c.fillRect(11,-30,3,12);
+    c.fillStyle=b.color; c.fillRect(2,-34,12,6);
+    c.fillStyle='rgba(255,255,255,.6)'; c.fillRect(3,-33,4,2);
+    c.fillStyle='#2a5cd0'; c.fillRect(6,-16,16,5);
+    const ph=Math.sin(t*0.5)*4;
+    c.fillStyle='#16307a'; c.fillRect(-6,-2,6,12+ph); c.fillRect(2,-2,6,12-ph);
+    c.fillStyle='#1a1a20'; c.fillRect(-7,9+ph,8,4); c.fillRect(1,9-ph,8,4);
+    c.restore();
+  }
   if(mode==='turbo'&&moving){
     const big=(t%8)<4;
     for(let i=0;i<4;i++){ c.globalAlpha=1-i*0.22; c.fillStyle='#ff5a4d';
@@ -1381,8 +1382,22 @@ function buildCards(){
     card.addEventListener('keydown',e=>{ if(e.code==='Enter'||e.code==='Space'){e.preventDefault();startGame(k);} });
     wrap.appendChild(card);
     const pc=card.querySelector('canvas').getContext('2d'); let pt=0;
-    setInterval(()=>{ pc.clearRect(0,0,152,90); pc.fillStyle='#16241b'; pc.fillRect(0,0,152,90); pc.fillStyle='#1a2a20'; pc.fillRect(0,76,152,14);
-      pc.save(); pc.translate(76,76); pc.scale(0.74,0.74); drawBikeBody(pc,b,pt,true,'eco',false,false); pc.restore(); pt++; },55);
+    setInterval(()=>{
+      pc.clearRect(0,0,152,90); pc.fillStyle='#16241b'; pc.fillRect(0,0,152,90);
+      pc.fillStyle='#1a2a20'; pc.fillRect(0,76,152,14);
+      const mi=BIKES[k].menuImg;
+      if(mi){                                   // full bike hero shot (no rider)
+        const pad=10, availW=152-pad*2, availH=80;
+        const sc=Math.min(availW/mi.width, availH/mi.height);
+        const dw=mi.width*sc, dh=mi.height*sc;
+        pc.imageSmoothingEnabled=false;
+        pc.drawImage(mi,(152-dw)/2,(80-dh)/2+2,dw,dh);
+      } else {                                  // procedural bike, NO rider, gentle wheel spin
+        pc.save(); pc.translate(76,74); pc.scale(0.92,0.92);
+        drawBikeBody(pc,b,pt,true,'eco',false,false,true); pc.restore();
+      }
+      pt++;
+    },55);
   });
 }
 
@@ -1427,7 +1442,14 @@ function frame(){
   else { sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,W,H); }
   requestAnimationFrame(frame);
 }
-buildArt(); try{ loadBikeArt(); }catch(e){} buildCards(); requestAnimationFrame(frame);
+buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} buildCards(); requestAnimationFrame(frame);
+function loadMenuBike(){
+  if(typeof Image==='undefined') return;
+  let im; try{ im=new Image(); }catch(e){ return; }
+  im.onload=()=>{ BIKES.city.menuImg=im; };
+  im.onerror=()=>{};
+  im.src='city-full.png';
+}
 </script>
 </body>
 </html>
