@@ -94,15 +94,20 @@
   .zoneHint{display:none;position:absolute;bottom:36%;font-size:7px;line-height:1.9;text-align:center;
     color:rgba(234,255,242,.9);background:rgba(8,16,11,.55);border:1px dashed #3a6a4c;
     padding:6px 8px;transition:opacity .8s;pointer-events:none;}
-  .zl{left:4%;} .zr{right:6%;}
+  .zr{right:6%;}
   body.touch .zoneHint{display:block;}
 
   #touch{position:absolute;inset:0;z-index:15;pointer-events:none;}
   .tbtn{position:absolute;pointer-events:auto;font-family:var(--pix);border:2px solid;
-    background:rgba(8,16,11,.32);padding:0;width:clamp(58px,15vh,84px);height:clamp(58px,15vh,84px);
-    border-radius:50%;font-size:7.5px;user-select:none;display:none;opacity:.8;}
-  .tjump{right:calc(14px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));border-color:var(--cyan);color:var(--cyan);}
-  .tmode{left:calc(14px + env(safe-area-inset-left));bottom:calc(16px + env(safe-area-inset-bottom));border-color:var(--eco);color:var(--eco);}
+    background:rgba(8,16,11,.34);padding:0;border-radius:50%;font-size:7.5px;user-select:none;display:none;opacity:.82;}
+  .tjump{width:clamp(60px,15vh,86px);height:clamp(60px,15vh,86px);
+    right:calc(14px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));border-color:var(--cyan);color:var(--cyan);}
+  .tduck{width:clamp(50px,12vh,70px);height:clamp(50px,12vh,70px);
+    right:calc(14px + env(safe-area-inset-right) + clamp(60px,15vh,86px) + 12px);
+    bottom:calc(16px + env(safe-area-inset-bottom));border-color:var(--gold);color:var(--gold);font-size:7px;}
+  .tmode{width:clamp(50px,12vh,70px);height:clamp(50px,12vh,70px);
+    left:calc(12px + env(safe-area-inset-left));top:50%;transform:translateY(-50%);
+    border-color:var(--eco);color:var(--eco);font-size:7px;}
   .tbtn:active{background:rgba(28,224,196,.3);}
   /* how-to-play guide */
   .gcard{background:var(--panel);border:3px solid var(--cyan);padding:16px 18px;max-width:560px;
@@ -177,8 +182,7 @@
       <b>E</b> <b>ECO</b> ⇄ <span class="t">TURBO</span> · <b>P</b> Pause · <b>H</b> Hitboxes<br>
       <span class="t">TURBO</span> for climbs ▲ · duck under <span class="t">low smog</span>
     </div>
-    <div class="zoneHint zl" id="zoneL">HOLD LEFT<br>= DUCK</div>
-    <div class="zoneHint zr" id="zoneR">TAP RIGHT<br>= JUMP</div>
+    <div class="zoneHint zr" id="zoneR">TAP THIS SIDE<br>= JUMP</div>
     <div class="intro" id="introHint">
       <span class="k">JUMP</span> cars · <span class="k">DUCK</span> low smog ·
       grab <span class="k">🍃</span> + <span class="k">⚡</span> ·
@@ -188,6 +192,7 @@
 
   <div id="touch">
     <button class="tbtn tmode" id="tMode">ECO/<br>TURBO</button>
+    <button class="tbtn tduck" id="tDuck">DUCK</button>
     <button class="tbtn tjump" id="tJump">JUMP</button>
   </div>
   <button class="tpause" id="tPause">⏸</button>
@@ -199,7 +204,7 @@
     <div class="pick">▼ CHOOSE YOUR E-BIKE ▼</div>
     <div class="cards" id="cards"></div>
     <div class="controls-hint"><kbd>SPACE</kbd>/<kbd>↑</kbd> jump (hold=higher) &nbsp; <kbd>E</kbd>/<kbd>↓</kbd> ECO⇄TURBO &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>H</kbd> hitboxes</div>
-    <div class="touch-hint">TAP A BIKE TO START · TAP RIGHT = JUMP · HOLD LEFT = DUCK</div>
+    <div class="touch-hint">TAP A BIKE TO START · TAP RIGHT = JUMP · DUCK / ECO-TURBO BUTTONS</div>
   </div>
 
   <div class="screen hidden" id="guide">
@@ -214,9 +219,9 @@
         <kbd>SPACE</kbd>/<kbd>↑</kbd> jump (hold = higher) &nbsp; <kbd>↓</kbd>/<kbd>S</kbd> duck &nbsp; <kbd>E</kbd> ECO⇄TURBO &nbsp; <kbd>P</kbd> pause
       </div>
       <div class="gctrl tcOnly">
-        TAP <b>RIGHT</b> side of screen: JUMP (hold = higher) · HOLD <b>LEFT</b> side: DUCK · green button: <b>ECO/TURBO</b>
+        Tap <b>RIGHT</b> side: JUMP (hold = higher) · <b>DUCK</b> button (gold, bottom-right) · <b>ECO/TURBO</b> button (green, left)
       </div>
-      <button class="btn" id="ready" style="margin-top:14px">LET'S RIDE ▶</button>
+      <div style="margin-top:14px"><button class="btn ghost" id="gback">◀ BACK</button><button class="btn" id="ready">LET'S RIDE ▶</button></div>
     </div>
   </div>
 
@@ -598,7 +603,7 @@ let G=null;
 function newGame(key){ const b=BIKES[key];
   return {key,b,state:'play',mode:'eco',battery:100,co2:0,damage:0,leaves:0,
     dist:0,worldX:0,speed:b.baseSpeed,riderX:HOME_X,y:BASE_GROUND,vy:0,onGround:true,
-    angle:0,stun:0,inv:0,jbuf:0,coyote:0,squash:0,jumpHeld:false,warn20:false,warn10:false,warn0:false,
+    angle:0,angleQ:0,stun:0,inv:0,jbuf:0,coyote:0,squash:0,jumpHeld:false,warn20:false,warn10:false,warn0:false,
     objects:[],hills:[],particles:[],floaters:[],amb:[],shake:0,finished:false,t:0,co2pop:0,debug:false,duck:false,fgT:330,trans:0,lastZone:0,cd:0}; }
 function groundYAt(g,wx){ let y=BASE_GROUND;
   for(const h of g.hills){ const d=wx-h.cx,hw=h.w/2;
@@ -697,20 +702,23 @@ if(!isTouchEnv()){
   scv.addEventListener('pointerdown',e=>{e.preventDefault();pressJump();});
   scv.addEventListener('pointerup',e=>{e.preventDefault();releaseJump();});
 }else{
-  const ptrs=new Map(); let duckCount=0;
-  function zoneOf(e){ const r=scv.getBoundingClientRect(); return (e.clientX-r.left) < r.width/2 ? 'L':'R'; }
+  // right half of the playfield = jump (big forgiving target); left half intentionally
+  // left clear for the rider. DUCK and ECO/TURBO are explicit buttons.
+  const jptrs=new Set();
+  function isRight(e){ const r=scv.getBoundingClientRect(); return (e.clientX-r.left) >= r.width*0.42; }
   scv.addEventListener('pointerdown',e=>{ e.preventDefault();
-    const z=zoneOf(e); ptrs.set(e.pointerId,z);
-    if(z==='R') pressJump();
-    else { duckCount++; if(G) G.duck=true; } });
-  const release=e=>{ const z=ptrs.get(e.pointerId); if(z===undefined) return;
-    ptrs.delete(e.pointerId);
-    if(z==='R') releaseJump();
-    else { duckCount=Math.max(0,duckCount-1); if(duckCount===0&&G) G.duck=false; } };
-  scv.addEventListener('pointerup',e=>{e.preventDefault();release(e);});
-  scv.addEventListener('pointercancel',release);
-  addEventListener('pointerup',release);          // finger lifted outside the canvas
-  addEventListener('pointercancel',release);
+    if(isRight(e)){ jptrs.add(e.pointerId); pressJump(); } });
+  const jrelease=e=>{ if(jptrs.delete(e.pointerId)) releaseJump(); };
+  scv.addEventListener('pointerup',e=>{e.preventDefault();jrelease(e);});
+  scv.addEventListener('pointercancel',jrelease);
+  addEventListener('pointerup',jrelease);
+  addEventListener('pointercancel',jrelease);
+  // DUCK button
+  const tDk=document.getElementById('tDuck');
+  tDk.addEventListener('pointerdown',e=>{e.preventDefault();if(G)G.duck=true;});
+  tDk.addEventListener('pointerup',e=>{e.preventDefault();if(G)G.duck=false;});
+  tDk.addEventListener('pointercancel',()=>{if(G)G.duck=false;});
+  tDk.addEventListener('contextmenu',e=>e.preventDefault());
 }
 [tJ,tM,scv].forEach(el=>el.addEventListener('contextmenu',e=>e.preventDefault()));
 function togglePause(){ document.getElementById('pauseBadge').style.display=(G&&G.state==='pause')?'block':'none'; }
@@ -773,6 +781,8 @@ function update(g){
   g.squash*=0.85;
   const ta=g.onGround?Math.atan(slope):Math.max(-0.45,Math.min(0.45,g.vy*0.03));
   g.angle+=(ta-g.angle)*0.2;
+  const STEP=Math.PI/24;                               // ~7.5deg steps: stable pixels, still smooth enough
+  g.angleQ=Math.round(g.angle/STEP)*STEP;
 
   /* ambient life */
   spawnAmbient(g);
@@ -972,7 +982,7 @@ function render(g){
   ctx.beginPath(); ctx.ellipse(g.riderX,gy+4,sw,7*Math.max(.5,1-alt/240),0,0,7); ctx.fill();
   const blink=g.inv>0 && (g.t%8<3);
   if(!blink){
-    ctx.save(); ctx.translate(g.riderX,g.y); ctx.rotate(g.angle);
+    ctx.save(); ctx.translate(Math.round(g.riderX),Math.round(g.y)); ctx.rotate(g.angleQ||0);
     ctx.scale(1+g.squash*0.08, 1-g.squash*0.16);
     if(g.inv>0) ctx.globalAlpha=0.75;
     drawBikeBody(ctx,g.b,g.t,true,g.mode,g.battery<20,g.duck&&g.onGround);
@@ -1190,10 +1200,18 @@ function loadBikeArt(){
       let wc,wr2;
       try{ const wb2=alphaBBox(wImg); wc=[wb2.x+wb2.w/2,wb2.y+wb2.h/2]; wr2=(wb2.w+wb2.h)/4; }
       catch(e){ const f=CITY_ART.wheelFull; wc=[f.cx*wImg.width,f.cy*wImg.height]; wr2=f.r*wImg.width; }
-      const ws=17/wr2, wcv=mkCanvas(38,38), wx=wcv.getContext('2d');
-      wx.imageSmoothingEnabled=false;
-      wx.translate(19,19); wx.scale(ws,ws); wx.translate(-wc[0],-wc[1]); wx.drawImage(wImg,0,0);
-      art.body=bc; art.backPt=P.back; art.P=P; art.wheel=wcv; art.ready=true;
+      const ws=17/wr2;
+      const NF=32, S=2;                                  // 32 frames, rendered at 2x then downscaled = crisp, stable
+      const frames=[];
+      for(let fi=0;fi<NF;fi++){
+        const big=mkCanvas(38*S,38*S), bx2=big.getContext('2d'); bx2.imageSmoothingEnabled=false;
+        bx2.translate(19*S,19*S); bx2.rotate(fi/NF*Math.PI*2); bx2.scale(ws*S,ws*S);
+        bx2.translate(-wc[0],-wc[1]); bx2.drawImage(wImg,0,0);
+        const sm=mkCanvas(38,38), sx2=sm.getContext('2d'); sx2.imageSmoothingEnabled=false;
+        sx2.drawImage(big,0,0,38,38);                    // snap to wheel's own grid -> no per-frame boil
+        frames.push(sm);
+      }
+      art.body=bc; art.backPt=P.back; art.P=P; art.wheelFrames=frames; art.NF=NF; art.ready=true;
     }catch(e){ /* keep procedural fallback */ }
   }
   bImg.onload=tryBake; wImg.onload=tryBake;
@@ -1201,13 +1219,15 @@ function loadBikeArt(){
   bImg.src=CITY_ART.body; wImg.src=CITY_ART.wheel;
 }
 function drawAssetBike(c,b,t,moving,mode,lowBat,crouch){
-  const a=b.art, wr=b.wheel, wy=-wr+2, back=-28, front=28, spin=moving?t*0.4:0;
+  const a=b.art;
+  if(!a||!a.wheelFrames||!a.body){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch); }
+  const wr=b.wheel, wy=-wr+2, back=-28, front=28, spin=moving?t*0.4:0;
   // logical position of an anchor (back axle sits at (-28,wy))
   const L=k=>[back+(a.P[k][0]-a.backPt[0]), wy+(a.P[k][1]-a.backPt[1])];
   // wheels (spinning sprites) behind the frame
   for(const wxp of[back,front]){
-    c.save(); c.translate(wxp,wy); c.rotate(spin); c.drawImage(a.wheel,-19,-19); c.restore();
-    // light catch on the lower tire arc (keeps dark tires readable on dark roads)
+    const fi=((Math.round(spin/(Math.PI*2)*a.NF)%a.NF)+a.NF)%a.NF;
+    c.drawImage(a.wheelFrames[fi], Math.round(wxp)-19, Math.round(wy)-19);   // integer placement
     c.strokeStyle='rgba(255,255,255,.20)'; c.lineWidth=2;
     c.beginPath(); c.arc(wxp,wy,wr-1,0.55,1.55); c.stroke();
   }
@@ -1333,7 +1353,6 @@ function syncHUD(g){
   const {zone,blend}=biomeBlend(g); elBio.textContent=BIOMES[blend>0.5?Math.min(2,zone+1):zone].name;
   hudBikeDraw(g);
   if(g.t>460){ document.getElementById('introHint').style.opacity='0';
-    document.getElementById('zoneL').style.opacity='0';
     document.getElementById('zoneR').style.opacity='0'; }
 }
 const hb=document.getElementById('hudBike'),hbx=hb.getContext('2d');
@@ -1359,7 +1378,7 @@ function buildCards(){
     wrap.appendChild(card);
     const pc=card.querySelector('canvas').getContext('2d'); let pt=0;
     setInterval(()=>{ pc.clearRect(0,0,152,90); pc.fillStyle='#16241b'; pc.fillRect(0,0,152,90); pc.fillStyle='#1a2a20'; pc.fillRect(0,76,152,14);
-      pc.save(); pc.translate(76,76); pc.scale(0.74,0.74); drawBikeBody(pc,b,pt,true,'eco',false); pc.restore(); pt++; },55);
+      pc.save(); pc.translate(76,76); pc.scale(0.74,0.74); drawBikeBody(pc,b,pt,true,'eco',false,false); pc.restore(); pt++; },55);
   });
 }
 
@@ -1378,7 +1397,6 @@ function beginRun(k){
   document.getElementById('menu').classList.add('hidden'); document.getElementById('end').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   document.getElementById('introHint').style.opacity='1';
-  document.getElementById('zoneL').style.opacity='1';
   document.getElementById('zoneR').style.opacity='1';
   if(isTouch){ document.querySelectorAll('.tbtn').forEach(b=>b.style.display='block');
     document.getElementById('tPause').classList.add('on'); }
@@ -1387,6 +1405,9 @@ function beginRun(k){
 }
 document.getElementById('ready').addEventListener('click',()=>{
   document.getElementById('guide').classList.add('hidden'); beginRun(pendingBike); });
+document.getElementById('gback').addEventListener('click',()=>{
+  document.getElementById('guide').classList.add('hidden');
+  document.getElementById('menu').classList.remove('hidden'); pendingBike=null; });
 document.getElementById('retry').addEventListener('click',()=>{ show('menu');
   document.getElementById('guide').classList.add('hidden');
   document.getElementById('hud').classList.add('hidden');
