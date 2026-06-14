@@ -656,11 +656,15 @@ function bikeCircles(g){
   if(asset){
     const P=g.b.art.P, bp=g.b.art.backPt;
     const seatX=-ah+(P.seat[0]-bp[0]), seatY=awy+(P.seat[1]-bp[1]); // rider sits on seat anchor
-    const Dr=Math.hypot(P.crank[0]-P.seat[0],P.crank[1]-P.seat[1])||40, Ur=Dr/3.6, S=0.65;
-    const shY=-Ur*2.35*S, hY=shY-Ur*0.82*S, hX=Ur*0.85*S, hr=Ur*0.52*S; // match drawRider
-    L = duck
-      ? [[-ah,awy,awr],[ah,awy,awr],[seatX+hX*0.7, seatY+shY*0.5, hr*1.5]]
-      : [[-ah,awy,awr],[ah,awy,awr],[seatX+hX*0.7, seatY+shY*0.62, hr*1.6],[seatX+hX, seatY+hY, hr*1.3]];
+    const Dr=Math.hypot(P.crank[0]-P.seat[0],P.crank[1]-P.seat[1])||40, Ur=Dr/3.6, S=0.80;
+    const torsoLenR=Ur*2.35*S, hr=Ur*0.52*S;               // match drawRider proportions
+    if(duck){
+      const shx=Ur*1.15*S, shy=-torsoLenR*0.55;            // tucked back/shoulders = highest point
+      L=[[-ah,awy,awr],[ah,awy,awr],[seatX+shx*0.8, seatY+shy, hr*1.7]];
+    } else {
+      const shY=-torsoLenR, hY=shY-Ur*0.82*S, hX=Ur*0.85*S;
+      L=[[-ah,awy,awr],[ah,awy,awr],[seatX+hX*0.7, seatY+shY*0.62, hr*1.6],[seatX+hX, seatY+hY, hr*1.3]];
+    }
   } else {
     L = duck ? [[-28,wy,wr],[28,wy,wr],[3,wy-8,12]]
              : [[-28,wy,wr],[28,wy,wr],[3,topY-9,13],[11,topY-26,8]];
@@ -1251,17 +1255,20 @@ function drawWheelProc(c,wx,wy,wr,color,spin){
   c.fillStyle='#0e0e12'; circle(c,wx,wy,Math.max(1.5,wr*0.09));
   c.fillStyle='rgba(255,255,255,.5)'; c.fillRect(wx-1,wy-3,2,2);
 }
-function drawRider(c, pa, moving, cx, cy, hx, hy){
+function drawRider(c, pa, moving, cx, cy, hx, hy, crouch){
   // anatomically-proportioned commuter; cylindrical 2-tone limbs; true circular IK pedaling.
   // drawn in hip-local space. light source upper-right.
   const J={b:'#4a635d',s:'#2f433e',h:'#68867c'}, SK={b:'#deb082',s:'#b88a63',h:'#eeca9e'},
         TR={b:'#3c4450',s:'#282f39',h:'#525c6a'}, SHc={b:'#1a1a20',s:'#0c0c10',h:'#343640'},
         HM={b:'#2a2e32',s:'#191c1f',h:'#5c6268',v:'#3ddc6f'}, GL='#16181e', OL='#121117';
-  const D=Math.hypot(cx,cy)||20, U=D/3.6, S=0.65;        // U = head unit; S = overall rider scale
+  const D=Math.hypot(cx,cy)||20, U=D/3.6, S=0.80;        // U = head unit; S = overall rider scale
   const rP=D*0.17, legT=D*1.0, Lt=legT*0.5, Ls=legT*0.5;  // legs/arms keep real reach to pedals/bars
+  const legW=Math.max(S,0.9);                            // sturdier legs than the torso scale
   const bob=Math.sin(pa*2)*(moving?U*0.10*S:0);
-  const torsoLen=U*2.35*S, sh=[U*0.55*S, -torsoLen+bob];
-  const hrad=U*0.52*S, neck=U*0.30*S, headC=[sh[0]+U*0.30*S, sh[1]-neck-hrad];
+  const torsoLen=U*2.35*S, hrad=U*0.52*S, neck=U*0.30*S;
+  let sh, headC;
+  if(crouch){ sh=[U*1.15*S, -torsoLen*0.55+bob]; headC=[sh[0]+U*0.55*S, sh[1]-hrad*0.55]; }  // forward aero tuck
+  else      { sh=[U*0.55*S, -torsoLen+bob];      headC=[sh[0]+U*0.30*S, sh[1]-neck-hrad]; }
   const fN=[cx+Math.cos(pa)*rP, cy+Math.sin(pa)*rP];
   const fF=[cx+Math.cos(pa+Math.PI)*rP, cy+Math.sin(pa+Math.PI)*rP];
   const LX=1.0, LY=-0.6;
@@ -1290,7 +1297,7 @@ function drawRider(c, pa, moving, cx, cy, hx, hy){
   function poly(pts,f){ c.fillStyle=f; c.beginPath(); c.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++) c.lineTo(pts[i][0],pts[i][1]); c.closePath(); c.fill(); }
   function leg(foot,far){
     const knee=ik(0,0,foot[0],foot[1],Lt,Ls,'fwd'), col=far?{b:TR.s,s:TR.s,h:TR.b}:TR;
-    cyl(0,-1,knee[0],knee[1],(far?4.5:5.5)*S,col); cyl(knee[0],knee[1],foot[0],foot[1],(far?3.3:4)*S,col);
+    cyl(0,-1,knee[0],knee[1],(far?4.5:5.5)*legW,col); cyl(knee[0],knee[1],foot[0],foot[1],(far?3.3:4)*legW,col);
     c.fillStyle=OL; c.fillRect(foot[0]-3*S,foot[1]-1*S,8*S,5*S);
     c.fillStyle=far?SHc.s:SHc.b; c.fillRect(foot[0]-2*S,foot[1],6*S,3*S);
     if(!far){ c.fillStyle=SHc.h; c.fillRect(foot[0]+1*S,foot[1],3*S,1*S); }
@@ -1352,9 +1359,8 @@ function drawAssetBike(c,b,t,moving,mode,lowBat,crouch,noRider){
   // rider mounted on seat / bar / crank anchors (skipped for menu previews)
   if(!noRider){
     c.save(); c.translate(sx2,sy2);
-    if(crouch){ c.translate(0, wr*0.30); c.scale(1,0.66); }   // tucked crouch
     const pa = moving ? t*0.22 : 1.2;                         // calm circular cadence
-    drawRider(c, pa, moving, kx-sx2, ky-sy2, hx2-sx2, hy2-sy2);
+    drawRider(c, pa, moving, kx-sx2, ky-sy2, hx2-sx2, hy2-sy2, crouch);  // crouch = forward tuck pose
     c.restore();
   }
   if(mode==='turbo'&&moving){
