@@ -1248,6 +1248,72 @@ function drawWheelProc(c,wx,wy,wr,color,spin){
   c.fillStyle='#0e0e12'; circle(c,wx,wy,Math.max(1.5,wr*0.09));
   c.fillStyle='rgba(255,255,255,.5)'; c.fillRect(wx-1,wy-3,2,2);
 }
+function drawRider(c, pa, moving, cx, cy, hx, hy){
+  // shaded commuter, two-segment IK limbs, true circular pedaling. Drawn in hip-local space.
+  const J={b:'#466059',s:'#30443f',h:'#607e74'}, SK={b:'#d8a878',s:'#b3855c',h:'#e8c496'},
+        P={b:'#39414d',s:'#262d36',h:'#4a5562'}, SHc={b:'#1d1d24',s:'#0e0e12'},
+        HM={b:'#2c3034',s:'#1b1e21',h:'#474d52',v:'#3ddc6f'}, OL='#141319';
+  const D=Math.hypot(cx,cy)||20;
+  const rP=D*0.18, legT=D*0.96+rP, Lt=legT*0.52, Ls=legT*0.48;
+  const bob=Math.sin(pa*2)*(moving?D*0.026:0);
+  const torsoLen=D*0.80, sh=[D*0.25, -torsoLen+bob];
+  const headC=[sh[0]+D*0.11, sh[1]-D*0.30], hr=D*0.235;
+  const fN=[cx+Math.cos(pa)*rP, cy+Math.sin(pa)*rP];
+  const fF=[cx+Math.cos(pa+Math.PI)*rP, cy+Math.sin(pa+Math.PI)*rP];
+  function ik(ax,ay,bx,by,L1,L2,prefer){
+    const ddx=bx-ax,ddy=by-ay,od=Math.hypot(ddx,ddy)||0.01;
+    const d=Math.max(Math.abs(L1-L2)+0.01,Math.min(L1+L2-0.01,od));
+    const a=(d*d+L1*L1-L2*L2)/(2*d), hh=Math.sqrt(Math.max(0,L1*L1-a*a));
+    const ux=ddx/od,uy=ddy/od,bX=ax+a*ux,bY=ay+a*uy,pxp=-uy,pyp=ux;
+    const k1=[bX+pxp*hh,bY+pyp*hh],k2=[bX-pxp*hh,bY-pyp*hh];
+    return prefer==='fwd'?(k1[0]>k2[0]?k1:k2):(k1[1]>k2[1]?k1:k2);
+  }
+  function limb(x1,y1,x2,y2,w,col){
+    c.lineCap='round'; c.lineJoin='round';
+    c.strokeStyle=OL; c.lineWidth=w+2; c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke();
+    c.strokeStyle=col.b; c.lineWidth=w; c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke();
+    c.strokeStyle=col.h||col.b; c.lineWidth=Math.max(1,w*0.34);
+    c.beginPath(); c.moveTo(x1,y1-w*0.3); c.lineTo(x2,y2-w*0.3); c.stroke();
+  }
+  function ell(x0,y0,rx,ry,fill){ c.fillStyle=fill; c.beginPath(); c.ellipse(x0,y0,Math.abs(rx),Math.abs(ry),0,0,7); c.fill(); }
+  function pie(x0,y0,r,a0,a1,fill){ c.fillStyle=fill; c.beginPath(); c.moveTo(x0,y0); c.arc(x0,y0,r,a0*Math.PI/180,a1*Math.PI/180,false); c.closePath(); c.fill(); }
+  function arcS(x0,y0,r,a0,a1,col,w){ c.strokeStyle=col; c.lineWidth=w; c.beginPath(); c.arc(x0,y0,r,a0*Math.PI/180,a1*Math.PI/180,false); c.stroke(); }
+  function leg(foot,far){
+    const knee=ik(0,0,foot[0],foot[1],Lt,Ls,'fwd'), col=far?{b:P.s,h:P.b}:P;
+    limb(0,0,knee[0],knee[1],far?4:5,col); limb(knee[0],knee[1],foot[0],foot[1],far?3:4,col);
+    c.fillStyle=OL; c.fillRect(foot[0]-3,foot[1]-1,7,5);
+    c.fillStyle=far?SHc.s:SHc.b; c.fillRect(foot[0]-2,foot[1],5,3);
+  }
+  function arm(far){
+    const shoulder=[sh[0]+(far?-2:1), sh[1]+2], hand=[hx,hy];
+    const al=Math.hypot(hand[0]-shoulder[0],hand[1]-shoulder[1])+1;
+    const elbow=ik(shoulder[0],shoulder[1],hand[0],hand[1],al*0.52,al*0.5,'down'), col=far?{b:J.s,h:J.b}:J;
+    limb(shoulder[0],shoulder[1],elbow[0],elbow[1],far?3:4,col); limb(elbow[0],elbow[1],hand[0],hand[1],far?3:4,col);
+    c.fillStyle=far?SK.s:SK.b; c.beginPath(); c.arc(hand[0],hand[1],2.2,0,7); c.fill();
+  }
+  function torso(){
+    const dxs=sh[0],dys=sh[1],Lp=Math.hypot(dxs,dys)||1,ux=dxs/Lp,uy=dys/Lp,pxp=-uy,pyp=ux;
+    const hipW=D*0.34,shW=D*0.30;
+    const p1=[pxp*hipW*0.5,pyp*hipW*0.5],p2=[-pxp*hipW*0.5,-pyp*hipW*0.5];
+    const p3=[sh[0]-pxp*shW*0.5,sh[1]-pyp*shW*0.5],p4=[sh[0]+pxp*shW*0.5,sh[1]+pyp*shW*0.5];
+    c.fillStyle=OL; c.beginPath(); c.moveTo(p1[0],p1[1]); c.lineTo(p2[0],p2[1]); c.lineTo(p3[0],p3[1]); c.lineTo(p4[0],p4[1]); c.closePath(); c.fill();
+    c.fillStyle=J.b; c.beginPath(); c.moveTo(p1[0]*0.84,p1[1]*0.84); c.lineTo(p2[0]*0.84,p2[1]*0.84); c.lineTo(p3[0],p3[1]); c.lineTo(p4[0],p4[1]); c.closePath(); c.fill();
+    c.strokeStyle=J.h; c.lineWidth=1.5; c.beginPath(); c.moveTo(p1[0],p1[1]); c.lineTo(p4[0],p4[1]); c.stroke();
+    c.strokeStyle=J.s; c.beginPath(); c.moveTo(p2[0],p2[1]); c.lineTo(p3[0],p3[1]); c.stroke();
+  }
+  function head(){
+    limb(sh[0],sh[1],headC[0],headC[1]+hr*0.4,3,SK);
+    ell(headC[0],headC[1],hr+1,hr+1,OL);
+    ell(headC[0],headC[1],hr,hr,SK.b);
+    ell(headC[0]-hr*0.4,headC[1]+hr*0.2,hr*0.6,hr*0.8,SK.s);
+    ell(headC[0]+hr*0.55,headC[1]+hr*0.05,hr*0.45,hr*0.55,SK.b);
+    pie(headC[0],headC[1]-0.5,hr+1.5,185,358,OL);
+    pie(headC[0],headC[1]-0.5,hr+0.5,188,356,HM.b);
+    arcS(headC[0],headC[1]-0.5,hr,205,265,HM.h,1.5);
+    arcS(headC[0],headC[1]-0.5,hr*0.6,210,300,HM.v,1);
+  }
+  leg(fF,true); arm(true); torso(); head(); arm(false); leg(fN,false);
+}
 function drawAssetBike(c,b,t,moving,mode,lowBat,crouch,noRider){
   const a=b.art;
   if(!a||!a.body||!a.wb){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch,noRider); }
@@ -1269,24 +1335,9 @@ function drawAssetBike(c,b,t,moving,mode,lowBat,crouch,noRider){
   // rider mounted on seat / bar / crank anchors (skipped for menu previews)
   if(!noRider){
     c.save(); c.translate(sx2,sy2);
-    if(crouch){ c.translate(0,7); c.scale(1,0.58); }
-    const ph=Math.sin(t*0.5)*4;
-    c.strokeStyle='#16307a'; c.lineWidth=5; c.lineCap='round';        // legs to crank
-    c.beginPath(); c.moveTo(0,-4); c.lineTo(kx-sx2-3,ky-sy2-ph*0.5); c.stroke();
-    c.strokeStyle='#1f48a8';
-    c.beginPath(); c.moveTo(2,-4); c.lineTo(kx-sx2+5,ky-sy2+ph*0.5); c.stroke();
-    c.fillStyle='#1a1a20';                                             // shoes
-    c.fillRect(kx-sx2-7,ky-sy2-ph*0.5-2,8,4); c.fillRect(kx-sx2+1,ky-sy2+ph*0.5-2,8,4);
-    c.save(); c.rotate(-0.22);                                         // leaned torso
-    c.fillStyle='#1f48a8'; c.fillRect(-5,-24,15,24);
-    c.fillStyle='#2a5cd0'; c.fillRect(-5,-24,11,24);
-    c.restore();
-    c.fillStyle='#ffd9a8'; c.fillRect(6,-34,11,11);                    // head
-    c.fillStyle='#e8b888'; c.fillRect(14,-34,3,11);
-    c.fillStyle=b.color; c.fillRect(6,-38,11,6);                       // helmet
-    c.fillStyle='rgba(255,255,255,.6)'; c.fillRect(7,-37,4,2);
-    c.strokeStyle='#2a5cd0'; c.lineWidth=4;                            // arm to bar
-    c.beginPath(); c.moveTo(7,-18); c.lineTo(hx2-sx2-1,hy2-sy2+3); c.stroke();
+    if(crouch){ c.translate(0, wr*0.30); c.scale(1,0.66); }   // tucked crouch
+    const pa = moving ? t*0.22 : 1.2;                         // calm circular cadence
+    drawRider(c, pa, moving, kx-sx2, ky-sy2, hx2-sx2, hy2-sy2);
     c.restore();
   }
   if(mode==='turbo'&&moving){
