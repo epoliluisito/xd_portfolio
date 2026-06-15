@@ -1161,14 +1161,29 @@ function drawDebug(g,c){
    (axle tilt) and baked to game scale. Anchors are stored as fractions
    so export margins/resizes don't matter. Missing/unreadable files ->
    silent fallback to the procedural bike. */
-const CITY_ART={
-  body:'city-body.png', wheel:'city-wheel.png',
-  // EXACT pixel anchors measured on the shipped city-body.png (1113x636, wheels drawn procedurally).
-  // Mapped through the live alpha bbox so trim/padding on re-export stays robust.
-  ref:[1113,636], refOrigin:[3,3], refBBox:[1107,630],
-  px:{back:[200,498],front:[940,496],crank:[560,545],seat:[440,125],bar:[835,180]},
-  bodyWheelRadius:196,           // wheel-well radius in body px -> sizes procedural wheels to the fenders
-  targetWheelbase:48             // in-game logical wheelbase (rider + hitboxes derive from this scale)
+const BIKE_ART={
+  // City: wheels-OFF body, procedural wheels drawn BEHIND the frame.
+  city:{
+    body:'city-body.png',
+    ref:[1113,636], refOrigin:[3,3], refBBox:[1107,630],
+    px:{back:[200,498],front:[940,496],crank:[560,545],seat:[440,125],bar:[835,180]},
+    bodyWheelRadius:196, targetWheelbase:48, full:'city-full.png'
+  },
+  // Monster & Mini: FULL bike art (undistorted); spinning procedural wheels drawn OVER the real
+  // wheels (coverWheels) so the fat tire shows as a ring around the moving spokes. Anchors measured
+  // on the full images where the hubs are visible.
+  monster:{
+    body:'monster-full.png', coverWheels:true,
+    ref:[1215,751], refOrigin:[0,0], refBBox:[1215,751],
+    px:{back:[152,510],front:[982,510],crank:[590,545],seat:[430,108],bar:[865,28]},
+    bodyWheelRadius:140, targetWheelbase:48, full:'monster-full.png'
+  },
+  mini:{
+    body:'mini-full.png', coverWheels:true,
+    ref:[1261,752], refOrigin:[0,0], refBBox:[1261,752],
+    px:{back:[188,510],front:[1008,500],crank:[480,555],seat:[430,95],bar:[905,25]},
+    bodyWheelRadius:135, targetWheelbase:48, full:'mini-full.png'
+  }
 };
 function alphaBBox(img){               // may throw SecurityError on file://
   const c=mkCanvas(img.width,img.height), x=c.getContext('2d');
@@ -1180,26 +1195,27 @@ function alphaBBox(img){               // may throw SecurityError on file://
   if(x1<x0) throw new Error('empty');
   return {x:x0,y:y0,w:x1-x0+1,h:y1-y0+1};
 }
-function loadBikeArt(){
-  const art={ready:false}; BIKES.city.art=art;
+function loadBikeArt(){ for(const key in BIKE_ART) bakeBikeArt(key, BIKE_ART[key]); }
+function bakeBikeArt(key, CFG){
+  const art={ready:false}; BIKES[key].art=art;
   if(typeof Image==='undefined') return;        // no image support -> procedural bikes
-  let bImg,got=false;
+  let bImg;
   try{ bImg=new Image(); }catch(e){ return; }
   function tryBake(){
     try{
-      const WB=CITY_ART.targetWheelbase;
+      const WB=CFG.targetWheelbase;
       // --- anchors: exact px mapped through the live alpha bbox ---
-      const O=CITY_ART.refOrigin, RB=CITY_ART.refBBox;
+      const O=CFG.refOrigin, RB=CFG.refBBox;
       let A, bodyWR;
       try{
         const bb=alphaBBox(bImg);
         const fx=v=>bb.x+((v[0]-O[0])/RB[0])*bb.w, fy=v=>bb.y+((v[1]-O[1])/RB[1])*bb.h;
-        A={}; for(const k in CITY_ART.px) A[k]=[fx(CITY_ART.px[k]),fy(CITY_ART.px[k])];
-        bodyWR=(CITY_ART.bodyWheelRadius/RB[0])*bb.w;
+        A={}; for(const k in CFG.px) A[k]=[fx(CFG.px[k]),fy(CFG.px[k])];
+        bodyWR=(CFG.bodyWheelRadius/RB[0])*bb.w;
       }catch(e){
-        const sxf=bImg.width/CITY_ART.ref[0], syf=bImg.height/CITY_ART.ref[1];
-        A={}; for(const k in CITY_ART.px) A[k]=[CITY_ART.px[k][0]*sxf,CITY_ART.px[k][1]*syf];
-        bodyWR=CITY_ART.bodyWheelRadius*sxf;
+        const sxf=bImg.width/CFG.ref[0], syf=bImg.height/CFG.ref[1];
+        A={}; for(const k in CFG.px) A[k]=[CFG.px[k][0]*sxf,CFG.px[k][1]*syf];
+        bodyWR=CFG.bodyWheelRadius*sxf;
       }
       const dx=A.front[0]-A.back[0], dy=A.front[1]-A.back[1];
       const tilt=Math.atan2(dy,dx), scale=WB/Math.hypot(dx,dy);
@@ -1232,12 +1248,12 @@ function loadBikeArt(){
       const P={}; for(const k in A){ const m=map(A[k][0],A[k][1]); P[k]=[m[0]-mnx,m[1]-mny]; }
       // wheels are drawn procedurally (crisp at game size, no shimmer) — store geometry only
       art.body=bc; art.backPt=P.back; art.P=P;
-      art.wheelR=wheelR; art.wb=WB; art.ready=true;
+      art.wheelR=wheelR; art.wb=WB; art.coverWheels=!!CFG.coverWheels; art.ready=true;
     }catch(e){ /* keep procedural fallback */ }
   }
   bImg.onload=tryBake;
   bImg.onerror=()=>{};
-  bImg.src=CITY_ART.body;
+  bImg.src=CFG.body;
 }
 function drawWheelProc(c,wx,wy,wr,color,spin){
   // consistent procedural wheel for all bikes: tire, rim sheen, spokes, hub
@@ -1250,9 +1266,9 @@ function drawWheelProc(c,wx,wy,wr,color,spin){
   c.strokeStyle='#9aa0aa'; c.lineWidth=2;
   for(let i=0;i<spokes;i++){ const a=sp+i*(6.2832/spokes);
     c.beginPath(); c.moveTo(wx,wy); c.lineTo(wx+Math.cos(a)*(wr-4),wy+Math.sin(a)*(wr-4)); c.stroke(); }
-  c.fillStyle=color; circle(c,wx,wy,Math.max(3,wr*0.22));
-  c.fillStyle='#0e0e12'; circle(c,wx,wy,Math.max(1.5,wr*0.09));
-  c.fillStyle='rgba(255,255,255,.5)'; c.fillRect(wx-1,wy-3,2,2);
+  c.fillStyle=color; circle(c,wx,wy,Math.max(2,wr*0.16));
+  c.fillStyle='#15151b'; circle(c,wx,wy,Math.max(1.5,wr*0.10));
+  c.fillStyle='rgba(255,255,255,.4)'; c.fillRect(wx-1,wy-2,2,1);
 }
 function drawRider(c, pa, moving, cx, cy, hx, hy, crouch){
   // anatomically-proportioned commuter; cylindrical 2-tone limbs; true circular IK pedaling.
@@ -1343,10 +1359,10 @@ function drawAssetBike(c,b,t,moving,mode,lowBat,crouch,noRider){
   const wr=a.wheelR, wy=-wr+2, half=a.wb/2, back=-half, front=half, spin=moving?t*0.4:0;
   // logical position of an anchor (back axle sits at (-half,wy))
   const L=k=>[back+(a.P[k][0]-a.backPt[0]), wy+(a.P[k][1]-a.backPt[1])];
-  // procedural wheels behind the frame (frame/fenders occlude them on top)
-  for(const wxp of [back,front]) drawWheelProc(c,wxp,wy,wr,b.color,spin);
-  // body
-  c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]);
+  // wheels behind the frame (wheels-off City art) OR over the real wheels (cover art)
+  const drawW=()=>{ for(const wxp of [back,front]) drawWheelProc(c,wxp,wy,wr,b.color,spin); };
+  if(a.coverWheels){ c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]); drawW(); }
+  else { drawW(); c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]); }
   // battery strip on the downtube: mode colour + low-battery blink
   const [kx,ky]=L('crank'), [sx2,sy2]=L('seat'), [hx2,hy2]=L('bar');
   const dtx=(kx+hx2)/2-2, dty=(ky+hy2)/2-4;
@@ -1535,10 +1551,12 @@ function frame(){
 buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} buildCards(); requestAnimationFrame(frame);
 function loadMenuBike(){
   if(typeof Image==='undefined') return;
-  let im; try{ im=new Image(); }catch(e){ return; }
-  im.onload=()=>{ BIKES.city.menuImg=im; };   // high-res hero for the City selection card
-  im.onerror=()=>{};
-  im.src='city-full.png';
+  for(const key in BIKE_ART){
+    const full=BIKE_ART[key].full; if(!full) continue;
+    let im; try{ im=new Image(); }catch(e){ return; }
+    im.onload=(k=>()=>{ BIKES[k].menuImg=im; })(key);   // hi-res hero per selection card
+    im.onerror=()=>{}; im.src=full;
+  }
 }
 </script>
 </body>
