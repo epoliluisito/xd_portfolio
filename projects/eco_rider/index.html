@@ -246,14 +246,28 @@
 "use strict";
 /* ============ PIXEL PIPELINE (world at 480x270, 2x upscale, crisp text overlay) ============ */
 const scv=document.getElementById('game'), sctx=scv.getContext('2d');
-const W=960,H=540,PIX=2;
-scv.width=W; scv.height=H; sctx.imageSmoothingEnabled=false;
+const W=960,H=540,PIX=1;                       // world buffer at full authored res (was 2 -> half-res mush)
 const low=document.createElement('canvas'); low.width=W/PIX; low.height=H/PIX;
 const ctx=low.getContext('2d'); ctx.imageSmoothingEnabled=false;
+// display canvas backing store at device pixels -> crisp upscale + sharp HUD text (no browser blur)
+let DPR=1;
+function sizeDisplay(){
+  DPR=Math.max(1,Math.min(window.devicePixelRatio||1,2));
+  const r=scv.getBoundingClientRect();
+  scv.width =Math.max(1,Math.round((r.width ||W)*DPR));
+  scv.height=Math.max(1,Math.round((r.height||H)*DPR));
+  sctx.imageSmoothingEnabled=false;
+}
+sizeDisplay(); addEventListener('resize',sizeDisplay); setTimeout(sizeDisplay,0);
 let TXT=[];
 
 /* ============ Tunables ============ */
 const BASE_GROUND=448, FINISH_M=3900, M_PER_PX=0.16, GRAV=0.62, HOME_X=220, LUNGE=58;
+// ---- camera: dolly-in. Gameplay magnified more than the (distant) skyline; both pivot the ground
+// line so the horizon stays glued. Tune ZG (gameplay) / ZB (background) to taste. ----
+const ZG=1.5, ZB=1.35, PVX=HOME_X, PVY=BASE_GROUND;
+function camFull(){ ctx.setTransform(1/PIX,0,0,1/PIX,jx/PIX,jy/PIX); }
+function camZ(Z){ const sc=Z/PIX; ctx.setTransform(sc,0,0,sc,(PVX*(1-Z)+jx)/PIX,(PVY*(1-Z)+jy)/PIX); }
 const JUMP_BUFFER=9, COYOTE=6, INVULN=55;
 const DRAIN_K=0.0172;            // battery drain per px (distance-based: speed-fair)
 const CRASH_BAT=4;               // crash costs battery too
@@ -959,26 +973,27 @@ function render(g){
   jx=g.shake>0.4?(Math.random()-.5)*g.shake:0;
   jy=g.shake>0.4?(Math.random()-.5)*g.shake:0;
 
-  ctx.setTransform(1/PIX,0,0,1/PIX,jx/PIX,jy/PIX);
+  camFull();                                   // sky: full frame, most distant (no zoom)
   ctx.drawImage(ART.skies[zone],0,0);
   if(blend>0){ ctx.globalAlpha=blend; ctx.drawImage(ART.skies[Math.min(2,zone+1)],0,0); ctx.globalAlpha=1; }
+  camZ(ZB);                                    // clouds + skyline: gentle distant-layer zoom
   drawClouds(g);
   ctx.globalAlpha=1-blend; SCENES[zone](g,1-blend);
   if(blend>0){ ctx.globalAlpha=blend; SCENES[Math.min(2,zone+1)](g,blend); }
   ctx.globalAlpha=1;
-
-  const A=BIOMES[zone], B=BIOMES[Math.min(2,zone+1)];
-  drawGround(g, mix(A.ground,B.ground,blend), mix(A.accent,B.accent,blend), blend<0.5?zone:Math.min(2,zone+1));
-
-  // god rays over scenery for the sunny biomes (crossfaded)
+  // god rays over the skyline (distant layer)
   const rayA=(zone===1||zone===2)?(1-blend):0, rayB=(Math.min(2,zone+1)>=1)?blend:0;
   godRays(g,Math.max(rayA,rayB));
+
+  const A=BIOMES[zone], B=BIOMES[Math.min(2,zone+1)];
+  camZ(ZG);                                    // ====== gameplay plane: full dolly-in zoom ======
+  drawGround(g, mix(A.ground,B.ground,blend), mix(A.accent,B.accent,blend), blend<0.5?zone:Math.min(2,zone+1));
 
   // climb signs: real road-sign sprite + crisp TURBO label
   for(const h of g.hills){ const sx=(h.cx-h.w/2)-g.worldX; if(sx>-80&&sx<W){
     const gy2=groundYAt(g,h.cx-h.w/2);
     ctx.drawImage(ART.sign, sx-37, gy2-112);
-    TXT.push({x:sx,y:gy2-38,str:'TURBO',col:'#ff5a4d',size:7,a:1});
+    TXT.push({x:sx,y:gy2-38,str:'TURBO',col:'#ff5a4d',size:7,a:1,gp:true});
   }}
 
   for(const o of g.objects){ const sx=o.x-g.worldX; if(sx<-220||sx>W+260)continue; drawObject(g,o,sx); }
@@ -1013,6 +1028,7 @@ function render(g){
     ctx.globalAlpha=1;
   }
 
+  camFull();                                   // ====== full-frame grading + UI overlays (no zoom) ======
   // per-biome color grading (crossfaded)
   ctx.fillStyle=A.tint; ctx.globalAlpha=1-blend; ctx.fillRect(0,0,W,H);
   if(blend>0){ ctx.fillStyle=B.tint; ctx.globalAlpha=blend; ctx.fillRect(0,0,W,H); }
@@ -1030,9 +1046,11 @@ function render(g){
     if(rem>0) TXT.push({x:W/2,y:H/2-8,str:String(n),col:'#ffd23f',size:44,a:1});
     else TXT.push({x:W/2,y:H/2-8,str:'GO!',col:'#3ddc6f',size:38,a:1});
   }
-  for(const f of g.floaters) TXT.push({x:f.wx-g.worldX,y:f.y,str:f.txt,col:f.col||f.c,size:f.size,a:Math.min(1,f.life/34)});
+  for(const f of g.floaters) TXT.push({x:f.wx-g.worldX,y:f.y,str:f.txt,col:f.col||f.c,size:f.size,a:Math.min(1,f.life/34),gp:true});
 
   /* blit + crisp overlay */
+  const DS=scv.width/W, DSy=scv.height/H;       // logical 960x540 -> device pixels
+  sctx.setTransform(DS,0,0,DSy,0,0); sctx.imageSmoothingEnabled=false;
   sctx.clearRect(0,0,W,H);
   sctx.drawImage(low,0,0,W,H);
   sctx.globalAlpha=0.5; sctx.fillStyle=sctx.createPattern(ART.scan,'repeat'); sctx.fillRect(0,0,W,H); sctx.globalAlpha=1;
@@ -1041,13 +1059,13 @@ function render(g){
   sctx.fillStyle=vg; sctx.fillRect(0,0,W,H);
   sctx.save(); sctx.translate(jx,jy); sctx.textAlign='center';
   for(const t of TXT){
+    let X=t.x,Y=t.y; if(t.gp){ X=(t.x-PVX)*ZG+PVX; Y=(t.y-PVY)*ZG+PVY; }   // gameplay text rides the dolly zoom
     sctx.globalAlpha=t.a; sctx.font=t.size+'px "Press Start 2P",monospace';
-    sctx.fillStyle='#06120b'; sctx.fillText(t.str,t.x+2,t.y+2);
-    sctx.fillStyle=t.col; sctx.fillText(t.str,t.x,t.y);
+    sctx.fillStyle='#06120b'; sctx.fillText(t.str,X+2,Y+2);
+    sctx.fillStyle=t.col; sctx.fillText(t.str,X,Y);
   }
-  sctx.globalAlpha=1; sctx.textAlign='left';
-  if(g.debug) drawDebug(g,sctx);
-  sctx.restore();
+  sctx.globalAlpha=1; sctx.textAlign='left'; sctx.restore();
+  if(g.debug){ sctx.save(); sctx.setTransform(DS*ZG,0,0,DSy*ZG, DS*(PVX*(1-ZG)+jx), DSy*(PVY*(1-ZG)+jy)); drawDebug(g,sctx); sctx.restore(); }
 }
 
 function drawGround(g,gcol,acol,dom){
@@ -1546,7 +1564,7 @@ function frame(){
   if(G&&G.state==='play'){ update(G); render(G); }
   else if(G&&G.state==='count'){ G.cd--; G.t++; render(G); if(G.cd<=0) G.state='play'; }
   else if(G&&(G.state==='pause'||G.state==='end')){ render(G); }
-  else { sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,W,H); }
+  else { sctx.setTransform(1,0,0,1,0,0); sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,scv.width,scv.height); }
   requestAnimationFrame(frame);
 }
 buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} buildCards(); requestAnimationFrame(frame);
