@@ -265,7 +265,8 @@ let TXT=[];
 const BASE_GROUND=448, FINISH_M=3900, M_PER_PX=0.16, GRAV=0.62, HOME_X=220, LUNGE=58;
 // ---- camera: dolly-in. Gameplay magnified more than the (distant) skyline; both pivot the ground
 // line so the horizon stays glued. Tune ZG (gameplay) / ZB (background) to taste. ----
-const ZG=1.5, ZB=1.35, PVX=HOME_X, PVY=BASE_GROUND;
+const ZG=1.5, ZB=1.30, PVX=HOME_X, PVY=BASE_GROUND;
+const BIKE_DETAIL=4;             // bake the bike sprite this many x its game size -> crisp menu-grade detail
 function camFull(){ ctx.setTransform(1/PIX,0,0,1/PIX,jx/PIX,jy/PIX); }
 function camZ(Z){ const sc=Z/PIX; ctx.setTransform(sc,0,0,sc,(PVX*(1-Z)+jx)/PIX,(PVY*(1-Z)+jy)/PIX); }
 const JUMP_BUFFER=9, COYOTE=6, INVULN=55;
@@ -618,7 +619,7 @@ function newGame(key){ const b=BIKES[key];
   return {key,b,state:'play',mode:'eco',battery:100,co2:0,damage:0,leaves:0,
     dist:0,worldX:0,speed:b.baseSpeed,riderX:HOME_X,y:BASE_GROUND,vy:0,onGround:true,
     angle:0,angleQ:0,stun:0,inv:0,jbuf:0,coyote:0,squash:0,jumpHeld:false,warn20:false,warn10:false,warn0:false,
-    objects:[],hills:[],particles:[],floaters:[],amb:[],shake:0,finished:false,t:0,co2pop:0,debug:false,duck:false,fgT:330,trans:0,lastZone:0,cd:0}; }
+    objects:[],hills:[],particles:[],floaters:[],amb:[],shake:0,finished:false,t:0,co2pop:0,co2hit:0,debug:false,duck:false,fgT:330,trans:0,lastZone:0,cd:0}; }
 function groundYAt(g,wx){ let y=BASE_GROUND;
   for(const h of g.hills){ const d=wx-h.cx,hw=h.w/2;
     if(d>-hw&&d<hw){ const t=d/hw; y-=h.height*(Math.cos(t*Math.PI)+1)/2; } } return y; }
@@ -825,16 +826,16 @@ function update(g){
     if(o.type==='car'&&!o.hit&&g.inv<=0){
       const rects=carRects(o,sx,groundY);
       outer: for(const c of circles) for(const r of rects)
-        if(circRect(c,r[0],r[1],r[2],r[3])){ o.hit=true; crash(g,72,14,o.x+o.w/2,groundY-o.h/2,'CRASH!','#ff5a4d'); break outer; }
+        if(circRect(c,r[0],r[1],r[2],r[3])){ o.hit=true; crash(g,150,14,o.x+o.w/2,groundY-o.h/2,'CRASH!','#ff5a4d'); break outer; }
     } else if(o.type==='smog'&&!o.hit&&g.inv<=0){
       const oy=groundY-o.off, ss=smogCircles(o,sx,oy);
       outer2: for(const c of circles) for(const s of ss)
-        if(circCirc(c,s[0],s[1],s[2])){ o.hit=true; crash(g,46,10,o.x+58,oy+28,'SMOG  -CO\u2082','#9a9aa4'); break outer2; }
+        if(circCirc(c,s[0],s[1],s[2])){ o.hit=true; crash(g,90,10,o.x+58,oy+28,'SMOG!','#9a9aa4'); break outer2; }
     } else if(o.type==='pothole'&&!o.hit){
       if(g.onGround) for(const c of circles){ if(!c.wheel) continue;
         if(c.x>sx+8 && c.x<sx+o.w-8){ o.hit=true;
           if(g.b.potholeTough>0.8){ flashMsg(o.x,groundY-46,'CLEARED','#3ddc6f',9); }
-          else { g.stun=Math.round(24*(1-g.b.potholeTough)); g.speed*=0.5; g.shake=Math.max(g.shake,6); flashMsg(o.x,groundY-46,'POTHOLE!','#ffb14d',9); }
+          else { g.stun=Math.round(24*(1-g.b.potholeTough)); g.speed*=0.5; g.shake=Math.max(g.shake,6); g.co2=Math.max(0,g.co2-40); g.co2hit=14; flashMsg(o.x,groundY-58,'POTHOLE!  -40g','#ffb14d',9); }
           break; } }
     } else if(o.type==='leaf'&&!o.got){
       const oy=groundY-o.off+Math.sin(g.t*0.07+o.bob)*6;
@@ -853,13 +854,13 @@ function update(g){
   g.floaters=g.floaters.filter(f=>f.life>0);
   for(const a of g.amb){ a.wx+=a.vx; a.y+=a.vy; if(a.sway)a.y+=Math.sin(g.t*0.06+a.ph)*0.4; a.life--; }
   g.amb=g.amb.filter(a=>a.life>0);
-  if(g.shake>0.4)g.shake*=0.85; if(g.co2pop>0)g.co2pop--;
+  if(g.shake>0.4)g.shake*=0.85; if(g.co2pop>0)g.co2pop--; if(g.co2hit>0)g.co2hit--;
   syncHUD(g);
 }
 function crash(g,co2pen,dmg,wx,y,msg,c){
-  g.co2=Math.max(0,g.co2-co2pen); g.damage+=dmg; g.speed*=0.55; g.shake=9; g.inv=INVULN;
-  g.battery=Math.max(0,g.battery-CRASH_BAT);                       // crashes cost charge
-  spawnBurst(wx,y,c,16); flashMsg(wx,y-18,msg,c,11); }
+  g.co2=Math.max(0,g.co2-co2pen); g.damage+=dmg; g.speed*=0.55; g.shake=9; g.inv=INVULN; g.co2hit=18;
+  g.battery=Math.max(0,g.battery-CRASH_BAT);                       // crashes cost charge AND score
+  spawnBurst(wx,y,c,16); flashMsg(wx,y-18,msg+'  -'+co2pen+'g',c,11); }
 function popCO2(){ G.co2pop=9; }
 
 /* ============ Ambient life (per-biome) ============ */
@@ -1006,18 +1007,7 @@ function render(g){
     for(let i=0;i<6;i++){ const y=110+hsh(i+Math.floor(g.t/3))*280, len=40+hsh(i*9)*70;
       ctx.fillRect(W-((g.t*16+i*170)%(W+len)),y,len,2); } }
 
-  const gy=groundYAt(g,g.worldX+g.riderX);
-  const alt=Math.max(0,gy-g.y), sw=38*Math.max(.35,1-alt/170);
-  ctx.fillStyle='rgba(0,0,0,'+(0.25*Math.max(.4,1-alt/200))+')';
-  ctx.beginPath(); ctx.ellipse(g.riderX,gy+4,sw,7*Math.max(.5,1-alt/240),0,0,7); ctx.fill();
-  const blink=g.inv>0 && (g.t%8<3);
-  if(!blink){
-    ctx.save(); ctx.translate(Math.round(g.riderX),Math.round(g.y)); ctx.rotate(g.angleQ||0);
-    ctx.scale(1+g.squash*0.08, 1-g.squash*0.16);
-    if(g.inv>0) ctx.globalAlpha=0.75;
-    drawBikeBody(ctx,g.b,g.t,true,g.mode,g.battery<20,g.duck&&g.onGround);
-    ctx.restore(); ctx.globalAlpha=1;
-  }
+  // (hero bike + contact shadow are drawn after the blit, on the device-res overlay, for crisp detail)
 
   const introA=Math.min(1,g.fgT/120);
   const transA=g.trans>0?Math.sin(Math.PI*(1-g.trans/170)):0;
@@ -1057,6 +1047,25 @@ function render(g){
   const vg=sctx.createRadialGradient(W/2,H/2,H*0.42,W/2,H/2,H*0.82);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.30)');
   sctx.fillStyle=vg; sctx.fillRect(0,0,W,H);
+
+  // ---- hero bike on the overlay: full device resolution + high-detail body + contact shadow ----
+  { const gyb=groundYAt(g,g.worldX+g.riderX);
+    const altb=Math.max(0,gyb-g.y), swb=38*Math.max(.35,1-altb/170), sab=Math.max(.4,1-altb/200);
+    sctx.save();
+    sctx.setTransform(DS*ZG,0,0,DSy*ZG, DS*(PVX*(1-ZG)+jx), DSy*(PVY*(1-ZG)+jy));
+    sctx.fillStyle='rgba(0,0,0,'+(0.20*sab)+')'; sctx.beginPath(); sctx.ellipse(g.riderX,gyb+4,swb,7*Math.max(.5,1-altb/240),0,0,7); sctx.fill();
+    sctx.fillStyle='rgba(0,0,0,'+(0.32*sab)+')'; sctx.beginPath(); sctx.ellipse(g.riderX,gyb+4,swb*0.56,4.3*Math.max(.5,1-altb/240),0,0,7); sctx.fill();
+    if(!(g.inv>0 && (g.t%8<3))){
+      sctx.imageSmoothingEnabled=true; sctx.imageSmoothingQuality='high';
+      sctx.translate(Math.round(g.riderX),Math.round(g.y)); sctx.rotate(g.angleQ||0);
+      sctx.scale(1+g.squash*0.08, 1-g.squash*0.16);
+      if(g.inv>0) sctx.globalAlpha=0.75;
+      drawBikeBody(sctx,g.b,g.t,true,g.mode,g.battery<20,g.duck&&g.onGround);
+      sctx.globalAlpha=1;
+    }
+    sctx.restore(); sctx.imageSmoothingEnabled=false;
+  }
+
   sctx.save(); sctx.translate(jx,jy); sctx.textAlign='center';
   for(const t of TXT){
     let X=t.x,Y=t.y; if(t.gp){ X=(t.x-PVX)*ZG+PVX; Y=(t.y-PVY)*ZG+PVY; }   // gameplay text rides the dolly zoom
@@ -1236,11 +1245,12 @@ function bakeBikeArt(key, CFG){
       }
       const dx=A.front[0]-A.back[0], dy=A.front[1]-A.back[1];
       const tilt=Math.atan2(dy,dx), scale=WB/Math.hypot(dx,dy);
-      const wheelR=bodyWR*scale;                 // logical wheel radius (matches the fenders)
+      const bakeScale=scale*BIKE_DETAIL;         // body baked BIG (crisp); drawn back down to world size at render
+      const wheelR=bodyWR*scale;                 // logical wheel radius (matches the fenders) -- world scale
       // --- bake body: HIGH-QUALITY downscale, then level the (tiny) axle tilt ---
       // The art is ~10x larger than its game size; nearest-neighbor would shred the
       // thin frame tubes. Multi-step halving with smoothing = clean area-averaged result.
-      const tw=Math.max(1,Math.round(bImg.width*scale)), th=Math.max(1,Math.round(bImg.height*scale));
+      const tw=Math.max(1,Math.round(bImg.width*bakeScale)), th=Math.max(1,Math.round(bImg.height*bakeScale));
       let src=bImg, cw=bImg.width, ch=bImg.height;
       while(cw>tw*2 || ch>th*2){
         cw=Math.max(tw,cw>>1); ch=Math.max(th,ch>>1);
@@ -1253,8 +1263,8 @@ function bakeBikeArt(key, CFG){
       smx.drawImage(src,0,0,tw,th);
       // bake in shrunk space (scale already applied); level tilt around the back axle
       const cs=Math.cos(-tilt), sn=Math.sin(-tilt);
-      const Abx=A.back[0]*scale, Aby=A.back[1]*scale;
-      const map=(px,py)=>{ const ox=px*scale-Abx, oy=py*scale-Aby;
+      const Abx=A.back[0]*bakeScale, Aby=A.back[1]*bakeScale;
+      const map=(px,py)=>{ const ox=px*bakeScale-Abx, oy=py*bakeScale-Aby;
         return [ox*cs-oy*sn, ox*sn+oy*cs]; };
       const corners=[[0,0],[bImg.width,0],[0,bImg.height],[bImg.width,bImg.height]].map(p=>map(p[0],p[1]));
       const mnx=Math.min(...corners.map(p=>p[0]))-1, mny=Math.min(...corners.map(p=>p[1]))-1;
@@ -1265,7 +1275,7 @@ function bakeBikeArt(key, CFG){
       const P={}; for(const k in A){ const m=map(A[k][0],A[k][1]); P[k]=[m[0]-mnx,m[1]-mny]; }
       // wheels are drawn procedurally (crisp at game size, no shimmer) — store geometry only
       art.body=bc; art.backPt=P.back; art.P=P;
-      art.wheelR=wheelR; art.wb=WB; art.coverWheels=!!CFG.coverWheels; art.ready=true;
+      art.wheelR=wheelR; art.wb=WB; art.bakeScale=BIKE_DETAIL; art.coverWheels=!!CFG.coverWheels; art.ready=true;
     }catch(e){ /* keep procedural fallback */ }
   }
   bImg.onload=tryBake;
@@ -1373,13 +1383,14 @@ function drawRider(c, pa, moving, cx, cy, hx, hy, crouch){
 function drawAssetBike(c,b,t,moving,mode,lowBat,crouch,noRider){
   const a=b.art;
   if(!a||!a.body||!a.wb){ b.art=null; return drawBikeBody(c,b,t,moving,mode,lowBat,crouch,noRider); }
-  const wr=a.wheelR, wy=-wr+2, half=a.wb/2, back=-half, front=half, spin=moving?t*0.4:0;
-  // logical position of an anchor (back axle sits at (-half,wy))
-  const L=k=>[back+(a.P[k][0]-a.backPt[0]), wy+(a.P[k][1]-a.backPt[1])];
-  // wheels behind the frame (wheels-off City art) OR over the real wheels (cover art)
+  const wr=a.wheelR, wy=-wr+2, half=a.wb/2, back=-half, front=half, spin=moving?t*0.4:0, D=a.bakeScale||1;
+  // anchor in world space (back axle at (-half,wy)); /D maps the hi-res bake space back to world
+  const L=k=>[back+(a.P[k][0]-a.backPt[0])/D, wy+(a.P[k][1]-a.backPt[1])/D];
+  // wheels behind the frame; body baked at D x detail, drawn scaled 1/D to occupy the world wheelbase
   const drawW=()=>{ for(const wxp of [back,front]) drawWheelProc(c,wxp,wy,wr,b.color,spin); };
-  if(a.coverWheels){ c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]); drawW(); }
-  else { drawW(); c.drawImage(a.body, back-a.backPt[0], wy-a.backPt[1]); }
+  const drawBody=()=>{ c.save(); c.translate(back,wy); c.scale(1/D,1/D); c.drawImage(a.body,-a.backPt[0],-a.backPt[1]); c.restore(); };
+  if(a.coverWheels){ drawBody(); drawW(); }
+  else { drawW(); drawBody(); }
   // battery strip on the downtube: mode colour + low-battery blink
   const [kx,ky]=L('crank'), [sx2,sy2]=L('seat'), [hx2,hy2]=L('bar');
   const dtx=(kx+hx2)/2-2, dty=(ky+hy2)/2-4;
@@ -1474,7 +1485,7 @@ function syncHUD(g){
   elBat.style.background=g.battery>50?'var(--eco)':g.battery>20?'var(--gold)':'var(--turbo)';
   elBatBox.className='batBar'+(g.battery<20?' crit':'');
   elCO2.textContent=Math.round(g.co2)+' g';
-  elCO2.style.transform=g.co2pop>0?'scale(1.3)':'scale(1)'; elCO2.style.color=g.co2pop>0?'var(--leaf)':'var(--cyan)';
+  elCO2.style.transform=(g.co2pop>0||g.co2hit>0)?'scale(1.3)':'scale(1)'; elCO2.style.color=g.co2hit>0?'#ff5a4d':(g.co2pop>0?'var(--leaf)':'var(--cyan)');
   elProg.style.width=(Math.min(1,g.dist/FINISH_M)*100)+'%';
   elDist.textContent=Math.round(g.dist)+' / '+FINISH_M+' m';
   const {zone,blend}=biomeBlend(g); elBio.textContent=BIOMES[blend>0.5?Math.min(2,zone+1):zone].name;
