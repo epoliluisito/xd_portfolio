@@ -18,7 +18,8 @@
     -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;}
   #stage{position:relative;background:#0a0f0c;touch-action:none;
-    width:100dvw; height:100dvh;}
+    width:min(100dvw, calc(100dvh * 16 / 9));
+    height:min(100dvh, calc(100dvw * 9 / 16));}
   canvas{display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;}
 
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -274,27 +275,19 @@
 "use strict";
 /* ============ PIXEL PIPELINE (world at 480x270, 2x upscale, crisp text overlay) ============ */
 const scv=document.getElementById('game'), sctx=scv.getContext('2d');
-let W=960; const H=540,PIX=1;                  // vertical world H is FIXED; W tracks screen aspect -> fills width, no stretch
+const W=960,H=540,PIX=1;                       // world buffer at full authored res (was 2 -> half-res mush)
 const low=document.createElement('canvas'); low.width=W/PIX; low.height=H/PIX;
 const PXS=2;                                   // world pixelation: higher = chunkier retro pixels (bike + HUD stay crisp). main lever for the pixel-art look.
 const chunk=document.createElement('canvas'); chunk.width=Math.round(W/PXS); chunk.height=Math.round(H/PXS);
 const chunkCtx=chunk.getContext('2d');
 const ctx=low.getContext('2d'); ctx.imageSmoothingEnabled=false;
 // display canvas backing store at device pixels -> crisp upscale + sharp HUD text (no browser blur)
-let DPR=1, _skiesBaked=false;
+let DPR=1;
 function sizeDisplay(){
   DPR=Math.max(1,Math.min(window.devicePixelRatio||1,2));
   const r=scv.getBoundingClientRect();
   scv.width =Math.max(1,Math.round((r.width ||W)*DPR));
   scv.height=Math.max(1,Math.round((r.height||H)*DPR));
-  // FULL-WIDTH on any phone: vertical world stays fixed (H); buffer WIDTH tracks the screen
-  // aspect so the upscale is uniform (no stretch) and a wider screen just reveals more track.
-  const newW=(r.height>0)?Math.round(H*r.width/r.height):W;
-  if(newW>0 && newW!==W){
-    W=newW; low.width=W/PIX; chunk.width=Math.round(W/PXS);
-    ctx.imageSmoothingEnabled=false;                       // a canvas resize resets its context
-    if(_skiesBaked) ART.skies=BIOMES.map(renderSky);       // re-bake the only width-baked asset
-  }
   sctx.imageSmoothingEnabled=false;
 }
 sizeDisplay(); addEventListener('resize',sizeDisplay); setTimeout(sizeDisplay,0);
@@ -632,7 +625,7 @@ function mkScan(){
   return k;
 }
 function buildArt(){
-  ART.skies=BIOMES.map(renderSky); _skiesBaked=true;
+  ART.skies=BIOMES.map(renderSky);
   ART.clouds=[
     mkCloud(150,52,[[14,18,70,22],[52,8,62,26],[2,24,40,20],[86,22,52,18]]),
     mkCloud(110,42,[[8,14,56,18],[38,6,48,22],[60,18,42,16]]),
