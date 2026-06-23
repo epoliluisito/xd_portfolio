@@ -1679,11 +1679,28 @@ document.getElementById('startBtn').addEventListener('click',()=>{
   document.getElementById('menu').classList.remove('hidden'); });
 document.getElementById('cta').addEventListener('click',()=>{ const e=document.getElementById('cta'); e.textContent='🔗 (Demo) opens brand store'; setTimeout(()=>e.textContent='⚡ FIND YOUR E-BIKE — GET 10% OFF',1400); });
 
-/* ============ Loop ============ */
-function frame(){
-  if(G&&G.state==='play'){ update(G); render(G); }
-  else if(G&&G.state==='count'){ G.cd--; G.t++; render(G); if(G.cd<=0) G.state='play'; }
-  else if(G&&(G.state==='pause'||G.state==='end')){ render(G); }
+/* ============ Loop (fixed timestep) ============
+   The whole simulation is tuned in per-frame units. Driving it straight off
+   requestAnimationFrame made it run at the DISPLAY's refresh rate, so a 120Hz phone
+   played ~2x faster than a 60Hz phone and the 3-2-1 drifted out of the baked audio.
+   We now advance the logic in fixed 1/60s steps (one step == one legacy frame, so all
+   the existing tuning is preserved) and render once per animation frame. Result: every
+   device runs the same game at the same speed, regardless of 60/90/120Hz. */
+const STEP=1000/60;            // one logical tick = 1/60 second
+let _prev=performance.now(), _acc=0;
+function logicTick(){
+  if(G&&G.state==='play') update(G);
+  else if(G&&G.state==='count'){ G.cd--; G.t++; if(G.cd<=0) G.state='play'; }
+}
+function frame(now){
+  if(typeof now!=='number') now=performance.now();
+  let dt=now-_prev; _prev=now;
+  if(dt>250) dt=250;          // tab was backgrounded: don't fast-forward the run
+  _acc+=dt;
+  let steps=0;
+  while(_acc>=STEP && steps<5){ logicTick(); _acc-=STEP; steps++; }
+  if(steps>=5) _acc=0;        // give up on a big backlog rather than spiral
+  if(G&&(G.state==='play'||G.state==='count'||G.state==='pause'||G.state==='end')) render(G);
   else { sctx.setTransform(1,0,0,1,0,0); sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,scv.width,scv.height); }
   requestAnimationFrame(frame);
 }
