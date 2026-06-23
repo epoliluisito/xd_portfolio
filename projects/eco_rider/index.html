@@ -294,8 +294,12 @@ const chunkCtx=chunk.getContext('2d');
 const ctx=low.getContext('2d'); ctx.imageSmoothingEnabled=false;
 // display canvas backing store at device pixels -> crisp upscale + sharp HUD text (no browser blur)
 let DPR=1, _skiesBaked=false;
+// LOWPERF: auto-enabled on weak devices (see the loop). Drops the backing store to 1x device
+// pixels (~4x less fill) and skips the two most expensive full-screen passes. Gameplay is
+// untouched — same speed, same layout, same difficulty — only the polish scales to the hardware.
+let LOWPERF=false, _vigCv=null, _scanPat=null, _ema=0, _emaN=0;
 function sizeDisplay(){
-  DPR=Math.max(1,Math.min(window.devicePixelRatio||1,2));
+  DPR=LOWPERF?1:Math.max(1,Math.min(window.devicePixelRatio||1,2));
   const r=scv.getBoundingClientRect();
   scv.width =Math.max(1,Math.round((r.width ||W)*DPR));
   scv.height=Math.max(1,Math.round((r.height||H)*DPR));
@@ -1116,10 +1120,18 @@ function render(g){
   chunkCtx.imageSmoothingEnabled=true; chunkCtx.clearRect(0,0,chunk.width,chunk.height);
   chunkCtx.drawImage(low,0,0,chunk.width,chunk.height);            // average down to a chunky source
   sctx.drawImage(chunk,0,0,chunk.width,chunk.height,0,0,W,H);       // nearest up -> blocky pixel-art world
-  sctx.globalAlpha=0.5; sctx.fillStyle=sctx.createPattern(ART.scan,'repeat'); sctx.fillRect(0,0,W,H); sctx.globalAlpha=1;
-  const vg=sctx.createRadialGradient(W/2,H/2,H*0.42,W/2,H/2,H*0.82);
-  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.30)');
-  sctx.fillStyle=vg; sctx.fillRect(0,0,W,H);
+  if(!LOWPERF){
+    if(!_scanPat) _scanPat=sctx.createPattern(ART.scan,'repeat');      // cache pattern (was rebuilt every frame)
+    sctx.globalAlpha=0.5; sctx.fillStyle=_scanPat; sctx.fillRect(0,0,W,H); sctx.globalAlpha=1;
+    if(!_vigCv||_vigCv.width!==W){                                     // bake vignette once per width
+      _vigCv=document.createElement('canvas'); _vigCv.width=W; _vigCv.height=H;
+      const vx=_vigCv.getContext('2d');
+      const vg=vx.createRadialGradient(W/2,H/2,H*0.42,W/2,H/2,H*0.82);
+      vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.30)');
+      vx.fillStyle=vg; vx.fillRect(0,0,W,H);
+    }
+    sctx.imageSmoothingEnabled=true; sctx.drawImage(_vigCv,0,0,W,H); sctx.imageSmoothingEnabled=false;
+  }
 
   // ---- hero bike on the overlay: full device resolution + high-detail body + contact shadow ----
   { const gyb=groundYAt(g,g.worldX+g.riderX);
@@ -1696,6 +1708,11 @@ function frame(now){
   if(typeof now!=='number') now=performance.now();
   let dt=now-_prev; _prev=now;
   if(dt>250) dt=250;          // tab was backgrounded: don't fast-forward the run
+  // Watch real framerate while actually racing; if a device can't hold ~33fps, drop quality ONCE.
+  if(G&&G.state==='play'&&dt<100){
+    _ema=_ema?_ema*0.9+dt*0.1:dt;
+    if(!LOWPERF && ++_emaN>50 && _ema>30){ LOWPERF=true; sizeDisplay(); }
+  }
   _acc+=dt;
   let steps=0;
   while(_acc>=STEP && steps<5){ logicTick(); _acc-=STEP; steps++; }
