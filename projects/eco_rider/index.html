@@ -317,7 +317,7 @@ sizeDisplay(); addEventListener('resize',sizeDisplay); setTimeout(sizeDisplay,0)
 let TXT=[];
 
 /* ============ Tunables ============ */
-const BASE_GROUND=448, FINISH_M=3900, M_PER_PX=0.16, GRAV=0.62, HOME_X=220, LUNGE=58, GROUND_STICK=22;
+const BASE_GROUND=448, FINISH_M=5200, M_PER_PX=0.16, GRAV=0.62, HOME_X=220, LUNGE=58, GROUND_STICK=22;
 const RIDER_DREF=29;   // rider body sized to ONE fixed reference on every bike (looks bigger on the small Mini)
 // ---- camera: dolly-in. Gameplay magnified more than the (distant) skyline; both pivot the ground
 // line so the horizon stays glued. Tune ZG (gameplay) / ZB (background) to taste. ----
@@ -347,7 +347,7 @@ const BIKES={
 };
 // Final score (shown as grams CO2 saved) is an INDIRECT, skill-based tally: faster finish + coins
 // collected - crashes. Per frame we bank distance weighted by current speed, so a quicker run nets more.
-const BASE_RATE=1.05, PAR_FRAMES=4600, TIME_RATE=0.6;   // PAR rescaled for the speed ramp (finishes ~3400-4000 frames)
+const BASE_RATE=1.05, PAR_FRAMES=6130, TIME_RATE=0.6;   // PAR rescaled for the longer 4-zone track
 const RAMP_END=3.0, RAMP_POW=1.4;   // game speed ramps 1x -> RAMP_END by the finish (ease-in); the late game is the skill gate
 const MODE={ eco:{speedMul:.84,drainMul:.55,co2Mul:2.2,badge:'ECO &nbsp;\u00b7&nbsp;SAVE'},
              turbo:{speedMul:1.4,drainMul:1.7,co2Mul:1.0,badge:'TURBO &nbsp;\u00b7&nbsp;FAST'} };
@@ -359,7 +359,9 @@ const BIOMES=[
   {name:'SEASIDE',  bands:['#1f66b8','#2f80cc','#4a9cde','#6fb9ec','#97d2f4','#c2e7fa','#e8f7ff'],
    sun:'#fff4c4', ground:'#c9a368', accent:'#9d7c47', tint:'rgba(255,244,210,0.07)'},
   {name:'ECO-CITY', bands:['#2a86d2','#48a0de','#6cbbe8','#92d2ee','#b7e4ec','#d4f0e2','#ecf9ee'],
-   sun:'#fff7d0', ground:'#7d9c68', accent:'#5f7e4e', tint:'rgba(255,226,150,0.10)'}
+   sun:'#fff7d0', ground:'#7d9c68', accent:'#5f7e4e', tint:'rgba(255,226,150,0.10)'},
+  {name:'WILDLANDS', bands:['#f2a65a','#f6bd6b','#f7d089','#ecdd97','#cfe0a0','#b6dca6','#cdeccb'],
+   sun:'#fff0bf', ground:'#6f9850', accent:'#52763c', tint:'rgba(255,206,140,0.12)'}
 ];
 
 /* ============ Pre-rendered art ============ */
@@ -546,6 +548,44 @@ function stripFgEco(x,w,h){
     x.fillRect(px,h-36,64,36); x.fillRect(px+10,h-50,44,18); x.fillRect(px+22,h-60,22,14); }
   x.fillStyle=C; x.fillRect(520,h-86,10,86); x.fillRect(496,h-118,58,40);
 }
+/* ---- WILDLANDS (4th biome): golden-hour restored nature ---- */
+function stripWildFar(x,w,h){
+  const layers=[{c:'#a9c585',base:0.40,amp:24},{c:'#86ad65',base:0.58,amp:34},{c:'#5f8c4b',base:0.80,amp:46}];
+  for(const L of layers){
+    x.fillStyle=L.c; x.beginPath(); x.moveTo(0,h);
+    for(let px=0;px<=w;px+=20){ const y=h-h*L.base+Math.sin(px*0.012+L.base*9)*L.amp+Math.sin(px*0.05)*6; x.lineTo(px,y); }
+    x.lineTo(w,h); x.closePath(); x.fill();
+    x.fillStyle='rgba(20,40,20,.10)';
+    for(let px=0;px<w;px+=13){ const y=h-h*L.base+Math.sin(px*0.012+L.base*9)*L.amp+Math.sin(px*0.05)*6; if(hsh(px*3+L.base*100)>.5) x.fillRect(px,y-4,5,7); }
+  }
+}
+function wildTree(x,px,baseY,sc,c1){
+  x.fillStyle='#6f4a2a'; x.fillRect(px-4*sc,baseY-30*sc,8*sc,30*sc);
+  x.fillStyle=c1;
+  x.beginPath(); x.arc(px,baseY-44*sc,22*sc,0,7); x.fill();
+  x.beginPath(); x.arc(px-17*sc,baseY-32*sc,15*sc,0,7); x.fill();
+  x.beginPath(); x.arc(px+17*sc,baseY-32*sc,15*sc,0,7); x.fill();
+  x.fillStyle=lite(c1,.22);
+  x.beginPath(); x.arc(px-6*sc,baseY-50*sc,12*sc,0,7); x.fill();
+}
+function stripWildMid(x,w,h){
+  let px=50,i=0;
+  while(px<w){ const sc=0.9+hsh(i+50)*0.7; wildTree(x,px,h-8,sc,i%2?'#3f8f48':'#469a52'); px+=120+hsh(i+9)*120; i++; }
+  for(let bx=0;bx<w;bx+=44){ if(hsh(bx)>.4){
+    x.fillStyle='#357a3e'; x.beginPath(); x.arc(bx,h-6,12+hsh(bx*2)*8,0,7); x.fill();
+    x.fillStyle=['#ff6fae','#ffd23f','#fff','#ff8c42'][(bx|0)%4]; x.fillRect(bx-1,h-16,4,4); } }
+  x.fillStyle='#2e6a37'; x.fillRect(0,h-6,w,6);
+}
+function stripFgWild(x,w,h){
+  const C='#173a20'; x.fillStyle=C;
+  for(let px=0;px<w;px+=7){ const bh=24+hsh(px*1.7)*64, lean=Math.sin(px*0.3)*5;
+    x.beginPath(); x.moveTo(px,h); x.quadraticCurveTo(px+lean,h-bh*0.6,px+lean*1.6,h-bh);
+    x.lineTo(px+3+lean*1.6,h-bh); x.quadraticCurveTo(px+3+lean,h-bh*0.6,px+3,h); x.closePath(); x.fill(); }
+  for(let px=18;px<w;px+=118){ if(hsh(px+5)>.35){
+    const fy=h-72-hsh(px)*28; x.strokeStyle=C; x.lineWidth=3; x.beginPath(); x.moveTo(px,h); x.lineTo(px,fy); x.stroke();
+    x.fillStyle=['#ff6fae','#ffd23f','#f6f6ff'][(px|0)%3]; x.beginPath(); x.arc(px,fy,5,0,7); x.fill();
+    x.fillStyle='#ffd23f'; x.fillRect(px-1,fy-1,3,3); } }
+}
 
 /* ---- NEW / REDESIGNED SPRITES (symbol clarity) ---- */
 function mkCar(c,taxi){
@@ -661,7 +701,9 @@ function buildArt(){
   ART.seaMid =mkStrip(1440,150,stripSeaMid);
   ART.ecoFar =mkStrip(1440,250,stripEcoFar);
   ART.ecoMid =mkStrip(1440,380,stripEcoMid);
-  ART.fg=[mkStrip(1440,140,stripFgCity),mkStrip(1440,120,stripFgSea),mkStrip(1440,130,stripFgEco)];
+  ART.wildFar=mkStrip(1440,250,stripWildFar);
+  ART.wildMid=mkStrip(1440,360,stripWildMid);
+  ART.fg=[mkStrip(1440,140,stripFgCity),mkStrip(1440,120,stripFgSea),mkStrip(1440,130,stripFgEco),mkStrip(1440,130,stripFgWild)];
   ART.cars=[mkCar('#b14b4b'),mkCar('#4b6db1'),mkCar('#7a7a82'),mkCar('#e8c33b',true)];
   ART.leafB=mkBadge('leaf'); ART.plugB=mkBadge('plug');
   ART.smog=mkSmog(); ART.cone=mkCone(); ART.sign=mkSign(); ART.scan=mkScan();
@@ -864,7 +906,7 @@ function update(g){
   g.co2+=adv*M_PER_PX*BASE_RATE;            // base CO2 from distance ridden (coins add, crashes subtract live)
 
   /* biome-transition + foreground timers */
-  { const bb=biomeBlend(g), domZ=bb.blend>0.5?Math.min(2,bb.zone+1):bb.zone;
+  { const bb=biomeBlend(g), domZ=bb.blend>0.5?Math.min(3,bb.zone+1):bb.zone;
     if(domZ!==g.lastZone){ g.lastZone=domZ; g.trans=110; } }
   if(g.trans>0) g.trans--;
   if(g.fgT>0) g.fgT--;
@@ -943,7 +985,7 @@ function popCO2(){ G.co2pop=9; }
 /* ============ Ambient life (per-biome) ============ */
 function spawnAmbient(g){
   if(g.t%6!==0) return;
-  const {zone,blend}=biomeBlend(g), dom=blend>0.5?Math.min(2,zone+1):zone;
+  const {zone,blend}=biomeBlend(g), dom=blend>0.5?Math.min(3,zone+1):zone;
   const wx=g.worldX+W+30;
   if(dom===0 && g.amb.length<26){          // drifting smog flecks
     g.amb.push({kind:0,wx,y:90+Math.random()*300,vx:-0.3-Math.random()*0.4,vy:0.05,life:300,ph:Math.random()*7});
@@ -951,6 +993,8 @@ function spawnAmbient(g){
     g.amb.push({kind:1,wx,y:BASE_GROUND-126+Math.random()*86,vx:0,vy:0,life:26+Math.random()*20,ph:Math.random()*7});
   } else if(dom===2 && g.amb.length<26){   // pollen
     g.amb.push({kind:2,wx,y:160+Math.random()*250,vx:-0.2,vy:-0.12,sway:1,life:320,ph:Math.random()*7});
+  } else if(dom===3 && g.amb.length<28){   // wildlands: drifting seeds / fireflies
+    g.amb.push({kind:3,wx,y:140+Math.random()*280,vx:-0.18,vy:-0.05,sway:1,life:340,ph:Math.random()*7});
   }
 }
 function drawAmbient(g){
@@ -959,11 +1003,12 @@ function drawAmbient(g){
     if(a.kind===0){ ctx.globalAlpha=Math.min(.3,a.life/300*.3); ctx.fillStyle='#9a96a2'; ctx.fillRect(sx,a.y,4,4); }
     else if(a.kind===1){ const tw=Math.sin(a.life*0.4); ctx.globalAlpha=Math.max(0,tw)*.8; ctx.fillStyle='#fff';
       ctx.fillRect(sx-3,a.y,8,2); ctx.fillRect(sx,a.y-3,2,8); }
-    else { ctx.globalAlpha=Math.min(.55,a.life/320*.55); ctx.fillStyle='#ffe9a8'; ctx.fillRect(sx,a.y,3,3); }
+    else if(a.kind===2){ ctx.globalAlpha=Math.min(.55,a.life/320*.55); ctx.fillStyle='#ffe9a8'; ctx.fillRect(sx,a.y,3,3); }
+    else { const tw=0.5+0.5*Math.sin(a.life*0.18+a.ph); ctx.globalAlpha=Math.min(.7,a.life/340)*tw; ctx.fillStyle='#ffe27a'; ctx.fillRect(sx,a.y,3,3); ctx.globalAlpha*=0.5; ctx.fillRect(sx-1,a.y-1,5,5); }
   }
   ctx.globalAlpha=1;
   // butterflies in eco biome
-  const {zone,blend}=biomeBlend(g), dom=blend>0.5?Math.min(2,zone+1):zone;
+  const {zone,blend}=biomeBlend(g), dom=blend>0.5?Math.min(3,zone+1):zone;
   if(dom===2){
     for(let i=0;i<3;i++){
       const bx=140+i*300+Math.sin(g.t*0.013+i*2)*60;
@@ -979,9 +1024,9 @@ function drawAmbient(g){
 
 /* ============ Biome blend ============ */
 function biomeBlend(g){
-  const p=Math.min(0.9999,g.dist/FINISH_M)*3;
-  let zone=Math.floor(p), frac=p-zone; if(zone>2){zone=2;frac=1;}
-  let blend=0; if(frac>0.90&&zone<2) blend=(frac-0.90)/0.10;   // crossfade only in the last 10% of a zone (was 18%)
+  const p=Math.min(0.9999,g.dist/FINISH_M)*4;
+  let zone=Math.floor(p), frac=p-zone; if(zone>3){zone=3;frac=1;}
+  let blend=0; if(frac>0.90&&zone<3) blend=(frac-0.90)/0.10;   // crossfade only in the last 10% of a zone
   blend=blend*blend*(3-2*blend);
   return {zone,blend};
 }
@@ -1032,7 +1077,12 @@ function sceneEco(g,a){
     ctx.restore();
     ctx.fillStyle='rgba(238,246,244,'+a+')'; ctx.beginPath(); ctx.arc(tx,ty,5,0,7); ctx.fill(); }
 }
-const SCENES=[sceneCity,sceneSea,sceneEco];
+const SCENES=[sceneCity,sceneSea,sceneEco,sceneWild];
+function sceneWild(g,a){
+  drawStrip(g,ART.wildFar,0.16,BASE_GROUND);
+  ctx.fillStyle='rgba(255,224,170,'+(0.22*a)+')'; ctx.fillRect(0,BASE_GROUND-120,W,120);   // warm golden-hour haze
+  drawStrip(g,ART.wildMid,0.42,BASE_GROUND+4);
+}
 function godRays(g,strength){
   if(strength<=0) return;
   ctx.save(); ctx.globalAlpha=0.05*strength;
@@ -1053,19 +1103,19 @@ function render(g){
 
   camFull();                                   // sky: full frame, most distant (no zoom)
   ctx.drawImage(ART.skies[zone],0,0);
-  if(blend>0){ ctx.globalAlpha=blend; ctx.drawImage(ART.skies[Math.min(2,zone+1)],0,0); ctx.globalAlpha=1; }
+  if(blend>0){ ctx.globalAlpha=blend; ctx.drawImage(ART.skies[Math.min(3,zone+1)],0,0); ctx.globalAlpha=1; }
   camZ(ZB);                                    // clouds + skyline: gentle distant-layer zoom
   drawClouds(g);
   ctx.globalAlpha=1-blend; SCENES[zone](g,1-blend);
-  if(blend>0){ ctx.globalAlpha=blend; SCENES[Math.min(2,zone+1)](g,blend); }
+  if(blend>0){ ctx.globalAlpha=blend; SCENES[Math.min(3,zone+1)](g,blend); }
   ctx.globalAlpha=1;
   // god rays over the skyline (distant layer)
-  const rayA=(zone===1||zone===2)?(1-blend):0, rayB=(Math.min(2,zone+1)>=1)?blend:0;
+  const rayA=(zone>=1)?(1-blend):0, rayB=(Math.min(3,zone+1)>=1)?blend:0;
   godRays(g,Math.max(rayA,rayB));
 
-  const A=BIOMES[zone], B=BIOMES[Math.min(2,zone+1)];
+  const A=BIOMES[zone], B=BIOMES[Math.min(3,zone+1)];
   camZ(ZG);                                    // ====== gameplay plane: full dolly-in zoom ======
-  drawGround(g, mix(A.ground,B.ground,blend), mix(A.accent,B.accent,blend), blend<0.5?zone:Math.min(2,zone+1));
+  drawGround(g, mix(A.ground,B.ground,blend), mix(A.accent,B.accent,blend), blend<0.5?zone:Math.min(3,zone+1));
 
   // climb signs: real road-sign sprite + crisp TURBO label
   for(const h of g.hills){ const sx=(h.cx-h.w/2)-g.worldX; if(sx>-80&&sx<W){
@@ -1091,7 +1141,7 @@ function render(g){
   const fgVis=Math.max(introA,transA)*0.92;
   if(fgVis>0.01){
     if(1-blend>0){ ctx.globalAlpha=(1-blend)*fgVis; drawStrip(g,ART.fg[zone],1.3,BASE_GROUND+44); }
-    if(blend>0){ ctx.globalAlpha=blend*fgVis; drawStrip(g,ART.fg[Math.min(2,zone+1)],1.3,BASE_GROUND+44); }
+    if(blend>0){ ctx.globalAlpha=blend*fgVis; drawStrip(g,ART.fg[Math.min(3,zone+1)],1.3,BASE_GROUND+44); }
     ctx.globalAlpha=1;
   }
 
@@ -1186,9 +1236,9 @@ function drawGround(g,gcol,acol,dom){
   }
   else if(dom===1){ ctx.strokeStyle='rgba(110,80,38,.55)'; ctx.lineWidth=3;
     for(let sx=-(g.worldX%34);sx<W;sx+=34){ const y=groundYAt(g,g.worldX+sx); ctx.beginPath(); ctx.moveTo(sx,y+8); ctx.lineTo(sx,H); ctx.stroke(); } }
-  else { ctx.fillStyle='rgba(255,255,255,.5)';
+  else if(dom!==3){ ctx.fillStyle='rgba(255,255,255,.5)';
     for(let sx=-off;sx<W;sx+=60){ const y=groundYAt(g,g.worldX+sx)+30; ctx.fillRect(sx,y,18,4); } }
-  const fl=Math.min(1,(dom===2?0.7:0)+Math.min(0.6,g.co2/4000));
+  const fl=Math.min(1,(dom>=2?0.7:0)+Math.min(0.6,g.co2/4000));
   if(fl>0.05){ ctx.globalAlpha=fl;
     for(let sx=((-g.worldX%96)+96)%96;sx<W;sx+=96){ const y=groundYAt(g,g.worldX+sx);
       ctx.fillStyle='#2f8f3a'; ctx.fillRect(sx,y+10,2,10);
@@ -1577,7 +1627,7 @@ function syncHUD(g){
   elCO2.style.transform=(g.co2pop>0||g.co2hit>0)?'scale(1.3)':'scale(1)'; elCO2.style.color=g.co2hit>0?'#ff5a4d':(g.co2pop>0?'var(--leaf)':'var(--cyan)');
   elProg.style.width=(Math.min(1,g.dist/FINISH_M)*100)+'%';
   elDist.textContent=Math.round(g.dist)+' / '+FINISH_M+' m';
-  const {zone,blend}=biomeBlend(g); elBio.textContent=BIOMES[blend>0.5?Math.min(2,zone+1):zone].name;
+  const {zone,blend}=biomeBlend(g); elBio.textContent=BIOMES[blend>0.5?Math.min(3,zone+1):zone].name;
   hudBikeDraw(g);
   if(g.t>460){ document.getElementById('introHint').style.opacity='0';
     document.getElementById('zoneR').style.opacity='0'; }
@@ -1699,6 +1749,7 @@ document.getElementById('cta').addEventListener('click',()=>{ const e=document.g
    the existing tuning is preserved) and render once per animation frame. Result: every
    device runs the same game at the same speed, regardless of 60/90/120Hz. */
 const STEP=1000/60;            // one logical tick = 1/60 second
+const GAMESPEED=0.85;          // global pace: 0.85 = 15% slower than before, applied uniformly to all motion
 let _prev=performance.now(), _acc=0;
 function logicTick(){
   if(G&&G.state==='play') update(G);
@@ -1713,7 +1764,7 @@ function frame(now){
     _ema=_ema?_ema*0.9+dt*0.1:dt;
     if(!LOWPERF && ++_emaN>50 && _ema>30){ LOWPERF=true; sizeDisplay(); }
   }
-  _acc+=dt;
+  _acc+=dt*((G&&G.state==='play')?GAMESPEED:1);   // 15% slower during play; countdown stays real-time (audio sync)
   let steps=0;
   while(_acc>=STEP && steps<5){ logicTick(); _acc-=STEP; steps++; }
   if(steps>=5) _acc=0;        // give up on a big backlog rather than spiral
