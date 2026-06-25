@@ -1301,14 +1301,24 @@ function render(g){
     const altb=Math.max(0,gyb-g.y), swb=38*Math.max(.35,1-altb/170), sab=Math.max(.4,1-altb/200);
     sctx.save();
     sctx.setTransform(DS*ZG,0,0,DSy*ZG, DS*(PVX*(1-ZG)+jx), DSy*(PVY*(1-ZG)+jy));
-    sctx.fillStyle='rgba(0,0,0,'+(0.20*sab)+')'; sctx.beginPath(); sctx.ellipse(g.riderX,gyb+4,swb,7*Math.max(.5,1-altb/240),0,0,7); sctx.fill();
-    sctx.fillStyle='rgba(0,0,0,'+(0.32*sab)+')'; sctx.beginPath(); sctx.ellipse(g.riderX,gyb+4,swb*0.56,4.3*Math.max(.5,1-altb/240),0,0,7); sctx.fill();
+    sctx.fillStyle='rgba(0,0,0,'+(0.07*sab)+')'; sctx.beginPath(); sctx.ellipse(g.riderX,gyb+4,swb,7*Math.max(.5,1-altb/240),0,0,7); sctx.fill();
+    sctx.fillStyle='rgba(0,0,0,'+(0.11*sab)+')'; sctx.beginPath(); sctx.ellipse(g.riderX,gyb+4,swb*0.56,4.3*Math.max(.5,1-altb/240),0,0,7); sctx.fill();
     if(!(g.inv>0 && (g.t%8<3))){
       sctx.imageSmoothingEnabled=true; sctx.imageSmoothingQuality='high';
       sctx.translate(Math.round(g.riderX),Math.round(g.y)); sctx.rotate(g.angleQ||0);
       sctx.scale(1+g.squash*0.08, 1-g.squash*0.16);
       if(g.inv>0) sctx.globalAlpha=0.75;
-      drawBikeBody(sctx,g.b,g.t,g.state==='play',g.mode,g.battery<20,false);
+      const R=RIDERS[g.key];
+      if(R&&R.ready){
+        const s=R.H/R.CH;                                          // sprite -> logical-px scale
+        let fi=0;
+        if(g.state==='play'){ fi=Math.floor(g.worldX*R.CAD)%R.NF; if(fi<0) fi+=R.NF; }
+        // anchor: wheel-centre -> x=0, contact-line -> y=+2 (same ground point the procedural rider used)
+        sctx.drawImage(R.img, fi*R.CW,0,R.CW,R.CH,
+                       -R.ACX*s, 2-R.ACY*s, R.CW*s, R.CH*s);
+      } else {
+        drawBikeBody(sctx,g.b,g.t,g.state==='play',g.mode,g.battery<20,false);
+      }
       sctx.globalAlpha=1;
     }
     sctx.restore(); sctx.imageSmoothingEnabled=false;
@@ -1885,8 +1895,27 @@ function frame(now){
   else { sctx.setTransform(1,0,0,1,0,0); sctx.fillStyle='#0a0f0c'; sctx.fillRect(0,0,scv.width,scv.height); }
   requestAnimationFrame(frame);
 }
+/* ---- play-view rider sprites, per bike (select screen unchanged) ----
+   Each entry maps a bike key -> its sprite sheet. Bikes with no entry (or a sheet that
+   fails to load) fall back to the procedural rider. To add the monster bike later, drop in
+   a third entry with its sheet + frame count + in-cell anchor (wheel-centre x, contact y). */
+const RIDERS={
+  mini: { src:'mini_rider_sheet.png', NF:14, CW:258, CH:320, ACX:129, ACY:318, H:80, CAD:0.06, img:null, ready:false },
+  city: { src:'city_rider_sheet.png', NF:13, CW:326, CH:320, ACX:163, ACY:318, H:76, CAD:0.06, img:null, ready:false },
+  monster: { src:'monster_rider_sheet.png', NF:10, CW:367, CH:320, ACX:183, ACY:318, H:78, CAD:0.06, img:null, ready:false }
+};
+function loadRiders(){
+  for(const k in RIDERS){ const R=RIDERS[k];
+    if(typeof Image==='undefined'){ assetReady(); continue; }
+    let im; try{ im=new Image(); }catch(e){ assetReady(); continue; }
+    im.onload=((R,im)=>()=>{ R.img=im; R.ready=true; assetReady(); })(R,im);
+    im.onerror=assetReady;                 // missing/renamed file -> procedural fallback, no load hang
+    im.src=R.src;
+  }
+}
+
 /* ---- boot loader: fill the bar as the bike art + font load, then reveal the game ---- */
-const LOAD_TOTAL=Object.keys(BIKE_ART).length*2 + 1;     // 3 body + 3 full bike images + the pixel font
+const LOAD_TOTAL=Object.keys(BIKE_ART).length*2 + 4;     // 3 body + 3 full bike images + pixel font + 3 rider sheets
 let _loaded=0,_loadDone=false; const _loadStart=Date.now();
 function assetReady(){
   _loaded=Math.min(LOAD_TOTAL,_loaded+1);
@@ -1903,7 +1932,7 @@ function finishLoading(){
 if(document.fonts&&document.fonts.ready){ document.fonts.ready.then(assetReady,assetReady); } else { assetReady(); }
 setTimeout(finishLoading,9000);                          // safety net: never hang on a stuck asset
 
-buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} buildCards(); requestAnimationFrame(frame);
+buildArt(); try{ loadBikeArt(); }catch(e){} try{ loadMenuBike(); }catch(e){} try{ loadRiders(); }catch(e){ assetReady(); } buildCards(); requestAnimationFrame(frame);
 function loadMenuBike(){
   if(typeof Image==='undefined') return;
   for(const key in BIKE_ART){
