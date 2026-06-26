@@ -2436,18 +2436,17 @@ const far = this.data.avoidDist;
   #elevatorVideoOverlay{
     position: fixed;
     inset: 0;
-    display: flex;             /* always in layout so video has a box and decodes */
-    visibility: hidden;        /* hidden visually until activated */
+    display: none;           /* toggled on demand */
     align-items: center;
     justify-content: center;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     background: #000;
-    z-index: 99999;            /* above A-Frame canvas */
+    z-index: 99999;          /* above A-Frame canvas */
     opacity: 0;
     pointer-events: none;
   }
   #elevatorVideoOverlay.active{
-    visibility: visible;
+    display: flex;
     pointer-events: auto;
   }
   #elevatorVideoOverlay video{
@@ -2459,52 +2458,6 @@ const far = this.data.avoidDist;
   #elevatorVideoOverlay.fadeIn{ transition: opacity 250ms ease; opacity: 1; }
   #elevatorVideoOverlay.fadeOut{ transition: opacity 450ms ease; opacity: 0; }
 
-  /* Elevator loading screen — shown while AYA preloads, before video starts */
-  #elevatorLoadScreen{
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #000;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 600ms ease;
-    z-index: 1;
-  }
-  #elevatorLoadScreen.show{ opacity: 1; }
-  #elevatorLoadInner{
-    width: min(560px, calc(100vw - 48px));
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    letter-spacing: 0.2px;
-  }
-  #elevatorLoadLabel{
-    font-size: 14px;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.9);
-    margin-bottom: 14px;
-  }
-  #elevatorLoadBarWrap{
-    width: 100%;
-    height: 10px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.12);
-    overflow: hidden;
-  }
-  #elevatorLoadBar{
-    height: 100%;
-    width: 0%;
-    background: rgba(255,255,255,0.82);
-    transition: width 350ms ease;
-  }
-  #elevatorLoadBody{
-    margin-top: 32px;
-    font-size: 13px;
-    line-height: 1.75;
-    color: rgba(255,255,255,0.52);
-    letter-spacing: 0.02em;
-  }
 
   /* Skip Elevator (only during elevator ride video) */
   #skipElevatorShell{
@@ -2613,17 +2566,6 @@ const far = this.data.avoidDist;
          disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
     <source src="elevator_ride.mp4" type="video/mp4"/>
   </video>
-  <div id="elevatorLoadScreen" aria-hidden="true">
-    <div id="elevatorLoadInner">
-      <div id="elevatorLoadLabel">preparing descent</div>
-      <div id="elevatorLoadBarWrap"><div id="elevatorLoadBar"></div></div>
-      <div id="elevatorLoadBody">
-        You entered a space shaped by shared anxiety — the uncertainty of what technological change does to work, to roles, to what we thought was stable.<br><br>
-        What follows asks something different: not to confront the fear, but to go underneath it.<br><br>
-        Toward what has always been human.
-      </div>
-    </div>
-  </div>
   <div id="skipElevatorShell" aria-hidden="true">
     <div id="skipElevatorBtn" role="button" tabindex="0" aria-label="Skip elevator">SKIP ELEVATOR</div>
   </div>
@@ -6643,10 +6585,8 @@ AFRAME.registerComponent('pbr-carpet', {
   const rideVideo = document.getElementById('elevatorRideVideo');
   const skipElevatorShell = document.getElementById('skipElevatorShell');
   const skipElevatorBtn = document.getElementById('skipElevatorBtn');
-  const loadScreen = document.getElementById('elevatorLoadScreen');
-  const loadBar    = document.getElementById('elevatorLoadBar');
 
-  if (!elevator || !rig || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo || !skipElevatorShell || !skipElevatorBtn || !loadScreen || !loadBar) return;
+  if (!elevator || !rig || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo || !skipElevatorShell || !skipElevatorBtn) return;
   
   // Helper to get active camera based on mode
   function getActiveCamera() {
@@ -6832,7 +6772,7 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   // --- state
-  const STATE = { IDLE:0, AUTOPILOT:1, READY_CONFIRM:2, LOADING:3, VIDEO:4 };
+  const STATE = { IDLE:0, AUTOPILOT:1, READY_CONFIRM:2, VIDEO:3 };
   let state = STATE.IDLE;
 
   function resetIdleUI(){
@@ -6970,252 +6910,128 @@ AFRAME.registerComponent('pbr-carpet', {
   function waitForAyaReadyThenNavigate(){
     const start = performance.now();
     const maxWaitMs = 30000; // hard fallback
-    // setInterval instead of requestAnimationFrame: the RAF loop stalls to near-zero
-    // when AYA's shader warmup saturates the GPU, making the black screen appear frozen
-    // and preventing even the 30 s hard-cap from firing. setInterval is driven by the
-    // timer thread and advances in real wall-clock time regardless of GPU load.
-    const t = setInterval(() => {
+    const tick = () => {
       const ready = (window.__ayaIsReady && window.__ayaIsReady());
       if (ready || (performance.now() - start) > maxWaitMs){
-        clearInterval(t);
         window.location.href = './rooms/aya.dev/';
+        return;
       }
-    }, 200);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 
-  // -----------------------------------------------------------------------
-  // NEW ARCHITECTURE
-  //
-  // F pressed → doors close → startLoadingScreen() runs immediately:
-  //   - Overlay goes black, load bar appears, AYA preload starts NOW
-  //   - setInterval polls ayaReady every 200 ms, animating the bar
-  //   - When AYA signals ready (or 30 s hard cap), startVideo() fires
-  //   - Video plays; by now AYA is warm, no competition, no stutter
-  //   - Video ends → finishElevatorRide() → navigate (AYA already ready)
-  //
-  // The skip button is shown once AYA is ready (during the video).
-  // If the video ends before skip is clicked, we navigate anyway.
-  // -----------------------------------------------------------------------
+  // --- Skip gating (prevents "dead" black screen if user skips before next room is ready)
+  let __skipEnabled = false;
+  let __skipPressed = false;
+  let __skipPollRAF = 0;
+
+  function setSkipUI(mode){
+    // mode: 'hidden' | 'disabled' | 'enabled' | 'loading'
+    try {
+      if (!skipElevatorShell || !skipElevatorBtn) return;
+      if (mode === 'hidden'){
+        skipElevatorShell.style.opacity = '0';
+        skipElevatorShell.style.pointerEvents = 'none';
+        skipElevatorBtn.setAttribute('aria-disabled','true');
+        try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '0.55';
+        return;
+      }
+      // keep shell present, but gate interaction
+      skipElevatorShell.style.opacity = '';
+      skipElevatorShell.style.pointerEvents = (mode === 'enabled') ? 'auto' : 'none';
+      if (mode === 'loading'){
+        skipElevatorBtn.textContent = 'LOADING…';
+        skipElevatorBtn.setAttribute('aria-disabled','true');
+        try { skipElevatorBtn.setAttribute('tabindex','-1'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '0.65';
+      } else if (mode === 'disabled'){
+        // Keep skip hidden until actually ready.
+        skipElevatorShell.style.opacity = '0';
+        skipElevatorShell.style.pointerEvents = 'none';
+        return;
+      } else {
+        // enabled
+        skipElevatorBtn.textContent = 'SKIP ELEVATOR';
+        skipElevatorBtn.setAttribute('aria-disabled','false');
+        try { skipElevatorBtn.setAttribute('tabindex','0'); } catch (e) {}
+        skipElevatorBtn.style.opacity = '';
+        // Release pointer lock so the user can see the cursor and click SKIP
+        try { if (document.exitPointerLock) document.exitPointerLock(); } catch (e) {}
+      }
+    } catch (e) {}
+  }
+
+  function startSkipReadyPolling(){
+    if (__skipPollRAF) return;
+    const tick = () => {
+      __skipPollRAF = 0;
+      const ready = (window.__ayaIsReady && window.__ayaIsReady());
+      if (ready){
+        __skipEnabled = true;
+        // If the user already tried to skip, complete the action now.
+        if (__skipPressed){
+          setSkipUI('loading');
+          finishElevatorRide();
+          return;
+        }
+        setSkipUI('enabled');
+        return;
+      }
+      // keep waiting
+      __skipPollRAF = requestAnimationFrame(tick);
+    };
+    __skipPollRAF = requestAnimationFrame(tick);
+  }
 
   let __elevatorRideFinished = false;
-  let __loadPollTimer = 0;
-
-  // Animate the load bar. pct is 0–100. We fake smooth progress up to 90%
-  // while waiting, then jump to 100% when AYA signals ready.
-  function setLoadBar(pct){
-    try { loadBar.style.width = Math.min(100, Math.max(0, pct)) + '%'; } catch(e){}
-  }
-
-  function showLoadScreen(){
-    // requestAnimationFrame ensures the browser has painted opacity:0 before we
-    // transition to 1 — without this the fade is skipped and it cuts hard.
-    requestAnimationFrame(()=>{
-      try { overlay.style.transition = 'opacity 600ms ease'; } catch(e){}
-      try { overlay.style.opacity = '1'; } catch(e){}
-      try { loadScreen.classList.add('show'); } catch(e){}
-    });
-  }
-
-  function hideLoadScreen(){
-    try { loadScreen.classList.remove('show'); } catch(e){}
-  }
-
-  function showSkipBtn(){
-    try {
-      skipElevatorShell.style.opacity = '';
-      skipElevatorShell.style.pointerEvents = 'auto';
-      skipElevatorBtn.setAttribute('aria-disabled','false');
-      skipElevatorBtn.setAttribute('tabindex','0');
-      skipElevatorBtn.style.opacity = '';
-      // Release pointer lock so user can click
-      if (document.exitPointerLock) document.exitPointerLock();
-    } catch(e){}
-  }
-
-  function hideSkipBtn(){
-    try {
-      skipElevatorShell.style.opacity = '0';
-      skipElevatorShell.style.pointerEvents = 'none';
-      skipElevatorBtn.setAttribute('aria-disabled','true');
-      skipElevatorBtn.setAttribute('tabindex','-1');
-    } catch(e){}
-  }
 
   function finishElevatorRide(){
     if (__elevatorRideFinished) return;
     __elevatorRideFinished = true;
 
-    // Stop any running load poll.
-    if (__loadPollTimer){ clearInterval(__loadPollTimer); __loadPollTimer = 0; }
-
-    // Hide skip button.
-    hideSkipBtn();
+    // Hide skip UI immediately.
+    try {
+      if (skipElevatorShell){
+        skipElevatorShell.style.opacity = '0';
+        skipElevatorShell.style.pointerEvents = 'none';
+      }
+    } catch (e) {}
 
     // Stop video cleanly.
-    try { rideVideo.pause(); } catch(e){}
+    try { rideVideo.pause(); } catch (e) {}
 
-    // Hold fully-opaque black before navigating.
+    // Hold a fully-opaque black cover before navigating.
     overlay.classList.remove('fadeIn');
     overlay.classList.remove('fadeOut');
-    overlay.style.visibility = 'visible';
+    overlay.style.display = 'flex';
     overlay.style.background = 'rgba(0,0,0,1)';
     overlay.style.opacity = '1';
     overlay.style.zIndex = '99999';
 
-    // Navigate directly. The load poll already resolved (either AYA signalled ready,
-    // or the 30s hard cap expired). Calling waitForAyaReadyThenNavigate here would
-    // start a fresh 30s wait cycle — producing a freeze when skip is clicked after
-    // a timeout. We have nothing left to wait for.
-    if (window.__ayaIframeMuteTimer){ clearInterval(window.__ayaIframeMuteTimer); window.__ayaIframeMuteTimer = 0; }
-    // 50ms before navigating: gives the browser one paint cycle to actually render
-    // the black overlay before page teardown begins. Without this the video frame
-    // can remain visible during unload, which reads as a freeze to the user.
-    setTimeout(()=>{ window.location.href = './rooms/aya.dev/'; }, 50);
+    // Now wait for AYA to be fully ready (or hit fallback) before hard navigation.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(waitForAyaReadyThenNavigate);
+    });
   }
-
-  function startVideo(){
-    // AYA is ready (or timed out). Hide load bar, start the video.
-    state = STATE.VIDEO;
-    hideLoadScreen();
-
-    // ---- CRITICAL: tear down the iframe BEFORE starting the video ----
-    // AYA_READY fires when aya.dev finishes its shader warmup, but the iframe's
-    // WebGL context is still fully alive at that point. Starting the video while
-    // the iframe context is running causes GPU competition → stutter, and having
-    // three concurrent WebGL contexts (fear_room paused, aya.dev iframe, video
-    // decoder) can overwhelm GPU memory and crash the tab.
-    // We blank the iframe here, wait 150 ms for the browser to actually release
-    // the GPU context, then start the video into clean GPU headroom.
-    if (window.__ayaIframeMuteTimer){ clearInterval(window.__ayaIframeMuteTimer); window.__ayaIframeMuteTimer = 0; }
-    try {
-      const f = document.getElementById('ayaPreloadFrame');
-      if (f) {
-        try {
-          const iwin = f.contentWindow;
-          if (iwin && iwin.THREE && iwin.THREE.AudioContext &&
-              typeof iwin.THREE.AudioContext.getContext === 'function') {
-            const ctx = iwin.THREE.AudioContext.getContext();
-            if (ctx) ctx.close();
-          }
-        } catch(e){}
-        f.src = 'about:blank';
-      }
-    } catch(e){}
-
-    setTimeout(()=>{
-      // Video was gesture-primed (muted play+pause) in onSecondF.
-      // Now play for real — GPU is clear.
-      try { rideVideo.currentTime = 0; } catch(e){}
-      rideVideo.muted = false;
-      const p = rideVideo.play();
-      if (p && typeof p.catch === 'function'){
-        p.catch(()=>{
-          rideVideo.muted = true;
-          rideVideo.play().catch(()=>{});
-        });
-      }
-
-      // Show skip button — AYA is ready and iframe is gone, navigation is instant.
-      showSkipBtn();
-
-      rideVideo.onended = finishElevatorRide;
-    }, 150);
-  }
-
-  function startLoadingScreen(){
-    __elevatorRideFinished = false;
-    setLoadBar(0);
-
-    // Hide guide.
-    hideGuide();
-
-    // Hide camera view toggle.
-    const cameraViewShell = document.getElementById('cameraViewShell');
-    if (cameraViewShell) cameraViewShell.classList.remove('show');
-    const cameraViewConfirm = document.getElementById('cameraViewConfirm');
-    if (cameraViewConfirm) cameraViewConfirm.classList.remove('show');
-
-    // Stop Fear Room audio.
-    hardStopAllAudio(rideVideo);
-
-    // Show the overlay, fading in from transparent so the transition from the
-    // fear_room is not abrupt. The load screen fades in over 600ms (see CSS).
-    overlay.style.pointerEvents = 'auto';
-    overlay.style.visibility = 'visible';
-    overlay.style.opacity = '0';
-    overlay.style.background = 'rgba(0,0,0,1)';
-    overlay.style.zIndex = '99999';
-
-    // Pause fear_room rendering — it won't be seen again from this page.
-    pauseSceneRendering();
-
-    // Hide skip button until video phase.
-    hideSkipBtn();
-
-    // Start AYA preloading immediately — doors are closing, user sees the load bar.
-    if (window.preloadAyaFragment) window.preloadAyaFragment();
-
-    // Mute the iframe's audio on a recurring interval.
-    // aya.dev creates its audio nodes asynchronously as A-Frame loads assets, so
-    // a one-time onload handler would miss them. We poll every 300 ms and silence
-    // everything we find. This prevents aya.dev from being audible during the load
-    // screen, and prevents the browser from having two concurrent audio sessions for
-    // the same origin at navigation time (which silences nde_dome / sphere_dome).
-    window.__ayaIframeMuteTimer = setInterval(()=>{
-      try {
-        const f = document.getElementById('ayaPreloadFrame');
-        if (!f) return;
-        const doc = f.contentDocument;
-        if (doc) {
-          doc.querySelectorAll('audio,video').forEach(m => {
-            try { m.muted = true; m.volume = 0; } catch(e){}
-          });
-        }
-        const iwin = f.contentWindow;
-        if (iwin && iwin.THREE && iwin.THREE.AudioContext &&
-            typeof iwin.THREE.AudioContext.getContext === 'function') {
-          const ctx = iwin.THREE.AudioContext.getContext();
-          if (ctx && ctx.state !== 'suspended') ctx.suspend();
-        }
-      } catch(e){}
-    }, 300);
-
-    // Show the load screen.
-    showLoadScreen();
-
-    // Poll for AYA ready. Animate bar as fake progress up to 90%; jump to 100% on ready.
-    const MAX_WAIT_MS = 30000;
-    const pollStart = performance.now();
-    let fakeBarPct = 0;
-
-    __loadPollTimer = setInterval(()=>{
-      const elapsed = performance.now() - pollStart;
-      const ready = (window.__ayaIsReady && window.__ayaIsReady());
-
-      // Fake progress: ease toward 90% asymptotically, snap to 100 on ready.
-      if (ready || elapsed >= MAX_WAIT_MS){
-        clearInterval(__loadPollTimer);
-        __loadPollTimer = 0;
-        setLoadBar(100);
-        // Brief pause so the bar visibly completes before video starts.
-        setTimeout(()=>{
-          // Add 'active' class now — this is the video phase.
-          overlay.classList.add('active');
-          startVideo();
-        }, 350);
-      } else {
-        // Asymptotic fake progress: approaches 90% over MAX_WAIT_MS.
-        fakeBarPct = 90 * (1 - Math.exp(-3 * elapsed / MAX_WAIT_MS));
-        setLoadBar(fakeBarPct);
-      }
-    }, 200);
-  }
-
-  // Skip: only reachable once AYA is ready (button is shown in startVideo()).
-  // At this point navigation is safe — just call finishElevatorRide directly.
   function onSkipElevatorActivate(e){
     if (e && e.preventDefault) e.preventDefault();
+
+    // If the next room isn't ready yet, do NOT hard-cut to black.
+    // Instead, hold the elevator video, show "SKIP ELEVATOR" and auto-complete once READY arrives.
+    const ready = (window.__ayaIsReady && window.__ayaIsReady());
+    if (!ready){
+      __skipPressed = true;
+      __skipEnabled = false;
+      setSkipUI('hidden');
+      startSkipReadyPolling();
+      return;
+    }
+
+    // Ready: proceed immediately with a clear "Loading…" acknowledgement.
     if (__elevatorRideFinished) return;
+    setSkipUI('loading');
     finishElevatorRide();
   }
 
@@ -7225,6 +7041,75 @@ AFRAME.registerComponent('pbr-carpet', {
       const k = e.key || '';
       if (k === 'Enter' || k === ' ' || k === 'Spacebar') onSkipElevatorActivate(e);
     });
+  }
+
+function startOverlayVideo(){
+    __elevatorRideFinished = false;
+    __skipPressed = false;
+    __skipEnabled = false;
+    // Hide the skip control until AYA preload has finished (prevents "stuck" black screen).
+    setSkipUI('hidden');
+
+    // Hide guide immediately for immersion
+    hideGuide();
+
+    // Hide camera view toggle during video
+    const cameraViewShell = document.getElementById('cameraViewShell');
+    if (cameraViewShell) cameraViewShell.classList.remove('show');
+    
+    // Close camera view dialog if open
+    const cameraViewConfirm = document.getElementById('cameraViewConfirm');
+    if (cameraViewConfirm) cameraViewConfirm.classList.remove('show');
+
+    // Stop Fear Room audio as soon as descent is confirmed.
+    hardStopAllAudio(rideVideo);
+
+    overlay.style.pointerEvents = 'auto';
+    overlay.style.display = 'flex';
+    overlay.classList.add('active');
+    overlay.classList.remove('fadeOut');
+    overlay.classList.add('fadeIn');
+
+    // Pause fear_room rendering while the elevator video runs (prevents double-GPU when AYA preloads).
+    pauseSceneRendering();
+
+    // Video play logic:
+    // The video was pre-played (muted) synchronously in onSecondF to preserve
+    // Safari's gesture trust. By now it has been running ~680ms (door close anim).
+    // We just need to unmute it. If it somehow paused (browser interruption),
+    // we fall back to a fresh play().
+    // We do NOT call load() here — video is preloaded and must not be re-decoded.
+    const alreadyPlaying = !rideVideo.paused;
+
+    if (alreadyPlaying) {
+      // Pre-play succeeded — just unmute.
+      rideVideo.muted = false;
+      // The 'playing' event already fired 680ms ago, so we trigger preload directly
+      // now that the scene is paused (safe to load without competing with 3D rendering).
+      setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
+    } else {
+      // Fallback: pre-play was blocked (e.g. very strict autoplay policy).
+      if (!rideVideo.__warmed) { try { rideVideo.load(); } catch(e){} rideVideo.__warmed = true; }
+      rideVideo.currentTime = 0;
+      rideVideo.muted = false;
+      const playPromise = rideVideo.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          rideVideo.muted = true;
+          rideVideo.play().catch(()=>{});
+        });
+      }
+      // Preload next room once video is confirmed running (scene is already paused above).
+      rideVideo.addEventListener('playing', () => {
+        setTimeout(() => { if (window.preloadAyaFragment) window.preloadAyaFragment(); }, 600);
+      }, { once: true });
+    }
+
+    // Skip becomes available only once the next room reports READY.
+    setSkipUI('hidden');
+    startSkipReadyPolling();
+
+    rideVideo.onended = finishElevatorRide;
   }
 
   function onFirstF(){
@@ -7247,11 +7132,6 @@ AFRAME.registerComponent('pbr-carpet', {
       state = STATE.READY_CONFIRM;
       setGuideHtml('Press <span class="keycap keycap-ask">F</span> again to confirm descent.');
       flashHint('Ready', 800);
-      // Begin AYA HTTP downloads + scene init now, while the user reads the prompt.
-      // This uses the waiting time before the second F press. Safe because
-      // pauseSceneRendering() fires before AYA reaches shader warmup (the GPU phase).
-      // The call in startLoadingScreen() remains as a fallback.
-      if (window.preloadAyaFragment) window.preloadAyaFragment();
     }).catch(()=>{
       // Safety: reset if something goes wrong
       window.__autopilotActive = false; // Clear autopilot flag
@@ -7262,37 +7142,35 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function onSecondF(){
-    if (state !== STATE.READY_CONFIRM) return;
-    state = STATE.LOADING;
+    // Start preloading the next room now (minimizes chance of stealing focus during the first F flow).
+    if (window.preloadAyaFragment) window.preloadAyaFragment();
 
-    // Stop any remaining Fear Room audio immediately.
+    if (state !== STATE.READY_CONFIRM) return;
+    state = STATE.VIDEO;
+
+    // Stop any remaining Fear Room audio immediately (even before the ride video starts).
     hardStopAllAudio(rideVideo);
 
-    // Close doors.
+    // Close doors only on confirm (your desired UX).
     toggleDoorsClose();
 
     // ---- SAFARI AUTOPLAY FIX ------------------------------------------------
     // Safari revokes gesture trust after any async gap (setTimeout, Promise, etc.).
-    // Prime the video element NOW, synchronously within this keydown handler, while
-    // the gesture token is still valid. Start MUTED and immediately pause — we only
-    // need the gesture trust established so that startVideo() can unmute + play later.
+    // Solution: call play() NOW, synchronously within this keydown handler, while
+    // the gesture token is still valid. Start MUTED (guaranteed to work on all browsers).
     // IMPORTANT: do NOT call rideVideo.load() here — video has preload="auto" and is
     // already buffered. Calling load() flushes that buffer and causes stutter/stall.
+    // startOverlayVideo() will unmute once the overlay is visible.
     try {
       rideVideo.currentTime = 0;
       rideVideo.muted = true;
-      const p = rideVideo.play();
-      // Pause immediately after gesture-priming — startVideo() will play for real.
-      if (p && typeof p.then === 'function'){
-        p.then(()=>{ try { rideVideo.pause(); } catch(e){} }).catch(()=>{});
-      } else {
-        try { rideVideo.pause(); } catch(e){}
-      }
+      rideVideo.play().catch(() => {});
     } catch(e) {}
     // -------------------------------------------------------------------------
 
-    // Wait for doors to close, then show load screen and start AYA preload.
-    setTimeout(startLoadingScreen, closeDelayMs);
+    setTimeout(()=>{
+      startOverlayVideo();
+    }, closeDelayMs);
   }
 
   function onKeyDown(e){
@@ -7525,33 +7403,6 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   // Loading progress (simple count-based progress)
-  // GPU warmup for the elevator ride video.
-  // Browsers allocate the video texture pipeline lazily — the very first frame
-  // displayed on screen triggers a GPU texture upload that causes a visible stutter.
-  // We force this allocation during the boot phase by playing the video briefly
-  // (muted, invisible) so the GPU compositor is fully warm before the user ever
-  // reaches the elevator.
-  function gpuWarmRideVideo(vid, done){
-    try {
-      vid.muted = true;
-      vid.currentTime = 0;
-      const playP = vid.play();
-      const finish = () => {
-        try { vid.pause(); } catch(e){}
-        vid.currentTime = 0;
-        done();
-      };
-      // Let it run for ~250ms — enough for 6-8 frames at 30fps to be decoded
-      // and uploaded to the GPU texture, warming the compositor pipeline.
-      setTimeout(finish, 250);
-      if (playP && typeof playP.catch === 'function'){
-        playP.catch(() => done()); // autoplay blocked — skip warmup gracefully
-      }
-    } catch(e) {
-      done();
-    }
-  }
-
   function buildLoadTasks() {
     const tasks = [];
     let total = 0;
@@ -7626,20 +7477,15 @@ AFRAME.registerComponent('pbr-carpet', {
     });
 
     // Explicitly gate boot on elevator video being fully buffered.
-    // The overlay is display:none at page load, so browsers suppress preload="auto"
-    // for hidden media — the video never actually buffers without an explicit .load().
-    // Calling .load() here (boot phase) is correct and safe. The "do not call .load()"
-    // note in onSecondF applies only at playback time, where it would flush a live buffer.
+    // preload="auto" alone is passive — the browser may defer it under asset load pressure,
+    // which is the root cause of first-play stutter. We register here without calling
+    // .load() (that would flush the already-filling buffer).
     const rideVid = document.getElementById('elevatorRideVideo');
     if (rideVid) {
       add(new Promise((res) => {
-        if (rideVid.readyState >= 4) {
-          gpuWarmRideVideo(rideVid, res);
-          return;
-        }
-        rideVid.addEventListener('canplaythrough', () => gpuWarmRideVideo(rideVid, res), { once: true });
+        if (rideVid.readyState >= 4) return res(); // HAVE_ENOUGH_DATA
+        rideVid.addEventListener('canplaythrough', () => res(), { once: true });
         rideVid.addEventListener('error', () => res(), { once: true });
-        try { rideVid.load(); } catch(e) {} // forces buffering despite display:none
         setTimeout(() => res(), 25000); // fail-open: never block forever
       }));
     }
@@ -8315,7 +8161,7 @@ AFRAME.registerComponent('racer-controller', {
     // 1. Projection label
     ZONES.push({
       id: 'projection_label', cx: 2.5, cz: 2.0, radius: 4,
-      gazeEntityIds: ['projection_label_station_1'],
+      gazeTargets: [{x:0.1, z:2.0}],
       hintTitle: 'After the Shift',
       build: function(ct){
         ct.innerHTML =
@@ -8329,7 +8175,7 @@ AFRAME.registerComponent('racer-controller', {
     // 2. Entrance walls (Wall2 + Wall2B combined, two pages)
     ZONES.push({
       id: 'entrance_walls', cx: 16.0, cz: 5.0, radius: 4,
-      gazeEntityIds: ['Wall2_panel', 'Wall2B_panel'],
+      gazeTargets: [{x:17.93, z:3.0}, {x:15.75, z:5.99}],
       hintTitle: 'Exhibition wall text',
       build: function(ct){
         var pages = [
@@ -8353,7 +8199,7 @@ AFRAME.registerComponent('racer-controller', {
     // 3. Network label
     ZONES.push({
       id: 'network_label', cx: 5.5, cz: 17.0, radius: 3.5,
-      gazeEntityIds: ['network_label'],
+      gazeTargets: [{x:4.0, z:18.0}],
       hintTitle: 'The Old Network',
       build: function(ct){
         ct.innerHTML =
@@ -8370,7 +8216,7 @@ AFRAME.registerComponent('racer-controller', {
     // 4. Painting label
     ZONES.push({
       id: 'painting', cx: 17.0, cz: 18.5, radius: 4,
-      gazeEntityIds: ['painting_label'],
+      gazeTargets: [{x:17.99, z:20.0}, {x:15.7, z:16.01}],
       hintTitle: 'The Reclassification Field',
       build: function(ct){
         ct.innerHTML =
@@ -8387,12 +8233,7 @@ AFRAME.registerComponent('racer-controller', {
     // 5. Station 3
     ZONES.push({
       id: 'station3', cx: 15.10, cz: 11.40, radius: 4,
-      gazeEntityIds: [
-        'station3_A1_panel',
-        'station3_B1_panel','station3_B2_panel','station3_B3_panel',
-        'station3_B4_panel','station3_B5_panel',
-        'station3_C1_panel'
-      ],
+      gazeTargets: [{x:17.87, z:11.0}, {x:15.75, z:6.13}, {x:15.75, z:15.87}],
       hintTitle: 'Station 3 \u2014 Job Displacement',
       build: function(ct){
         var imgs = [
@@ -8418,7 +8259,7 @@ AFRAME.registerComponent('racer-controller', {
     // 6. Station 4 — triggered by looking at the LABEL at entrance
     ZONES.push({
       id: 'station4', cx: 11.0, cz: 21.0, radius: 4,
-      gazeEntityIds: ['s4_station4_label'],
+      gazeTargets: [{x:11.02, z:19.7}],
       hintTitle: 'Station 4 \u2014 The Mercurial Mon',
       build: function(ct){
         var imgs = [
@@ -8447,12 +8288,7 @@ AFRAME.registerComponent('racer-controller', {
     // 7. Station 5
     ZONES.push({
       id: 'station5', cx: 21.5, cz: 28.0, radius: 4,
-      gazeEntityIds: [
-        'station5_A_authority_trace_panel',
-        'station5_B_ownership_control_register_panel',
-        'station5_C_lobbying_policy_timeline_panel',
-        'station5_D_accountability_register_panel'
-      ],
+      gazeTargets: [{x:23.9, z:28.5}, {x:23.9, z:26.5}, {x:20.15, z:29.9}, {x:22.5, z:29.9}],
       hintTitle: 'Station 5 \u2014 Accountability',
       build: function(ct){
         var imgs = [
@@ -8485,7 +8321,7 @@ AFRAME.registerComponent('racer-controller', {
     }
     ZONES.push({
       id: 'photography', cx: 2.5, cz: 20.5, radius: 3.5,
-      gazeEntityIds: ['photo_label'],
+      gazeTargets: [{x:2.99, z:19.5}],
       hintTitle: 'The Aftershift \u2014 Photography',
       build: function(ct){
         ct.innerHTML =
@@ -8630,12 +8466,12 @@ AFRAME.registerComponent('racer-controller', {
   var activeZone = null;
   var isOpen = false;
   var gazeAwayTimer = 0;
-  var GAZE_GRACE = 0.3;
+  var GAZE_GRACE = 2.0;
   var GAZE_HALF_ANGLE = 50;
   var CHECK_MS = 160;
   var lastCheck = 0;
 
-  var _camDir = null, _camWorld = null, _raycaster = null;
+  var _camDir = null, _toTarget = null, _camWorld = null;
 
   /* ================================================================
      INIT
@@ -8649,10 +8485,8 @@ AFRAME.registerComponent('racer-controller', {
     defineZones();
 
     _camDir    = new THREE.Vector3();
+    _toTarget  = new THREE.Vector3();
     _camWorld  = new THREE.Vector3();
-    _raycaster = new THREE.Raycaster();
-    _raycaster.near = 0;
-    _raycaster.far  = 14; // covers any panel within the proximity zone
 
     // Key handler (useCapture to beat movement keys)
     document.addEventListener('keydown', function(e){
@@ -8693,7 +8527,6 @@ AFRAME.registerComponent('racer-controller', {
         if (rig && !rig.hasAttribute('proximity-info-tick')){
           rig.setAttribute('proximity-info-tick', '');
         }
-        resolveGazeObjects();
       };
       if (scene.hasLoaded) attach();
       else scene.addEventListener('loaded', attach);
@@ -8701,45 +8534,29 @@ AFRAME.registerComponent('racer-controller', {
   }
 
   /* ================================================================
-     GAZE CHECK — raycaster against actual scene meshes
-     gazeObjects are resolved lazily on first use (and re-resolved if
-     empty), so we never depend on scene-load timing for mesh readiness.
+     GAZE CHECK
+     Three.js Object3D.getWorldDirection() returns the LOCAL +Z axis
+     in world space — but cameras look down LOCAL -Z.
+     So we NEGATE to get the actual look direction.
      ================================================================ */
-  function resolveGazeObjects(){
-    for (var i = 0; i < ZONES.length; i++){
-      var zone = ZONES[i];
-      zone.gazeObjects = [];
-      var ids = zone.gazeEntityIds || [];
-      for (var j = 0; j < ids.length; j++){
-        var el = document.getElementById(ids[j]);
-        if (el && el.object3D) zone.gazeObjects.push(el.object3D);
-      }
-    }
-  }
-
-  function ensureGazeObjects(zone){
-    // Re-resolve if not yet populated (handles case where meshes weren't
-    // ready at scene-load time).
-    if (!zone.gazeObjects || !zone.gazeObjects.length){
-      zone.gazeObjects = [];
-      var ids = zone.gazeEntityIds || [];
-      for (var j = 0; j < ids.length; j++){
-        var el = document.getElementById(ids[j]);
-        if (el && el.object3D) zone.gazeObjects.push(el.object3D);
-      }
-    }
-  }
-
   function isGazingAt(zone, cam3){
-    ensureGazeObjects(zone);
-    var objects = zone.gazeObjects;
-    if (!objects || !objects.length) return false;
+    cam3.getWorldDirection(_camDir);      // Camera already returns -Z (look dir)
+    _camDir.y = 0;
+    if (_camDir.lengthSq() < 0.0001) return false;
+    _camDir.normalize();
 
-    cam3.getWorldPosition(_camWorld);
-    cam3.getWorldDirection(_camDir);
+    // _camWorld is pre-set by proximityTick to the rig's world position —
+    // do NOT overwrite it here with the camera position.
 
-    _raycaster.set(_camWorld, _camDir);
-    return _raycaster.intersectObjects(objects, true).length > 0;
+    var halfRad = GAZE_HALF_ANGLE * Math.PI / 180;
+    var targets = zone.gazeTargets;
+    for (var i = 0; i < targets.length; i++){
+      _toTarget.set(targets[i].x - _camWorld.x, 0, targets[i].z - _camWorld.z);
+      if (_toTarget.lengthSq() < 0.0001) return true;
+      _toTarget.normalize();
+      if (_camDir.dot(_toTarget) >= Math.cos(halfRad)) return true;
+    }
+    return false;
   }
 
   /* ================================================================
@@ -8753,6 +8570,14 @@ AFRAME.registerComponent('racer-controller', {
     var scene = rigEl.sceneEl;
     var cam3 = scene && scene.camera;
     if (!cam3) return;
+
+    // Pre-set _camWorld to the rig's world position before calling isGazingAt.
+    // isGazingAt uses _camWorld as the spatial origin for the to-target angle test.
+    // Using the camera's own position is wrong in third-person: the camera sits
+    // several metres behind the player on the spring arm, which pulls every
+    // to-target vector toward "forward" and causes false gaze hits for panels
+    // that are actually to the side. The rig position is always the correct origin.
+    rigEl.object3D.getWorldPosition(_camWorld);
 
     var closest = null, closestDist = Infinity;
     for (var i = 0; i < ZONES.length; i++){
