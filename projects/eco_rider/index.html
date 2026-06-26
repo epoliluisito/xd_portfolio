@@ -115,10 +115,10 @@
   .gctrl{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:6.5px;color:#9fd9b8;line-height:2.1;}
   .tcOnly{display:none;} body.touch .tcOnly{display:block;} body.touch .kbOnly{display:none;}
   .pausebadge{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:15px;color:#fff;z-index:18;display:none;}
-  .tpause{display:none;position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(calc(-50% + 118px));
-    z-index:16;width:30px;height:30px;border-radius:8px;border:2px solid #2f5c3f;background:rgba(8,16,11,.6);
-    color:#9fd9b8;font-size:11px;padding:0;font-family:var(--pix);}
-  body.touch .tpause.on{display:block;}
+  .tpause{display:none;position:absolute;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(calc(-50% + 150px));
+    z-index:16;height:30px;min-width:30px;padding:0 10px;border-radius:8px;border:2px solid #2f5c3f;background:rgba(8,16,11,.6);
+    color:#9fd9b8;font-size:9px;font-family:var(--pix);letter-spacing:1px;cursor:pointer;pointer-events:auto;}
+  .tpause.on{display:block;}
 
   @media (max-height:430px){
     .batBar{width:84px;} .progWrap{width:92px;}
@@ -194,7 +194,7 @@
 
   <div id="hud" class="hidden">
     <div class="hudTL">
-      <canvas class="hudBike" id="hudBike" width="48" height="30"></canvas>
+      <canvas class="hudBike" id="hudBike" width="96" height="60"></canvas>
       <div class="batWrap"><div class="batLbl">BATTERY</div><div class="batBar" id="batBox"><i id="batFill"></i></div></div>
     </div>
     <div class="hudCO2"><div class="lbl">CO₂ SAVED</div><div class="val" id="co2val">0 g</div></div>
@@ -218,7 +218,7 @@
     <button class="tbtn tmode" id="tMode">HOLD<br>TURBO</button>
     <button class="tbtn tjump" id="tJump">JUMP</button>
   </div>
-  <button class="tpause" id="tPause">⏸</button>
+  <button class="tpause" id="tPause">☰ MENU</button>
   <div class="pausebadge" id="pauseBadge">⏸ PAUSED</div>
 
   <audio id="bgm" src="eco_bike.mp3" loop preload="auto"></audio>
@@ -274,10 +274,23 @@
       <div class="endline" id="endScore">FINAL SCORE: 0</div>
       <div class="equiv" id="endEquiv"></div>
       <div style="margin-top:14px">
+        <button class="btn" id="again">▶ PLAY AGAIN</button>
         <button class="btn ghost" id="retry">↻ TRY ANOTHER MODEL</button>
         <button class="btn cta" id="cta">⚡ FIND YOUR E-BIKE — GET 10% OFF</button>
       </div>
       <div class="equiv" style="margin-top:8px">This is the power of [Your Brand] electric mobility.</div>
+    </div>
+  <div class="screen hidden" id="pausemenu">
+    <div class="endcard">
+      <div class="endttl">PAUSED</div>
+      <div style="margin-top:16px">
+        <button class="btn" id="pmResume">▶ RESUME</button>
+        <button class="btn" id="pmRestart">↻ RESTART (SAME BIKE)</button>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn ghost" id="pmChange">🚲 CHANGE BIKE</button>
+        <button class="btn ghost" id="pmQuit">✕ QUIT</button>
+      </div>
     </div>
   </div>
 </div></div>
@@ -348,7 +361,7 @@ const BIKES={
 // Final score (shown as grams CO2 saved) is an INDIRECT, skill-based tally: faster finish + coins
 // collected - crashes. Per frame we bank distance weighted by current speed, so a quicker run nets more.
 const BASE_RATE=1.05, PAR_FRAMES=10730, TIME_RATE=0.6;   // PAR scales linearly with track length (7 zones)
-const RAMP_END=3.0, RAMP_POW=1.4;   // game speed ramps 1x -> RAMP_END by the finish (ease-in); the late game is the skill gate
+const RAMP_END=2.7, RAMP_POW=1.4;   // game speed ramps 1x -> RAMP_END by the finish (ease-in); the late game is the skill gate
 const MODE={ eco:{speedMul:.84,drainMul:.55,co2Mul:2.2,badge:'ECO &nbsp;\u00b7&nbsp;SAVE'},
              turbo:{speedMul:1.4,drainMul:1.7,co2Mul:1.0,badge:'TURBO &nbsp;\u00b7&nbsp;FAST'} };
 
@@ -912,7 +925,7 @@ addEventListener('keydown',e=>{
   if(e.code==='Space'||e.code==='ArrowUp') pressJump();
   if(e.code==='KeyE'&&G&&G.state==='play'){ if(G.battery<=0&&!G.turboHeld) flashMsg(G.worldX+G.riderX,G.y-50,'NO BATTERY!','#ff5a4d',12); G.turboHeld=true; }
   if(e.code==='KeyH'&&G) G.debug=!G.debug;
-  if(e.code==='KeyP'&&G){ if(G.state==='play')G.state='pause'; else if(G.state==='pause')G.state='play'; togglePause(); }
+  if((e.code==='KeyP'||e.code==='Escape')&&G){ if(G.state==='play')openPauseMenu(); else if(G.state==='pause')resumeGame(); }
 });
 addEventListener('keyup',e=>{ if(e.code==='Space'||e.code==='ArrowUp') releaseJump();
   if(e.code==='KeyE'&&G) G.turboHeld=false; });
@@ -926,7 +939,7 @@ tM.addEventListener('pointerup',e=>{e.preventDefault(); if(G) G.turboHeld=false;
 tM.addEventListener('pointercancel',()=>{ if(G) G.turboHeld=false;});
 const tP=document.getElementById('tPause');
 tP.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();
-  if(G){ if(G.state==='play')G.state='pause'; else if(G.state==='pause')G.state='play'; togglePause(); }});
+  if(G){ if(G.state==='play')openPauseMenu(); else if(G.state==='pause')resumeGame(); }});
 /* ---- canvas controls: desktop unchanged (click = jump); touch gets ZONES ----
    right half: tap = jump (hold = higher). No duck: clouds are jumped over or ridden under.
    Per-pointer tracking so multi-touch jumps register cleanly. */
@@ -953,7 +966,20 @@ if(!isTouchEnv()){
    double-tap zoom. Neither suppresses taps/clicks, so gameplay and menus are unaffected. */
 ['gesturestart','gesturechange','gestureend'].forEach(ev=>
   document.addEventListener(ev,e=>e.preventDefault(),{passive:false}));
-function togglePause(){ const pz=(G&&G.state==='pause'); document.getElementById('pauseBadge').style.display=pz?'block':'none'; if(pz) musicStop(); else if(G&&G.state==='play') musicPlay(); }
+const pauseMenuEl=document.getElementById('pausemenu');
+function openPauseMenu(){ if(!G||(G.state!=='play'&&G.state!=='count'))return;
+  G.state='pause'; pauseMenuEl.classList.remove('hidden'); musicStop(); }
+function resumeGame(){ if(!G||G.state!=='pause')return;
+  pauseMenuEl.classList.add('hidden'); G.state='play'; musicPlay(); }
+function toMenu(){                                   // back to bike selection, fully torn down
+  pauseMenuEl.classList.add('hidden'); show('menu'); musicStop();
+  document.getElementById('guide').classList.add('hidden');
+  document.getElementById('hud').classList.add('hidden');
+  document.getElementById('tPause').classList.remove('on');
+  document.querySelectorAll('.tbtn').forEach(b=>b.style.display='none'); G=null; }
+function quitGame(){ musicStop(); try{ window.close(); }catch(e){}
+  // browsers block close() on tabs they didn't open via script; fall back to the menu
+  setTimeout(()=>{ if(!window.closed) toMenu(); },150); }
 
 /* ============ FX ============ */
 function spawnDust(wx,y){ for(let i=0;i<7;i++)G.particles.push({wx:wx-12,y,vx:-Math.random()*1.4-.4,vy:-Math.random()*2,life:18,c:'#caa56b'});}
@@ -1756,11 +1782,20 @@ function syncHUD(g){
     document.getElementById('zoneR').style.opacity='0'; }
 }
 const hb=document.getElementById('hudBike'),hbx=hb.getContext('2d');
-function hudBikeDraw(g){ hbx.clearRect(0,0,48,30);
-  hbx.strokeStyle=g.b.color; hbx.lineWidth=2;
-  hbx.beginPath(); hbx.arc(13,20,7,0,7); hbx.moveTo(42,20); hbx.arc(35,20,7,0,7); hbx.stroke();
-  hbx.beginPath(); hbx.moveTo(13,20); hbx.lineTo(22,9); hbx.lineTo(30,9); hbx.lineTo(35,20); hbx.moveTo(22,9); hbx.lineTo(24,20); hbx.stroke();
-  hbx.fillStyle=g.mode==='turbo'?'#ff5a4d':'#3ddc6f'; hbx.fillRect(23,11,6,7); }
+function hudBikeDraw(g){ hbx.clearRect(0,0,96,60);
+  const hero=BIKES[g.key]&&BIKES[g.key].menuImg;   // same product shot used on the selection card
+  if(hero){
+    const sc=Math.min(92/hero.width, 56/hero.height), dw=hero.width*sc, dh=hero.height*sc;
+    hbx.imageSmoothingEnabled=true; hbx.imageSmoothingQuality='high';
+    hbx.drawImage(hero,(96-dw)/2,(60-dh)/2,dw,dh);
+  } else {                                          // procedural fallback (2x backing)
+    hbx.save(); hbx.scale(2,2);
+    hbx.strokeStyle=g.b.color; hbx.lineWidth=2;
+    hbx.beginPath(); hbx.arc(13,20,7,0,7); hbx.moveTo(42,20); hbx.arc(35,20,7,0,7); hbx.stroke();
+    hbx.beginPath(); hbx.moveTo(13,20); hbx.lineTo(22,9); hbx.lineTo(30,9); hbx.lineTo(35,20); hbx.moveTo(22,9); hbx.lineTo(24,20); hbx.stroke();
+    hbx.fillStyle=g.mode==='turbo'?'#ff5a4d':'#3ddc6f'; hbx.fillRect(23,11,6,7);
+    hbx.restore();
+  } }
 
 /* ============ Menu ============ */
 const STAT_ROWS=[['SPD','speed'],['RNG','range'],['AGI','agility']];
@@ -1810,13 +1845,15 @@ function startGame(k){
   document.getElementById('guide').classList.remove('hidden');
 }
 function beginRun(k){
-  G=newGame(k); buildLevel(G);
+  G=newGame(k); buildLevel(G);                       // fresh state: battery 100, empty objects/particles
+  _acc=0; _prev=performance.now(); _ema=0; _emaN=0;   // fresh timing, no carryover
+  if(bgm){ try{ bgm.currentTime=0; }catch(e){} }      // music starts over from the top
   document.getElementById('menu').classList.add('hidden'); document.getElementById('end').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   document.getElementById('introHint').style.opacity='1';
   document.getElementById('zoneR').style.opacity='1';
-  if(isTouch){ document.querySelectorAll('.tbtn').forEach(b=>b.style.display='block');
-    document.getElementById('tPause').classList.add('on'); }
+  if(isTouch){ document.querySelectorAll('.tbtn').forEach(b=>b.style.display='block'); }
+  document.getElementById('tPause').classList.add('on');   // MENU button on all devices
   updateModeBadge();
   G.state='count'; G.cd=194; playCountVoice();
 }
@@ -1854,11 +1891,12 @@ document.getElementById('ready').addEventListener('click',()=>{
 document.getElementById('gback').addEventListener('click',()=>{
   document.getElementById('guide').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden'); pendingBike=null; musicStop(); });
-document.getElementById('retry').addEventListener('click',()=>{ show('menu'); musicStop();
-  document.getElementById('guide').classList.add('hidden');
-  document.getElementById('hud').classList.add('hidden');
-  document.getElementById('tPause').classList.remove('on');
-  document.querySelectorAll('.tbtn').forEach(b=>b.style.display='none'); G=null; });
+document.getElementById('retry').addEventListener('click',toMenu);
+document.getElementById('again').addEventListener('click',()=>{ const k=G?G.key:pendingBike; if(k){ beginRun(k); musicPlay(); } });
+document.getElementById('pmResume').addEventListener('click',resumeGame);
+document.getElementById('pmRestart').addEventListener('click',()=>{ const k=G&&G.key; if(k){ beginRun(k); musicPlay(); } });
+document.getElementById('pmChange').addEventListener('click',toMenu);
+document.getElementById('pmQuit').addEventListener('click',quitGame);
 document.getElementById('startBtn').addEventListener('click',()=>{
   document.getElementById('welcome').classList.add('hidden');
   document.getElementById('menu').classList.remove('hidden'); });
