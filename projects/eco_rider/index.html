@@ -362,7 +362,7 @@ const BIKES={
 // Final score (shown as grams CO2 saved) is an INDIRECT, skill-based tally: faster finish + coins
 // collected - crashes. Per frame we bank distance weighted by current speed, so a quicker run nets more.
 const BASE_RATE=1.05, PAR_FRAMES=10730, TIME_RATE=0.6;   // PAR scales linearly with track length (7 zones)
-const RAMP_END=2.7, RAMP_POW=1.4;   // game speed ramps 1x -> RAMP_END by the finish (ease-in); the late game is the skill gate
+const RAMP_END=2.565, RAMP_POW=1.4;   // game speed ramps 1x -> RAMP_END by the finish (ease-in); the late game is the skill gate
 const MODE={ eco:{speedMul:.84,drainMul:.55,co2Mul:2.2,badge:'ECO &nbsp;\u00b7&nbsp;SAVE'},
              turbo:{speedMul:1.4,drainMul:1.7,co2Mul:1.0,badge:'TURBO &nbsp;\u00b7&nbsp;FAST'} };
 
@@ -1235,6 +1235,45 @@ function godRays(g,strength){
   ctx.restore();
 }
 
+/* night intensity of the current (crossfaded) biome: 0 day -> 1 full night */
+function nightAmt(g){ const {zone,blend}=biomeBlend(g); const N=[0,0,0,0,0.6,1,0.2];
+  return N[zone]*(1-blend)+N[Math.min(6,zone+1)]*blend; }
+
+/* bike running-lights, drawn in the bike's local space (origin = wheel-centre/contact, +x = forward).
+   headlight = warm cone + core glow projecting ahead; rear = red lamp. all additive ('lighter'). */
+function drawBikeLights(c,g,n,sWpx,sHpx){
+  const t=g.t;
+  const fx=sWpx*0.30, fy=-sHpx*0.56;            // headlight near the stem/handlebar
+  const rx=-sWpx*0.22, ry=-sHpx*0.46;           // rear lamp at the seatpost
+  const fl=0.90+0.10*Math.sin(t*0.5);           // subtle flicker
+  const rfl=0.80+0.20*Math.sin(t*0.7+1.3);
+  c.save(); c.globalCompositeOperation='lighter';
+  // headlight beam cone -> road ahead
+  const beamLen=sWpx*2.15;
+  const ax=fx, ay=fy, bx=fx+beamLen, by=fy-sHpx*0.20, dx=fx+beamLen*0.98, dy=sHpx*0.16;
+  const grd=c.createLinearGradient(ax,ay,(bx+dx)/2,(by+dy)/2);
+  grd.addColorStop(0,'rgba(255,240,180,'+(0.42*n*fl)+')');
+  grd.addColorStop(0.5,'rgba(255,232,150,'+(0.15*n*fl)+')');
+  grd.addColorStop(1,'rgba(255,225,140,0)');
+  c.fillStyle=grd; c.beginPath(); c.moveTo(ax,ay); c.lineTo(bx,by); c.lineTo(dx,dy); c.closePath(); c.fill();
+  // headlight core glow
+  const cr=sHpx*0.34, cg=c.createRadialGradient(fx,fy,0,fx,fy,cr);
+  cg.addColorStop(0,'rgba(255,252,228,'+(0.85*n*fl)+')');
+  cg.addColorStop(0.4,'rgba(255,240,180,'+(0.5*n*fl)+')');
+  cg.addColorStop(1,'rgba(255,235,160,0)');
+  c.fillStyle=cg; c.beginPath(); c.arc(fx,fy,cr,0,7); c.fill();
+  // rear red lamp
+  const rr=sHpx*0.26, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
+  rg.addColorStop(0,'rgba(255,90,70,'+(0.9*n*rfl)+')');
+  rg.addColorStop(0.45,'rgba(255,40,30,'+(0.5*n*rfl)+')');
+  rg.addColorStop(1,'rgba(255,30,20,0)');
+  c.fillStyle=rg; c.beginPath(); c.arc(rx,ry,rr,0,7); c.fill();
+  // bright lamp cores
+  c.fillStyle='rgba(255,255,240,'+(0.9*n*fl)+')'; c.beginPath(); c.arc(fx,fy,sHpx*0.05,0,7); c.fill();
+  c.fillStyle='rgba(255,120,100,'+(0.95*n*rfl)+')'; c.beginPath(); c.arc(rx,ry,sHpx*0.045,0,7); c.fill();
+  c.restore();
+}
+
 function render(g){
   TXT=[];
   const {zone,blend}=biomeBlend(g);
@@ -1343,6 +1382,10 @@ function render(g){
       } else {
         drawBikeBody(sctx,g.b,g.t,g.state==='play',g.mode,g.battery<20,false);
       }
+      const nAmt=nightAmt(g);                                    // headlight + rear lamp fade in on dark biomes
+      if(nAmt>0.01){ let sWpx,sHpx;
+        if(R&&R.ready){ const s2=R.H/R.CH; sHpx=R.H; sWpx=R.CW*s2; } else { sHpx=70; sWpx=128; }
+        drawBikeLights(sctx,g,nAmt,sWpx,sHpx); }
       sctx.globalAlpha=1;
     }
     sctx.restore(); sctx.imageSmoothingEnabled=false;
