@@ -1242,9 +1242,9 @@ function nightAmt(g){ const {zone,blend}=biomeBlend(g); const N=[0,0,0,0,0.6,1,0
 /* per-bike lamp placement/size. f=[xFrac,yFrac] front bulb, r=[xFrac,yFrac] rear lamp,
    bulb/rear = radius as a fraction of drawn bike height. fractions are of the drawn sprite (x from wheel-centre, y up = negative). */
 const LIGHTS={
-  monster:{ f:[0.295,-0.46], r:[-0.42,-0.40], bulb:0.05, rear:0.12, aim:0.06 },
+  monster:{ f:[0.295,-0.46], r:[-0.42,-0.40], bulb:0.04, rear:0.12, aim:0.06 },
   city:   { f:[0.37,-0.42], r:[-0.43,-0.36], bulb:0.05, rear:0.09, aim:0.50, bo:[0.005,0.034] },
-  mini:   { f:[0.23,-0.45], r:[-0.23,-0.36], bulb:0.05, rear:0.10, aim:0.24 }
+  mini:   { f:[0.235,-0.235], r:[-0.23,-0.36], bulb:0.04, rear:0, aim:0.24, beam:0.58 }
 };
 /* bike running-lights, drawn in the bike's local space (origin = wheel-centre/contact, +x = forward).
    the caller rasterises this through the world pixel pipeline + an additive blit, so keep shapes simple. */
@@ -1255,8 +1255,9 @@ function drawBikeLights(c,g,n,sWpx,sHpx){
   const fl=0.90+0.10*Math.sin(t*0.5), rfl=0.78+0.22*Math.sin(t*0.7+1.3);
   c.save(); c.globalCompositeOperation='lighter';
   // headlight beam cone -> road ahead (brightness concentrated near the lamp, then fades fast)
-  const beamLen=sWpx*2.15, aim=(L.aim||0)*sHpx;
-  const ax=fx, ay=fy, bx=fx+beamLen, by=fy-sHpx*0.17+aim, dx=fx+beamLen, dy=fy+sHpx*0.21+aim;
+  // beam[] (default 1) scales the cone's length AND spread so it can match the sprite lamp's size.
+  const bs=(L.beam||1), beamLen=sWpx*2.15*bs, aim=(L.aim||0)*sHpx;
+  const ax=fx, ay=fy, bx=fx+beamLen, by=fy-sHpx*0.17*bs+aim, dx=fx+beamLen, dy=fy+sHpx*0.21*bs+aim;
   const grd=c.createLinearGradient(ax,ay,(bx+dx)/2,(by+dy)/2);
   grd.addColorStop(0,'rgba(255,240,180,'+(0.46*n*fl)+')');
   grd.addColorStop(0.22,'rgba(255,234,158,'+(0.2*n*fl)+')');
@@ -1270,12 +1271,14 @@ function drawBikeLights(c,g,n,sWpx,sHpx){
   bg.addColorStop(0,'rgba(255,250,220,'+(0.92*n*fl)+')');
   bg.addColorStop(1,'rgba(255,244,190,0)');
   c.fillStyle=bg; c.beginPath(); c.arc(bfx,bfy,br,0,7); c.fill();
-  // rear red lamp (small, soft)
-  const rr=sHpx*L.rear, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
-  rg.addColorStop(0,'rgba(255,72,56,'+(0.95*n*rfl)+')');
-  rg.addColorStop(0.5,'rgba(232,32,26,'+(0.4*n*rfl)+')');
-  rg.addColorStop(1,'rgba(220,20,20,0)');
-  c.fillStyle=rg; c.beginPath(); c.arc(rx,ry,rr,0,7); c.fill();
+  // rear red lamp (small, soft) -> skipped entirely when rear<=0 (e.g. mini has no rear fixture in the sprite)
+  if((L.rear||0)>0){
+    const rr=sHpx*L.rear, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
+    rg.addColorStop(0,'rgba(255,72,56,'+(0.95*n*rfl)+')');
+    rg.addColorStop(0.5,'rgba(232,32,26,'+(0.4*n*rfl)+')');
+    rg.addColorStop(1,'rgba(220,20,20,0)');
+    c.fillStyle=rg; c.beginPath(); c.arc(rx,ry,rr,0,7); c.fill();
+  }
   c.restore();
 }
 
