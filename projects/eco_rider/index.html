@@ -1239,31 +1239,41 @@ function godRays(g,strength){
 function nightAmt(g){ const {zone,blend}=biomeBlend(g); const N=[0,0,0,0,0.6,1,0.2];
   return N[zone]*(1-blend)+N[Math.min(6,zone+1)]*blend; }
 
+/* per-bike lamp placement/size. f=[xFrac,yFrac] front bulb, r=[xFrac,yFrac] rear lamp,
+   bulb/rear = radius as a fraction of drawn bike height. fractions are of the drawn sprite (x from wheel-centre, y up = negative). */
+const LIGHTS={
+  monster:{ f:[0.30,-0.56], r:[-0.37,-0.28], bulb:0.05, rear:0.12 },
+  city:   { f:[0.30,-0.56], r:[-0.36,-0.33], bulb:0.05, rear:0.13 },
+  mini:   { f:[0.30,-0.56], r:[-0.36,-0.33], bulb:0.05, rear:0.13 }
+};
 /* bike running-lights, drawn in the bike's local space (origin = wheel-centre/contact, +x = forward).
    the caller rasterises this through the world pixel pipeline + an additive blit, so keep shapes simple. */
 function drawBikeLights(c,g,n,sWpx,sHpx){
-  const t=g.t;
-  const fx=sWpx*0.30, fy=-sHpx*0.56;            // headlight bulb (front, at the stem) — front placement was already good
-  const rx=-sWpx*0.36, ry=-sHpx*0.33;           // rear lamp at the rack/seatpost behind the rider
+  const t=g.t, L=LIGHTS[g.key]||LIGHTS.city;
+  const fx=sWpx*L.f[0], fy=sHpx*L.f[1];          // headlight bulb
+  const rx=sWpx*L.r[0], ry=sHpx*L.r[1];          // rear lamp
   const fl=0.90+0.10*Math.sin(t*0.5), rfl=0.78+0.22*Math.sin(t*0.7+1.3);
   c.save(); c.globalCompositeOperation='lighter';
-  // headlight beam cone -> road ahead (point-sampled later, so it turns chunky)
+  // headlight beam cone -> road ahead (brightness concentrated near the lamp, then fades fast)
   const beamLen=sWpx*2.15;
   const ax=fx, ay=fy, bx=fx+beamLen, by=fy-sHpx*0.20, dx=fx+beamLen*0.98, dy=sHpx*0.16;
   const grd=c.createLinearGradient(ax,ay,(bx+dx)/2,(by+dy)/2);
-  grd.addColorStop(0,'rgba(255,240,180,'+(0.5*n*fl)+')');
-  grd.addColorStop(0.5,'rgba(255,232,150,'+(0.18*n*fl)+')');
+  grd.addColorStop(0,'rgba(255,240,180,'+(0.46*n*fl)+')');
+  grd.addColorStop(0.22,'rgba(255,234,158,'+(0.2*n*fl)+')');
+  grd.addColorStop(0.6,'rgba(255,228,145,'+(0.07*n*fl)+')');
   grd.addColorStop(1,'rgba(255,225,140,0)');
   c.fillStyle=grd; c.beginPath(); c.moveTo(ax,ay); c.lineTo(bx,by); c.lineTo(dx,dy); c.closePath(); c.fill();
-  // small bulb only (NO big sphere) — the light just emerges from the lamp
-  c.fillStyle='rgba(255,250,214,'+(0.95*n*fl)+')'; c.beginPath(); c.arc(fx,fy,sHpx*0.075,0,7); c.fill();
-  // rear red lamp (small, sits on the bike tail)
-  const rr=sHpx*0.17, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
-  rg.addColorStop(0,'rgba(255,70,55,'+(0.95*n*rfl)+')');
-  rg.addColorStop(0.5,'rgba(230,30,25,'+(0.42*n*rfl)+')');
+  // small SOFT bulb (the lamp source) -> stays tiny so it doesn't blob over the cone origin
+  const br=sHpx*L.bulb, bg=c.createRadialGradient(fx,fy,0,fx,fy,br);
+  bg.addColorStop(0,'rgba(255,250,220,'+(0.92*n*fl)+')');
+  bg.addColorStop(1,'rgba(255,244,190,0)');
+  c.fillStyle=bg; c.beginPath(); c.arc(fx,fy,br,0,7); c.fill();
+  // rear red lamp (small, soft)
+  const rr=sHpx*L.rear, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
+  rg.addColorStop(0,'rgba(255,72,56,'+(0.95*n*rfl)+')');
+  rg.addColorStop(0.5,'rgba(232,32,26,'+(0.4*n*rfl)+')');
   rg.addColorStop(1,'rgba(220,20,20,0)');
   c.fillStyle=rg; c.beginPath(); c.arc(rx,ry,rr,0,7); c.fill();
-  c.fillStyle='rgba(255,120,95,'+(0.95*n*rfl)+')'; c.beginPath(); c.arc(rx,ry,sHpx*0.05,0,7); c.fill();
   c.restore();
 }
 
