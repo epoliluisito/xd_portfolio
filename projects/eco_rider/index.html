@@ -1240,37 +1240,30 @@ function nightAmt(g){ const {zone,blend}=biomeBlend(g); const N=[0,0,0,0,0.6,1,0
   return N[zone]*(1-blend)+N[Math.min(6,zone+1)]*blend; }
 
 /* bike running-lights, drawn in the bike's local space (origin = wheel-centre/contact, +x = forward).
-   headlight = warm cone + core glow projecting ahead; rear = red lamp. all additive ('lighter'). */
+   the caller rasterises this through the world pixel pipeline + an additive blit, so keep shapes simple. */
 function drawBikeLights(c,g,n,sWpx,sHpx){
   const t=g.t;
-  const fx=sWpx*0.30, fy=-sHpx*0.56;            // headlight near the stem/handlebar
-  const rx=-sWpx*0.22, ry=-sHpx*0.46;           // rear lamp at the seatpost
-  const fl=0.90+0.10*Math.sin(t*0.5);           // subtle flicker
-  const rfl=0.80+0.20*Math.sin(t*0.7+1.3);
+  const fx=sWpx*0.30, fy=-sHpx*0.56;            // headlight bulb (front, at the stem) — front placement was already good
+  const rx=-sWpx*0.36, ry=-sHpx*0.33;           // rear lamp at the rack/seatpost behind the rider
+  const fl=0.90+0.10*Math.sin(t*0.5), rfl=0.78+0.22*Math.sin(t*0.7+1.3);
   c.save(); c.globalCompositeOperation='lighter';
-  // headlight beam cone -> road ahead
+  // headlight beam cone -> road ahead (point-sampled later, so it turns chunky)
   const beamLen=sWpx*2.15;
   const ax=fx, ay=fy, bx=fx+beamLen, by=fy-sHpx*0.20, dx=fx+beamLen*0.98, dy=sHpx*0.16;
   const grd=c.createLinearGradient(ax,ay,(bx+dx)/2,(by+dy)/2);
-  grd.addColorStop(0,'rgba(255,240,180,'+(0.42*n*fl)+')');
-  grd.addColorStop(0.5,'rgba(255,232,150,'+(0.15*n*fl)+')');
+  grd.addColorStop(0,'rgba(255,240,180,'+(0.5*n*fl)+')');
+  grd.addColorStop(0.5,'rgba(255,232,150,'+(0.18*n*fl)+')');
   grd.addColorStop(1,'rgba(255,225,140,0)');
   c.fillStyle=grd; c.beginPath(); c.moveTo(ax,ay); c.lineTo(bx,by); c.lineTo(dx,dy); c.closePath(); c.fill();
-  // headlight core glow
-  const cr=sHpx*0.34, cg=c.createRadialGradient(fx,fy,0,fx,fy,cr);
-  cg.addColorStop(0,'rgba(255,252,228,'+(0.85*n*fl)+')');
-  cg.addColorStop(0.4,'rgba(255,240,180,'+(0.5*n*fl)+')');
-  cg.addColorStop(1,'rgba(255,235,160,0)');
-  c.fillStyle=cg; c.beginPath(); c.arc(fx,fy,cr,0,7); c.fill();
-  // rear red lamp
-  const rr=sHpx*0.26, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
-  rg.addColorStop(0,'rgba(255,90,70,'+(0.9*n*rfl)+')');
-  rg.addColorStop(0.45,'rgba(255,40,30,'+(0.5*n*rfl)+')');
-  rg.addColorStop(1,'rgba(255,30,20,0)');
+  // small bulb only (NO big sphere) — the light just emerges from the lamp
+  c.fillStyle='rgba(255,250,214,'+(0.95*n*fl)+')'; c.beginPath(); c.arc(fx,fy,sHpx*0.075,0,7); c.fill();
+  // rear red lamp (small, sits on the bike tail)
+  const rr=sHpx*0.17, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
+  rg.addColorStop(0,'rgba(255,70,55,'+(0.95*n*rfl)+')');
+  rg.addColorStop(0.5,'rgba(230,30,25,'+(0.42*n*rfl)+')');
+  rg.addColorStop(1,'rgba(220,20,20,0)');
   c.fillStyle=rg; c.beginPath(); c.arc(rx,ry,rr,0,7); c.fill();
-  // bright lamp cores
-  c.fillStyle='rgba(255,255,240,'+(0.9*n*fl)+')'; c.beginPath(); c.arc(fx,fy,sHpx*0.05,0,7); c.fill();
-  c.fillStyle='rgba(255,120,100,'+(0.95*n*rfl)+')'; c.beginPath(); c.arc(rx,ry,sHpx*0.045,0,7); c.fill();
+  c.fillStyle='rgba(255,120,95,'+(0.95*n*rfl)+')'; c.beginPath(); c.arc(rx,ry,sHpx*0.05,0,7); c.fill();
   c.restore();
 }
 
@@ -1382,13 +1375,26 @@ function render(g){
       } else {
         drawBikeBody(sctx,g.b,g.t,g.state==='play',g.mode,g.battery<20,false);
       }
-      const nAmt=nightAmt(g);                                    // headlight + rear lamp fade in on dark biomes
-      if(nAmt>0.01){ let sWpx,sHpx;
-        if(R&&R.ready){ const s2=R.H/R.CH; sHpx=R.H; sWpx=R.CW*s2; } else { sHpx=70; sWpx=128; }
-        drawBikeLights(sctx,g,nAmt,sWpx,sHpx); }
       sctx.globalAlpha=1;
     }
     sctx.restore(); sctx.imageSmoothingEnabled=false;
+  }
+
+  // ---- night running-lights: drawn at world pixel-scale (chunky) + additive, IN FRONT of the bike ----
+  const nAmt=nightAmt(g);
+  if(nAmt>0.01 && !(g.inv>0 && (g.t%8<3))){
+    let sWpx,sHpx; const R2=RIDERS[g.key];
+    if(R2&&R2.ready){ const s2=R2.H/R2.CH; sHpx=R2.H; sWpx=R2.CW*s2; } else { sHpx=70; sWpx=128; }
+    ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,low.width,low.height);   // reuse low as a transparent light scratch
+    camZ(ZG);
+    ctx.translate(Math.round(g.riderX),Math.round(g.y)); ctx.rotate(g.angleQ||0); ctx.scale(1+g.squash*0.08,1-g.squash*0.16);
+    drawBikeLights(ctx,g,nAmt,sWpx,sHpx);
+    chunkCtx.imageSmoothingEnabled=false; chunkCtx.clearRect(0,0,chunk.width,chunk.height);
+    chunkCtx.drawImage(low,0,0,chunk.width,chunk.height);                     // point-sample -> chunky pixels
+    sctx.setTransform(DS,0,0,DSy,0,0); sctx.imageSmoothingEnabled=false;
+    sctx.globalCompositeOperation='lighter';                                  // additive: reads as emitted light
+    sctx.drawImage(chunk,0,0,chunk.width,chunk.height,0,0,W,H);
+    sctx.globalCompositeOperation='source-over';
   }
 
   // ---- foreground strip IN FRONT of the rider: lamp-posts / props occlude the bike for depth ----
