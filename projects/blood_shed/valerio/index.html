@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Valerio's Pixel Battle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #eee;
+            font-family: 'Courier New', Courier, monospace;
+            image-rendering: pixelated; /* Essential for pixel art */
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 16 / 9;
+            background-color: #333;
+            border: 4px solid #555;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            pointer-events: none;
+        }
+        #user-guide {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #444;
+            border: 2px solid #666;
+            text-align: center;
+            max-width: 800px;
+            width: 90%;
+        }
+        .key {
+            display: inline-block;
+            padding: 4px 8px;
+            background-color: #666;
+            border-radius: 4px;
+            margin: 0 2px;
+            font-weight: bold;
+        }
+        #mobile-controls {
+            display: none; /* Hidden on desktop */
+            margin-top: 10px;
+            width: 100%;
+            max-width: 800px;
+            justify-content: space-around;
+        }
+        .control-btn {
+            width: 60px;
+            height: 60px;
+            background-color: #555;
+            border: 2px solid #777;
+            border-radius: 50%;
+            font-size: 24px;
+            color: #eee;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+        }
+        .control-btn:active {
+            background-color: #777;
+        }
+
+        @media (max-width: 768px) {
+            #user-guide {
+                font-size: 0.8em;
+            }
+            #mobile-controls {
+                display: flex;
+            }
+            /* Adjust guide for mobile */
+            #user-guide .desktop-only {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-layer">
+        <div>Health: <span id="health">100</span></div>
+        <div>Score: <span id="score">0</span></div>
+    </div>
+</div>
+
+<div id="user-guide">
+    <strong>Controls:</strong>
+    <span class="desktop-only">Move: <span class="key">Arrow Keys</span> or <span class="key">WASD</span> | </span>
+    Attack: <span class="key">Space</span> <span class="desktop-only">or <span class="key">Z</span></span> |
+    <span class="desktop-only">Run: Hold <span class="key">Shift</span></span>
+</div>
+
+<div id="mobile-controls">
+    <div class="control-btn" id="btn-left">←</div>
+    <div class="control-btn" id="btn-right">→</div>
+    <div class="control-btn" id="btn-attack">⚔️</div>
+</div>
+
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const healthDisplay = document.getElementById('health');
+    const scoreDisplay = document.getElementById('score');
+
+    // Set canvas size
+    const GAME_WIDTH = 480;
+    const GAME_HEIGHT = 270;
+    canvas.width = GAME_WIDTH;
+    canvas.height = GAME_HEIGHT;
+
+    // Game Variables
+    let health = 100;
+    let score = 0;
+    let lastTime = 0;
+    let keys = {};
+    let isRunning = false;
+
+    // Load Sprite Sheet
+    const spriteSheet = new Image();
+    spriteSheet.src = 'valerio_sprite_png'; // Assuming this is the correct path
+
+    // --- Game Objects ---
+
+    // Player
+    const player = {
+        x: 50,
+        y: GAME_HEIGHT - 80,
+        width: 32,
+        height: 48,
+        frameX: 0,
+        frameY: 0,
+        speed: 2,
+        runSpeed: 4,
+        moving: false,
+        attacking: false,
+        direction: 1, // 1 for right, -1 for left
+        animationTimer: 0,
+        animationSpeed: 100, // ms per frame
+        state: 'idle', // idle, walk, run, attack
+
+        animations: {
+            idle: { row: 0, frames: 4 },
+            walk: { row: 1, frames: 6 },
+            run: { row: 2, frames: 6 },
+            attack: { row: 3, frames: 4 }
+        },
+
+        update(deltaTime) {
+            this.moving = false;
+            let currentSpeed = isRunning ? this.runSpeed : this.speed;
+
+            if (keys['ArrowRight'] || keys['d']) {
+                this.x += currentSpeed;
+                this.direction = 1;
+                this.moving = true;
+            } else if (keys['ArrowLeft'] || keys['a']) {
+                this.x -= currentSpeed;
+                this.direction = -1;
+                this.moving = true;
+            }
+
+            // Boundary Check
+            if (this.x < 0) this.x = 0;
+            if (this.x > GAME_WIDTH - this.width) this.x = GAME_WIDTH - this.width;
+
+            // State Management
+            if (this.attacking) {
+                this.state = 'attack';
+            } else if (this.moving) {
+                this.state = isRunning ? 'run' : 'walk';
+            } else {
+                this.state = 'idle';
+            }
+
+            this.animate(deltaTime);
+        },
+
+        animate(deltaTime) {
+            this.animationTimer += deltaTime;
+            const anim = this.animations[this.state];
+
+            if (this.animationTimer > this.animationSpeed) {
+                this.frameX = (this.frameX + 1) % anim.frames;
+                this.animationTimer = 0;
+
+                // End attack animation
+                if (this.state === 'attack' && this.frameX === anim.frames - 1) {
+                    this.attacking = false;
+                    this.frameX = 0;
+                }
+            }
+            this.frameY = anim.row;
+        },
+
+        draw(ctx) {
+            let spriteX = this.frameX * 48; // Assuming 48x48 frames in the sheet
+            let spriteY = this.frameY * 48;
+            
+            ctx.save();
+            if (this.direction === -1) {
+                ctx.scale(-1, 1);
+                ctx.drawImage(
+                    spriteSheet,
+                    spriteX, spriteY, 48, 48,
+                    -this.x - this.width, this.y, this.width, this.height
+                );
+            } else {
+                ctx.drawImage(
+                    spriteSheet,
+                    spriteX, spriteY, 48, 48,
+                    this.x, this.y, this.width, this.height
+                );
+            }
+            ctx.restore();
+        }
+    };
+
+    // Monsters
+    let monsters = [];
+    class Monster {
+        constructor() {
+            this.width = 32;
+            this.height = 32;
+            this.x = GAME_WIDTH + this.width;
+            this.y = GAME_HEIGHT - 64;
+            this.speed = Math.random() * 1.5 + 0.5;
+            this.color = `hsl(${Math.random() * 360}, 70%, 50%)`;
+            this.markedForDeletion = false;
+        }
+        update() {
+            this.x -= this.speed;
+            if (this.x < -this.width) this.markedForDeletion = true;
+
+            // Collision with player
+            if (
+                this.x < player.x + player.width &&
+                this.x + this.width > player.x &&
+                this.y < player.y + player.height &&
+                this.y + this.height > player.y
+            ) {
+                if (player.attacking) {
+                    this.markedForDeletion = true;
+                    score += 10;
+                    scoreDisplay.textContent = score;
+                } else {
+                    health -= 1;
+                    healthDisplay.textContent = health;
+                    this.markedForDeletion = true;
+                }
+            }
+        }
+        draw(ctx) {
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            // Simple face
+            ctx.fillStyle = 'black';
+            ctx.fillRect(this.x + 6, this.y + 8, 4, 4);
+            ctx.fillRect(this.x + 22, this.y + 8, 4, 4);
+            ctx.fillRect(this.x + 8, this.y + 20, 16, 4);
+        }
+    }
+
+    let monsterTimer = 0;
+    let monsterInterval = 2000; // Spawn a monster every 2 seconds
+
+    // --- Game Loop ---
+
+    function gameLoop(timeStamp) {
+        let deltaTime = timeStamp - lastTime;
+        lastTime = timeStamp;
+
+        ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+        // Update and Draw Player
+        player.update(deltaTime);
+        player.draw(ctx);
+
+        // Manage Monsters
+        monsterTimer += deltaTime;
+        if (monsterTimer > monsterInterval) {
+            monsters.push(new Monster());
+            monsterTimer = 0;
+        }
+        [...monsters].forEach(monster => monster.update());
+        monsters = monsters.filter(monster => !monster.markedForDeletion);
+        monsters.forEach(monster => monster.draw(ctx));
+
+        // Game Over
+        if (health <= 0) {
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.fillStyle = 'white';
+            ctx.font = '30px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2);
+            return;
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    // --- Input Handling ---
+
+    window.addEventListener('keydown', (e) => {
+        keys[e.key] = true;
+        if (e.key === 'Shift') isRunning = true;
+        if ((e.key === ' ' || e.key === 'z') && !player.attacking) {
+            player.attacking = true;
+            player.frameX = 0; // Reset animation frame for attack
+        }
+    });
+    window.addEventListener('keyup', (e) => {
+        keys[e.key] = false;
+        if (e.key === 'Shift') isRunning = false;
+    });
+
+    // Mobile Controls
+    const btnLeft = document.getElementById('btn-left');
+    const btnRight = document.getElementById('btn-right');
+    const btnAttack = document.getElementById('btn-attack');
+
+    btnLeft.addEventListener('touchstart', () => keys['ArrowLeft'] = true);
+    btnLeft.addEventListener('touchend', () => keys['ArrowLeft'] = false);
+    
+    btnRight.addEventListener('touchstart', () => keys['ArrowRight'] = true);
+    btnRight.addEventListener('touchend', () => keys['ArrowRight'] = false);
+
+    btnAttack.addEventListener('touchstart', () => {
+        if (!player.attacking) {
+            player.attacking = true;
+            player.frameX = 0;
+        }
+    });
+
+    // Start Game
+    spriteSheet.onload = () => {
+        gameLoop(0);
+    };
+
+</script>
+</body>
+</html>
