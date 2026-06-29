@@ -222,6 +222,20 @@ const WALLS = [
   {x: 5.5, z: 57, w: 1, d: 6},   // Gallery End Block
 ];
 
+function getRoom(x, z) {
+  if (z < 0) return 'ENTRANCE';
+  if (x > -5 && x < 5) return 'CORRIDOR';
+  if (x <= -5) {
+    if (z < 30) return 'L1';
+    if (z < 45) return 'L2';
+    return 'L3';
+  } else {
+    if (z < 20) return 'R1';
+    if (z < 40) return 'R2';
+    return 'R3';
+  }
+}
+
 // ---- Canvas Text Generation Helpers ----
 function wrapText(context, text, x, y, maxWidth, lineHeight) {
   const paragraphs = text.split('\n');
@@ -253,23 +267,12 @@ function createRoomTitleTexture(title) {
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   
-  let fontSize = 150;
+  // Fixed font size so all titles match the scale of the longest one ("ARTISTIC MADNESS")
+  const fontSize = 110; 
   ctx.font = `400 ${fontSize}px 'DM Mono', monospace`;
   
   if ('letterSpacing' in ctx) {
     ctx.letterSpacing = '20px';
-  }
-  
-  // Measure text to prevent cutoff for long titles (like ARTISTIC MADNESS)
-  let mWidth = ctx.measureText(title.toUpperCase()).width;
-  if ('letterSpacing' in ctx) mWidth += title.length * 20; 
-  
-  if (mWidth > 1800) {
-    fontSize = Math.floor(150 * (1800 / mWidth));
-    ctx.font = `400 ${fontSize}px 'DM Mono', monospace`;
-  }
-  
-  if ('letterSpacing' in ctx) {
     ctx.fillText(title.toUpperCase(), 1024, 256);
   } else {
     ctx.fillText(title.toUpperCase().split('').join(' '), 1024, 256);
@@ -417,7 +420,7 @@ WALLS.forEach(w => {
   scene.add(wall);
 });
 
-// ---- Add Room Signage ----
+// ---- Add Room Signage (Perfectly Aligned to Corridor Walls) ----
 const roomTitles = [
   { text: 'NIVEA', x: -4.9, z: 3, rot: Math.PI/2 },
   { text: 'LLOYDS', x: -4.9, z: 33, rot: Math.PI/2 },
@@ -801,7 +804,6 @@ function checkCollision(pos, radius) {
 }
 
 // ---- Line of Sight Check ----
-// Ray steps towards target to ensure no walls obscure the view
 function checkLineOfSight(p1, p2) {
   const steps = 20;
   for(let i = 1; i < steps; i++) {
@@ -810,7 +812,7 @@ function checkLineOfSight(p1, p2) {
     const pz = p1.z + (p2.z - p1.z) * t;
     
     if (checkCollision({x: px, z: pz}, 0.05)) {
-      return false; // Vision is blocked by a wall or closed door
+      return false; 
     }
   }
   return true;
@@ -951,26 +953,22 @@ function animate() {
       const dirToScreen = s.mesh.position.clone().sub(camera.position).normalize();
       const camGazeDot = camForward.dot(dirToScreen); 
       
-      // Calculate if the camera is physically standing in front of the screen
       const dirToCam = camera.position.clone().sub(s.mesh.position).normalize();
       const isFacingFront = s.normal.dot(dirToCam) > 0.15; 
       
-      // Calculate strict Line Of Sight
       const hasLOS = checkLineOfSight(camera.position, s.mesh.position);
       
       if (s.video.paused) s.video.play().catch(()=>{});
 
-      // strict requirements: Must be in front of the screen, must have line of sight, must be in range.
       if (isFacingFront && hasLOS && dist < MAX_AUDIO_DIST) {
         let distVol = 1.0 - ((dist - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
         distVol = Math.max(0, Math.min(1, distVol));
         let gazeVol = Math.max(0.15, (camGazeDot + 0.5) / 1.5); 
         s.video.volume = distVol * gazeVol;
       } else {
-        s.video.volume = 0; // Cut off sound entirely if behind wall or facing back of screen
+        s.video.volume = 0; 
       }
 
-      // UI Prompt requirements are even stricter: closer distance, precise line of sight, heavily facing screen
       if (isFacingFront && hasLOS && dist < 10 && camGazeDot > 0.75) {
         const score = (camGazeDot * 20) - dist; 
         if (score > bestScore) {
