@@ -83,7 +83,7 @@ const W = cv.width, H = cv.height;
 
 // --- LOAD VALERIO SPRITE ---
 const valerioImg = new Image();
-valerioImg.src = 'valerio_sprite.png'; // Make sure this is in the same folder!
+valerioImg.src = 'valerio_sprite.png'; 
 
 /* ---------- Belt-scroller world ---------- */
 const FLOOR_TOP = 360, FLOOR_BOT = 510;
@@ -157,7 +157,7 @@ const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const dist=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
 function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 
-/* ---------- Characters (All Valerio) ---------- */
+/* ---------- Characters ---------- */
 const CHARS = [
   { id:'valerio_1', name:'VALERIO "IL BOMBER"', sub:'EQUILIBRATO', color:'#ff6a00', accent:'#fff', weapon:'#ff8c00',
     str:1.2, speed:1.1, vita:'MEDIA', baseHp:110, reach:74, desc:'Bilanciato. Calci devastanti e rapidità letale.' },
@@ -479,50 +479,55 @@ function drawPlayerSprite(x, y, scale, giant, alpha, facingOverride, overrideSta
   ctx.save();
   ctx.translate(x, y);
   
-  const facing = facingOverride !== undefined ? facingOverride : G.facing;
+  // Safely determine facing direction (even if G doesn't exist yet)
+  const facing = facingOverride !== undefined ? facingOverride : (G ? G.facing : 1);
   ctx.scale(facing * giant, giant);
   if(alpha !== undefined) ctx.globalAlpha = alpha;
 
-  // Grid assumes 12 columns, 3 rows based on the provided image
   const cols = 12, rows = 3;
   const fw = valerioImg.naturalWidth / cols;
   const fh = valerioImg.naturalHeight / rows;
 
   let fRow = 0, fCol = 2; // Default: Idle Right
 
-  // Determine state
-  const isDead = overrideState === 'dead' || G.dead;
-  const isHurt = overrideState === 'hurt' || G.hurtTimer > 0;
-  const isAtk = overrideState === 'atk' || G.atkTimer > 0;
-  const isRolling = overrideState === 'roll' || G.rolling;
-  const isJump = overrideState === 'jump' || !G.onGround;
+  // Safely read G states
+  const isDead = overrideState === 'dead' || (G && G.dead);
+  const isHurt = overrideState === 'hurt' || (G && G.hurtTimer > 0);
+  const isAtk = overrideState === 'atk' || (G && G.atkTimer > 0);
+  const isRolling = overrideState === 'roll' || (G && G.rolling);
+  const isJump = overrideState === 'jump' || (G && !G.onGround);
 
   if (isDead) {
       fRow = 2; fCol = 6; // Fall
   } else if (isHurt) {
       fRow = 2; fCol = 5; // Block/Hurt
   } else if (isAtk) {
-      const p = 1 - G.atkTimer / G.atkDur;
-      if (G.atkType === 'light') {
-          fRow = 2; fCol = Math.min(2, Math.floor(p * 3)); // Punch: 0,1,2
-      } else if (G.atkType === 'heavy' || G.atkType === 'special') {
-          fRow = 2; fCol = 3 + Math.min(1, Math.floor(p * 2)); // Kick: 3,4
+      // Menu screen preview attack animation, or active game attack animation
+      const atkType = G ? G.atkType : 'light'; 
+      const p = (G && G.atkDur > 0) ? (1 - G.atkTimer / G.atkDur) : ((Math.floor(time/5)%3)/3);
+      
+      if (atkType === 'light') {
+          fRow = 2; fCol = Math.floor(p * 3); // Punch: 0,1,2
+          if(fCol > 2) fCol = 2;
+      } else {
+          fRow = 2; fCol = 3 + Math.floor(p * 2); // Kick: 3,4
+          if(fCol > 4) fCol = 4;
       }
   } else if (isRolling) {
-      fRow = 1; fCol = 6 + (Math.floor(time / 4) % 6); // Use Run animation for roll
+      fRow = 1; fCol = 6 + (Math.floor(time / 4) % 6); // Run animation
   } else if (isJump) {
       fRow = 2; fCol = 3; // Jumping kick pose
-  } else if (keys.left || keys.right || keys.up || keys.down || overrideState==='walk') {
+  } else if (overrideState === 'walk' || (G && (keys.left || keys.right || keys.up || keys.down))) {
       fRow = 1; fCol = Math.floor(time / 6) % 6; // Walk animation
+  } else {
+      fRow = 0; fCol = 2; // Idle animation
   }
 
-  // To make his height match the 100px standard of the game:
+  // To make his height match the standard of the game:
   const targetHeight = 130 * scale; 
   const spriteScale = targetHeight / fh;
   
   ctx.scale(spriteScale, spriteScale);
-  
-  // Anchor the sprite (feet near the bottom)
   ctx.drawImage(valerioImg, fCol * fw, fRow * fh, fw, fh, -fw/2, -fh * 0.95, fw, fh);
   ctx.restore();
 }
@@ -675,7 +680,7 @@ function drawCharSelect(){
     rr(x,y,cw,h,10); ctx.fill(); ctx.strokeStyle=c.color; ctx.lineWidth=sel?4:2;
     if(sel){ctx.shadowColor=c.color;ctx.shadowBlur=20;} rr(x,y,cw,h,10); ctx.stroke(); ctx.shadowBlur=0;
     
-    // Draw Valerio Sprite for char select
+    // Draw Valerio Sprite safely!
     let state = sel && Math.floor(time/14)%2 ? 'atk' : 'idle';
     drawPlayerSprite(x+cw/2, y+150, 1.3, 1, 1, 1, state);
 
