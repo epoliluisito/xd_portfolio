@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Virtual Art Gallery - Multi-Room</title>
+<title>Virtual Art Gallery - Expanded</title>
 <link href="data:," rel="icon"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -11,10 +11,8 @@
   body { overflow: hidden; background: #000; font-family: 'DM Mono', monospace; color: #fff; }
   canvas { display: block; width: 100vw; height: 100vh; }
   
-  /* ---- UI Overlays ---- */
   #ui { position: fixed; inset: 0; pointer-events: none; }
   
-  /* User Guide */
   #guide-panel {
     position: absolute; top: 20px; left: 20px;
     background: rgba(4,6,10,0.85); border: 1px solid rgba(255,255,255,0.08);
@@ -25,7 +23,6 @@
   .ctrl-key { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); font-size: 9px; padding: 4px 8px; border-radius: 4px; white-space: nowrap; }
   .ctrl-desc { color: rgba(255,255,255,0.6); font-size: 10px; letter-spacing: 0.1em; line-height: 1.4; }
 
-  /* Map */
   #map-panel {
     position: absolute; top: 20px; right: 20px;
     background: rgba(4,6,10,0.85); border: 1px solid rgba(255,255,255,0.08);
@@ -34,7 +31,6 @@
   #map-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 14px; font-weight: 400; }
   #map-canvas { border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.5); width: 160px; height: 160px; }
 
-  /* Proximity Prompt */
   #proximity-prompt {
     position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
     color: rgba(232,197,71,0.9); font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase;
@@ -44,7 +40,6 @@
   }
   #proximity-prompt.visible { opacity: 1; }
 
-  /* Loading & Entry Screen */
   #loading {
     position: fixed; inset: 0; background: #030408; z-index: 300;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -60,7 +55,6 @@
   }
   #enter-btn:hover { background: rgba(232,197,71,0.1); border-color: #e8c547; color: #e8c547; }
 
-  /* Video Overlay */
   #overlay {
     position: fixed; inset: 0; background: rgba(2,3,6,0.95); backdrop-filter: blur(14px);
     z-index: 200; display: flex; align-items: center; justify-content: center;
@@ -136,7 +130,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-// ---- Utility function for smooth character rotation ----
 function lerpAngle(start, end, amt) {
   let delta = end - start;
   while (delta > Math.PI) delta -= Math.PI * 2;
@@ -144,67 +137,65 @@ function lerpAngle(start, end, amt) {
   return start + delta * amt;
 }
 
-// ---- Configuration & Data ----
-// We have completely rebuilt the layout to ensure accurate placement on the walls.
-// Corridor is 9m wide: X from -4.5 to 4.5. Z from -0.5 to 50.5.
-// Left Rooms depth is 19.5m: X from -24.0 to -4.5
-// Right Rooms depth is 19.5m: X from 4.5 to 24.0
+// ---- EXACT COORDINATES FOR 100% FLUSH MOUNTING ----
+// Screen offset from wall face
+const OFF = 0.02;
+
+// Outer walls (Inner faces): West: -20, East: 20, North: -10, South: 60
+// Corridor: -5 to 5.
+// Left Partition 1: Z face N=14.5, S=15.5
+// Left Partition 2: Z face N=34.5, S=35.5
+// Right Partition 1: Z face N=9.5, S=10.5
+// Right Partition 2: Z face N=24.5, S=25.5
 
 const VIDEOS = [
-  // NIVEA: Left Room, Z: 0 to 24.5
-  { id: 'nivea_1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -24, z: 6, rot: Math.PI/2 },
-  { id: 'nivea_2', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -24, z: 18, rot: Math.PI/2 },
-  { id: 'nivea_3', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: -14.5, z: 0, rot: 0 },
-  { id: 'nivea_4', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: -14.5, z: 24.5, rot: Math.PI },
+  // NIVEA (Left 1): Z from -10 to 14.5
+  { id: 'nivea_1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -20+OFF, z: -2, rot: Math.PI/2 },
+  { id: 'nivea_2', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -20+OFF, z: 8, rot: Math.PI/2 },
+  { id: 'nivea_3', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: -12.5, z: -10+OFF, rot: 0 },
+  { id: 'nivea_4', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: -12.5, z: 14.5-OFF, rot: Math.PI },
   
-  // ALWAYS: Right Room, Z: 0 to 16.5
-  { id: 'always_1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: 24, z: 5, rot: -Math.PI/2 },
-  { id: 'always_2', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: 24, z: 12, rot: -Math.PI/2 },
+  // ALWAYS (Right 1): Z from -10 to 9.5
+  { id: 'always_1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: 20-OFF, z: -2, rot: -Math.PI/2 },
+  { id: 'always_2', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: 20-OFF, z: 6, rot: -Math.PI/2 },
   
-  // KELLOGGS: Right Room, Z: 16.5 to 28.5
-  { id: 'kellogs', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 24, z: 22.5, rot: -Math.PI/2 },
+  // KELLOGGS (Right 2): Z from 10.5 to 24.5
+  { id: 'kellogs', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 20-OFF, z: 17.5, rot: -Math.PI/2 },
   
-  // LLOYDS: Left Room, Z: 24.5 to 36.5
-  { id: 'lloyds', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: -24, z: 30.5, rot: Math.PI/2 },
+  // LLOYDS (Left 2): Z from 15.5 to 34.5
+  { id: 'lloyds', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: -20+OFF, z: 25, rot: Math.PI/2 },
   
-  // TWILIO: Right Room, Z: 28.5 to 50.5
-  { id: 'twilio', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: 24, z: 39.5, rot: -Math.PI/2 },
+  // TWILIO (Right 3): Z from 25.5 to 60
+  { id: 'twilio', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: 20-OFF, z: 42, rot: -Math.PI/2 },
   
-  // STEREOCLIP: Left Room, Z: 36.5 to 50.5
-  { id: 'stereo', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: -24, z: 43.5, rot: Math.PI/2 }
+  // STEREOCLIP (Left 3): Z from 35.5 to 60
+  { id: 'stereo', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: -20+OFF, z: 47, rot: Math.PI/2 }
 ];
 
 const WALLS = [
-  // Outer box
-  {x: 0, z: -0.5, w: 50, d: 1}, // North Outer
-  {x: 0, z: 50.5, w: 50, d: 1}, // South Outer
-  {x: -24.5, z: 25, w: 1, d: 52}, // West Outer
-  {x: 24.5, z: 25, w: 1, d: 52},  // East Outer
+  // Outer Boundaries
+  {x: 0, z: -10.5, w: 42, d: 1}, // North
+  {x: 0, z: 60.5, w: 42, d: 1}, // South
+  {x: -20.5, z: 25, w: 1, d: 72}, // West
+  {x: 20.5, z: 25, w: 1, d: 72},  // East
 
-  // Corridor Left Walls (Gaps for doors)
-  {x: -4.5, z: 4.5, w: 1, d: 9}, 
-  {x: -4.5, z: 21, w: 1, d: 12}, 
-  {x: -4.5, z: 36.5, w: 1, d: 7}, 
-  {x: -4.5, z: 48, w: 1, d: 4}, 
+  // Left Room Partitions (X from -20 to -5, width 15, center -12.5)
+  {x: -12.5, z: 15, w: 15, d: 1},
+  {x: -12.5, z: 35, w: 15, d: 1},
 
-  // Corridor Right Walls (Gaps for doors)
-  {x: 4.5, z: 2.5, w: 1, d: 5}, 
-  {x: 4.5, z: 15, w: 1, d: 8}, 
-  {x: 4.5, z: 28, w: 1, d: 6}, 
-  {x: 4.5, z: 43.5, w: 1, d: 13}, 
+  // Right Room Partitions (X from 5 to 20, width 15, center 12.5)
+  {x: 12.5, z: 10, w: 15, d: 1},
+  {x: 12.5, z: 25, w: 15, d: 1},
 
-  // Room Partitions Left
-  {x: -14.5, z: 24.5, w: 19, d: 1}, // Divides Nivea/Lloyds
-  {x: -14.5, z: 36.5, w: 19, d: 1}, // Divides Lloyds/Stereo
-  
-  // Room Partitions Right
-  {x: 14.5, z: 16.5, w: 19, d: 1}, // Divides Always/Kelloggs
-  {x: 14.5, z: 28.5, w: 19, d: 1}, // Divides Kelloggs/Twilio
+  // Corridor Pillars / Archways to clearly define rooms without closing them off
+  {x: -5, z: 15, w: 1, d: 4},
+  {x: -5, z: 35, w: 1, d: 4},
+  {x: 5, z: 10, w: 1, d: 4},
+  {x: 5, z: 25, w: 1, d: 4},
 ];
 
-// ---- Preloader State ----
 let loadedAssets = 0;
-const totalAssets = VIDEOS.length + 1; // +1 for character
+const totalAssets = VIDEOS.length + 1; 
 let audioUnlocked = false;
 
 function registerAssetLoaded() {
@@ -219,12 +210,9 @@ function registerAssetLoaded() {
     
     btn.addEventListener('click', () => {
       audioUnlocked = true;
-      
-      // Force play all videos immediately on interaction so they loop continuously
       screens.forEach(s => {
         s.video.play().catch(e => console.warn('Autoplay blocked:', e));
       });
-
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
     });
@@ -238,7 +226,6 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-// Crucial for rich, realistic colors
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; 
@@ -246,46 +233,26 @@ renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x020304);
-scene.fog = new THREE.FogExp2(0x020304, 0.015);
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.FogExp2(0x000000, 0.015);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150);
 
-// ---- Atmospheric Lighting ----
 const ambient = new THREE.AmbientLight(0xffffff, 1.0); 
 scene.add(ambient);
 const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 1.0); 
 scene.add(hemiLight);
 
-// Overhead architectural lights placed in the centers of the rooms
-const roomCenters = [
-  {x: -14.5, z: 12}, // Nivea
-  {x: 14.5, z: 8},   // Always
-  {x: 14.5, z: 22.5},// Kelloggs
-  {x: -14.5, z: 30.5},// Lloyds
-  {x: 14.5, z: 39.5}, // Twilio
-  {x: -14.5, z: 43.5},// Stereo
-  {x: 0, z: 5}, {x: 0, z: 15}, {x: 0, z: 25}, {x: 0, z: 35}, {x: 0, z: 45} // Corridor
-];
-roomCenters.forEach(pos => {
-  const light = new THREE.PointLight(0xfff5e6, 1.5, 25);
-  light.position.set(pos.x, 5.0, pos.z);
-  scene.add(light);
-});
-
-// ---- Architecture & Textures ----
 const texLoader = new THREE.TextureLoader();
-
 const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp', undefined, undefined, () => console.warn('Base texture missing'));
 const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
 const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
 
-// Must enforce color space on the albedo map
 concreteBase.colorSpace = THREE.SRGBColorSpace;
 
 [concreteBase, concreteNorm, concreteRough].forEach(tex => {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(16, 16); 
+  tex.repeat.set(20, 20); 
 });
 
 const wallMat = new THREE.MeshStandardMaterial({
@@ -298,25 +265,19 @@ const floorMat = new THREE.MeshStandardMaterial({
   color: 0x666666, roughness: 0.6, metalness: 0.15 
 });
 
-const ceilingMat = new THREE.MeshStandardMaterial({
-  color: 0x050505, roughness: 0.9, metalness: 0.1
-});
-
-// Floor
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), floorMat);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), floorMat);
 floor.position.set(0, 0, 25);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// Ceiling
-const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), ceilingMat);
-ceiling.position.set(0, 7.0, 25);
+// Ceilings and Walls are 8 meters tall now
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), wallMat);
+ceiling.position.set(0, 8.0, 25);
 ceiling.rotation.x = Math.PI / 2;
 scene.add(ceiling);
 
-// Generate Geometry Walls (Taller to accommodate larger screens)
-const WALL_HEIGHT = 7.0;
+const WALL_HEIGHT = 8.0;
 WALLS.forEach(w => {
   const wall = new THREE.Mesh(new THREE.BoxGeometry(w.w, WALL_HEIGHT, w.d), wallMat);
   wall.position.set(w.x, WALL_HEIGHT/2, w.z);
@@ -337,50 +298,39 @@ VIDEOS.forEach(v => {
   vidEl.volume = 0; 
   
   vidEl.onloadeddata = () => {
-    // Attempt play immediately to start buffering, but user gesture unlocks audio
     vidEl.play().catch(()=>{}); 
     registerAssetLoaded();
   };
   vidEl.onerror = () => {
-    console.warn(`Could not load preview video: ${v.file}`);
     registerAssetLoaded();
   };
 
   const videoTex = new THREE.VideoTexture(vidEl);
   videoTex.colorSpace = THREE.SRGBColorSpace;
   
-  // Screens are 1.5x larger now
-  const screenGeo = new THREE.PlaneGeometry(4.8, 2.7);
+  // Massive 6.4 x 3.6 screens (16:9)
+  const screenGeo = new THREE.PlaneGeometry(6.4, 3.6);
   
-  // BasicMaterial + toneMapped: false guarantees 100% crisp, unwashed video
   const screenMat = new THREE.MeshBasicMaterial({ 
     color: 0xffffff, 
     map: videoTex,
-    toneMapped: false 
+    toneMapped: false // Prevents washed out colors
   });
   const screenMesh = new THREE.Mesh(screenGeo, screenMat);
   
-  // Exact wall offset to prevent clipping perfectly
-  const offset = 0.02;
-  let px = v.x, pz = v.z;
-  if(v.rot === 0) pz += offset;
-  if(v.rot === Math.PI) pz -= offset;
-  if(v.rot === Math.PI/2) px += offset;
-  if(v.rot === -Math.PI/2) px -= offset;
-
-  screenMesh.position.set(px, 3.0, pz); // Set higher on the wall
+  screenMesh.position.set(v.x, 3.5, v.z);
   screenMesh.rotation.y = v.rot;
   scene.add(screenMesh);
 
   // Soft glowing cast light bouncing off the concrete
   const normal = new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), v.rot);
-  const glowLight = new THREE.PointLight(0xfff0dd, 0.7, 8, 2);
-  glowLight.position.set(px + normal.x * 0.5, 3.0, pz + normal.z * 0.5);
+  const glowLight = new THREE.PointLight(0xfff0dd, 0.8, 12, 2);
+  glowLight.position.set(v.x + normal.x * 1.5, 3.5, v.z + normal.z * 1.5);
   scene.add(glowLight);
 
-  // Directional gallery spotlight pointing down at the screen
-  const spot = new THREE.SpotLight(0xffeedd, 5.0, 15, Math.PI/4, 0.5, 1.5);
-  spot.position.set(px + normal.x * 1.5, 6.5, pz + normal.z * 1.5);
+  // Spot light from above
+  const spot = new THREE.SpotLight(0xffeedd, 8.0, 20, Math.PI/4, 0.5, 1.5);
+  spot.position.set(v.x + normal.x * 2.0, 7.5, v.z + normal.z * 2.0);
   spot.target = screenMesh;
   scene.add(spot);
 
@@ -389,7 +339,7 @@ VIDEOS.forEach(v => {
 
 // ---- Character Setup with DRACOLoader ----
 let character, mixer, idleAction, walkAction;
-let currentWeight = 0; // 0 = idle, 1 = walk
+let currentWeight = 0; 
 
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
@@ -402,8 +352,7 @@ gltfLoader.load('clarity_builder.glb',
     character = gltf.scene;
     character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     
-    // Spawn safely inside the central corridor facing down the hall
-    character.position.set(0, 0, 5);
+    character.position.set(0, 0, 0);
     character.rotation.y = 0;
     scene.add(character);
     
@@ -466,7 +415,7 @@ document.addEventListener('mousemove', e => {
   if(!pointerLocked || isOverlayOpen) return;
   walkYaw -= e.movementX * 0.003;
   walkPitch -= e.movementY * 0.003;
-  walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch)); // Clamped pitch slightly
+  walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
 });
 
 // ---- Interaction & Overlay Logic ----
@@ -484,7 +433,6 @@ function triggerInteraction() {
   document.getElementById('overlay-title').textContent = data.title;
   document.getElementById('overlay-desc').textContent = `Now viewing the ${data.brand} film: ${data.title}. Use the controls below to expand to full screen.`;
   
-  // Mute all world videos while watching full screen overlay
   screens.forEach(s => s.video.volume = 0);
   
   overlayVid.src = data.file;
@@ -510,11 +458,10 @@ function drawMap() {
   const cw = 160, ch = 160;
   mapCtx.clearRect(0, 0, cw, ch);
   
-  const scale = 1.6; // Scaled to fit 50x50 area
+  const scale = 2.0; 
   const offsetX = cw/2;
   const offsetZ = ch/2 - 25 * scale;
 
-  // Draw walls
   mapCtx.fillStyle = 'rgba(255,255,255,0.2)';
   WALLS.forEach(w => {
     const mx = offsetX + (w.x - w.w/2) * scale;
@@ -522,7 +469,6 @@ function drawMap() {
     mapCtx.fillRect(mx, mz, w.w * scale, w.d * scale);
   });
   
-  // Draw screens
   mapCtx.fillStyle = 'rgba(232,197,71,0.8)';
   screens.forEach(s => {
     const mx = offsetX + s.data.x * scale;
@@ -530,7 +476,6 @@ function drawMap() {
     mapCtx.beginPath(); mapCtx.arc(mx, mz, 2, 0, Math.PI*2); mapCtx.fill();
   });
   
-  // Draw player
   mapCtx.fillStyle = '#fff';
   const px = offsetX + character.position.x * scale;
   const pz = offsetZ + character.position.z * scale;
@@ -560,10 +505,8 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   if (character && audioUnlocked && !isOverlayOpen) {
-    // Movement Logic
     const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     
-    // Smooth Animation Blending
     if (mixer) {
       currentWeight = THREE.MathUtils.lerp(currentWeight, moving ? 1 : 0, 0.15);
       if(idleAction) idleAction.setEffectiveWeight(1 - currentWeight);
@@ -571,7 +514,6 @@ function animate() {
       mixer.update(dt);
     }
 
-    // Determine target rotation (Always face away from camera like 3rd person shooter)
     let targetRot = Math.atan2(-Math.sin(walkYaw), -Math.cos(walkYaw));
 
     if (moving) {
@@ -592,7 +534,7 @@ function animate() {
 
         const nextX = character.position.x + move.x * speed;
         const nextZ = character.position.z + move.z * speed;
-        const radius = 0.4; // Collision boundary size
+        const radius = 0.4; 
 
         if (!checkCollision({x: nextX, z: character.position.z}, radius)) {
           character.position.x = nextX;
@@ -603,10 +545,8 @@ function animate() {
       }
     }
     
-    // Character smoothly rotates to target (stops 360 concussive orbit)
     character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
 
-    // Camera follow (Third Person locked behind player)
     const camDist = 5.0;
     const camHeight = 2.0;
     const cp = character.position;
@@ -616,34 +556,27 @@ function animate() {
       cp.z + Math.cos(walkYaw) * Math.cos(walkPitch) * camDist
     );
     
-    // Prevent camera from clipping through walls behind player
     if(checkCollision({x: tPos.x, z: tPos.z}, 0.2)) {
-      tPos.lerp(cp, 0.6); // move camera closer to player if obstructed
+      tPos.lerp(cp, 0.6); 
     }
     
-    camera.position.lerp(tPos, 0.25); // Faster lerp for tighter feel
+    camera.position.lerp(tPos, 0.25); 
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
 
-    // Proximity checking for Audio & UI
     let closest = null;
-    let minDist = 4.5; // Distance at which UI prompt shows
+    let minDist = 4.5; 
     
-    // Audio ranges updated for larger rooms
-    const MAX_AUDIO_DIST = 14.0; 
-    const MIN_AUDIO_DIST = 4.0; 
+    const MAX_AUDIO_DIST = 15.0; 
+    const MIN_AUDIO_DIST = 5.0; 
 
     screens.forEach(s => {
       const d = character.position.distanceTo(s.mesh.position);
       
-      // Ensure video is playing continuously in the background
       if (s.video.paused) s.video.play().catch(()=>{});
 
-      // UI Prompt Logic
       if(d < minDist) { minDist = d; closest = s; }
 
-      // Audio Proximity Mapped
       if (d < MAX_AUDIO_DIST) {
-        // Scale volume 0.0 to 1.0 based on strict distance
         let vol = 1.0 - ((d - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
         s.video.volume = Math.max(0, Math.min(1, vol));
       } else {
