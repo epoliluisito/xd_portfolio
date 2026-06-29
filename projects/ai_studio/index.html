@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { overflow: hidden; background: #060810; font-family: 'DM Mono', monospace; color: #fff; }
+  body { overflow: hidden; background: #030408; font-family: 'DM Mono', monospace; color: #fff; }
   canvas { display: block; width: 100vw; height: 100vh; }
   
   /* ---- UI Overlays ---- */
@@ -17,8 +17,8 @@
   /* User Guide */
   #guide-panel {
     position: absolute; top: 20px; left: 20px;
-    background: rgba(6,8,16,0.82); border: 1px solid rgba(255,255,255,0.08);
-    backdrop-filter: blur(16px); padding: 18px; width: 260px;
+    background: rgba(6,8,16,0.7); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px); padding: 18px; width: 260px;
   }
   #guide-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; margin-bottom: 14px; color: rgba(232,197,71,0.8); font-weight: 400; }
   .ctrl-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
@@ -28,8 +28,8 @@
   /* Map */
   #map-panel {
     position: absolute; top: 20px; right: 20px;
-    background: rgba(6,8,16,0.82); border: 1px solid rgba(255,255,255,0.08);
-    backdrop-filter: blur(16px); padding: 18px; text-align: center;
+    background: rgba(6,8,16,0.7); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px); padding: 18px; text-align: center;
   }
   #map-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 14px; font-weight: 400; }
   #map-canvas { border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.5); width: 160px; height: 160px; }
@@ -46,7 +46,7 @@
 
   /* Loading Screen */
   #loading {
-    position: fixed; inset: 0; background: #060810; z-index: 300;
+    position: fixed; inset: 0; background: #030408; z-index: 300;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     transition: opacity 0.8s ease;
   }
@@ -78,7 +78,6 @@
   #overlay-desc { color: rgba(255,255,255,0.6); font-size: 13px; line-height: 1.8; }
 </style>
 
-<!-- Import Map for Three.js -->
 <script type="importmap">
 {
   "imports": {
@@ -107,7 +106,7 @@
 
   <div id="map-panel">
     <h3>Location</h3>
-    <canvas id="map-canvas"></canvas>
+    <canvas id="map-canvas" width="160" height="160"></canvas>
   </div>
 
   <div id="proximity-prompt">Press [ E ] to View Film</div>
@@ -131,20 +130,73 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 // ---- Configuration & Data ----
+// Adjusted for a long central corridor. Corridor is X: -4 to 4, Z: -10 to 46.
 const VIDEOS = [
-  { id: 'nivea_1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -8, z: -10, rot: 0 },
-  { id: 'nivea_2', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -4, z: -10, rot: 0 },
-  { id: 'nivea_3', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: 0, z: -10, rot: 0 },
-  { id: 'nivea_4', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: 4, z: -10, rot: 0 },
+  // NIVEA: Large Room 1 (X: -24 to -4, Z: 0 to 20)
+  { id: 'nivea_1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -23.5, z: 5, rot: Math.PI/2 },
+  { id: 'nivea_2', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -23.5, z: 15, rot: Math.PI/2 },
+  { id: 'nivea_3', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: -14, z: 0.5, rot: 0 },
+  { id: 'nivea_4', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: -14, z: 19.5, rot: Math.PI },
   
-  { id: 'always_1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: -10, z: 0, rot: Math.PI/2 },
-  { id: 'always_2', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: -10, z: 4, rot: Math.PI/2 },
+  // ALWAYS: Medium Room 2 (X: 4 to 16, Z: 0 to 12)
+  { id: 'always_1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: 15.5, z: 3, rot: -Math.PI/2 },
+  { id: 'always_2', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: 15.5, z: 9, rot: -Math.PI/2 },
   
-  { id: 'kellogs', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 10, z: 0, rot: -Math.PI/2 },
-  { id: 'lloyds', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: 10, z: 4, rot: -Math.PI/2 },
+  // KELLOGGS: Small Room 3 (X: 4 to 16, Z: 16 to 24)
+  { id: 'kellogs', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 15.5, z: 20, rot: -Math.PI/2 },
   
-  { id: 'twilio', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: -4, z: 10, rot: Math.PI },
-  { id: 'stereo', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: 4, z: 10, rot: Math.PI }
+  // LLOYDS: Small Room 4 (X: -16 to -4, Z: 24 to 32)
+  { id: 'lloyds', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: -15.5, z: 28, rot: Math.PI/2 },
+  
+  // TWILIO: Small Room 5 (X: 4 to 16, Z: 28 to 36)
+  { id: 'twilio', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: 15.5, z: 32, rot: -Math.PI/2 },
+  
+  // STEREOCLIP: Small Room 6 (X: -16 to -4, Z: 36 to 44)
+  { id: 'stereo', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: -15.5, z: 40, rot: Math.PI/2 }
+];
+
+const WALLS = [
+  // Boundaries
+  { x: 0, z: -10, w: 48, d: 1 }, // Back (North)
+  { x: 0, z: 46, w: 48, d: 1 },  // Front (South)
+  { x: -24, z: 18, w: 1, d: 56 }, // Far Left Edge
+  { x: 16, z: 18, w: 1, d: 56 },  // Far Right Edge
+
+  // Nivea Room (-24 to -4, 0 to 20)
+  { x: -14, z: 0, w: 20, d: 1 },
+  { x: -14, z: 20, w: 20, d: 1 },
+  { x: -4, z: 3, w: 1, d: 6 }, // Doorway between Z=6 and 14
+  { x: -4, z: 17, w: 1, d: 6 },
+
+  // Always Room (4 to 16, 0 to 12)
+  { x: 10, z: 0, w: 12, d: 1 },
+  { x: 10, z: 12, w: 12, d: 1 },
+  { x: 4, z: 1.5, w: 1, d: 3 }, // Doorway between Z=3 and 9
+  { x: 4, z: 10.5, w: 1, d: 3 },
+
+  // Kelloggs Room (4 to 16, 16 to 24)
+  { x: 10, z: 16, w: 12, d: 1 },
+  { x: 10, z: 24, w: 12, d: 1 },
+  { x: 4, z: 17, w: 1, d: 2 }, // Doorway between Z=18 and 22
+  { x: 4, z: 23, w: 1, d: 2 },
+
+  // Lloyds Room (-16 to -4, 24 to 32)
+  { x: -10, z: 24, w: 12, d: 1 },
+  { x: -10, z: 32, w: 12, d: 1 },
+  { x: -4, z: 25, w: 1, d: 2 },
+  { x: -4, z: 31, w: 1, d: 2 },
+
+  // Twilio Room (4 to 16, 28 to 36)
+  { x: 10, z: 28, w: 12, d: 1 },
+  { x: 10, z: 36, w: 12, d: 1 },
+  { x: 4, z: 29, w: 1, d: 2 },
+  { x: 4, z: 35, w: 1, d: 2 },
+
+  // Stereoclip Room (-16 to -4, 36 to 44)
+  { x: -10, z: 36, w: 12, d: 1 },
+  { x: -10, z: 44, w: 12, d: 1 },
+  { x: -4, z: 37, w: 1, d: 2 },
+  { x: -4, z: 43, w: 1, d: 2 }
 ];
 
 // ---- Preloader State ----
@@ -171,71 +223,64 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-// Brighter tone mapping
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.3; 
+renderer.toneMappingExposure = 1.0; 
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x060810);
-scene.fog = new THREE.FogExp2(0x060810, 0.02);
+scene.background = new THREE.Color(0x030408);
+scene.fog = new THREE.FogExp2(0x030408, 0.025);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150);
 
-// ---- Soft Base Lighting ----
-const ambient = new THREE.AmbientLight(0xffffff, 2.0); // Boosted base lighting
+// ---- Soft & Atmospheric Base Lighting ----
+const ambient = new THREE.AmbientLight(0xffffff, 0.2); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xe6f0ff, 0x223344, 1.8); // Soft warm/cool gradient
+const hemiLight = new THREE.HemisphereLight(0x446688, 0x050a11, 0.5); 
 scene.add(hemiLight);
 
 // ---- Architecture & Textures ----
 const texLoader = new THREE.TextureLoader();
 
-// Fallbacks are logged if missing, but we assume they are located correctly as per instructions
-const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp');
+const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp', undefined, undefined, () => console.warn('Base texture missing'));
 const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
 const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
 
 [concreteBase, concreteNorm, concreteRough].forEach(tex => {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(8, 8);
+  tex.repeat.set(12, 12);
 });
 
-// Lightened the base colors significantly so the scene isn't pitch black
+// Slightly darker materials to let the emissive screens dominate
 const wallMat = new THREE.MeshStandardMaterial({
   map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
-  color: 0x888888, roughness: 0.9, metalness: 0.1
+  color: 0x444444, roughness: 0.9, metalness: 0.1
 });
 
 const floorMat = new THREE.MeshStandardMaterial({
   map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
-  color: 0x666666, roughness: 0.7, metalness: 0.2
+  color: 0x222222, roughness: 0.7, metalness: 0.2
 });
 
-// Floor
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), floorMat);
+// Large Floor
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), floorMat);
+floor.position.set(0, 0, 18);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// Simple Walls Helper
-function createWall(w, h, d, x, y, z) {
-  const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-  wall.position.set(x, y, z);
+// Generate Geometry Walls
+WALLS.forEach(w => {
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(w.w, 6, w.d), wallMat);
+  wall.position.set(w.x, 3, w.z);
   wall.castShadow = true;
   wall.receiveShadow = true;
   scene.add(wall);
-}
-// Outer bounds
-createWall(60, 6, 1, 0, 3, -15); // Back
-createWall(60, 6, 1, 0, 3, 15);  // Front
-createWall(1, 6, 30, -15, 3, 0); // Left
-createWall(1, 6, 30, 15, 3, 0);  // Right
+});
 
 // ---- Video Screens ----
 const screens = [];
 VIDEOS.forEach(v => {
-  // 1. Create HTML Video Element for the preview (looping, muted)
   const vidEl = document.createElement('video');
   vidEl.src = v.file;
   vidEl.crossOrigin = 'anonymous';
@@ -243,34 +288,30 @@ VIDEOS.forEach(v => {
   vidEl.muted = true;
   vidEl.playsInline = true;
   
-  // Hook up loading logic
   vidEl.onloadeddata = () => {
     vidEl.play();
     registerAssetLoaded();
   };
   vidEl.onerror = () => {
     console.warn(`Could not load preview video: ${v.file}`);
-    registerAssetLoaded(); // fail gracefully
+    registerAssetLoaded();
   };
 
-  // 2. Map to Three.js VideoTexture
   const videoTex = new THREE.VideoTexture(vidEl);
   videoTex.colorSpace = THREE.SRGBColorSpace;
   
-  // 3. Screen Mesh setup (emissive glowing)
   const screenGeo = new THREE.PlaneGeometry(3.2, 1.8);
   const screenMat = new THREE.MeshStandardMaterial({ 
     color: 0x000000, 
     map: videoTex,
     emissiveMap: videoTex,
     emissive: 0xffffff,
-    emissiveIntensity: 1.5, // Fake emission 
+    emissiveIntensity: 1.2,
     roughness: 0.2 
   });
   const screenMesh = new THREE.Mesh(screenGeo, screenMat);
   
-  // Positioning offset slightly from the wall
-  const offset = 0.6;
+  const offset = 0.52;
   let px = v.x, pz = v.z;
   if(v.rot === 0) pz += offset;
   if(v.rot === Math.PI) pz -= offset;
@@ -281,9 +322,9 @@ VIDEOS.forEach(v => {
   screenMesh.rotation.y = v.rot;
   scene.add(screenMesh);
 
-  // 4. Soft PointLight in front of screen to fake ambient glow bouncing off concrete
+  // Soft glowing cast light for atmosphere
   const normal = new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), v.rot);
-  const glowLight = new THREE.PointLight(0xaaccff, 1.5, 8); // Soft cyan-ish tint, drops off
+  const glowLight = new THREE.PointLight(0xfff0dd, 1.0, 10);
   glowLight.position.set(px + normal.x * 1.5, 2.2, pz + normal.z * 1.5);
   scene.add(glowLight);
 
@@ -303,9 +344,11 @@ gltfLoader.load('clarity_builder.glb',
   (gltf) => {
     character = gltf.scene;
     character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    
+    // Spawn in the central corridor
+    character.position.set(0, 0, -5);
     scene.add(character);
     
-    // Proper Animation Setup
     if (gltf.animations && gltf.animations.length) {
       mixer = new THREE.AnimationMixer(character);
       const idle = gltf.animations.find(a => a.name.toLowerCase().includes('idle')) || gltf.animations[0];
@@ -327,7 +370,7 @@ gltfLoader.load('clarity_builder.glb',
   undefined,
   (err) => { 
     console.error('Error loading character:', err); 
-    registerAssetLoaded(); // fail gracefully
+    registerAssetLoaded(); 
   }
 );
 
@@ -384,7 +427,7 @@ function triggerInteraction() {
   
   const vid = document.getElementById('overlay-video');
   vid.src = data.file;
-  vid.play(); // Auto-play the main overlay video when opened
+  vid.play(); 
   
   document.getElementById('overlay').classList.add('visible');
 }
@@ -394,7 +437,7 @@ function closeOverlay() {
   document.getElementById('overlay').classList.remove('visible');
   const vid = document.getElementById('overlay-video');
   vid.pause();
-  vid.src = ""; // Stop buffering
+  vid.src = ""; 
 }
 document.getElementById('overlay-close').addEventListener('click', closeOverlay);
 
@@ -402,25 +445,54 @@ document.getElementById('overlay-close').addEventListener('click', closeOverlay)
 const mapCtx = document.getElementById('map-canvas').getContext('2d');
 function drawMap() {
   if(!character) return;
-  mapCtx.clearRect(0,0,160,160);
   
-  // Draw rooms (simplified)
-  mapCtx.fillStyle = 'rgba(255,255,255,0.1)';
-  mapCtx.fillRect(10, 10, 140, 140);
+  const cw = 160, ch = 160;
+  mapCtx.clearRect(0, 0, cw, ch);
+  
+  // Transform world coords to map coords
+  // Scene bounds approximately X: -25 to +17, Z: -12 to 46
+  // Shift by roughly X+12, Z+5, scale * 2.5
+  const scale = 2.0;
+  const offsetX = cw/2;
+  const offsetZ = ch/2 - 30;
+
+  // Draw walls
+  mapCtx.fillStyle = 'rgba(255,255,255,0.2)';
+  WALLS.forEach(w => {
+    const mx = offsetX + (w.x - w.w/2) * scale;
+    const mz = offsetZ + (w.z - w.d/2) * scale;
+    mapCtx.fillRect(mx, mz, w.w * scale, w.d * scale);
+  });
   
   // Draw screens
-  mapCtx.fillStyle = 'rgba(232,197,71,0.6)';
+  mapCtx.fillStyle = 'rgba(232,197,71,0.8)';
   screens.forEach(s => {
-    const mx = 80 + (s.data.x * 4);
-    const mz = 80 + (s.data.z * 4);
-    mapCtx.beginPath(); mapCtx.arc(mx, mz, 3, 0, Math.PI*2); mapCtx.fill();
+    const mx = offsetX + s.data.x * scale;
+    const mz = offsetZ + s.data.z * scale;
+    mapCtx.beginPath(); mapCtx.arc(mx, mz, 2, 0, Math.PI*2); mapCtx.fill();
   });
   
   // Draw player
   mapCtx.fillStyle = '#fff';
-  const px = 80 + (character.position.x * 4);
-  const pz = 80 + (character.position.z * 4);
-  mapCtx.beginPath(); mapCtx.arc(px, pz, 4, 0, Math.PI*2); mapCtx.fill();
+  const px = offsetX + character.position.x * scale;
+  const pz = offsetZ + character.position.z * scale;
+  mapCtx.beginPath(); mapCtx.arc(px, pz, 3, 0, Math.PI*2); mapCtx.fill();
+}
+
+// ---- Collision System ----
+function checkCollision(pos, radius) {
+  for(let i=0; i<WALLS.length; i++) {
+    const w = WALLS[i];
+    const hw = w.w / 2;
+    const hd = w.d / 2;
+    
+    // AABB check
+    if (pos.x + radius > w.x - hw && pos.x - radius < w.x + hw &&
+        pos.z + radius > w.z - hd && pos.z - radius < w.z + hd) {
+      return true; // Collision detected
+    }
+  }
+  return false;
 }
 
 // ---- Render Loop ----
@@ -430,7 +502,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  if (character && !isOverlayOpen) {
+  if (character && !isOverlayOpen && loadedAssets === totalAssets) {
     // Movement Logic
     const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     
@@ -458,11 +530,21 @@ function animate() {
       
       if (move.lengthSq() > 0) {
         move.normalize();
-        character.position.addScaledVector(move, 4.0 * dt);
+        const speed = 4.0 * dt;
         
-        // Simple bounds constraint
-        character.position.x = Math.max(-14, Math.min(14, character.position.x));
-        character.position.z = Math.max(-14, Math.min(14, character.position.z));
+        // Next position tracking for sliding collision
+        const nextX = character.position.x + move.x * speed;
+        const nextZ = character.position.z + move.z * speed;
+        const radius = 0.5;
+
+        // Try moving X
+        if (!checkCollision({x: nextX, z: character.position.z}, radius)) {
+          character.position.x = nextX;
+        }
+        // Try moving Z
+        if (!checkCollision({x: character.position.x, z: nextZ}, radius)) {
+          character.position.z = nextZ;
+        }
         
         character.rotation.y = THREE.MathUtils.lerp(character.rotation.y, Math.atan2(move.x, move.z), 0.15);
       }
