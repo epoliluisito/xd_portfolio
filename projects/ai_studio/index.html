@@ -136,38 +136,46 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
+// ---- Utility function for smooth character rotation ----
+function lerpAngle(start, end, amt) {
+  let delta = end - start;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  return start + delta * amt;
+}
+
 // ---- Configuration & Data ----
 // Central Corridor: X: -3 to 3. Z: 0 to 42.
 const VIDEOS = [
-  // NIVEA: Room 1 (West Wall: x = -17.5. North Wall: z = 0.5. South Wall: z = 19.5)
+  // NIVEA: Room 1 
   { id: 'nivea_1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -17.48, z: 4, rot: Math.PI/2 },
   { id: 'nivea_2', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -17.48, z: 12, rot: Math.PI/2 },
   { id: 'nivea_3', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: -10, z: -1.48, rot: 0 },
   { id: 'nivea_4', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: -10, z: 17.48, rot: Math.PI },
   
-  // ALWAYS: Room 2 (East Wall: x = 17.5)
+  // ALWAYS: Room 2 
   { id: 'always_1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: 17.48, z: 4, rot: -Math.PI/2 },
   { id: 'always_2', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: 17.48, z: 10, rot: -Math.PI/2 },
   
-  // KELLOGGS: Room 3 (East Wall: x = 17.5)
+  // KELLOGGS: Room 3 
   { id: 'kellogs', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 17.48, z: 19, rot: -Math.PI/2 },
   
-  // LLOYDS: Room 4 (West Wall: x = -17.5)
+  // LLOYDS: Room 4 
   { id: 'lloyds', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: -17.48, z: 24, rot: Math.PI/2 },
   
-  // TWILIO: Room 5 (East Wall: x = 17.5)
+  // TWILIO: Room 5
   { id: 'twilio', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: 17.48, z: 31, rot: -Math.PI/2 },
   
-  // STEREOCLIP: Room 6 (West Wall: x = -17.5)
+  // STEREOCLIP: Room 6
   { id: 'stereo', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: -17.48, z: 36, rot: Math.PI/2 }
 ];
 
 const WALLS = [
   // Outer box
-  {x: 0, z: -2, w: 40, d: 1}, // North (Inner face Z = -1.5)
-  {x: 0, z: 46, w: 40, d: 1}, // South (Inner face Z = 45.5)
-  {x: -18, z: 22, w: 1, d: 48}, // West (Inner face X = -17.5)
-  {x: 18, z: 22, w: 1, d: 48},  // East (Inner face X = 17.5)
+  {x: 0, z: -2, w: 40, d: 1}, 
+  {x: 0, z: 46, w: 40, d: 1}, 
+  {x: -18, z: 22, w: 1, d: 48}, 
+  {x: 18, z: 22, w: 1, d: 48},  
 
   // Corridor Left Walls
   {x: -3, z: 1.5, w: 1, d: 5}, 
@@ -182,13 +190,13 @@ const WALLS = [
   {x: 3, z: 32.5, w: 1, d: 11}, 
 
   // Room Partitions Left
-  {x: -10.5, z: 20, w: 14, d: 1}, // Divides Nivea/Lloyds
-  {x: -10.5, z: 34, w: 14, d: 1}, // Divides Lloyds/Stereo
+  {x: -10.5, z: 20, w: 14, d: 1}, 
+  {x: -10.5, z: 34, w: 14, d: 1}, 
   
   // Room Partitions Right
-  {x: 10.5, z: 14, w: 14, d: 1}, // Divides Always/Kelloggs
-  {x: 10.5, z: 24, w: 14, d: 1}, // Divides Kelloggs/Twilio
-  {x: 10.5, z: 40, w: 14, d: 1}, // End Twilio
+  {x: 10.5, z: 14, w: 14, d: 1}, 
+  {x: 10.5, z: 24, w: 14, d: 1}, 
+  {x: 10.5, z: 40, w: 14, d: 1}, 
 ];
 
 // ---- Preloader State ----
@@ -221,7 +229,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-// Crucial for rich, realistic colors
+// Output encoding
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; 
@@ -235,10 +243,9 @@ scene.fog = new THREE.FogExp2(0x020304, 0.015);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150);
 
 // ---- Atmospheric Lighting ----
-// Low ambient light to let spotlights and emissive screens dictate the mood
-const ambient = new THREE.AmbientLight(0xffffff, 0.5); 
+const ambient = new THREE.AmbientLight(0xffffff, 0.2); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 0.5); 
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 0.3); 
 scene.add(hemiLight);
 
 // Overhead architectural lights (Adds rich specular bounce to concrete)
@@ -312,7 +319,7 @@ VIDEOS.forEach(v => {
   vidEl.crossOrigin = 'anonymous';
   vidEl.loop = true;
   vidEl.playsInline = true;
-  vidEl.volume = 0; // Handled by proximity
+  vidEl.volume = 0; // Handled strictly by proximity
   
   vidEl.onloadeddata = () => {
     registerAssetLoaded();
@@ -326,14 +333,12 @@ VIDEOS.forEach(v => {
   videoTex.colorSpace = THREE.SRGBColorSpace;
   
   const screenGeo = new THREE.PlaneGeometry(3.2, 1.8);
-  const screenMat = new THREE.MeshStandardMaterial({ 
-    color: 0x000000, 
+  
+  // FIX: BasicMaterial + toneMapped: false guarantees 100% crisp, unwashed video
+  const screenMat = new THREE.MeshBasicMaterial({ 
+    color: 0xffffff, 
     map: videoTex,
-    emissiveMap: videoTex,
-    emissive: 0xffffff,
-    emissiveIntensity: 1.2,
-    roughness: 0.3,
-    metalness: 0.2
+    toneMapped: false 
   });
   const screenMesh = new THREE.Mesh(screenGeo, screenMat);
   
@@ -351,13 +356,13 @@ VIDEOS.forEach(v => {
 
   // Soft glowing cast light bouncing off the concrete
   const normal = new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), v.rot);
-  const glowLight = new THREE.PointLight(0xfff0dd, 0.7, 8, 2);
-  glowLight.position.set(px + normal.x * 1.5, 2.2, pz + normal.z * 1.5);
+  const glowLight = new THREE.PointLight(0xfff0dd, 0.6, 6, 2);
+  glowLight.position.set(px + normal.x * 0.5, 2.2, pz + normal.z * 0.5);
   scene.add(glowLight);
 
-  // Directional gallery spotlight pointing down at the screen
+  // Directional gallery spotlight pointing down at the screen (highlights the concrete)
   const spot = new THREE.SpotLight(0xffeedd, 5.0, 10, Math.PI/4, 0.5, 1.5);
-  spot.position.set(px + normal.x * 1.2, 4.4, pz + normal.z * 1.2);
+  spot.position.set(px + normal.x * 1.0, 4.4, pz + normal.z * 1.0);
   spot.target = screenMesh;
   scene.add(spot);
 
@@ -443,7 +448,7 @@ document.addEventListener('mousemove', e => {
   if(!pointerLocked || isOverlayOpen) return;
   walkYaw -= e.movementX * 0.003;
   walkPitch -= e.movementY * 0.003;
-  walkPitch = Math.max(-0.6, Math.min(0.5, walkPitch));
+  walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch)); // Clamped pitch slightly
 });
 
 // ---- Interaction & Overlay Logic ----
@@ -548,6 +553,9 @@ function animate() {
       mixer.update(dt);
     }
 
+    // Determine target rotation (Always face away from camera like 3rd person shooter)
+    let targetRot = Math.atan2(-Math.sin(walkYaw), -Math.cos(walkYaw));
+
     if (moving) {
       const dir = new THREE.Vector3(-Math.sin(walkYaw), 0, -Math.cos(walkYaw)).normalize();
       const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
@@ -562,9 +570,11 @@ function animate() {
         move.normalize();
         const speed = 4.0 * dt;
         
+        targetRot = Math.atan2(move.x, move.z);
+
         const nextX = character.position.x + move.x * speed;
         const nextZ = character.position.z + move.z * speed;
-        const radius = 0.5; // Collision boundary size
+        const radius = 0.4; // Collision boundary size
 
         if (!checkCollision({x: nextX, z: character.position.z}, radius)) {
           character.position.x = nextX;
@@ -572,14 +582,15 @@ function animate() {
         if (!checkCollision({x: character.position.x, z: nextZ}, radius)) {
           character.position.z = nextZ;
         }
-        
-        character.rotation.y = THREE.MathUtils.lerp(character.rotation.y, Math.atan2(move.x, move.z), 0.15);
       }
     }
+    
+    // FIX 2: Character smoothly rotates to target (stops 360 concussive orbit)
+    character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
 
-    // Camera follow (Third Person)
-    const camDist = 4.5;
-    const camHeight = 2.2;
+    // Camera follow (Third Person locked behind player)
+    const camDist = 4.0;
+    const camHeight = 1.8;
     const cp = character.position;
     const tPos = new THREE.Vector3(
       cp.x + Math.sin(walkYaw) * Math.cos(walkPitch) * camDist,
@@ -592,14 +603,16 @@ function animate() {
       tPos.lerp(cp, 0.6); // move camera closer to player if obstructed
     }
     
-    camera.position.lerp(tPos, 0.15);
+    camera.position.lerp(tPos, 0.25); // Faster lerp for tighter feel
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
 
     // Proximity checking for Audio & UI
     let closest = null;
     let minDist = 3.5;
-    const MAX_AUDIO_DIST = 8.0;
-    const MIN_AUDIO_DIST = 2.0;
+    
+    // FIX 3: Audio ONLY heard when within 4m, gets loud at 2m
+    const MAX_AUDIO_DIST = 4.0; 
+    const MIN_AUDIO_DIST = 1.5; 
 
     screens.forEach(s => {
       const d = character.position.distanceTo(s.mesh.position);
@@ -610,7 +623,7 @@ function animate() {
       // Audio Logic
       if (d < MAX_AUDIO_DIST) {
         if (s.video.paused) s.video.play().catch(()=>{});
-        // Scale volume 0.0 to 1.0 based on distance
+        // Scale volume 0.0 to 1.0 based on strict distance
         let vol = 1.0 - ((d - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
         s.video.volume = Math.max(0, Math.min(1, vol));
       } else {
