@@ -216,6 +216,12 @@ function registerAssetLoaded() {
     
     btn.addEventListener('click', () => {
       audioUnlocked = true;
+      
+      // Force play all videos immediately on interaction so they loop continuously
+      screens.forEach(s => {
+        s.video.play().catch(e => console.warn('Autoplay blocked:', e));
+      });
+
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
     });
@@ -229,7 +235,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-// Output encoding
+// Crucial for rich, realistic colors
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; 
@@ -243,19 +249,20 @@ scene.fog = new THREE.FogExp2(0x020304, 0.015);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150);
 
 // ---- Atmospheric Lighting ----
-const ambient = new THREE.AmbientLight(0xffffff, 0.2); 
+// Doubled the base brightness from 0.5 to 1.0
+const ambient = new THREE.AmbientLight(0xffffff, 1.0); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 0.3); 
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 1.0); 
 scene.add(hemiLight);
 
-// Overhead architectural lights (Adds rich specular bounce to concrete)
+// Overhead architectural lights (Boosted intensity to maintain highlights in brighter room)
 const roomCenters = [
   {x: -10, z: 10}, {x: 10, z: 6}, {x: 10, z: 19}, 
   {x: -10, z: 27}, {x: 10, z: 32}, {x: -10, z: 40},
   {x: 0, z: 5}, {x: 0, z: 15}, {x: 0, z: 25}, {x: 0, z: 35} // Corridor
 ];
 roomCenters.forEach(pos => {
-  const light = new THREE.PointLight(0xfff5e6, 0.8, 15);
+  const light = new THREE.PointLight(0xfff5e6, 1.5, 20);
   light.position.set(pos.x, 4.0, pos.z);
   scene.add(light);
 });
@@ -319,9 +326,12 @@ VIDEOS.forEach(v => {
   vidEl.crossOrigin = 'anonymous';
   vidEl.loop = true;
   vidEl.playsInline = true;
-  vidEl.volume = 0; // Handled strictly by proximity
+  vidEl.muted = false; // Audio is mapped by volume, not muted property
+  vidEl.volume = 0;    // Starts strictly silent
   
   vidEl.onloadeddata = () => {
+    // Attempt play immediately to start buffering, but user gesture unlocks audio
+    vidEl.play().catch(()=>{}); 
     registerAssetLoaded();
   };
   vidEl.onerror = () => {
@@ -334,7 +344,7 @@ VIDEOS.forEach(v => {
   
   const screenGeo = new THREE.PlaneGeometry(3.2, 1.8);
   
-  // FIX: BasicMaterial + toneMapped: false guarantees 100% crisp, unwashed video
+  // BasicMaterial + toneMapped: false guarantees 100% crisp, unwashed video
   const screenMat = new THREE.MeshBasicMaterial({ 
     color: 0xffffff, 
     map: videoTex,
@@ -356,7 +366,7 @@ VIDEOS.forEach(v => {
 
   // Soft glowing cast light bouncing off the concrete
   const normal = new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), v.rot);
-  const glowLight = new THREE.PointLight(0xfff0dd, 0.6, 6, 2);
+  const glowLight = new THREE.PointLight(0xfff0dd, 0.7, 8, 2);
   glowLight.position.set(px + normal.x * 0.5, 2.2, pz + normal.z * 0.5);
   scene.add(glowLight);
 
@@ -466,7 +476,7 @@ function triggerInteraction() {
   document.getElementById('overlay-title').textContent = data.title;
   document.getElementById('overlay-desc').textContent = `Now viewing the ${data.brand} film: ${data.title}. Use the controls below to expand to full screen.`;
   
-  // Mute all world videos
+  // Mute all world videos while watching full screen overlay
   screens.forEach(s => s.video.volume = 0);
   
   overlayVid.src = data.file;
@@ -585,7 +595,7 @@ function animate() {
       }
     }
     
-    // FIX 2: Character smoothly rotates to target (stops 360 concussive orbit)
+    // Character smoothly rotates to target (stops 360 concussive orbit)
     character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
 
     // Camera follow (Third Person locked behind player)
@@ -608,27 +618,28 @@ function animate() {
 
     // Proximity checking for Audio & UI
     let closest = null;
-    let minDist = 3.5;
+    let minDist = 3.5; // Distance at which UI prompt shows
     
-    // FIX 3: Audio ONLY heard when within 4m, gets loud at 2m
+    // Audio ONLY heard when within 4m, gets loud at 2m
     const MAX_AUDIO_DIST = 4.0; 
     const MIN_AUDIO_DIST = 1.5; 
 
     screens.forEach(s => {
       const d = character.position.distanceTo(s.mesh.position);
       
+      // Ensure video is playing continuously in the background
+      if (s.video.paused) s.video.play().catch(()=>{});
+
       // UI Prompt Logic
       if(d < minDist) { minDist = d; closest = s; }
 
-      // Audio Logic
+      // Audio Proximity Mapped
       if (d < MAX_AUDIO_DIST) {
-        if (s.video.paused) s.video.play().catch(()=>{});
         // Scale volume 0.0 to 1.0 based on strict distance
         let vol = 1.0 - ((d - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
         s.video.volume = Math.max(0, Math.min(1, vol));
       } else {
         s.video.volume = 0;
-        if (!s.video.paused) s.video.pause();
       }
     });
 
