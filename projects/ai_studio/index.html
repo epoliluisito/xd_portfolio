@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Virtual Art Gallery</title>
+<!-- Prevent favicon.ico 404 -->
+<link href="data:," rel="icon"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -127,6 +129,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 // ---- Configuration & Data ----
 const VIDEOS = [
@@ -171,7 +174,8 @@ scene.add(hemiLight);
 
 // ---- Architecture & Textures ----
 const texLoader = new THREE.TextureLoader();
-const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp');
+// Using a safe fallback if textures are missing initially
+const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp', undefined, undefined, () => console.warn('Base texture not found yet'));
 const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
 const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
 
@@ -239,10 +243,16 @@ VIDEOS.forEach(v => {
   screens.push({ mesh: screenMesh, data: v });
 });
 
-// ---- Character ----
+// ---- Character Setup with DRACOLoader ----
 let character, mixer, idleAction, walkAction;
-const gltfLoader = new GLTFLoader();
 const loadFill = document.getElementById('load-fill');
+
+const dracoLoader = new DRACOLoader();
+// Using standard Google decoder path
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(dracoLoader);
 
 gltfLoader.load('clarity_builder.glb', 
   (gltf) => {
@@ -260,7 +270,7 @@ gltfLoader.load('clarity_builder.glb',
     document.getElementById('loading').style.opacity = '0';
     setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
   },
-  (xhr) => { loadFill.style.width = (xhr.loaded / xhr.total * 100) + '%'; },
+  (xhr) => { if(xhr.total) loadFill.style.width = (xhr.loaded / xhr.total * 100) + '%'; },
   (err) => { console.error('Error loading character:', err); }
 );
 
@@ -360,7 +370,7 @@ function animate() {
 
   if (character && !isOverlayOpen) {
     // Movement
-    const moving = keys.w || keys.a || keys.s || keys.d;
+    const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     if (mixer) {
       const state = moving ? 'walk' : 'idle';
       if (moving && walkAction && idleAction) { idleAction.weight = 0; walkAction.weight = 1; }
@@ -373,10 +383,10 @@ function animate() {
       const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
       const move = new THREE.Vector3();
       
-      if (keys.w) move.add(dir);
-      if (keys.s) move.sub(dir);
-      if (keys.d) move.add(right);
-      if (keys.a) move.sub(right);
+      if (keys.w || keys.arrowup) move.add(dir);
+      if (keys.s || keys.arrowdown) move.sub(dir);
+      if (keys.d || keys.arrowright) move.add(right);
+      if (keys.a || keys.arrowleft) move.sub(right);
       
       if (move.lengthSq() > 0) {
         move.normalize();
