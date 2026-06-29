@@ -60,7 +60,7 @@
   }
   #enter-btn:hover { background: rgba(232,197,71,0.1); border-color: #e8c547; color: #e8c547; }
 
-  /* Video Overlay */
+  /* Video Overlay (2-Column Layout) */
   #overlay {
     position: fixed; inset: 0; background: rgba(2,3,6,0.95); backdrop-filter: blur(14px);
     z-index: 200; display: flex; align-items: center; justify-content: center;
@@ -68,20 +68,32 @@
   }
   #overlay.visible { opacity: 1; pointer-events: all; }
   #overlay-panel {
-    width: 900px; max-width: 90vw; max-height: 90vh; background: rgba(8,10,14,0.98);
-    border: 1px solid rgba(255,255,255,0.1); padding: 40px; display: flex; flex-direction: column;
-    box-shadow: 0 40px 100px rgba(0,0,0,0.9); overflow-y: auto; position: relative;
+    width: 1100px; max-width: 95vw; max-height: 90vh; background: rgba(8,10,14,0.98);
+    border: 1px solid rgba(255,255,255,0.1); padding: 40px; display: flex; flex-direction: row; gap: 40px;
+    box-shadow: 0 40px 100px rgba(0,0,0,0.9); overflow-y: auto; position: relative; border-radius: 12px;
   }
   #overlay-close {
     position: absolute; top: 20px; right: 20px; background: transparent; border: 1px solid rgba(255,255,255,0.2);
-    color: rgba(255,255,255,0.6); font-family: inherit; font-size: 10px; letter-spacing: 0.2em; padding: 6px 12px; cursor: pointer;
+    color: rgba(255,255,255,0.6); font-family: inherit; font-size: 10px; letter-spacing: 0.2em; padding: 6px 12px; cursor: pointer; z-index: 10;
   }
   #overlay-close:hover { color: #fff; border-color: #fff; }
-  #overlay-brand { color: #e8c547; font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 8px; }
-  #overlay-title { font-size: 22px; font-weight: 400; margin-bottom: 24px; letter-spacing: 0.05em; }
-  #overlay-video-container { width: 100%; background: #000; margin-bottom: 24px; aspect-ratio: 16/9; }
-  #overlay-video { width: 100%; height: 100%; object-fit: contain; }
-  #overlay-desc { color: rgba(255,255,255,0.5); font-size: 13px; line-height: 1.8; }
+  
+  #overlay-info {
+    flex: 1; display: flex; flex-direction: column; justify-content: center;
+  }
+  #overlay-brand { color: #e8c547; font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 12px; }
+  #overlay-title { font-size: 28px; font-weight: 400; margin-bottom: 24px; letter-spacing: 0.05em; line-height: 1.2; }
+  #overlay-desc { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
+  
+  #overlay-video-container { 
+    flex: 2; background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  }
+  #overlay-video { width: 100%; height: auto; max-height: 100%; object-fit: contain; }
+
+  @media (max-width: 900px) {
+    #overlay-panel { flex-direction: column; padding: 24px; gap: 24px; }
+    #overlay-info, #overlay-video-container { width: 100%; flex: auto; }
+  }
 </style>
 
 <script type="importmap">
@@ -122,12 +134,14 @@
 <div id="overlay">
   <div id="overlay-panel">
     <button id="overlay-close">ESC / CLOSE</button>
-    <div id="overlay-brand">BRAND</div>
-    <h2 id="overlay-title">FILM TITLE</h2>
+    <div id="overlay-info">
+      <div id="overlay-brand">BRAND</div>
+      <h2 id="overlay-title">FILM TITLE</h2>
+      <div id="overlay-desc">Film description and context goes here.</div>
+    </div>
     <div id="overlay-video-container">
       <video id="overlay-video" controls controlsList="nodownload"></video>
     </div>
-    <div id="overlay-desc">Film description and context goes here.</div>
   </div>
 </div>
 
@@ -136,6 +150,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
+// Wait for fonts to be ready so all Canvas textures render cleanly with DM Mono
+await document.fonts.ready;
+
 function lerpAngle(start, end, amt) {
   let delta = end - start;
   while (delta > Math.PI) delta -= Math.PI * 2;
@@ -143,50 +160,67 @@ function lerpAngle(start, end, amt) {
   return start + delta * amt;
 }
 
-// ---- SPATIAL LAYOUT & COORDINATES ----
+// ---- SPATIAL LAYOUT, FILMS & CONTENT ----
+// Co-located specific films on shared walls and scaled single-film rooms
 const VIDEOS = [
-  { id: 'nivea_1', room: 'L1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -15.5, z: 0, rot: 0 },
-  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -25, z: 15, rot: Math.PI/2 },
-  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: -15.5, z: 29.5, rot: Math.PI },
-  { id: 'nivea_4', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: -6, z: 25, rot: -Math.PI/2 },
+  // L1: NIVEA (Large Room: Z 0 to 30)
+  { id: 'nivea_1', room: 'L1', brand: 'NIVEA', title: 'Disney Collaboration', desc: 'A magical journey exploring the intersection of skincare and timeless storytelling.\n\nCreated in collaboration with Disney.', file: 'nivea_disney.mp4', x: -15.5, z: 0, rot: 0 },
+  { id: 'nivea_5', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Cheetah', desc: 'Unleash your inner speed and precision.\n\nExperience the power of the Deep Cheetah campaign.', file: 'nivea_men_deep_cheetah.mp4', x: -25, z: 8, rot: Math.PI/2 },
+  { id: 'nivea_4', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Tennis', desc: 'Stay fresh under pressure.\n\nHigh-performance care for high-intensity moments.', file: 'nivea_men_deep_tennis.mp4', x: -25, z: 21, rot: Math.PI/2 },
+  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -9, z: 29.5, rot: Math.PI },
+  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -19, z: 29.5, rot: Math.PI },
   
-  { id: 'always_1', room: 'R1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: 15.5, z: 0, rot: 0 },
-  { id: 'always_2', room: 'R1', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: 6, z: 25, rot: Math.PI/2 },
+  // R1: ALWAYS (Medium Room: Z 0 to 20)
+  { id: 'always_1', room: 'R1', brand: 'ALWAYS', title: 'Get Unnoticed', desc: 'Confidence that lets you focus on what matters.\n\nAn empowering narrative for everyday heroes.', file: 'always_get_unnoticed.mp4', x: 15.5, z: 0, rot: 0 },
+  { id: 'always_2', room: 'R1', brand: 'ALWAYS', title: 'Snap Poof Gone', desc: 'Fast, effective, and invisible.\n\nDiscover the freedom of total protection.', file: 'always_snap_poof_gone.mp4', x: 25, z: 10, rot: -Math.PI/2 },
   
-  { id: 'kellogs', room: 'R2', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 25, z: 45, rot: -Math.PI/2 },
-  { id: 'lloyds', room: 'L2', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: -25, z: 45, rot: Math.PI/2 },
-  { id: 'twilio', room: 'R3', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: 25, z: 75, rot: -Math.PI/2 },
-  { id: 'stereo', room: 'L3', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: -25, z: 75, rot: Math.PI/2 }
+  // R2: KELLOGGS (Small Room: Z 20 to 40) - Scaled Up
+  { id: 'kellogs', room: 'R2', brand: 'KELLOGGS', title: 'Tresor', desc: 'Unleash the ultimate chocolatey experience.\n\nA thrilling ride for the tastebuds.', file: 'kellogs_tresor.mp4', x: 25, z: 30, rot: -Math.PI/2, scale: 1.4 },
+  
+  // L2: LLOYDS (Small Room: Z 30 to 45) - Scaled Up
+  { id: 'lloyds', room: 'L2', brand: 'LLOYDS', title: 'DOOH', desc: 'Modern banking for a dynamic world.\n\nDigital Out Of Home campaign highlights.', file: 'lloyds_dooh.mp4', x: -25, z: 37.5, rot: Math.PI/2, scale: 1.4 },
+  
+  // R3: TWILIO (Small Room: Z 40 to 60) - Scaled Up
+  { id: 'twilio', room: 'R3', brand: 'TWILIO', title: 'Clarity Builder Germany', desc: 'Empowering developers to build clearer connections.\n\nA showcase of Twilio’s impact in Germany.', file: 'twilio_clarity_builder_germany.mp4', x: 25, z: 50, rot: -Math.PI/2, scale: 1.4 },
+  
+  // L3: ARTISTIC MADNESS (Small Room: Z 45 to 60) - 2.39 Aspect Ratio & Scaled Up
+  { id: 'stereo', room: 'L3', brand: 'ARTISTIC MADNESS', title: 'Music Video', desc: 'Immersive soundscapes meet stunning visuals.\n\nAn exclusive music video premiere.', file: 'stereoclip_music_video.mp4', x: -25, z: 52.5, rot: Math.PI/2, scale: 1.6, aspect: 2.39 }
 ];
 
+// Room architecture customized per volume of films
 const WALLS = [
-  // Outer Boundaries including Entrance Foyer
+  // Outer Boundaries & Entrances
   {x: 0, z: -15, w: 52, d: 1}, 
   {x: -15.5, z: -0.5, w: 21, d: 1}, 
   {x: 15.5, z: -0.5, w: 21, d: 1},  
-  {x: 0, z: 90.5, w: 52, d: 1}, 
+  {x: 0, z: 60.5, w: 52, d: 1}, // Tighter Gallery End
 
   // Elongated Side Boundaries
-  {x: -25.5, z: 38, w: 1, d: 106}, 
-  {x: 25.5, z: 38, w: 1, d: 106},  
+  {x: -25.5, z: 30, w: 1, d: 61}, 
+  {x: 25.5, z: 30, w: 1, d: 61},  
 
-  // Horizontal Partitions
-  {x: -15.5, z: 30, w: 20, d: 1}, 
-  {x: 15.5, z: 30, w: 20, d: 1},  
-  {x: -15.5, z: 60, w: 20, d: 1}, 
-  {x: 15.5, z: 60, w: 20, d: 1},  
+  // Left Partitions (Asymmetrical Depth)
+  {x: -15.5, z: 30, w: 20, d: 1}, // End of NIVEA
+  {x: -15.5, z: 45, w: 20, d: 1}, // End of LLOYDS
 
-  // Corridor Left Wall
-  {x: -5.5, z: 5, w: 1, d: 10},
-  {x: -5.5, z: 30, w: 1, d: 20},
-  {x: -5.5, z: 60, w: 1, d: 20},
-  {x: -5.5, z: 85, w: 1, d: 10},
+  // Right Partitions (Asymmetrical Depth)
+  {x: 15.5, z: 20, w: 20, d: 1}, // End of ALWAYS
+  {x: 15.5, z: 40, w: 20, d: 1}, // End of KELLOGGS
 
-  // Corridor Right Wall
-  {x: 5.5, z: 5, w: 1, d: 10},
-  {x: 5.5, z: 30, w: 1, d: 20},
-  {x: 5.5, z: 60, w: 1, d: 20},
-  {x: 5.5, z: 85, w: 1, d: 10},
+  // Corridor Left Wall (Ensure minimum 6m solid blocks for Signage)
+  {x: -5.5, z: 3, w: 1, d: 6},   // NIVEA Wall Block
+  {x: -5.5, z: 27, w: 1, d: 6},  // NIVEA End Block
+  {x: -5.5, z: 33, w: 1, d: 6},  // LLOYDS Wall Block
+  {x: -5.5, z: 48, w: 1, d: 6},  // ARTISTIC MADNESS Wall Block
+  {x: -5.5, z: 58, w: 1, d: 4},  // Gallery End Block
+
+  // Corridor Right Wall (Ensure minimum 6m solid blocks for Signage)
+  {x: 5.5, z: 3, w: 1, d: 6},    // ALWAYS Wall Block
+  {x: 5.5, z: 17, w: 1, d: 6},   // ALWAYS End Block
+  {x: 5.5, z: 23, w: 1, d: 6},   // KELLOGGS Wall Block
+  {x: 5.5, z: 37, w: 1, d: 6},   // KELLOGGS End Block
+  {x: 5.5, z: 43, w: 1, d: 6},   // TWILIO Wall Block
+  {x: 5.5, z: 57, w: 1, d: 6},   // Gallery End Block
 ];
 
 function getRoom(x, z) {
@@ -194,13 +228,84 @@ function getRoom(x, z) {
   if (x > -5 && x < 5) return 'CORRIDOR';
   if (x <= -5) {
     if (z < 30) return 'L1';
-    if (z < 60) return 'L2';
+    if (z < 45) return 'L2';
     return 'L3';
   } else {
-    if (z < 30) return 'R1';
-    if (z < 60) return 'R2';
+    if (z < 20) return 'R1';
+    if (z < 40) return 'R2';
     return 'R3';
   }
+}
+
+// ---- Canvas Text Generation Helpers ----
+function wrapText(context, text, x, y, maxWidth, lineHeight) {
+  const paragraphs = text.split('\n');
+  let currentY = y;
+  for(let p = 0; p < paragraphs.length; p++) {
+      const words = paragraphs[p].split(' ');
+      let line = '';
+      for (let n = 0; n < words.length; n++) {
+          const testLine = line + words[n] + ' ';
+          const metrics = context.measureText(testLine);
+          if (metrics.width > maxWidth && n > 0) {
+              context.fillText(line, x, currentY);
+              line = words[n] + ' ';
+              currentY += lineHeight;
+          } else {
+              line = testLine;
+          }
+      }
+      context.fillText(line, x, currentY);
+      currentY += lineHeight;
+  }
+}
+
+function createRoomTitleTexture(title) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,1024,256);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.font = `400 90px 'DM Mono', monospace`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  
+  if ('letterSpacing' in ctx) {
+    ctx.letterSpacing = '14px';
+    ctx.fillText(title.toUpperCase(), 512, 128);
+  } else {
+    ctx.fillText(title.toUpperCase().split('').join(' '), 512, 128);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createGalleryLabelTexture(brand, title, desc) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 1024;
+  const ctx = canvas.getContext('2d');
+  
+  ctx.fillStyle = 'rgba(12, 12, 12, 0.7)';
+  ctx.fillRect(0, 0, 1024, 1024);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 1020, 1020);
+
+  ctx.fillStyle = '#e8c547';
+  ctx.font = `500 32px 'DM Mono', monospace`;
+  ctx.fillText(brand.toUpperCase(), 80, 80);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `400 56px 'DM Mono', monospace`;
+  wrapText(ctx, title, 80, 160, 860, 68);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = `300 28px 'DM Mono', monospace`;
+  wrapText(ctx, desc, 80, 360, 860, 42);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 // ---- Preloader State ----
@@ -229,7 +334,6 @@ function registerAssetLoaded() {
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
       
-      // Narrative Sequence: Start Tim after 2 seconds
       setTimeout(() => {
         if (timState === 'intro_wait') timState = 'walking';
       }, 2000);
@@ -243,7 +347,7 @@ setTimeout(() => {
     loadedAssets = totalAssets;
     registerAssetLoaded();
   }
-}, 8000);
+}, 10000);
 
 // ---- Setup Scene ----
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -255,6 +359,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0; 
+const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 document.body.appendChild(renderer.domElement);
 
@@ -275,7 +380,6 @@ const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
 const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
 
 concreteBase.colorSpace = THREE.SRGBColorSpace;
-const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 [concreteBase, concreteNorm, concreteRough].forEach(tex => {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -293,15 +397,15 @@ const floorMat = new THREE.MeshStandardMaterial({
   color: 0x666666, roughness: 0.6, metalness: 0.15 
 });
 
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 150), floorMat);
-floor.position.set(0, 0, 45); 
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), floorMat);
+floor.position.set(0, 0, 30); 
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
 const WALL_HEIGHT = 8.0;
-const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(120, 150), wallMat);
-ceiling.position.set(0, WALL_HEIGHT, 45);
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), wallMat);
+ceiling.position.set(0, WALL_HEIGHT, 30);
 ceiling.rotation.x = Math.PI / 2;
 scene.add(ceiling);
 
@@ -313,8 +417,30 @@ WALLS.forEach(w => {
   scene.add(wall);
 });
 
+// ---- Add Room Signage (Perfectly Aligned to Corridor Walls) ----
+const roomTitles = [
+  { text: 'NIVEA', x: -4.9, z: 3, rot: Math.PI/2 },
+  { text: 'LLOYDS', x: -4.9, z: 33, rot: Math.PI/2 },
+  { text: 'ARTISTIC MADNESS', x: -4.9, z: 48, rot: Math.PI/2 },
+  { text: 'ALWAYS', x: 4.9, z: 3, rot: -Math.PI/2 },
+  { text: 'KELLOGGS', x: 4.9, z: 23, rot: -Math.PI/2 },
+  { text: 'TWILIO', x: 4.9, z: 43, rot: -Math.PI/2 }
+];
+
+roomTitles.forEach(rt => {
+  const tex = createRoomTitleTexture(rt.text);
+  tex.anisotropy = maxAnisotropy;
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(5, 1.25), 
+    new THREE.MeshBasicMaterial({map: tex, transparent: true, alphaTest: 0.05})
+  );
+  plane.position.set(rt.x, 6, rt.z);
+  plane.rotation.y = rt.rot;
+  scene.add(plane);
+});
+
 // ---- Entrance System: Sliding Doors & Buttons ----
-let doorState = 'closed'; // 'closed', 'opening', 'open'
+let doorState = 'closed';
 
 const doorMat = new THREE.MeshStandardMaterial({color: 0x333333, metalness: 0.8, roughness: 0.2});
 const doorL = new THREE.Mesh(new THREE.BoxGeometry(5.5, WALL_HEIGHT, 0.8), doorMat);
@@ -325,7 +451,6 @@ doorL.castShadow = true; doorL.receiveShadow = true;
 doorR.castShadow = true; doorR.receiveShadow = true;
 scene.add(doorL, doorR);
 
-// Elevator Button Panel
 const panelMesh = new THREE.Mesh(
   new THREE.BoxGeometry(0.4, 1.2, 0.4), 
   new THREE.MeshStandardMaterial({color: 0x222222, metalness: 0.9, roughness: 0.2})
@@ -343,13 +468,11 @@ const btnLight = new THREE.PointLight(0xff0000, 0.5, 3);
 btnLight.position.set(4.5, 1.0, -2.4);
 scene.add(btnLight);
 
-// Room / Ambience Lights
+// Room Lights configured to the newly scaled map
 const roomCenters = [
-  {x: 0, z: -8}, // Spawn Area
-  {x: -15.5, z: 15}, {x: 15.5, z: 15}, 
-  {x: -15.5, z: 45}, {x: 15.5, z: 45}, 
-  {x: -15.5, z: 75}, {x: 15.5, z: 75}, 
-  {x: 0, z: 15}, {x: 0, z: 45}, {x: 0, z: 75}
+  {x: 0, z: -8}, {x: -15.5, z: 15}, {x: 15.5, z: 10}, 
+  {x: 15.5, z: 30}, {x: -15.5, z: 37.5}, {x: 15.5, z: 50}, 
+  {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}
 ];
 roomCenters.forEach(pos => {
   const light = new THREE.PointLight(0xfff5e6, 1.2, 35);
@@ -357,7 +480,7 @@ roomCenters.forEach(pos => {
   scene.add(light);
 });
 
-// ---- Video Screens & Frames ----
+// ---- Video Screens, Aspect Ratios & Frames ----
 const screens = [];
 VIDEOS.forEach(v => {
   const vidEl = document.createElement('video');
@@ -376,18 +499,24 @@ VIDEOS.forEach(v => {
       registerAssetLoaded();
     }
   };
-  
   vidEl.addEventListener('loadedmetadata', loadHandler);
   vidEl.addEventListener('error', loadHandler);
 
   const videoTex = new THREE.VideoTexture(vidEl);
   videoTex.colorSpace = THREE.SRGBColorSpace;
+  videoTex.anisotropy = maxAnisotropy;
   
-  const screenGeo = new THREE.PlaneGeometry(6.4, 3.6);
+  // Dynamic Sizing
+  const vScale = v.scale || 1.0;
+  const vAspect = v.aspect || 1.7777; // Default to 16:9
+  const width = 6.4 * vScale;
+  const height = (6.4 / vAspect) * vScale;
+
+  const screenGeo = new THREE.PlaneGeometry(width, height);
   const screenMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: videoTex, toneMapped: false });
   
   const frameDepth = 0.12;
-  const frameGeo = new THREE.BoxGeometry(6.6, 3.8, frameDepth);
+  const frameGeo = new THREE.BoxGeometry(width + 0.2, height + 0.2, frameDepth);
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7, metalness: 0.6 });
 
   const group = new THREE.Group();
@@ -399,6 +528,17 @@ VIDEOS.forEach(v => {
   const screenMesh = new THREE.Mesh(screenGeo, screenMat);
   screenMesh.position.set(0, 0, frameDepth + 0.005); 
   group.add(screenMesh);
+
+  // Gallery Description Label
+  const labelTex = createGalleryLabelTexture(v.brand, v.title, v.desc);
+  labelTex.anisotropy = maxAnisotropy;
+  const labelGeo = new THREE.PlaneGeometry(2.4, 2.4); 
+  const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.05 });
+  const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+  
+  // Adaptive label offset based on screen scale
+  labelMesh.position.set((width / 2) + 1.6, 0, frameDepth + 0.01); 
+  group.add(labelMesh);
 
   const offset = 0.02;
   let px = v.x, pz = v.z;
@@ -434,14 +574,12 @@ dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5
 const gltfLoader = new GLTFLoader();
 gltfLoader.setDRACOLoader(dracoLoader);
 
-// 1. Load Greg (Player)
 let character, mixer, idleAction, walkAction;
 let currentWeight = 0; 
 gltfLoader.load('greg.glb', (gltf) => {
   character = gltf.scene;
   character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
   
-  // Player spawns far back facing the door
   character.position.set(0, 0, -10);
   character.rotation.y = Math.PI; 
   scene.add(character);
@@ -465,33 +603,31 @@ gltfLoader.load('greg.glb', (gltf) => {
   registerAssetLoaded();
 }, undefined, (err) => { console.error('Error loading greg:', err); registerAssetLoaded(); });
 
-// 2. Load Tim (NPC)
 let tim, timMixer, timIdleAction, timWalkAction;
 let timCurrentWeight = 0;
-let timState = 'intro_wait'; // 'intro_wait', 'walking', 'waiting', 'idle'
+let timState = 'intro_wait'; 
 let currentWaypoint = 0;
 let waitTimer = 0;
 
-// Waypoints configured so Tim opens the door first
+// Path updated for the compacted gallery length
 const timWaypoints = [
-  {x: 3.5, z: -2.5, wait: 1.5, action: 'open_door'}, // Approach panel and "press" button
+  {x: 3.5, z: -2.5, wait: 1.5, action: 'open_door'},
   {x: 0, z: 5, wait: 0},
-  {x: -10, z: 15, wait: 5}, // Stop at Nivea
+  {x: -10, z: 15, wait: 5}, 
   {x: 0, z: 15, wait: 0},
-  {x: 0, z: 45, wait: 0},
-  {x: 15, z: 45, wait: 5}, // Stop at Kelloggs
-  {x: 0, z: 45, wait: 0},
-  {x: 0, z: 75, wait: 0},
-  {x: -15, z: 75, wait: 5} // Stop at StereoClip
+  {x: 0, z: 30, wait: 0},
+  {x: 10, z: 30, wait: 5}, 
+  {x: 0, z: 30, wait: 0},
+  {x: 0, z: 52, wait: 0},
+  {x: -15, z: 52, wait: 5} 
 ];
 
 gltfLoader.load('tim.glb', (gltf) => {
   tim = gltf.scene;
   tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
   
-  // Tim spawns right in front of the player
   tim.position.set(-1.5, 0, -6);
-  tim.rotation.y = Math.PI; // Face the door
+  tim.rotation.y = Math.PI; 
   scene.add(tim);
   
   if (gltf.animations && gltf.animations.length) {
@@ -525,7 +661,7 @@ window.addEventListener('keydown', e => {
   }
   const k = e.key.toLowerCase();
   if(keys.hasOwnProperty(k)) keys[k] = true;
-  if(e.key === 'e' || e.key === 'E') triggerInteraction();
+  if(e.key === 'e') triggerInteraction();
 });
 
 window.addEventListener('keyup', e => {
@@ -575,7 +711,7 @@ function triggerInteraction() {
     const data = activeScreen.data;
     document.getElementById('overlay-brand').textContent = data.brand;
     document.getElementById('overlay-title').textContent = data.title;
-    document.getElementById('overlay-desc').textContent = `Now viewing the ${data.brand} film: ${data.title}. Use the controls below to expand to full screen.`;
+    document.getElementById('overlay-desc').textContent = data.desc;
     
     screens.forEach(s => s.video.volume = 0);
     
@@ -595,7 +731,7 @@ function closeOverlay() {
 }
 document.getElementById('overlay-close').addEventListener('click', closeOverlay);
 
-// ---- Map System ----
+// ---- Map System (INVERTED/NATURAL ALIGNMENT) ----
 const mapCtx = document.getElementById('map-canvas').getContext('2d');
 function drawMap() {
   if(!character) return;
@@ -603,37 +739,37 @@ function drawMap() {
   const cw = 160, ch = 160;
   mapCtx.clearRect(0, 0, cw, ch);
   
-  const scale = 1.3; 
-  const offsetX = cw/2;
-  const offsetZ = ch/2 - 45 * scale;
+  const scale = 1.6; 
+  const offsetX = cw / 2;
+  const offsetY = ch - 20; // Natural map alignment: Start at bottom, Z progresses Upwards (-Y)
 
   mapCtx.fillStyle = 'rgba(255,255,255,0.2)';
   WALLS.forEach(w => {
-    const mx = offsetX + (w.x - w.w/2) * scale;
-    const mz = offsetZ + (w.z - w.d/2) * scale;
-    mapCtx.fillRect(mx, mz, w.w * scale, w.d * scale);
+    const cx = offsetX + w.x * scale;
+    const cy = offsetY - w.z * scale; // Inverted mapping for natural minimap layout
+    mapCtx.fillRect(cx - (w.w*scale)/2, cy - (w.d*scale)/2, w.w*scale, w.d*scale);
   });
   
   mapCtx.fillStyle = doorState === 'open' ? 'rgba(0,255,0,0.5)' : 'rgba(255,100,100,0.8)';
-  mapCtx.fillRect(offsetX + (doorL.position.x - 2.75) * scale, offsetZ + (doorL.position.z - 0.4) * scale, 5.5 * scale, 0.8 * scale);
-  mapCtx.fillRect(offsetX + (doorR.position.x - 2.75) * scale, offsetZ + (doorR.position.z - 0.4) * scale, 5.5 * scale, 0.8 * scale);
+  mapCtx.fillRect(offsetX + (doorL.position.x - 2.75) * scale, offsetY - (doorL.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
+  mapCtx.fillRect(offsetX + (doorR.position.x - 2.75) * scale, offsetY - (doorR.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
 
   mapCtx.fillStyle = 'rgba(232,197,71,0.8)';
   screens.forEach(s => {
     const mx = offsetX + s.data.x * scale;
-    const mz = offsetZ + s.data.z * scale;
-    mapCtx.beginPath(); mapCtx.arc(mx, mz, 2, 0, Math.PI*2); mapCtx.fill();
+    const mz = offsetY - s.data.z * scale;
+    mapCtx.beginPath(); mapCtx.arc(mx, mz, 2.5, 0, Math.PI*2); mapCtx.fill();
   });
   
   mapCtx.fillStyle = '#fff';
   const px = offsetX + character.position.x * scale;
-  const pz = offsetZ + character.position.z * scale;
-  mapCtx.beginPath(); mapCtx.arc(px, pz, 3, 0, Math.PI*2); mapCtx.fill();
+  const pz = offsetY - character.position.z * scale;
+  mapCtx.beginPath(); mapCtx.arc(px, pz, 3.5, 0, Math.PI*2); mapCtx.fill();
 
   if (tim) {
     mapCtx.fillStyle = '#ff6666';
     const tx = offsetX + tim.position.x * scale;
-    const tz = offsetZ + tim.position.z * scale;
+    const tz = offsetY - tim.position.z * scale;
     mapCtx.beginPath(); mapCtx.arc(tx, tz, 2.5, 0, Math.PI*2); mapCtx.fill();
   }
 }
@@ -674,7 +810,6 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  // Update Animation Mixers
   if (mixer) mixer.update(dt);
   if (timMixer) {
     const isTimMoving = (timState === 'walking');
@@ -684,7 +819,6 @@ function animate() {
     timMixer.update(dt);
   }
 
-  // Handle Opening Entrance Doors
   if (doorState === 'opening') {
     doorL.position.x -= 3 * dt;
     doorR.position.x += 3 * dt;
@@ -693,7 +827,6 @@ function animate() {
     }
   }
 
-  // Tim NPC Logic
   if (timState === 'walking') {
     const target = timWaypoints[currentWaypoint];
     const dx = target.x - tim.position.x;
@@ -701,7 +834,6 @@ function animate() {
     const dist = Math.hypot(dx, dz);
     
     if (dist < 0.2) {
-      // Trigger actions at waypoints
       if (target.action === 'open_door' && doorState === 'closed') {
         doorState = 'opening';
         buttonMat.color.setHex(0x00cc00);
@@ -733,7 +865,6 @@ function animate() {
     }
   }
 
-  // Player movement
   if (character && audioUnlocked && !isOverlayOpen) {
     const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     
@@ -790,7 +921,7 @@ function animate() {
     camera.position.lerp(tPos, 0.25); 
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
 
-    // ---- Proximity & Logic ----
+    // Proximity & Spatial Audio
     let distToPanel = camera.position.distanceTo(panelMesh.position);
     let showPanelPrompt = (distToPanel < 3.5 && doorState === 'closed');
     
@@ -814,7 +945,6 @@ function animate() {
         if (dist < MAX_AUDIO_DIST) {
           let distVol = 1.0 - ((dist - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
           distVol = Math.max(0, Math.min(1, distVol));
-          
           let gazeVol = Math.max(0.05, (dot + 0.2) / 1.2); 
           s.video.volume = distVol * gazeVol;
         } else {
@@ -843,7 +973,7 @@ function animate() {
       activeScreen = closestScreen;
       
       if(activeInteractable === 'video') {
-        promptEl.textContent = "Press [ E ] to View Film";
+        promptEl.textContent = `Press [ E ] to view ${activeScreen.data.title}`;
         promptEl.classList.add('visible');
       } else {
         promptEl.classList.remove('visible');
