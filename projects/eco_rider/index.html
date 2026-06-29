@@ -669,7 +669,10 @@ function stripFgNight(x,w,h){
 function stripDawnFar(x,w,h){
   for(const L of [{c:'#cdb6d0',b:0.42,a:18},{c:'#a9bcc0',b:0.6,a:26},{c:'#86a878',b:0.82,a:34}]){
     x.fillStyle=L.c; x.beginPath(); x.moveTo(0,h);
-    for(let px=0;px<=w;px+=22){ const y=h-h*L.b+Math.sin(px*0.01+L.b*7)*L.a; x.lineTo(px,y); }
+    // freq = 2*full cycles across the strip width so the hill tiles seamlessly (y at px=0 === y at px=w);
+    // loop is clamped to land EXACTLY on px=w so the silhouette covers the full width (no sky-gap at the tile seam).
+    const f=Math.PI*4/w;
+    for(let px=0;;px+=24){ const cx=px<w?px:w; const y=h-h*L.b+Math.sin(cx*f+L.b*7)*L.a; x.lineTo(cx,y); if(cx>=w)break; }
     x.lineTo(w,h); x.closePath(); x.fill(); }
   x.fillStyle='rgba(255,235,205,.16)'; x.fillRect(0,h*0.5,w,h*0.5);   // low dawn mist
   for(const tx of [360,900,1260]){ x.strokeStyle='rgba(40,60,50,.5)'; x.lineWidth=3;   // distant wind turbines
@@ -1250,9 +1253,9 @@ function nightAmt(g){ const {slot,slot2,blend}=biomeBlend(g);
 /* per-bike lamp placement/size. f=[xFrac,yFrac] front bulb, r=[xFrac,yFrac] rear lamp,
    bulb/rear = radius as a fraction of drawn bike height. fractions are of the drawn sprite (x from wheel-centre, y up = negative). */
 const LIGHTS={
-  monster:{ f:[0.295,-0.46], r:[-0.42,-0.40], bulb:0, rear:0.12, aim:0.06 },
-  city:   { f:[0.375,-0.395], r:[-0.43,-0.36], bulb:0, rear:0.09, aim:0.50 },
-  mini:   { f:[0.255,-0.26], r:[-0.23,-0.36], bulb:0, rear:0, aim:0.24, beam:0.58 }
+  monster:{ f:[0.295,-0.46], r:[-0.42,-0.40], bulb:0.16, rear:0.145, aim:0.06 },
+  city:   { f:[0.375,-0.395], r:[-0.43,-0.36], bulb:0.15, rear:0.11, aim:0.50 },
+  mini:   { f:[0.255,-0.26], r:[-0.23,-0.36], bulb:0.17, rear:0, aim:0.24, beam:0.58 }
 };
 /* bike running-lights, drawn in the bike's local space (origin = wheel-centre/contact, +x = forward).
    the caller rasterises this through the world pixel pipeline + an additive blit, so keep shapes simple. */
@@ -1279,15 +1282,16 @@ function drawBikeLights(c,g,n,sWpx,sHpx){
   if((L.bulb||0)>0){
     const bfx=fx+sWpx*((L.bo&&L.bo[0])||0), bfy=fy+sHpx*((L.bo&&L.bo[1])||0);
     const br=sHpx*L.bulb, bg=c.createRadialGradient(bfx,bfy,0,bfx,bfy,br);
-    bg.addColorStop(0,'rgba(255,250,220,'+(0.92*n*fl)+')');
-    bg.addColorStop(1,'rgba(255,244,190,0)');
+    bg.addColorStop(0,'rgba(255,250,224,'+(1.0*n*fl)+')');     // hot core = same peak as the cone
+    bg.addColorStop(0.45,'rgba(255,245,200,'+(0.6*n*fl)+')');
+    bg.addColorStop(1,'rgba(255,240,186,0)');
     c.fillStyle=bg; c.beginPath(); c.arc(bfx,bfy,br,0,7); c.fill();
   }
   // rear red lamp (small, soft) -> skipped entirely when rear<=0 (e.g. mini has no rear fixture in the sprite)
   if((L.rear||0)>0){
     const rr=sHpx*L.rear, rg=c.createRadialGradient(rx,ry,0,rx,ry,rr);
-    rg.addColorStop(0,'rgba(255,72,56,'+(0.95*n*rfl)+')');
-    rg.addColorStop(0.5,'rgba(232,32,26,'+(0.4*n*rfl)+')');
+    rg.addColorStop(0,'rgba(255,86,68,'+(1.0*n*rfl)+')');
+    rg.addColorStop(0.5,'rgba(236,40,32,'+(0.58*n*rfl)+')');
     rg.addColorStop(1,'rgba(220,20,20,0)');
     c.fillStyle=rg; c.beginPath(); c.arc(rx,ry,rr,0,7); c.fill();
   }
