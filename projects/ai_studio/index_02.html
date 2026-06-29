@@ -160,11 +160,11 @@ const VIDEOS = [
 ];
 
 const WALLS = [
-  // Outer Boundaries including Entrance Foyer
-  {x: 0, z: -15, w: 52, d: 1}, 
-  {x: -15.5, z: -0.5, w: 21, d: 1}, 
-  {x: 15.5, z: -0.5, w: 21, d: 1},  
-  {x: 0, z: 90.5, w: 52, d: 1}, 
+  // Outer Boundaries including new Entrance Foyer
+  {x: 0, z: -15, w: 52, d: 1}, // Rear Entrance Wall
+  {x: -15.5, z: -0.5, w: 21, d: 1}, // Front Wall L (Contains Door)
+  {x: 15.5, z: -0.5, w: 21, d: 1},  // Front Wall R (Contains Door)
+  {x: 0, z: 90.5, w: 52, d: 1}, // Far End Wall
 
   // Elongated Side Boundaries
   {x: -25.5, z: 38, w: 1, d: 106}, 
@@ -205,7 +205,7 @@ function getRoom(x, z) {
 
 // ---- Preloader State ----
 let loadedAssets = 0;
-const totalAssets = VIDEOS.length + 2; 
+const totalAssets = VIDEOS.length + 2; // Videos + Greg + Tim
 let audioUnlocked = false;
 let isReady = false;
 
@@ -228,11 +228,6 @@ function registerAssetLoaded() {
       });
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
-      
-      // Narrative Sequence: Start Tim after 2 seconds
-      setTimeout(() => {
-        if (timState === 'intro_wait') timState = 'walking';
-      }, 2000);
     });
   }
 }
@@ -246,6 +241,7 @@ setTimeout(() => {
 }, 8000);
 
 // ---- Setup Scene ----
+// Use Native Device Pixel Ratio for much higher resolution clarity
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -275,6 +271,8 @@ const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
 const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
 
 concreteBase.colorSpace = THREE.SRGBColorSpace;
+
+// Push Anisotropy filtering for high res floor/wall textures
 const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 [concreteBase, concreteNorm, concreteRough].forEach(tex => {
@@ -294,7 +292,7 @@ const floorMat = new THREE.MeshStandardMaterial({
 });
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 150), floorMat);
-floor.position.set(0, 0, 45); 
+floor.position.set(0, 0, 45); // Extended to cover -30 to 120
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
@@ -391,6 +389,7 @@ VIDEOS.forEach(v => {
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7, metalness: 0.6 });
 
   const group = new THREE.Group();
+  
   const frameMesh = new THREE.Mesh(frameGeo, frameMat);
   frameMesh.position.set(0, 0, frameDepth / 2); 
   frameMesh.castShadow = true;
@@ -420,6 +419,8 @@ VIDEOS.forEach(v => {
   spot.position.set(v.x + normal.x * 3.0, 7.5, v.z + normal.z * 3.0);
   spot.target = group;
   spot.castShadow = true;
+  
+  // High-Res Shadows
   spot.shadow.mapSize.width = 1024;
   spot.shadow.mapSize.height = 1024;
   spot.shadow.bias = -0.001; 
@@ -441,9 +442,9 @@ gltfLoader.load('greg.glb', (gltf) => {
   character = gltf.scene;
   character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
   
-  // Player spawns far back facing the door
+  // Spawn facing the door
   character.position.set(0, 0, -10);
-  character.rotation.y = Math.PI; 
+  character.rotation.y = Math.PI; // Face +Z (down the gallery)
   scene.add(character);
   
   if (gltf.animations && gltf.animations.length) {
@@ -468,13 +469,11 @@ gltfLoader.load('greg.glb', (gltf) => {
 // 2. Load Tim (NPC)
 let tim, timMixer, timIdleAction, timWalkAction;
 let timCurrentWeight = 0;
-let timState = 'intro_wait'; // 'intro_wait', 'walking', 'waiting', 'idle'
+let timState = 'idle'; // 'idle', 'walking', 'waiting'
 let currentWaypoint = 0;
 let waitTimer = 0;
 
-// Waypoints configured so Tim opens the door first
 const timWaypoints = [
-  {x: 3.5, z: -2.5, wait: 1.5, action: 'open_door'}, // Approach panel and "press" button
   {x: 0, z: 5, wait: 0},
   {x: -10, z: 15, wait: 5}, // Stop at Nivea
   {x: 0, z: 15, wait: 0},
@@ -489,9 +488,9 @@ gltfLoader.load('tim.glb', (gltf) => {
   tim = gltf.scene;
   tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
   
-  // Tim spawns right in front of the player
-  tim.position.set(-1.5, 0, -6);
-  tim.rotation.y = Math.PI; // Face the door
+  // Spawn Tim waiting beside the entrance door
+  tim.position.set(-1.5, 0, -3);
+  tim.rotation.y = Math.PI; 
   scene.add(tim);
   
   if (gltf.animations && gltf.animations.length) {
@@ -516,7 +515,7 @@ gltfLoader.load('tim.glb', (gltf) => {
 // ---- Controls & Movement ----
 const keys = { w:false, a:false, s:false, d:false, arrowup:false, arrowdown:false, arrowleft:false, arrowright:false };
 let pointerLocked = false, isOverlayOpen = false;
-let walkYaw = Math.PI, walkPitch = -0.1; 
+let walkYaw = Math.PI, walkPitch = -0.1; // Initialize looking down the +Z axis
 
 window.addEventListener('keydown', e => {
   if(isOverlayOpen) {
@@ -551,7 +550,7 @@ document.addEventListener('mousemove', e => {
 });
 
 // ---- Interaction Logic ----
-let activeInteractable = null; 
+let activeInteractable = null; // 'door' or 'video'
 let activeScreen = null;
 const promptEl = document.getElementById('proximity-prompt');
 const overlayVid = document.getElementById('overlay-video');
@@ -560,15 +559,18 @@ function triggerInteraction() {
   if(isOverlayOpen) return;
   
   if (activeInteractable === 'door') {
+    // Open the entrance door!
     doorState = 'opening';
     promptEl.classList.remove('visible');
     activeInteractable = null;
     
+    // Light up button to Green
     buttonMat.color.setHex(0x00cc00);
     buttonMat.emissive.setHex(0x005500);
     btnLight.color.setHex(0x00ff00);
 
   } else if (activeInteractable === 'video' && activeScreen) {
+    // Play Video Film
     isOverlayOpen = true;
     document.exitPointerLock();
     
@@ -614,6 +616,7 @@ function drawMap() {
     mapCtx.fillRect(mx, mz, w.w * scale, w.d * scale);
   });
   
+  // Draw doors
   mapCtx.fillStyle = doorState === 'open' ? 'rgba(0,255,0,0.5)' : 'rgba(255,100,100,0.8)';
   mapCtx.fillRect(offsetX + (doorL.position.x - 2.75) * scale, offsetZ + (doorL.position.z - 0.4) * scale, 5.5 * scale, 0.8 * scale);
   mapCtx.fillRect(offsetX + (doorR.position.x - 2.75) * scale, offsetZ + (doorR.position.z - 0.4) * scale, 5.5 * scale, 0.8 * scale);
@@ -640,16 +643,19 @@ function drawMap() {
 
 // ---- Collision System ----
 function checkCollision(pos, radius) {
+  // Static Boundaries
   for(let i=0; i<WALLS.length; i++) {
     const w = WALLS[i];
     const hw = w.w / 2;
     const hd = w.d / 2;
+    
     if (pos.x + radius > w.x - hw && pos.x - radius < w.x + hw &&
         pos.z + radius > w.z - hd && pos.z - radius < w.z + hd) {
       return true;
     }
   }
 
+  // Sliding Doors
   if (doorState !== 'open') {
     let hw = 5.5 / 2; let hd = 0.8 / 2;
     let dxL = doorL.position.x; let dzL = doorL.position.z;
@@ -659,6 +665,7 @@ function checkCollision(pos, radius) {
     if (pos.x + radius > dxR - hw && pos.x - radius < dxR + hw && pos.z + radius > dzR - hd && pos.z - radius < dzR + hd) return true;
   }
 
+  // Tim (NPC Obstacle)
   if (tim) {
     const distToTim = Math.hypot(pos.x - tim.position.x, pos.z - tim.position.z);
     if (distToTim < radius + 0.3) return true; 
@@ -688,8 +695,9 @@ function animate() {
   if (doorState === 'opening') {
     doorL.position.x -= 3 * dt;
     doorR.position.x += 3 * dt;
-    if (doorL.position.x <= -8.25) { 
+    if (doorL.position.x <= -8.25) { // Doors have slid into the walls
       doorState = 'open';
+      timState = 'walking'; // Trigger Tim to begin his tour!
     }
   }
 
@@ -701,14 +709,6 @@ function animate() {
     const dist = Math.hypot(dx, dz);
     
     if (dist < 0.2) {
-      // Trigger actions at waypoints
-      if (target.action === 'open_door' && doorState === 'closed') {
-        doorState = 'opening';
-        buttonMat.color.setHex(0x00cc00);
-        buttonMat.emissive.setHex(0x005500);
-        btnLight.color.setHex(0x00ff00);
-      }
-      
       if (target.wait > 0) {
         timState = 'waiting';
         waitTimer = target.wait;
