@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Virtual Art Gallery</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #060810; font-family: 'DM Mono', monospace; color: #fff; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  
+  /* ---- UI Overlays ---- */
+  #ui { position: fixed; inset: 0; pointer-events: none; }
+  
+  /* User Guide */
+  #guide-panel {
+    position: absolute; top: 20px; left: 20px;
+    background: rgba(6,8,16,0.82); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(16px); padding: 18px; width: 260px;
+  }
+  #guide-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; margin-bottom: 14px; color: rgba(232,197,71,0.8); font-weight: 400; }
+  .ctrl-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .ctrl-key { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); font-size: 9px; padding: 4px 8px; border-radius: 4px; white-space: nowrap; }
+  .ctrl-desc { color: rgba(255,255,255,0.6); font-size: 10px; letter-spacing: 0.1em; line-height: 1.4; }
+
+  /* Map */
+  #map-panel {
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(6,8,16,0.82); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(16px); padding: 18px; text-align: center;
+  }
+  #map-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 14px; font-weight: 400; }
+  #map-canvas { border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.5); width: 160px; height: 160px; }
+
+  /* Proximity Prompt */
+  #proximity-prompt {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    color: rgba(232,197,71,0.9); font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase;
+    background: rgba(6,8,16,0.85); border: 1px solid rgba(232,197,71,0.4);
+    padding: 12px 24px; backdrop-filter: blur(12px); border-radius: 4px;
+    opacity: 0; transition: opacity 0.4s ease;
+  }
+  #proximity-prompt.visible { opacity: 1; }
+
+  /* Loading Screen */
+  #loading {
+    position: fixed; inset: 0; background: #060810; z-index: 300;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.8s ease;
+  }
+  #loading h1 { font-size: 14px; letter-spacing: 0.4em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 20px; font-weight: 400; }
+  #load-bar { width: 240px; height: 1px; background: rgba(255,255,255,0.1); position: relative; }
+  #load-fill { position: absolute; top: 0; left: 0; height: 100%; background: #e8c547; width: 0%; transition: width 0.3s; }
+
+  /* Video Overlay */
+  #overlay {
+    position: fixed; inset: 0; background: rgba(4,6,12,0.95); backdrop-filter: blur(14px);
+    z-index: 200; display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.5s ease;
+  }
+  #overlay.visible { opacity: 1; pointer-events: all; }
+  #overlay-panel {
+    width: 900px; max-width: 90vw; max-height: 90vh; background: rgba(10,12,20,0.95);
+    border: 1px solid rgba(255,255,255,0.1); padding: 40px; display: flex; flex-direction: column;
+    box-shadow: 0 40px 100px rgba(0,0,0,0.8); overflow-y: auto; position: relative;
+  }
+  #overlay-close {
+    position: absolute; top: 20px; right: 20px; background: transparent; border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.6); font-family: inherit; font-size: 10px; letter-spacing: 0.2em; padding: 6px 12px; cursor: pointer;
+  }
+  #overlay-close:hover { color: #fff; border-color: #fff; }
+  #overlay-brand { color: #e8c547; font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 8px; }
+  #overlay-title { font-size: 22px; font-weight: 400; margin-bottom: 24px; letter-spacing: 0.05em; }
+  #overlay-video-container { width: 100%; background: #000; margin-bottom: 24px; aspect-ratio: 16/9; }
+  #overlay-video { width: 100%; height: 100%; object-fit: contain; }
+  #overlay-desc { color: rgba(255,255,255,0.6); font-size: 13px; line-height: 1.8; }
+</style>
+
+<!-- Import Map for Three.js -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="loading">
+  <h1>Loading Gallery</h1>
+  <div id="load-bar"><div id="load-fill"></div></div>
+</div>
+
+<div id="ui">
+  <div id="guide-panel">
+    <h3>Gallery Guide</h3>
+    <div class="ctrl-row"><span class="ctrl-key">W A S D</span><span class="ctrl-desc">Walk</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">Mouse</span><span class="ctrl-desc">Look Around</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">Click</span><span class="ctrl-desc">Lock Camera</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">ESC</span><span class="ctrl-desc">Unlock Camera</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">E</span><span class="ctrl-desc">Interact with Screen</span></div>
+  </div>
+
+  <div id="map-panel">
+    <h3>Location</h3>
+    <canvas id="map-canvas"></canvas>
+  </div>
+
+  <div id="proximity-prompt">Press [ E ] to View Film</div>
+</div>
+
+<div id="overlay">
+  <div id="overlay-panel">
+    <button id="overlay-close">ESC / CLOSE</button>
+    <div id="overlay-brand">BRAND</div>
+    <h2 id="overlay-title">FILM TITLE</h2>
+    <div id="overlay-video-container">
+      <video id="overlay-video" controls controlsList="nodownload"></video>
+    </div>
+    <div id="overlay-desc">Film description and context goes here.</div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ---- Configuration & Data ----
+const VIDEOS = [
+  { id: 'nivea_1', brand: 'NIVEA', title: 'Disney Collaboration', file: 'nivea_disney.mp4', x: -8, z: -10, rot: 0 },
+  { id: 'nivea_2', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', file: 'nivea_fathers_day_caucasian.mp4', x: -4, z: -10, rot: 0 },
+  { id: 'nivea_3', brand: 'NIVEA', title: 'Father\'s Day (Thai)', file: 'nivea_fathers_day_thai.mp4', x: 0, z: -10, rot: 0 },
+  { id: 'nivea_4', brand: 'NIVEA MEN', title: 'Deep Tennis', file: 'nivea_men_deep_tennis.mp4', x: 4, z: -10, rot: 0 },
+  
+  { id: 'always_1', brand: 'ALWAYS', title: 'Get Unnoticed', file: 'always_get_unnoticed.mp4', x: -10, z: 0, rot: Math.PI/2 },
+  { id: 'always_2', brand: 'ALWAYS', title: 'Snap Poof Gone', file: 'always_snap_poof_gone.mp4', x: -10, z: 4, rot: Math.PI/2 },
+  
+  { id: 'kellogs', brand: 'KELLOGGS', title: 'Tresor', file: 'kellogs_tresor.mp4', x: 10, z: 0, rot: -Math.PI/2 },
+  { id: 'lloyds', brand: 'LLOYDS', title: 'DOOH', file: 'lloyds_dooh.mp4', x: 10, z: 4, rot: -Math.PI/2 },
+  
+  { id: 'twilio', brand: 'TWILIO', title: 'Clarity Builder Germany', file: 'twilio_clarity_builder_germany.mp4', x: -4, z: 10, rot: Math.PI },
+  { id: 'stereo', brand: 'STEREOCLIP', title: 'Music Video', file: 'stereoclip_music_video.mp4', x: 4, z: 10, rot: Math.PI }
+];
+
+// ---- Setup Scene ----
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x060810);
+scene.fog = new THREE.FogExp2(0x060810, 0.025);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+const camGroup = new THREE.Group();
+scene.add(camGroup);
+camGroup.add(camera);
+
+// ---- Lights ----
+const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambient);
+const hemiLight = new THREE.HemisphereLight(0x1a2b4c, 0x0a1018, 0.8);
+scene.add(hemiLight);
+
+// ---- Architecture & Textures ----
+const texLoader = new THREE.TextureLoader();
+const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp');
+const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
+const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
+
+[concreteBase, concreteNorm, concreteRough].forEach(tex => {
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(8, 8);
+});
+
+const wallMat = new THREE.MeshStandardMaterial({
+  map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
+  color: 0x333333, roughness: 0.9, metalness: 0.1
+});
+
+const floorMat = new THREE.MeshStandardMaterial({
+  map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
+  color: 0x222222, roughness: 0.7, metalness: 0.2
+});
+
+// Floor
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// Simple Walls
+function createWall(w, h, d, x, y, z) {
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+  wall.position.set(x, y, z);
+  wall.castShadow = true;
+  wall.receiveShadow = true;
+  scene.add(wall);
+}
+// Outer bounds
+createWall(60, 6, 1, 0, 3, -15); // Back
+createWall(60, 6, 1, 0, 3, 15);  // Front
+createWall(1, 6, 30, -15, 3, 0); // Left
+createWall(1, 6, 30, 15, 3, 0);  // Right
+
+// ---- Video Screens ----
+const screens = [];
+VIDEOS.forEach(v => {
+  // Screen mesh
+  const screenGeo = new THREE.PlaneGeometry(3.2, 1.8);
+  const screenMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+  
+  // Positioning offset slightly from the wall
+  const offset = 0.6;
+  let px = v.x, pz = v.z;
+  if(v.rot === 0) pz += offset;
+  if(v.rot === Math.PI) pz -= offset;
+  if(v.rot === Math.PI/2) px += offset;
+  if(v.rot === -Math.PI/2) px -= offset;
+
+  screenMesh.position.set(px, 2.2, pz);
+  screenMesh.rotation.y = v.rot;
+  scene.add(screenMesh);
+
+  // Spotlight above screen
+  const spot = new THREE.SpotLight(0xfff5e6, 2.5, 10, 0.6, 0.5, 1);
+  spot.position.set(px, 4.5, pz + (v.rot===0?1:(v.rot===Math.PI?-1:0)));
+  spot.target = screenMesh;
+  scene.add(spot);
+
+  screens.push({ mesh: screenMesh, data: v });
+});
+
+// ---- Character ----
+let character, mixer, idleAction, walkAction;
+const gltfLoader = new GLTFLoader();
+const loadFill = document.getElementById('load-fill');
+
+gltfLoader.load('clarity_builder.glb', 
+  (gltf) => {
+    character = gltf.scene;
+    character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    scene.add(character);
+    
+    if (gltf.animations && gltf.animations.length) {
+      mixer = new THREE.AnimationMixer(character);
+      const idle = gltf.animations.find(a => a.name.toLowerCase().includes('idle')) || gltf.animations[0];
+      const walk = gltf.animations.find(a => a.name.toLowerCase().includes('walk')) || gltf.animations[1];
+      if (idle) { idleAction = mixer.clipAction(idle); idleAction.play(); }
+      if (walk) walkAction = mixer.clipAction(walk);
+    }
+    document.getElementById('loading').style.opacity = '0';
+    setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
+  },
+  (xhr) => { loadFill.style.width = (xhr.loaded / xhr.total * 100) + '%'; },
+  (err) => { console.error('Error loading character:', err); }
+);
+
+// ---- Controls & Movement ----
+const keys = { w:false, a:false, s:false, d:false };
+let pointerLocked = false, isOverlayOpen = false;
+let walkYaw = Math.PI, walkPitch = -0.2;
+
+window.addEventListener('keydown', e => {
+  if(isOverlayOpen) {
+    if(e.key === 'Escape') closeOverlay();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if(keys.hasOwnProperty(k)) keys[k] = true;
+  if(e.key === 'e' || e.key === 'E') triggerInteraction();
+});
+
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if(keys.hasOwnProperty(k)) keys[k] = false;
+});
+
+renderer.domElement.addEventListener('click', () => {
+  if(!pointerLocked && !isOverlayOpen) renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = !!document.pointerLockElement;
+});
+
+document.addEventListener('mousemove', e => {
+  if(!pointerLocked || isOverlayOpen) return;
+  walkYaw -= e.movementX * 0.003;
+  walkPitch -= e.movementY * 0.003;
+  walkPitch = Math.max(-0.6, Math.min(0.5, walkPitch));
+});
+
+// ---- Interaction Logic ----
+let activeScreen = null;
+const promptEl = document.getElementById('proximity-prompt');
+
+function triggerInteraction() {
+  if(!activeScreen || isOverlayOpen) return;
+  isOverlayOpen = true;
+  document.exitPointerLock();
+  
+  const data = activeScreen.data;
+  document.getElementById('overlay-brand').textContent = data.brand;
+  document.getElementById('overlay-title').textContent = data.title;
+  document.getElementById('overlay-desc').textContent = `Now viewing the ${data.brand} film: ${data.title}. Use the controls on the video player to go fullscreen.`;
+  
+  const vid = document.getElementById('overlay-video');
+  vid.src = data.file;
+  
+  document.getElementById('overlay').classList.add('visible');
+}
+
+function closeOverlay() {
+  isOverlayOpen = false;
+  document.getElementById('overlay').classList.remove('visible');
+  document.getElementById('overlay-video').pause();
+}
+document.getElementById('overlay-close').addEventListener('click', closeOverlay);
+
+// ---- Map System ----
+const mapCtx = document.getElementById('map-canvas').getContext('2d');
+function drawMap() {
+  if(!character) return;
+  mapCtx.clearRect(0,0,160,160);
+  
+  // Draw rooms (simplified)
+  mapCtx.fillStyle = 'rgba(255,255,255,0.1)';
+  mapCtx.fillRect(10, 10, 140, 140);
+  
+  // Draw screens
+  mapCtx.fillStyle = 'rgba(232,197,71,0.6)';
+  screens.forEach(s => {
+    const mx = 80 + (s.data.x * 4);
+    const mz = 80 + (s.data.z * 4);
+    mapCtx.beginPath(); mapCtx.arc(mx, mz, 3, 0, Math.PI*2); mapCtx.fill();
+  });
+  
+  // Draw player
+  mapCtx.fillStyle = '#fff';
+  const px = 80 + (character.position.x * 4);
+  const pz = 80 + (character.position.z * 4);
+  mapCtx.beginPath(); mapCtx.arc(px, pz, 4, 0, Math.PI*2); mapCtx.fill();
+}
+
+// ---- Render Loop ----
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (character && !isOverlayOpen) {
+    // Movement
+    const moving = keys.w || keys.a || keys.s || keys.d;
+    if (mixer) {
+      const state = moving ? 'walk' : 'idle';
+      if (moving && walkAction && idleAction) { idleAction.weight = 0; walkAction.weight = 1; }
+      else if (!moving && walkAction && idleAction) { walkAction.weight = 0; idleAction.weight = 1; }
+      mixer.update(dt);
+    }
+
+    if (moving) {
+      const dir = new THREE.Vector3(-Math.sin(walkYaw), 0, -Math.cos(walkYaw)).normalize();
+      const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+      const move = new THREE.Vector3();
+      
+      if (keys.w) move.add(dir);
+      if (keys.s) move.sub(dir);
+      if (keys.d) move.add(right);
+      if (keys.a) move.sub(right);
+      
+      if (move.lengthSq() > 0) {
+        move.normalize();
+        character.position.addScaledVector(move, 4.0 * dt);
+        
+        // Simple bounds constraint
+        character.position.x = Math.max(-14, Math.min(14, character.position.x));
+        character.position.z = Math.max(-14, Math.min(14, character.position.z));
+        
+        character.rotation.y = THREE.MathUtils.lerp(character.rotation.y, Math.atan2(move.x, move.z), 0.15);
+      }
+    }
+
+    // Camera follow
+    const camDist = 5;
+    const camHeight = 2.2;
+    const cp = character.position;
+    const tPos = new THREE.Vector3(
+      cp.x + Math.sin(walkYaw) * Math.cos(walkPitch) * camDist,
+      cp.y - Math.sin(walkPitch) * camDist + camHeight,
+      cp.z + Math.cos(walkYaw) * Math.cos(walkPitch) * camDist
+    );
+    
+    camera.position.lerp(tPos, 0.15);
+    camera.lookAt(cp.x, cp.y + 1.4, cp.z);
+
+    // Proximity checking
+    let closest = null;
+    let minDist = 3.5;
+    screens.forEach(s => {
+      const d = character.position.distanceTo(s.mesh.position);
+      if(d < minDist) { minDist = d; closest = s; }
+    });
+
+    if(closest !== activeScreen) {
+      activeScreen = closest;
+      if(activeScreen) promptEl.classList.add('visible');
+      else promptEl.classList.remove('visible');
+    }
+    
+    drawMap();
+  }
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>
