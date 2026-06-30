@@ -276,12 +276,12 @@ let isReady = false;
 let audioUnlocked = false;
 
 // Decoupled Multi-spritesheet registry
-// Note: greg_walk contains 8 frames. tim_walk contains 7 frames.
+// Both greg_walk AND tim_walk contain exactly 8 frames (8 columns) in their respective sheets!
 const characters = {
   greg_idle: { img: new Image(), src: 'characters/greg_idle.png', ready: false, cols: 1 },
   greg_walk: { img: new Image(), src: 'characters/greg_walk.png', ready: false, cols: 8 },
   tim_idle: { img: new Image(), src: 'characters/tim_idle.png', ready: false, cols: 1 },
-  tim_walk: { img: new Image(), src: 'characters/tim_walk.png', ready: false, cols: 7 } // Corrected to 7 columns!
+  tim_walk: { img: new Image(), src: 'characters/tim_walk.png', ready: false, cols: 8 } // CORRECTED: Tim has exactly 8 frames
 };
 
 function onAssetLoaded() {
@@ -373,16 +373,21 @@ class Entity {
     if (!meta || !meta.ready) return;
 
     const img = meta.img;
+    
+    // Calculate precise frame width (fW) based on the corrected column count
     const fW = img.width / meta.cols;
     const fH = img.height;
 
-    // ELIMINATE ARTIFACT BLEEDING:
-    // Crop exactly 3px off the left and right boundaries of each frame source.
-    // Also, snap all frame calculations using Math.floor to prevent sampling errors.
-    const cropMargin = 3;
-    const sourceX = Math.floor((this.currentFrame * fW) + cropMargin);
+    // PREVENT SUBPIXEL SCALE BLEEDING:
+    // Crop exactly 6px safety margin on both left and right sides to completely
+    // eliminate shoe-tip pixel bleeding on both characters. 
+    // Snap all slicing bounds using Math.round to force perfect integer positioning.
+    const cropMargin = 6;
+    const frameStartX = Math.round(this.currentFrame * fW);
+    
+    const sourceX = frameStartX + cropMargin;
     const sourceY = 0;
-    const sourceW = Math.floor(fW - (cropMargin * 2));
+    const sourceW = Math.round(fW) - (cropMargin * 2);
     const sourceH = fH;
 
     const aspect = sourceW / sourceH;
