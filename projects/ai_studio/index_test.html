@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Virtual Art Gallery - Grand Exhibition</title>
+<link href="data:," rel="icon"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: #000; font-family: 'DM Mono', monospace; color: #fff; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  
+  /* ---- UI Overlays ---- */
+  #ui { position: fixed; inset: 0; pointer-events: none; }
+  
+  /* User Guide */
+  #guide-panel {
+    position: absolute; top: 20px; left: 20px;
+    background: rgba(4,6,10,0.85); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px); padding: 18px; width: 260px;
+  }
+  #guide-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; margin-bottom: 14px; color: rgba(232,197,71,0.8); font-weight: 400; }
+  .ctrl-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .ctrl-key { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); font-size: 9px; padding: 4px 8px; border-radius: 4px; white-space: nowrap; }
+  .ctrl-desc { color: rgba(255,255,255,0.6); font-size: 10px; letter-spacing: 0.1em; line-height: 1.4; }
+
+  /* Map */
+  #map-panel {
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(4,6,10,0.85); border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px); padding: 18px; text-align: center;
+  }
+  #map-panel h3 { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 14px; font-weight: 400; }
+  #map-canvas { border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.5); width: 160px; height: 160px; }
+
+  /* Proximity Prompt */
+  #proximity-prompt {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    color: rgba(232,197,71,0.9); font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase;
+    background: rgba(6,8,16,0.95); border: 1px solid rgba(232,197,71,0.4);
+    padding: 12px 24px; backdrop-filter: blur(12px); border-radius: 4px;
+    opacity: 0; transition: opacity 0.4s ease;
+  }
+  #proximity-prompt.visible { opacity: 1; }
+
+  /* Loading & Entry Screen */
+  #loading {
+    position: fixed; inset: 0; background: #030408; z-index: 300;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.8s ease; pointer-events: all;
+  }
+  #loading h1 { font-size: 14px; letter-spacing: 0.4em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-bottom: 20px; font-weight: 400; text-align: center; }
+  #load-bar { width: 240px; height: 1px; background: rgba(255,255,255,0.1); position: relative; margin-bottom: 30px; }
+  #load-fill { position: absolute; top: 0; left: 0; height: 100%; background: #e8c547; width: 0%; transition: width 0.3s; }
+  #enter-btn {
+    display: none; background: transparent; border: 1px solid rgba(232,197,71,0.5);
+    color: rgba(232,197,71,0.9); font-family: inherit; font-size: 11px; letter-spacing: 0.3em;
+    padding: 12px 32px; cursor: pointer; text-transform: uppercase; transition: all 0.3s;
+  }
+  #enter-btn:hover { background: rgba(232,197,71,0.1); border-color: #e8c547; color: #e8c547; }
+
+  /* Video Overlay (2-Column Layout) */
+  #overlay {
+    position: fixed; inset: 0; background: rgba(2,3,6,0.95); backdrop-filter: blur(14px);
+    z-index: 200; display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.5s ease;
+  }
+  #overlay.visible { opacity: 1; pointer-events: all; }
+  #overlay-panel {
+    width: 1100px; max-width: 95vw; max-height: 90vh; background: rgba(8,10,14,0.98);
+    border: 1px solid rgba(255,255,255,0.1); padding: 40px; display: flex; flex-direction: row; gap: 40px;
+    box-shadow: 0 40px 100px rgba(0,0,0,0.9); overflow-y: auto; position: relative; border-radius: 12px;
+  }
+  #overlay-close {
+    position: absolute; top: 20px; right: 20px; background: transparent; border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.6); font-family: inherit; font-size: 10px; letter-spacing: 0.2em; padding: 6px 12px; cursor: pointer; z-index: 10;
+  }
+  #overlay-close:hover { color: #fff; border-color: #fff; }
+  
+  #overlay-info {
+    flex: 1; display: flex; flex-direction: column; justify-content: center;
+  }
+  #overlay-brand { color: #e8c547; font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 12px; }
+  #overlay-title { font-size: 28px; font-weight: 400; margin-bottom: 24px; letter-spacing: 0.05em; line-height: 1.2; }
+  #overlay-desc { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
+  
+  #overlay-video-container { 
+    flex: 2; background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  }
+  #overlay-video { width: 100%; height: auto; max-height: 100%; object-fit: contain; }
+
+  @media (max-width: 900px) {
+    #overlay-panel { flex-direction: column; padding: 24px; gap: 24px; }
+    #overlay-info, #overlay-video-container { width: 100%; flex: auto; }
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="loading">
+  <h1 id="load-text">Waking the Gallery...</h1>
+  <div id="load-bar"><div id="load-fill"></div></div>
+  <button id="enter-btn">Enter Gallery</button>
+</div>
+
+<div id="ui">
+  <div id="guide-panel">
+    <h3>Gallery Guide</h3>
+    <div class="ctrl-row"><span class="ctrl-key">W A S D</span><span class="ctrl-desc">Walk</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">Mouse</span><span class="ctrl-desc">Look Around</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">Click</span><span class="ctrl-desc">Lock Camera</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">ESC</span><span class="ctrl-desc">Unlock Camera</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">E</span><span class="ctrl-desc">Interact</span></div>
+  </div>
+
+  <div id="map-panel">
+    <h3>Location</h3>
+    <canvas id="map-canvas" width="160" height="160"></canvas>
+  </div>
+
+  <div id="proximity-prompt">Press [ E ] to Interact</div>
+</div>
+
+<div id="overlay">
+  <div id="overlay-panel">
+    <button id="overlay-close">ESC / CLOSE</button>
+    <div id="overlay-info">
+      <div id="overlay-brand">BRAND</div>
+      <h2 id="overlay-title">FILM TITLE</h2>
+      <div id="overlay-desc">Film description and context goes here.</div>
+    </div>
+    <div id="overlay-video-container">
+      <video id="overlay-video" controls controlsList="nodownload"></video>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+// Wait for fonts to be ready so all Canvas textures render cleanly with DM Mono
+await document.fonts.ready;
+
+function lerpAngle(start, end, amt) {
+  let delta = end - start;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  return start + delta * amt;
+}
+
+// ---- SPATIAL LAYOUT, FILMS & CONTENT ----
+const VIDEOS = [
+  // L1: NIVEA (Large Room: Z 0 to 30)
+  { id: 'nivea_1', room: 'L1', brand: 'NIVEA', title: 'Disney Collaboration', desc: 'A magical journey exploring the intersection of skincare and timeless storytelling.\n\nCreated in collaboration with Disney.', file: 'nivea_disney.mp4', x: -15.5, z: 0, rot: 0 },
+  { id: 'nivea_5', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Cheetah', desc: 'Unleash your inner speed and precision.\n\nExperience the power of the Deep Cheetah campaign.', file: 'nivea_men_deep_cheetah.mp4', x: -25, z: 8, rot: Math.PI/2 },
+  { id: 'nivea_4', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Tennis', desc: 'Stay fresh under pressure.\n\nHigh-performance care for high-intensity moments.', file: 'nivea_men_deep_tennis.mp4', x: -25, z: 21, rot: Math.PI/2 },
+  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -9, z: 29.5, rot: Math.PI },
+  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -19, z: 29.5, rot: Math.PI },
+  
+  // R1: ALWAYS (Medium Room: Z 0 to 20)
+  { id: 'always_1', room: 'R1', brand: 'ALWAYS', title: 'Get Unnoticed', desc: 'Confidence that lets you focus on what matters.\n\nAn empowering narrative for everyday heroes.', file: 'always_get_unnoticed.mp4', x: 15.5, z: 0, rot: 0 },
+  { id: 'always_2', room: 'R1', brand: 'ALWAYS', title: 'Snap Poof Gone', desc: 'Fast, effective, and invisible.\n\nDiscover the freedom of total protection.', file: 'always_snap_poof_gone.mp4', x: 25, z: 10, rot: -Math.PI/2 },
+  
+  // R2: KELLOGGS (Small Room: Z 20 to 40) - Scaled Up
+  { id: 'kellogs', room: 'R2', brand: 'KELLOGGS', title: 'Tresor', desc: 'Unleash the ultimate chocolatey experience.\n\nA thrilling ride for the tastebuds.', file: 'kellogs_tresor.mp4', x: 25, z: 30, rot: -Math.PI/2, scale: 1.4 },
+  
+  // L2: LLOYDS (Small Room: Z 30 to 45) - Scaled Up
+  { id: 'lloyds', room: 'L2', brand: 'LLOYDS', title: 'DOOH', desc: 'Modern banking for a dynamic world.\n\nDigital Out Of Home campaign highlights.', file: 'lloyds_dooh.mp4', x: -25, z: 37.5, rot: Math.PI/2, scale: 1.4 },
+  
+  // R3: TWILIO (Small Room: Z 40 to 60) - Scaled Up
+  { id: 'twilio', room: 'R3', brand: 'TWILIO', title: 'Clarity Builder Germany', desc: 'Empowering developers to build clearer connections.\n\nA showcase of Twilio’s impact in Germany.', file: 'twilio_clarity_builder_germany.mp4', x: 25, z: 50, rot: -Math.PI/2, scale: 1.4 },
+  
+  // L3: ARTISTIC MADNESS (Small Room: Z 45 to 60) - 2.39 Aspect Ratio & Scaled Up
+  { id: 'stereo', room: 'L3', brand: 'ARTISTIC MADNESS', title: 'Music Video', desc: 'Immersive soundscapes meet stunning visuals.\n\nAn exclusive music video premiere.', file: 'stereoclip_music_video.mp4', x: -25, z: 52.5, rot: Math.PI/2, scale: 1.6, aspect: 2.39 }
+];
+
+// Room architecture customized per volume of films
+const WALLS = [
+  // Outer Boundaries & Entrances
+  {x: 0, z: -15, w: 52, d: 1}, 
+  {x: -15.5, z: -0.5, w: 21, d: 1}, 
+  {x: 15.5, z: -0.5, w: 21, d: 1},  
+  {x: 0, z: 60.5, w: 52, d: 1}, // Tighter Gallery End
+
+  // Elongated Side Boundaries
+  {x: -25.5, z: 30, w: 1, d: 61}, 
+  {x: 25.5, z: 30, w: 1, d: 61},  
+
+  // Left Partitions (Asymmetrical Depth)
+  {x: -15.5, z: 30, w: 20, d: 1}, // End of NIVEA
+  {x: -15.5, z: 45, w: 20, d: 1}, // End of LLOYDS
+
+  // Right Partitions (Asymmetrical Depth)
+  {x: 15.5, z: 20, w: 20, d: 1}, // End of ALWAYS
+  {x: 15.5, z: 40, w: 20, d: 1}, // End of KELLOGGS
+
+  // Corridor Left Wall (Ensure minimum 6m solid blocks for Signage)
+  {x: -5.5, z: 3, w: 1, d: 6},   // NIVEA Wall Block
+  {x: -5.5, z: 27, w: 1, d: 6},  // NIVEA End Block
+  {x: -5.5, z: 33, w: 1, d: 6},  // LLOYDS Wall Block
+  {x: -5.5, z: 48, w: 1, d: 6},  // ARTISTIC MADNESS Wall Block
+  {x: -5.5, z: 58, w: 1, d: 4},  // Gallery End Block
+
+  // Corridor Right Wall (Ensure minimum 6m solid blocks for Signage)
+  {x: 5.5, z: 3, w: 1, d: 6},    // ALWAYS Wall Block
+  {x: 5.5, z: 17, w: 1, d: 6},   // ALWAYS End Block
+  {x: 5.5, z: 23, w: 1, d: 6},   // KELLOGGS Wall Block
+  {x: 5.5, z: 37, w: 1, d: 6},   // KELLOGGS End Block
+  {x: 5.5, z: 43, w: 1, d: 6},   // TWILIO Wall Block
+  {x: 5.5, z: 57, w: 1, d: 6},   // Gallery End Block
+];
+
+function getRoom(x, z) {
+  if (z < 0) return 'ENTRANCE';
+  if (x > -5 && x < 5) return 'CORRIDOR';
+  if (x <= -5) {
+    if (z < 30) return 'L1';
+    if (z < 45) return 'L2';
+    return 'L3';
+  } else {
+    if (z < 20) return 'R1';
+    if (z < 40) return 'R2';
+    return 'R3';
+  }
+}
+
+// ---- Canvas Text Generation Helpers ----
+function wrapText(context, text, x, y, maxWidth, lineHeight) {
+  const paragraphs = text.split('\n');
+  let currentY = y;
+  for(let p = 0; p < paragraphs.length; p++) {
+      const words = paragraphs[p].split(' ');
+      let line = '';
+      for (let n = 0; n < words.length; n++) {
+          const testLine = line + words[n] + ' ';
+          const metrics = context.measureText(testLine);
+          if (metrics.width > maxWidth && n > 0) {
+              context.fillText(line, x, currentY);
+              line = words[n] + ' ';
+              currentY += lineHeight;
+          } else {
+              line = testLine;
+          }
+      }
+      context.fillText(line, x, currentY);
+      currentY += lineHeight;
+  }
+}
+
+function createRoomTitleTexture(title) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2048; canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,2048,512);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  
+  // Fixed font size so all titles match the scale of the longest one ("ARTISTIC MADNESS")
+  const fontSize = 110; 
+  ctx.font = `400 ${fontSize}px 'DM Mono', monospace`;
+  
+  if ('letterSpacing' in ctx) {
+    ctx.letterSpacing = '20px';
+    ctx.fillText(title.toUpperCase(), 1024, 256);
+  } else {
+    ctx.fillText(title.toUpperCase().split('').join(' '), 1024, 256);
+  }
+  
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createGalleryLabelTexture(brand, title, desc) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 1024;
+  const ctx = canvas.getContext('2d');
+  
+  ctx.fillStyle = 'rgba(12, 12, 12, 0.7)';
+  ctx.fillRect(0, 0, 1024, 1024);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 1020, 1020);
+
+  ctx.fillStyle = '#e8c547';
+  ctx.font = `500 32px 'DM Mono', monospace`;
+  ctx.fillText(brand.toUpperCase(), 80, 80);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `400 56px 'DM Mono', monospace`;
+  wrapText(ctx, title, 80, 160, 860, 68);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = `300 28px 'DM Mono', monospace`;
+  wrapText(ctx, desc, 80, 360, 860, 42);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// ---- Preloader State ----
+let loadedAssets = 0;
+const totalAssets = VIDEOS.length + 2; 
+let audioUnlocked = false;
+let isReady = false;
+
+function registerAssetLoaded() {
+  if (isReady) return; 
+  loadedAssets++;
+  const progress = (loadedAssets / totalAssets) * 100;
+  document.getElementById('load-fill').style.width = Math.min(progress, 100) + '%';
+  
+  if (loadedAssets >= totalAssets) {
+    isReady = true;
+    document.getElementById('load-text').textContent = 'Gallery Ready.';
+    const btn = document.getElementById('enter-btn');
+    btn.style.display = 'block';
+    
+    btn.addEventListener('click', () => {
+      audioUnlocked = true;
+      screens.forEach(s => {
+        s.video.play().catch(e => console.warn('Autoplay blocked:', e));
+      });
+      document.getElementById('loading').style.opacity = '0';
+      setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
+      
+      setTimeout(() => {
+        if (timState === 'intro_wait') timState = 'walking';
+      }, 2000);
+    });
+  }
+}
+
+setTimeout(() => {
+  if(!isReady) {
+    console.warn("Forcing load completion due to timeout.");
+    loadedAssets = totalAssets;
+    registerAssetLoaded();
+  }
+}, 10000);
+
+// ---- Setup Scene ----
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0; 
+const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.FogExp2(0x000000, 0.012);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150);
+
+const ambient = new THREE.AmbientLight(0xffffff, 1.0); 
+scene.add(ambient);
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 1.0); 
+scene.add(hemiLight);
+
+const texLoader = new THREE.TextureLoader();
+const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp', undefined, undefined, () => console.warn('Base texture missing'));
+const concreteNorm = texLoader.load('concrete_texture/concrete_normal.webp');
+const concreteRough = texLoader.load('concrete_texture/concrete_roughness.webp');
+
+concreteBase.colorSpace = THREE.SRGBColorSpace;
+
+[concreteBase, concreteNorm, concreteRough].forEach(tex => {
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(20, 20); 
+  tex.anisotropy = maxAnisotropy; 
+});
+
+const wallMat = new THREE.MeshStandardMaterial({
+  map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
+  color: 0x999999, roughness: 0.8, metalness: 0.1
+});
+
+const floorMat = new THREE.MeshStandardMaterial({
+  map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
+  color: 0x666666, roughness: 0.6, metalness: 0.15 
+});
+
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), floorMat);
+floor.position.set(0, 0, 30); 
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+const WALL_HEIGHT = 8.0;
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), wallMat);
+ceiling.position.set(0, WALL_HEIGHT, 30);
+ceiling.rotation.x = Math.PI / 2;
+scene.add(ceiling);
+
+WALLS.forEach(w => {
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(w.w, WALL_HEIGHT, w.d), wallMat);
+  wall.position.set(w.x, WALL_HEIGHT/2, w.z);
+  wall.castShadow = true;
+  wall.receiveShadow = true;
+  scene.add(wall);
+});
+
+// ---- Add Room Signage (Perfectly Aligned to Corridor Walls) ----
+const roomTitles = [
+  { text: 'NIVEA', x: -4.9, z: 3, rot: Math.PI/2 },
+  { text: 'LLOYDS', x: -4.9, z: 33, rot: Math.PI/2 },
+  { text: 'ARTISTIC MADNESS', x: -4.9, z: 48, rot: Math.PI/2 },
+  { text: 'ALWAYS', x: 4.9, z: 3, rot: -Math.PI/2 },
+  { text: 'KELLOGGS', x: 4.9, z: 23, rot: -Math.PI/2 },
+  { text: 'TWILIO', x: 4.9, z: 43, rot: -Math.PI/2 }
+];
+
+roomTitles.forEach(rt => {
+  const tex = createRoomTitleTexture(rt.text);
+  tex.anisotropy = maxAnisotropy;
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(5, 1.25), 
+    new THREE.MeshBasicMaterial({map: tex, transparent: true, alphaTest: 0.05})
+  );
+  plane.position.set(rt.x, 6, rt.z);
+  plane.rotation.y = rt.rot;
+  scene.add(plane);
+});
+
+// ---- Entrance System: Sliding Doors & Buttons ----
+let doorState = 'closed';
+
+const doorMat = new THREE.MeshStandardMaterial({color: 0x333333, metalness: 0.8, roughness: 0.2});
+const doorL = new THREE.Mesh(new THREE.BoxGeometry(5.5, WALL_HEIGHT, 0.8), doorMat);
+const doorR = new THREE.Mesh(new THREE.BoxGeometry(5.5, WALL_HEIGHT, 0.8), doorMat);
+doorL.position.set(-2.75, WALL_HEIGHT/2, -0.5);
+doorR.position.set(2.75, WALL_HEIGHT/2, -0.5);
+doorL.castShadow = true; doorL.receiveShadow = true;
+doorR.castShadow = true; doorR.receiveShadow = true;
+scene.add(doorL, doorR);
+
+const panelMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(0.4, 1.2, 0.4), 
+  new THREE.MeshStandardMaterial({color: 0x222222, metalness: 0.9, roughness: 0.2})
+);
+panelMesh.position.set(4.5, 0.6, -2);
+panelMesh.castShadow = true;
+scene.add(panelMesh);
+
+const buttonMat = new THREE.MeshStandardMaterial({color: 0xcc0000, emissive: 0x550000});
+const buttonMesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.2), buttonMat);
+buttonMesh.position.set(4.5, 1.0, -2.2); 
+scene.add(buttonMesh);
+
+const btnLight = new THREE.PointLight(0xff0000, 0.5, 3);
+btnLight.position.set(4.5, 1.0, -2.4);
+scene.add(btnLight);
+
+// Room Lights configured to the newly scaled map
+const roomCenters = [
+  {x: 0, z: -8}, {x: -15.5, z: 15}, {x: 15.5, z: 10}, 
+  {x: 15.5, z: 30}, {x: -15.5, z: 37.5}, {x: 15.5, z: 50}, 
+  {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}
+];
+roomCenters.forEach(pos => {
+  const light = new THREE.PointLight(0xfff5e6, 1.2, 35);
+  light.position.set(pos.x, 6.0, pos.z);
+  scene.add(light);
+});
+
+// ---- Video Screens, Aspect Ratios & Frames ----
+const screens = [];
+VIDEOS.forEach(v => {
+  const vidEl = document.createElement('video');
+  vidEl.src = v.file;
+  vidEl.crossOrigin = 'anonymous';
+  vidEl.loop = true;
+  vidEl.playsInline = true;
+  vidEl.muted = false; 
+  vidEl.volume = 0; 
+  vidEl.preload = 'auto';
+  
+  let isVideoRegistered = false;
+  const loadHandler = () => {
+    if(!isVideoRegistered) {
+      isVideoRegistered = true;
+      registerAssetLoaded();
+    }
+  };
+  vidEl.addEventListener('loadedmetadata', loadHandler);
+  vidEl.addEventListener('error', loadHandler);
+
+  const videoTex = new THREE.VideoTexture(vidEl);
+  videoTex.colorSpace = THREE.SRGBColorSpace;
+  videoTex.anisotropy = maxAnisotropy;
+  
+  const vScale = v.scale || 1.0;
+  const vAspect = v.aspect || 1.7777; // Default to 16:9
+  const width = 6.4 * vScale;
+  const height = (6.4 / vAspect) * vScale;
+
+  const screenGeo = new THREE.PlaneGeometry(width, height);
+  const screenMat = new THREE.MeshBasicMaterial({ color: 0xffffff, map: videoTex, toneMapped: false });
+  
+  const frameDepth = 0.12;
+  const frameGeo = new THREE.BoxGeometry(width + 0.2, height + 0.2, frameDepth);
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7, metalness: 0.6 });
+
+  const group = new THREE.Group();
+  const frameMesh = new THREE.Mesh(frameGeo, frameMat);
+  frameMesh.position.set(0, 0, frameDepth / 2); 
+  frameMesh.castShadow = true;
+  group.add(frameMesh);
+
+  const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+  screenMesh.position.set(0, 0, frameDepth + 0.005); 
+  group.add(screenMesh);
+
+  const labelTex = createGalleryLabelTexture(v.brand, v.title, v.desc);
+  labelTex.anisotropy = maxAnisotropy;
+  const labelGeo = new THREE.PlaneGeometry(2.4, 2.4); 
+  const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.05 });
+  const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+  
+  labelMesh.position.set((width / 2) + 1.6, 0, frameDepth + 0.01); 
+  group.add(labelMesh);
+
+  const offset = 0.02;
+  let px = v.x, pz = v.z;
+  if(v.rot === 0) pz += offset;
+  if(v.rot === Math.PI) pz -= offset;
+  if(v.rot === Math.PI/2) px += offset;
+  if(v.rot === -Math.PI/2) px -= offset;
+
+  group.position.set(px, 3.5, pz);
+  group.rotation.y = v.rot;
+  scene.add(group);
+
+  const normal = new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), v.rot);
+  
+  const glowLight = new THREE.PointLight(0xfff0dd, 0.8, 12, 2);
+  glowLight.position.set(v.x + normal.x * 2.0, 3.5, v.z + normal.z * 2.0);
+  scene.add(glowLight);
+
+  const spot = new THREE.SpotLight(0xffeedd, 15.0, 20, Math.PI/5, 0.6, 1.5);
+  spot.position.set(v.x + normal.x * 3.0, 7.5, v.z + normal.z * 3.0);
+  spot.target = group;
+  spot.castShadow = true;
+  spot.shadow.mapSize.width = 1024;
+  spot.shadow.mapSize.height = 1024;
+  spot.shadow.bias = -0.001; 
+  scene.add(spot);
+
+  screens.push({ mesh: group, data: v, video: vidEl, normal: normal });
+});
+
+// ---- Character Loaders (Greg & Tim) ----
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(dracoLoader);
+
+let character, mixer, idleAction, walkAction;
+let currentWeight = 0; 
+gltfLoader.load('greg.glb', (gltf) => {
+  character = gltf.scene;
+  character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+  
+  character.position.set(0, 0, -10);
+  character.rotation.y = Math.PI; 
+  scene.add(character);
+  
+  if (gltf.animations && gltf.animations.length) {
+    mixer = new THREE.AnimationMixer(character);
+    const idle = gltf.animations.find(a => a.name.toLowerCase().includes('idle')) || gltf.animations[0];
+    const walk = gltf.animations.find(a => a.name.toLowerCase().includes('walk')) || gltf.animations[1];
+    
+    if (idle) {
+      idleAction = mixer.clipAction(idle);
+      idleAction.play();
+      idleAction.setEffectiveWeight(1);
+    }
+    if (walk) {
+      walkAction = mixer.clipAction(walk);
+      walkAction.play();
+      walkAction.setEffectiveWeight(0);
+    }
+  }
+  registerAssetLoaded();
+}, undefined, (err) => { console.error('Error loading greg:', err); registerAssetLoaded(); });
+
+let tim, timMixer, timIdleAction, timWalkAction;
+let timCurrentWeight = 0;
+let timState = 'intro_wait'; 
+let currentWaypoint = 0;
+let waitTimer = 0;
+
+const timWaypoints = [
+  {x: 3.5, z: -2.5, wait: 1.5, action: 'open_door'},
+  {x: 0, z: 5, wait: 0},
+  {x: -10, z: 15, wait: 5}, 
+  {x: 0, z: 15, wait: 0},
+  {x: 0, z: 30, wait: 0},
+  {x: 10, z: 30, wait: 5}, 
+  {x: 0, z: 30, wait: 0},
+  {x: 0, z: 52, wait: 0},
+  {x: -15, z: 52, wait: 5} 
+];
+
+gltfLoader.load('tim.glb', (gltf) => {
+  tim = gltf.scene;
+  tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+  
+  tim.position.set(-1.5, 0, -6);
+  tim.rotation.y = Math.PI; 
+  scene.add(tim);
+  
+  if (gltf.animations && gltf.animations.length) {
+    timMixer = new THREE.AnimationMixer(tim);
+    const idle = gltf.animations.find(a => a.name.toLowerCase().includes('idle')) || gltf.animations[0];
+    const walk = gltf.animations.find(a => a.name.toLowerCase().includes('walk')) || gltf.animations[1];
+    
+    if (idle) {
+      timIdleAction = timMixer.clipAction(idle);
+      timIdleAction.play();
+      timIdleAction.setEffectiveWeight(1);
+    }
+    if (walk) {
+      timWalkAction = timMixer.clipAction(walk);
+      timWalkAction.play();
+      timWalkAction.setEffectiveWeight(0);
+    }
+  }
+  registerAssetLoaded();
+}, undefined, (err) => { console.error('Error loading tim:', err); registerAssetLoaded(); });
+
+// ---- Controls & Movement ----
+const keys = { w:false, a:false, s:false, d:false, arrowup:false, arrowdown:false, arrowleft:false, arrowright:false };
+let pointerLocked = false, isOverlayOpen = false;
+let walkYaw = Math.PI, walkPitch = -0.1; 
+
+window.addEventListener('keydown', e => {
+  if(isOverlayOpen) {
+    if(e.key === 'Escape') closeOverlay();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if(keys.hasOwnProperty(k)) keys[k] = true;
+  if(e.key === 'e') triggerInteraction();
+});
+
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if(keys.hasOwnProperty(k)) keys[k] = false;
+});
+
+renderer.domElement.addEventListener('click', () => {
+  if(!pointerLocked && !isOverlayOpen && audioUnlocked) {
+    renderer.domElement.requestPointerLock();
+  }
+});
+
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = !!document.pointerLockElement;
+});
+
+document.addEventListener('mousemove', e => {
+  if(!pointerLocked || isOverlayOpen) return;
+  walkYaw -= e.movementX * 0.003;
+  walkPitch -= e.movementY * 0.003;
+  walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
+});
+
+// ---- Interaction Logic ----
+let activeInteractable = null; 
+let activeScreen = null;
+const promptEl = document.getElementById('proximity-prompt');
+const overlayVid = document.getElementById('overlay-video');
+
+function triggerInteraction() {
+  if(isOverlayOpen) return;
+  
+  if (activeInteractable === 'door') {
+    doorState = 'opening';
+    promptEl.classList.remove('visible');
+    activeInteractable = null;
+    
+    buttonMat.color.setHex(0x00cc00);
+    buttonMat.emissive.setHex(0x005500);
+    btnLight.color.setHex(0x00ff00);
+
+  } else if (activeInteractable === 'video' && activeScreen) {
+    isOverlayOpen = true;
+    document.exitPointerLock();
+    
+    const data = activeScreen.data;
+    document.getElementById('overlay-brand').textContent = data.brand;
+    document.getElementById('overlay-title').textContent = data.title;
+    document.getElementById('overlay-desc').textContent = data.desc;
+    
+    screens.forEach(s => s.video.volume = 0);
+    
+    overlayVid.src = data.file;
+    overlayVid.volume = 1;
+    overlayVid.play(); 
+    
+    document.getElementById('overlay').classList.add('visible');
+  }
+}
+
+function closeOverlay() {
+  isOverlayOpen = false;
+  document.getElementById('overlay').classList.remove('visible');
+  overlayVid.pause();
+  overlayVid.src = ""; 
+}
+document.getElementById('overlay-close').addEventListener('click', closeOverlay);
+
+// ---- Map System (INVERTED/NATURAL ALIGNMENT) ----
+const mapCtx = document.getElementById('map-canvas').getContext('2d');
+function drawMap() {
+  if(!character) return;
+  
+  const cw = 160, ch = 160;
+  mapCtx.clearRect(0, 0, cw, ch);
+  
+  const scale = 1.6; 
+  const offsetX = cw / 2;
+  const offsetY = ch - 20; 
+
+  mapCtx.fillStyle = 'rgba(255,255,255,0.2)';
+  WALLS.forEach(w => {
+    const cx = offsetX + w.x * scale;
+    const cy = offsetY - w.z * scale; 
+    mapCtx.fillRect(cx - (w.w*scale)/2, cy - (w.d*scale)/2, w.w*scale, w.d*scale);
+  });
+  
+  mapCtx.fillStyle = doorState === 'open' ? 'rgba(0,255,0,0.5)' : 'rgba(255,100,100,0.8)';
+  mapCtx.fillRect(offsetX + (doorL.position.x - 2.75) * scale, offsetY - (doorL.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
+  mapCtx.fillRect(offsetX + (doorR.position.x - 2.75) * scale, offsetY - (doorR.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
+
+  mapCtx.fillStyle = 'rgba(232,197,71,0.8)';
+  screens.forEach(s => {
+    const mx = offsetX + s.data.x * scale;
+    const mz = offsetY - s.data.z * scale;
+    mapCtx.beginPath(); mapCtx.arc(mx, mz, 2.5, 0, Math.PI*2); mapCtx.fill();
+  });
+  
+  mapCtx.fillStyle = '#fff';
+  const px = offsetX + character.position.x * scale;
+  const pz = offsetY - character.position.z * scale;
+  mapCtx.beginPath(); mapCtx.arc(px, pz, 3.5, 0, Math.PI*2); mapCtx.fill();
+
+  if (tim) {
+    mapCtx.fillStyle = '#ff6666';
+    const tx = offsetX + tim.position.x * scale;
+    const tz = offsetY - tim.position.z * scale;
+    mapCtx.beginPath(); mapCtx.arc(tx, tz, 2.5, 0, Math.PI*2); mapCtx.fill();
+  }
+}
+
+// ---- Collision System ----
+function checkCollision(pos, radius) {
+  for(let i=0; i<WALLS.length; i++) {
+    const w = WALLS[i];
+    const hw = w.w / 2;
+    const hd = w.d / 2;
+    if (pos.x + radius > w.x - hw && pos.x - radius < w.x + hw &&
+        pos.z + radius > w.z - hd && pos.z - radius < w.z + hd) {
+      return true;
+    }
+  }
+
+  if (doorState !== 'open') {
+    let hw = 5.5 / 2; let hd = 0.8 / 2;
+    let dxL = doorL.position.x; let dzL = doorL.position.z;
+    if (pos.x + radius > dxL - hw && pos.x - radius < dxL + hw && pos.z + radius > dzL - hd && pos.z - radius < dzL + hd) return true;
+    
+    let dxR = doorR.position.x; let dzR = doorR.position.z;
+    if (pos.x + radius > dxR - hw && pos.x - radius < dxR + hw && pos.z + radius > dzR - hd && pos.z - radius < dzR + hd) return true;
+  }
+
+  if (tim) {
+    const distToTim = Math.hypot(pos.x - tim.position.x, pos.z - tim.position.z);
+    if (distToTim < radius + 0.3) return true; 
+  }
+
+  return false;
+}
+
+// ---- Line of Sight Check ----
+function checkLineOfSight(p1, p2) {
+  const steps = 20;
+  for(let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const px = p1.x + (p2.x - p1.x) * t;
+    const pz = p1.z + (p2.z - p1.z) * t;
+    
+    if (checkCollision({x: px, z: pz}, 0.05)) {
+      return false; 
+    }
+  }
+  return true;
+}
+
+// ---- Render Loop ----
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (mixer) mixer.update(dt);
+  if (timMixer) {
+    const isTimMoving = (timState === 'walking');
+    timCurrentWeight = THREE.MathUtils.lerp(timCurrentWeight, isTimMoving ? 1 : 0, 0.15);
+    if(timIdleAction) timIdleAction.setEffectiveWeight(1 - timCurrentWeight);
+    if(timWalkAction) timWalkAction.setEffectiveWeight(timCurrentWeight);
+    timMixer.update(dt);
+  }
+
+  if (doorState === 'opening') {
+    doorL.position.x -= 3 * dt;
+    doorR.position.x += 3 * dt;
+    if (doorL.position.x <= -8.25) { 
+      doorState = 'open';
+    }
+  }
+
+  if (timState === 'walking') {
+    const target = timWaypoints[currentWaypoint];
+    const dx = target.x - tim.position.x;
+    const dz = target.z - tim.position.z;
+    const dist = Math.hypot(dx, dz);
+    
+    if (dist < 0.2) {
+      if (target.action === 'open_door' && doorState === 'closed') {
+        doorState = 'opening';
+        buttonMat.color.setHex(0x00cc00);
+        buttonMat.emissive.setHex(0x005500);
+        btnLight.color.setHex(0x00ff00);
+      }
+      
+      if (target.wait > 0) {
+        timState = 'waiting';
+        waitTimer = target.wait;
+      } else {
+        currentWaypoint++;
+        if (currentWaypoint >= timWaypoints.length) timState = 'idle';
+      }
+    } else {
+      const moveSpeed = 2.5;
+      tim.position.x += (dx / dist) * moveSpeed * dt;
+      tim.position.z += (dz / dist) * moveSpeed * dt;
+      
+      const targetRot = Math.atan2(dx, dz);
+      tim.rotation.y = lerpAngle(tim.rotation.y, targetRot, 0.1);
+    }
+  } else if (timState === 'waiting') {
+    waitTimer -= dt;
+    if (waitTimer <= 0) {
+      currentWaypoint++;
+      if (currentWaypoint >= timWaypoints.length) timState = 'idle';
+      else timState = 'walking';
+    }
+  }
+
+  if (character && audioUnlocked && !isOverlayOpen) {
+    const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
+    
+    currentWeight = THREE.MathUtils.lerp(currentWeight, moving ? 1 : 0, 0.15);
+    if(idleAction) idleAction.setEffectiveWeight(1 - currentWeight);
+    if(walkAction) walkAction.setEffectiveWeight(currentWeight);
+
+    let targetRot = Math.atan2(-Math.sin(walkYaw), -Math.cos(walkYaw));
+
+    if (moving) {
+      const dir = new THREE.Vector3(-Math.sin(walkYaw), 0, -Math.cos(walkYaw)).normalize();
+      const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+      const move = new THREE.Vector3();
+      
+      if (keys.w || keys.arrowup) move.add(dir);
+      if (keys.s || keys.arrowdown) move.sub(dir);
+      if (keys.d || keys.arrowright) move.add(right);
+      if (keys.a || keys.arrowleft) move.sub(right);
+      
+      if (move.lengthSq() > 0) {
+        move.normalize();
+        const speed = 4.5 * dt;
+        
+        targetRot = Math.atan2(move.x, move.z);
+
+        const nextX = character.position.x + move.x * speed;
+        const nextZ = character.position.z + move.z * speed;
+        const radius = 0.5; 
+
+        if (!checkCollision({x: nextX, z: character.position.z}, radius)) {
+          character.position.x = nextX;
+        }
+        if (!checkCollision({x: character.position.x, z: nextZ}, radius)) {
+          character.position.z = nextZ;
+        }
+      }
+    }
+    
+    character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
+
+    const camDist = 5.0;
+    const camHeight = 2.0;
+    const cp = character.position;
+    const tPos = new THREE.Vector3(
+      cp.x + Math.sin(walkYaw) * Math.cos(walkPitch) * camDist,
+      cp.y - Math.sin(walkPitch) * camDist + camHeight,
+      cp.z + Math.cos(walkYaw) * Math.cos(walkPitch) * camDist
+    );
+    
+    if(checkCollision({x: tPos.x, z: tPos.z}, 0.2)) {
+      tPos.lerp(cp, 0.6); 
+    }
+    
+    camera.position.lerp(tPos, 0.25); 
+    camera.lookAt(cp.x, cp.y + 1.4, cp.z);
+
+    // ---- Proximity, Visibility & Spatial Audio ----
+    let distToPanel = camera.position.distanceTo(panelMesh.position);
+    let showPanelPrompt = (distToPanel < 3.5 && doorState === 'closed');
+    
+    let bestScore = -Infinity;
+    let closestScreen = null;
+    
+    const MAX_AUDIO_DIST = 14.0; 
+    const MIN_AUDIO_DIST = 4.0; 
+    
+    const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+
+    screens.forEach(s => {
+      const dist = camera.position.distanceTo(s.mesh.position);
+      const dirToScreen = s.mesh.position.clone().sub(camera.position).normalize();
+      const camGazeDot = camForward.dot(dirToScreen); 
+      
+      const dirToCam = camera.position.clone().sub(s.mesh.position).normalize();
+      const isFacingFront = s.normal.dot(dirToCam) > 0.15; 
+      
+      const hasLOS = checkLineOfSight(camera.position, s.mesh.position);
+      
+      if (s.video.paused) s.video.play().catch(()=>{});
+
+      if (isFacingFront && hasLOS && dist < MAX_AUDIO_DIST) {
+        let distVol = 1.0 - ((dist - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
+        distVol = Math.max(0, Math.min(1, distVol));
+        let gazeVol = Math.max(0.15, (camGazeDot + 0.5) / 1.5); 
+        s.video.volume = distVol * gazeVol;
+      } else {
+        s.video.volume = 0; 
+      }
+
+      if (isFacingFront && hasLOS && dist < 10 && camGazeDot > 0.75) {
+        const score = (camGazeDot * 20) - dist; 
+        if (score > bestScore) {
+          bestScore = score;
+          closestScreen = s;
+        }
+      }
+    });
+
+    if (showPanelPrompt) {
+      activeInteractable = 'door';
+      promptEl.textContent = "Press [ E ] to Open Door";
+      promptEl.classList.add('visible');
+      activeScreen = null;
+    } else {
+      activeInteractable = closestScreen ? 'video' : null;
+      activeScreen = closestScreen;
+      
+      if(activeInteractable === 'video') {
+        promptEl.textContent = `Press [ E ] to view ${activeScreen.data.title}`;
+        promptEl.classList.add('visible');
+      } else {
+        promptEl.classList.remove('visible');
+      }
+    }
+    
+    drawMap();
+  }
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
+</script>
+</body>
+</html>
