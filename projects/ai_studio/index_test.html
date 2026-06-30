@@ -60,6 +60,30 @@
   }
   #enter-btn:hover { background: rgba(232,197,71,0.1); border-color: #e8c547; color: #e8c547; }
 
+  /* Confirmation Overlay */
+  #confirm-overlay {
+    position: fixed; inset: 0; background: rgba(2,3,6,0.95); backdrop-filter: blur(14px);
+    z-index: 400; display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.5s ease;
+  }
+  #confirm-overlay.visible { opacity: 1; pointer-events: all; }
+  #confirm-panel {
+    background: rgba(8,10,14,0.98); border: 1px solid rgba(232,197,71,0.6);
+    padding: 40px; text-align: center; max-width: 440px; border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+  }
+  #confirm-panel h3 { color: #e8c547; font-size: 14px; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 20px; font-weight: 400; }
+  #confirm-panel p { color: rgba(255,255,255,0.8); font-size: 12px; line-height: 1.6; margin-bottom: 35px; letter-spacing: 0.05em; }
+  .confirm-btns { display: flex; gap: 20px; justify-content: center; }
+  .confirm-btn {
+    background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #fff;
+    padding: 12px 24px; cursor: pointer; font-family: inherit; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.2em; transition: all 0.3s;
+  }
+  .confirm-btn.primary { border-color: #e8c547; color: #e8c547; background: rgba(232,197,71,0.05); }
+  .confirm-btn:hover { background: rgba(255,255,255,0.1); border-color: #fff; }
+  .confirm-btn.primary:hover { background: rgba(232,197,71,0.15); border-color: #e8c547; }
+
   /* Video Overlay (2-Column Layout) */
   #overlay {
     position: fixed; inset: 0; background: rgba(2,3,6,0.95); backdrop-filter: blur(14px);
@@ -78,16 +102,12 @@
   }
   #overlay-close:hover { color: #fff; border-color: #fff; }
   
-  #overlay-info {
-    flex: 1; display: flex; flex-direction: column; justify-content: center;
-  }
+  #overlay-info { flex: 1; display: flex; flex-direction: column; justify-content: center; }
   #overlay-brand { color: #e8c547; font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 12px; }
   #overlay-title { font-size: 28px; font-weight: 400; margin-bottom: 24px; letter-spacing: 0.05em; line-height: 1.2; }
   #overlay-desc { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
   
-  #overlay-video-container { 
-    flex: 2; background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;
-  }
+  #overlay-video-container { flex: 2; background: #000; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
   #overlay-video { width: 100%; height: auto; max-height: 100%; object-fit: contain; }
 
   @media (max-width: 900px) {
@@ -111,6 +131,17 @@
   <h1 id="load-text">Waking the Gallery...</h1>
   <div id="load-bar"><div id="load-fill"></div></div>
   <button id="enter-btn">Enter Gallery</button>
+</div>
+
+<div id="confirm-overlay">
+  <div id="confirm-panel">
+    <h3>Travel Initiated</h3>
+    <p>Please confirm you'd like to travel to the traditional production room.</p>
+    <div class="confirm-btns">
+      <button id="btn-cancel-travel" class="confirm-btn">Cancel</button>
+      <button id="btn-confirm-travel" class="confirm-btn primary">Confirm</button>
+    </div>
+  </div>
 </div>
 
 <div id="ui">
@@ -150,7 +181,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-// Wait for fonts to be ready so all Canvas textures render cleanly with DM Mono
 await document.fonts.ready;
 
 function lerpAngle(start, end, amt) {
@@ -162,79 +192,55 @@ function lerpAngle(start, end, amt) {
 
 // ---- SPATIAL LAYOUT, FILMS & CONTENT ----
 const VIDEOS = [
-  // L1: NIVEA (Large Room: Z 0 to 30)
   { id: 'nivea_1', room: 'L1', brand: 'NIVEA', title: 'Disney Collaboration', desc: 'A magical journey exploring the intersection of skincare and timeless storytelling.\n\nCreated in collaboration with Disney.', file: 'nivea_disney.mp4', x: -15.5, z: 0, rot: 0 },
   { id: 'nivea_5', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Cheetah', desc: 'Unleash your inner speed and precision.\n\nExperience the power of the Deep Cheetah campaign.', file: 'nivea_men_deep_cheetah.mp4', x: -25, z: 8, rot: Math.PI/2 },
   { id: 'nivea_4', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Tennis', desc: 'Stay fresh under pressure.\n\nHigh-performance care for high-intensity moments.', file: 'nivea_men_deep_tennis.mp4', x: -25, z: 21, rot: Math.PI/2 },
   { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -9, z: 29.5, rot: Math.PI },
   { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -19, z: 29.5, rot: Math.PI },
-  
-  // R1: ALWAYS (Medium Room: Z 0 to 20)
   { id: 'always_1', room: 'R1', brand: 'ALWAYS', title: 'Get Unnoticed', desc: 'Confidence that lets you focus on what matters.\n\nAn empowering narrative for everyday heroes.', file: 'always_get_unnoticed.mp4', x: 15.5, z: 0, rot: 0 },
   { id: 'always_2', room: 'R1', brand: 'ALWAYS', title: 'Snap Poof Gone', desc: 'Fast, effective, and invisible.\n\nDiscover the freedom of total protection.', file: 'always_snap_poof_gone.mp4', x: 25, z: 10, rot: -Math.PI/2 },
-  
-  // R2: KELLOGGS (Small Room: Z 20 to 40) - Scaled Up
   { id: 'kellogs', room: 'R2', brand: 'KELLOGGS', title: 'Tresor', desc: 'Unleash the ultimate chocolatey experience.\n\nA thrilling ride for the tastebuds.', file: 'kellogs_tresor.mp4', x: 25, z: 30, rot: -Math.PI/2, scale: 1.4 },
-  
-  // L2: LLOYDS (Small Room: Z 30 to 45) - Scaled Up
   { id: 'lloyds', room: 'L2', brand: 'LLOYDS', title: 'DOOH', desc: 'Modern banking for a dynamic world.\n\nDigital Out Of Home campaign highlights.', file: 'lloyds_dooh.mp4', x: -25, z: 37.5, rot: Math.PI/2, scale: 1.4 },
-  
-  // R3: TWILIO (Small Room: Z 40 to 60) - Scaled Up
   { id: 'twilio', room: 'R3', brand: 'TWILIO', title: 'Clarity Builder Germany', desc: 'Empowering developers to build clearer connections.\n\nA showcase of Twilio’s impact in Germany.', file: 'twilio_clarity_builder_germany.mp4', x: 25, z: 50, rot: -Math.PI/2, scale: 1.4 },
-  
-  // L3: ARTISTIC MADNESS (Small Room: Z 45 to 60) - 2.39 Aspect Ratio & Scaled Up
   { id: 'stereo', room: 'L3', brand: 'ARTISTIC MADNESS', title: 'Music Video', desc: 'Immersive soundscapes meet stunning visuals.\n\nAn exclusive music video premiere.', file: 'stereoclip_music_video.mp4', x: -25, z: 52.5, rot: Math.PI/2, scale: 1.6, aspect: 2.39 }
 ];
 
-// Room architecture customized per volume of films
+const WALL_HEIGHT = 8.0;
+
 const WALLS = [
   // Outer Boundaries & Entrances
   {x: 0, z: -15, w: 52, d: 1}, 
   {x: -15.5, z: -0.5, w: 21, d: 1}, 
   {x: 15.5, z: -0.5, w: 21, d: 1},  
-  {x: 0, z: 60.5, w: 52, d: 1}, // Tighter Gallery End
+  
+  // Tighter Gallery End with a 3m gap in the center for the exit door
+  {x: -13.75, z: 60.5, w: 24.5, d: 1}, // Left of the far exit door
+  {x: 13.75, z: 60.5, w: 24.5, d: 1},  // Right of the far exit door
+  {x: 0, z: 60.5, w: 3, d: 1, y: 5.5, h: 5}, // Lintel over the exit door to cover the gap overhead
 
   // Elongated Side Boundaries
   {x: -25.5, z: 30, w: 1, d: 61}, 
   {x: 25.5, z: 30, w: 1, d: 61},  
 
-  // Left Partitions (Asymmetrical Depth)
-  {x: -15.5, z: 30, w: 20, d: 1}, // End of NIVEA
-  {x: -15.5, z: 45, w: 20, d: 1}, // End of LLOYDS
+  // Partitions
+  {x: -15.5, z: 30, w: 20, d: 1}, 
+  {x: -15.5, z: 45, w: 20, d: 1}, 
+  {x: 15.5, z: 20, w: 20, d: 1}, 
+  {x: 15.5, z: 40, w: 20, d: 1}, 
 
-  // Right Partitions (Asymmetrical Depth)
-  {x: 15.5, z: 20, w: 20, d: 1}, // End of ALWAYS
-  {x: 15.5, z: 40, w: 20, d: 1}, // End of KELLOGGS
-
-  // Corridor Left Wall (Ensure minimum 6m solid blocks for Signage)
-  {x: -5.5, z: 3, w: 1, d: 6},   // NIVEA Wall Block
-  {x: -5.5, z: 27, w: 1, d: 6},  // NIVEA End Block
-  {x: -5.5, z: 33, w: 1, d: 6},  // LLOYDS Wall Block
-  {x: -5.5, z: 48, w: 1, d: 6},  // ARTISTIC MADNESS Wall Block
-  {x: -5.5, z: 58, w: 1, d: 4},  // Gallery End Block
-
-  // Corridor Right Wall (Ensure minimum 6m solid blocks for Signage)
-  {x: 5.5, z: 3, w: 1, d: 6},    // ALWAYS Wall Block
-  {x: 5.5, z: 17, w: 1, d: 6},   // ALWAYS End Block
-  {x: 5.5, z: 23, w: 1, d: 6},   // KELLOGGS Wall Block
-  {x: 5.5, z: 37, w: 1, d: 6},   // KELLOGGS End Block
-  {x: 5.5, z: 43, w: 1, d: 6},   // TWILIO Wall Block
-  {x: 5.5, z: 57, w: 1, d: 6},   // Gallery End Block
+  // Corridor Walls
+  {x: -5.5, z: 3, w: 1, d: 6},  
+  {x: -5.5, z: 27, w: 1, d: 6},  
+  {x: -5.5, z: 33, w: 1, d: 6},  
+  {x: -5.5, z: 48, w: 1, d: 6},  
+  {x: -5.5, z: 58, w: 1, d: 4},  
+  {x: 5.5, z: 3, w: 1, d: 6},   
+  {x: 5.5, z: 17, w: 1, d: 6},   
+  {x: 5.5, z: 23, w: 1, d: 6},   
+  {x: 5.5, z: 37, w: 1, d: 6},   
+  {x: 5.5, z: 43, w: 1, d: 6},   
+  {x: 5.5, z: 57, w: 1, d: 6},   
 ];
-
-function getRoom(x, z) {
-  if (z < 0) return 'ENTRANCE';
-  if (x > -5 && x < 5) return 'CORRIDOR';
-  if (x <= -5) {
-    if (z < 30) return 'L1';
-    if (z < 45) return 'L2';
-    return 'L3';
-  } else {
-    if (z < 20) return 'R1';
-    if (z < 40) return 'R2';
-    return 'R3';
-  }
-}
 
 // ---- Canvas Text Generation Helpers ----
 function wrapText(context, text, x, y, maxWidth, lineHeight) {
@@ -263,11 +269,8 @@ function createRoomTitleTexture(title) {
   const canvas = document.createElement('canvas');
   canvas.width = 2048; canvas.height = 512;
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0,0,2048,512);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  
-  // Fixed font size so all titles match the scale of the longest one ("ARTISTIC MADNESS")
   const fontSize = 110; 
   ctx.font = `400 ${fontSize}px 'DM Mono', monospace`;
   
@@ -306,6 +309,39 @@ function createGalleryLabelTexture(brand, title, desc) {
   ctx.font = `300 28px 'DM Mono', monospace`;
   wrapText(ctx, desc, 80, 360, 860, 42);
 
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createRetroSignTexture(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, 1024, 256);
+  
+  ctx.strokeStyle = 'rgba(232, 197, 71, 0.85)';
+  ctx.lineWidth = 12;
+  ctx.shadowColor = 'rgba(232, 197, 71, 1)';
+  ctx.shadowBlur = 24;
+  ctx.strokeRect(16, 16, 992, 224);
+  
+  ctx.textAlign = 'center'; 
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(255, 255, 255, 0.7)';
+  ctx.shadowBlur = 15;
+  ctx.font = `400 48px 'DM Mono', monospace`;
+  
+  if ('letterSpacing' in ctx) {
+    ctx.letterSpacing = '10px';
+    ctx.fillText(text.toUpperCase(), 512, 128);
+  } else {
+    ctx.fillText(text.toUpperCase().split('').join(' '), 512, 128);
+  }
+  
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -406,21 +442,21 @@ floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-const WALL_HEIGHT = 8.0;
 const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), wallMat);
 ceiling.position.set(0, WALL_HEIGHT, 30);
 ceiling.rotation.x = Math.PI / 2;
 scene.add(ceiling);
 
 WALLS.forEach(w => {
-  const wall = new THREE.Mesh(new THREE.BoxGeometry(w.w, WALL_HEIGHT, w.d), wallMat);
-  wall.position.set(w.x, WALL_HEIGHT/2, w.z);
+  const height = w.h || WALL_HEIGHT;
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(w.w, height, w.d), wallMat);
+  wall.position.set(w.x, w.y || (height/2), w.z);
   wall.castShadow = true;
   wall.receiveShadow = true;
   scene.add(wall);
 });
 
-// ---- Add Room Signage (Perfectly Aligned to Corridor Walls) ----
+// ---- Add Room Signage (Aligned to Corridor Walls) ----
 const roomTitles = [
   { text: 'NIVEA', x: -4.9, z: 3, rot: Math.PI/2 },
   { text: 'LLOYDS', x: -4.9, z: 33, rot: Math.PI/2 },
@@ -471,11 +507,32 @@ const btnLight = new THREE.PointLight(0xff0000, 0.5, 3);
 btnLight.position.set(4.5, 1.0, -2.4);
 scene.add(btnLight);
 
-// Room Lights configured to the newly scaled map
+// ---- Exit System: Traditional Production Door ----
+const exitDoorMat = new THREE.MeshStandardMaterial({color: 0x111111, metalness: 0.9, roughness: 0.3});
+const exitDoor = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 0.4), exitDoorMat);
+exitDoor.position.set(0, 1.5, 60.5);
+exitDoor.castShadow = true; exitDoor.receiveShadow = true;
+scene.add(exitDoor);
+
+const retroSignTex = createRetroSignTexture('Traditional Production');
+retroSignTex.anisotropy = maxAnisotropy;
+const retroSignMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(3.5, 0.875),
+  new THREE.MeshBasicMaterial({map: retroSignTex})
+);
+retroSignMesh.position.set(0, 4.2, 59.95);
+retroSignMesh.rotation.y = Math.PI; 
+scene.add(retroSignMesh);
+
+const retroLight = new THREE.PointLight(0xe8c547, 1.2, 10);
+retroLight.position.set(0, 4.2, 59.5);
+scene.add(retroLight);
+
+// ---- Room Lights ----
 const roomCenters = [
   {x: 0, z: -8}, {x: -15.5, z: 15}, {x: 15.5, z: 10}, 
   {x: 15.5, z: 30}, {x: -15.5, z: 37.5}, {x: 15.5, z: 50}, 
-  {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}
+  {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}, {x: 0, z: 57}
 ];
 roomCenters.forEach(pos => {
   const light = new THREE.PointLight(0xfff5e6, 1.2, 35);
@@ -483,7 +540,7 @@ roomCenters.forEach(pos => {
   scene.add(light);
 });
 
-// ---- Video Screens, Aspect Ratios & Frames ----
+// ---- Video Screens ----
 const screens = [];
 VIDEOS.forEach(v => {
   const vidEl = document.createElement('video');
@@ -510,7 +567,7 @@ VIDEOS.forEach(v => {
   videoTex.anisotropy = maxAnisotropy;
   
   const vScale = v.scale || 1.0;
-  const vAspect = v.aspect || 1.7777; // Default to 16:9
+  const vAspect = v.aspect || 1.7777;
   const width = 6.4 * vScale;
   const height = (6.4 / vAspect) * vScale;
 
@@ -569,7 +626,7 @@ VIDEOS.forEach(v => {
   screens.push({ mesh: group, data: v, video: vidEl, normal: normal });
 });
 
-// ---- Character Loaders (Greg & Tim) ----
+// ---- Character Loaders ----
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
 const gltfLoader = new GLTFLoader();
@@ -656,7 +713,10 @@ let walkYaw = Math.PI, walkPitch = -0.1;
 
 window.addEventListener('keydown', e => {
   if(isOverlayOpen) {
-    if(e.key === 'Escape') closeOverlay();
+    if(e.key === 'Escape') {
+      closeOverlay();
+      document.getElementById('confirm-overlay').classList.remove('visible');
+    }
     return;
   }
   const k = e.key.toLowerCase();
@@ -686,6 +746,46 @@ document.addEventListener('mousemove', e => {
   walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
 });
 
+// ---- Level Transition Logic ----
+function startLevelTransition() {
+  const loadingScreen = document.getElementById('loading');
+  const loadText = document.getElementById('load-text');
+  const loadFill = document.getElementById('load-fill');
+  
+  document.getElementById('enter-btn').style.display = 'none';
+  loadText.textContent = "TRAVELLING TO TRADITIONAL PRODUCTION...";
+  
+  loadFill.style.transition = 'none';
+  loadFill.style.width = '0%';
+  
+  loadingScreen.style.display = 'flex';
+  loadingScreen.style.opacity = '1';
+  loadingScreen.style.pointerEvents = 'all';
+  
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      loadFill.style.transition = 'width 2s cubic-bezier(0.4, 0, 0.2, 1)';
+      loadFill.style.width = '100%';
+      
+      setTimeout(() => {
+        window.location.href = './2d/';
+      }, 2100);
+    });
+  });
+}
+
+// Confirmation UI Events
+document.getElementById('btn-cancel-travel').addEventListener('click', () => {
+  document.getElementById('confirm-overlay').classList.remove('visible');
+  isOverlayOpen = false;
+});
+
+document.getElementById('btn-confirm-travel').addEventListener('click', () => {
+  document.getElementById('confirm-overlay').classList.remove('visible');
+  startLevelTransition();
+});
+
+
 // ---- Interaction Logic ----
 let activeInteractable = null; 
 let activeScreen = null;
@@ -695,7 +795,12 @@ const overlayVid = document.getElementById('overlay-video');
 function triggerInteraction() {
   if(isOverlayOpen) return;
   
-  if (activeInteractable === 'door') {
+  if (activeInteractable === 'exit_door') {
+    isOverlayOpen = true;
+    document.exitPointerLock();
+    document.getElementById('confirm-overlay').classList.add('visible');
+
+  } else if (activeInteractable === 'door') {
     doorState = 'opening';
     promptEl.classList.remove('visible');
     activeInteractable = null;
@@ -731,7 +836,7 @@ function closeOverlay() {
 }
 document.getElementById('overlay-close').addEventListener('click', closeOverlay);
 
-// ---- Map System (INVERTED/NATURAL ALIGNMENT) ----
+// ---- Map System ----
 const mapCtx = document.getElementById('map-canvas').getContext('2d');
 function drawMap() {
   if(!character) return;
@@ -753,6 +858,10 @@ function drawMap() {
   mapCtx.fillStyle = doorState === 'open' ? 'rgba(0,255,0,0.5)' : 'rgba(255,100,100,0.8)';
   mapCtx.fillRect(offsetX + (doorL.position.x - 2.75) * scale, offsetY - (doorL.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
   mapCtx.fillRect(offsetX + (doorR.position.x - 2.75) * scale, offsetY - (doorR.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
+
+  // Far Exit Door
+  mapCtx.fillStyle = 'rgba(100,200,255,0.8)';
+  mapCtx.fillRect(offsetX + (exitDoor.position.x - 1.5) * scale, offsetY - (exitDoor.position.z + 0.2) * scale, 3 * scale, 0.4 * scale);
 
   mapCtx.fillStyle = 'rgba(232,197,71,0.8)';
   screens.forEach(s => {
@@ -778,6 +887,9 @@ function drawMap() {
 function checkCollision(pos, radius) {
   for(let i=0; i<WALLS.length; i++) {
     const w = WALLS[i];
+    // Exclude lintels/overhead walls from floor-level collision checks
+    if(w.y && w.y > 4) continue;
+    
     const hw = w.w / 2;
     const hd = w.d / 2;
     if (pos.x + radius > w.x - hw && pos.x - radius < w.x + hw &&
@@ -786,6 +898,7 @@ function checkCollision(pos, radius) {
     }
   }
 
+  // Entrance door check
   if (doorState !== 'open') {
     let hw = 5.5 / 2; let hd = 0.8 / 2;
     let dxL = doorL.position.x; let dzL = doorL.position.z;
@@ -794,6 +907,11 @@ function checkCollision(pos, radius) {
     let dxR = doorR.position.x; let dzR = doorR.position.z;
     if (pos.x + radius > dxR - hw && pos.x - radius < dxR + hw && pos.z + radius > dzR - hd && pos.z - radius < dzR + hd) return true;
   }
+
+  // Exit door check
+  let hwE = 3 / 2; let hdE = 0.4 / 2;
+  let dxE = exitDoor.position.x; let dzE = exitDoor.position.z;
+  if (pos.x + radius > dxE - hwE && pos.x - radius < dxE + hwE && pos.z + radius > dzE - hdE && pos.z - radius < dzE + hdE) return true;
 
   if (tim) {
     const distToTim = Math.hypot(pos.x - tim.position.x, pos.z - tim.position.z);
@@ -940,6 +1058,9 @@ function animate() {
     let distToPanel = camera.position.distanceTo(panelMesh.position);
     let showPanelPrompt = (distToPanel < 3.5 && doorState === 'closed');
     
+    let distToExit = camera.position.distanceTo(exitDoor.position);
+    let showExitPrompt = (distToExit < 4.0);
+
     let bestScore = -Infinity;
     let closestScreen = null;
     
@@ -981,6 +1102,11 @@ function animate() {
     if (showPanelPrompt) {
       activeInteractable = 'door';
       promptEl.textContent = "Press [ E ] to Open Door";
+      promptEl.classList.add('visible');
+      activeScreen = null;
+    } else if (showExitPrompt) {
+      activeInteractable = 'exit_door';
+      promptEl.textContent = "Press [ E ] to Enter Traditional Production";
       promptEl.classList.add('visible');
       activeScreen = null;
     } else {
