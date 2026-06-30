@@ -322,21 +322,23 @@ function createRetroSignTexture(text) {
   ctx.fillStyle = '#0a0a0a';
   ctx.fillRect(0, 0, 1024, 256);
   
-  ctx.strokeStyle = 'rgba(232, 197, 71, 0.85)';
-  ctx.lineWidth = 12;
-  ctx.shadowColor = 'rgba(232, 197, 71, 1)';
-  ctx.shadowBlur = 24;
-  ctx.strokeRect(16, 16, 992, 224);
+  // Subtler border
+  ctx.strokeStyle = 'rgba(232, 197, 71, 0.4)';
+  ctx.lineWidth = 4;
+  ctx.shadowColor = 'rgba(232, 197, 71, 0.6)';
+  ctx.shadowBlur = 12;
+  ctx.strokeRect(20, 20, 984, 216);
   
+  // Subtler text
   ctx.textAlign = 'center'; 
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#ffffff';
-  ctx.shadowColor = 'rgba(255, 255, 255, 0.7)';
-  ctx.shadowBlur = 15;
-  ctx.font = `400 48px 'DM Mono', monospace`;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.shadowColor = 'rgba(255, 255, 255, 0.3)';
+  ctx.shadowBlur = 8;
+  ctx.font = `300 42px 'DM Mono', monospace`;
   
   if ('letterSpacing' in ctx) {
-    ctx.letterSpacing = '10px';
+    ctx.letterSpacing = '12px';
     ctx.fillText(text.toUpperCase(), 512, 128);
   } else {
     ctx.fillText(text.toUpperCase().split('').join(' '), 512, 128);
@@ -524,8 +526,9 @@ retroSignMesh.position.set(0, 4.2, 59.95);
 retroSignMesh.rotation.y = Math.PI; 
 scene.add(retroSignMesh);
 
-const retroLight = new THREE.PointLight(0xe8c547, 1.2, 10);
-retroLight.position.set(0, 4.2, 59.5);
+// Toned down ambient lighting for the sign
+const retroLight = new THREE.PointLight(0xe8c547, 0.5, 8);
+retroLight.position.set(0, 4.2, 59.6);
 scene.add(retroLight);
 
 // ---- Room Lights ----
@@ -836,7 +839,7 @@ function closeOverlay() {
 }
 document.getElementById('overlay-close').addEventListener('click', closeOverlay);
 
-// ---- Map System ----
+// ---- Map System (X Flipped for Intuitive Orientation) ----
 const mapCtx = document.getElementById('map-canvas').getContext('2d');
 function drawMap() {
   if(!character) return;
@@ -850,34 +853,35 @@ function drawMap() {
 
   mapCtx.fillStyle = 'rgba(255,255,255,0.2)';
   WALLS.forEach(w => {
-    const cx = offsetX + w.x * scale;
+    // Invert X coordinate so what is physically to the user's left (in 3D +Z space) displays on the left side of the map
+    const cx = offsetX - w.x * scale; 
     const cy = offsetY - w.z * scale; 
     mapCtx.fillRect(cx - (w.w*scale)/2, cy - (w.d*scale)/2, w.w*scale, w.d*scale);
   });
   
   mapCtx.fillStyle = doorState === 'open' ? 'rgba(0,255,0,0.5)' : 'rgba(255,100,100,0.8)';
-  mapCtx.fillRect(offsetX + (doorL.position.x - 2.75) * scale, offsetY - (doorL.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
-  mapCtx.fillRect(offsetX + (doorR.position.x - 2.75) * scale, offsetY - (doorR.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
+  mapCtx.fillRect(offsetX - doorL.position.x * scale - (5.5 * scale)/2, offsetY - (doorL.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
+  mapCtx.fillRect(offsetX - doorR.position.x * scale - (5.5 * scale)/2, offsetY - (doorR.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
 
   // Far Exit Door
   mapCtx.fillStyle = 'rgba(100,200,255,0.8)';
-  mapCtx.fillRect(offsetX + (exitDoor.position.x - 1.5) * scale, offsetY - (exitDoor.position.z + 0.2) * scale, 3 * scale, 0.4 * scale);
+  mapCtx.fillRect(offsetX - exitDoor.position.x * scale - (3 * scale)/2, offsetY - (exitDoor.position.z + 0.2) * scale, 3 * scale, 0.4 * scale);
 
   mapCtx.fillStyle = 'rgba(232,197,71,0.8)';
   screens.forEach(s => {
-    const mx = offsetX + s.data.x * scale;
+    const mx = offsetX - s.data.x * scale;
     const mz = offsetY - s.data.z * scale;
     mapCtx.beginPath(); mapCtx.arc(mx, mz, 2.5, 0, Math.PI*2); mapCtx.fill();
   });
   
   mapCtx.fillStyle = '#fff';
-  const px = offsetX + character.position.x * scale;
+  const px = offsetX - character.position.x * scale;
   const pz = offsetY - character.position.z * scale;
   mapCtx.beginPath(); mapCtx.arc(px, pz, 3.5, 0, Math.PI*2); mapCtx.fill();
 
   if (tim) {
     mapCtx.fillStyle = '#ff6666';
-    const tx = offsetX + tim.position.x * scale;
+    const tx = offsetX - tim.position.x * scale;
     const tz = offsetY - tim.position.z * scale;
     mapCtx.beginPath(); mapCtx.arc(tx, tz, 2.5, 0, Math.PI*2); mapCtx.fill();
   }
@@ -1055,11 +1059,13 @@ function animate() {
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
 
     // ---- Proximity, Visibility & Spatial Audio ----
-    let distToPanel = camera.position.distanceTo(panelMesh.position);
-    let showPanelPrompt = (distToPanel < 3.5 && doorState === 'closed');
     
-    let distToExit = camera.position.distanceTo(exitDoor.position);
-    let showExitPrompt = (distToExit < 4.0);
+    // Evaluate proximity from the CHARACTER position instead of camera
+    let distToPanel = character.position.distanceTo(panelMesh.position);
+    let showPanelPrompt = (distToPanel < 2.5 && doorState === 'closed');
+    
+    let distToExit = character.position.distanceTo(exitDoor.position);
+    let showExitPrompt = (distToExit < 3.0);
 
     let bestScore = -Infinity;
     let closestScreen = null;
