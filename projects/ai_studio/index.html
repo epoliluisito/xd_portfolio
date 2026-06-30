@@ -361,20 +361,21 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0; 
+renderer.toneMappingExposure = 1.2; // Slightly increased for the new dark theme
 const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
-scene.fog = new THREE.FogExp2(0x000000, 0.012);
+scene.fog = new THREE.FogExp2(0x000000, 0.015);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150);
 
-const ambient = new THREE.AmbientLight(0xffffff, 1.0); 
+// Dramatically reduced ambient light to allow room lights & screens to create contrast and shadows
+const ambient = new THREE.AmbientLight(0xffffff, 0.02); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x112233, 1.0); 
+const hemiLight = new THREE.HemisphereLight(0x222233, 0x000000, 0.1); 
 scene.add(hemiLight);
 
 const texLoader = new THREE.TextureLoader();
@@ -390,14 +391,22 @@ concreteBase.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy; 
 });
 
+// PHOTOREALISTIC DARK THEME: Matte dark walls 
 const wallMat = new THREE.MeshStandardMaterial({
   map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
-  color: 0x999999, roughness: 0.8, metalness: 0.1
+  color: 0x111111, roughness: 0.85, metalness: 0.2
 });
 
-const floorMat = new THREE.MeshStandardMaterial({
+// PHOTOREALISTIC DARK THEME: Glossy, premium reflective black physical floor
+const floorMat = new THREE.MeshPhysicalMaterial({
   map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
-  color: 0x666666, roughness: 0.6, metalness: 0.15 
+  color: 0x020202, roughness: 0.15, metalness: 0.2,
+  clearcoat: 1.0, clearcoatRoughness: 0.1 
+});
+
+// PHOTOREALISTIC DARK THEME: Invisible/matte black ceiling to hide the roof
+const ceilingMat = new THREE.MeshStandardMaterial({
+  color: 0x000000, roughness: 1.0, metalness: 0.0
 });
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), floorMat);
@@ -407,7 +416,7 @@ floor.receiveShadow = true;
 scene.add(floor);
 
 const WALL_HEIGHT = 8.0;
-const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), wallMat);
+const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(80, 120), ceilingMat);
 ceiling.position.set(0, WALL_HEIGHT, 30);
 ceiling.rotation.x = Math.PI / 2;
 scene.add(ceiling);
@@ -445,7 +454,7 @@ roomTitles.forEach(rt => {
 // ---- Entrance System: Sliding Doors & Buttons ----
 let doorState = 'closed';
 
-const doorMat = new THREE.MeshStandardMaterial({color: 0x333333, metalness: 0.8, roughness: 0.2});
+const doorMat = new THREE.MeshStandardMaterial({color: 0x111111, metalness: 0.8, roughness: 0.1});
 const doorL = new THREE.Mesh(new THREE.BoxGeometry(5.5, WALL_HEIGHT, 0.8), doorMat);
 const doorR = new THREE.Mesh(new THREE.BoxGeometry(5.5, WALL_HEIGHT, 0.8), doorMat);
 doorL.position.set(-2.75, WALL_HEIGHT/2, -0.5);
@@ -456,7 +465,7 @@ scene.add(doorL, doorR);
 
 const panelMesh = new THREE.Mesh(
   new THREE.BoxGeometry(0.4, 1.2, 0.4), 
-  new THREE.MeshStandardMaterial({color: 0x222222, metalness: 0.9, roughness: 0.2})
+  new THREE.MeshStandardMaterial({color: 0x111111, metalness: 0.9, roughness: 0.2})
 );
 panelMesh.position.set(4.5, 0.6, -2);
 panelMesh.castShadow = true;
@@ -478,8 +487,11 @@ const roomCenters = [
   {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}
 ];
 roomCenters.forEach(pos => {
-  const light = new THREE.PointLight(0xfff5e6, 1.2, 35);
+  // Lowered intensity to allow screens to pop out in the darkness
+  const light = new THREE.PointLight(0xfff5e6, 0.8, 35);
   light.position.set(pos.x, 6.0, pos.z);
+  light.castShadow = true;
+  light.shadow.bias = -0.001;
   scene.add(light);
 });
 
@@ -519,7 +531,7 @@ VIDEOS.forEach(v => {
   
   const frameDepth = 0.12;
   const frameGeo = new THREE.BoxGeometry(width + 0.2, height + 0.2, frameDepth);
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.7, metalness: 0.6 });
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.5, metalness: 0.8 });
 
   const group = new THREE.Group();
   const frameMesh = new THREE.Mesh(frameGeo, frameMat);
