@@ -181,8 +181,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-await document.fonts.ready;
-
 function lerpAngle(start, end, amt) {
   let delta = end - start;
   while (delta > Math.PI) delta -= Math.PI * 2;
@@ -216,7 +214,7 @@ const WALLS = [
   // Tighter Gallery End with a 3m gap in the center for the exit door
   {x: -13.75, z: 60.5, w: 24.5, d: 1}, // Left of the far exit door
   {x: 13.75, z: 60.5, w: 24.5, d: 1},  // Right of the far exit door
-  {x: 0, z: 60.5, w: 3, d: 1, y: 5.5, h: 5}, // Lintel over the exit door to cover the gap overhead
+  {x: 0, z: 60.5, w: 3, d: 1, y: 5.5, h: 5}, // Lintel over the exit door
 
   // Elongated Side Boundaries
   {x: -25.5, z: 30, w: 1, d: 61}, 
@@ -239,7 +237,7 @@ const WALLS = [
   {x: 5.5, z: 23, w: 1, d: 6},   
   {x: 5.5, z: 37, w: 1, d: 6},   
   {x: 5.5, z: 43, w: 1, d: 6},   
-  {x: 5.5, z: 57, w: 1, d: 6},   
+  {x: 5.5, z: 57, w: 1, d: 6}
 ];
 
 // ---- Canvas Text Generation Helpers ----
@@ -382,13 +380,14 @@ function registerAssetLoaded() {
   }
 }
 
+// Reduced fallback timeout to 4s to prevent hanging if media loading gets completely blocked
 setTimeout(() => {
   if(!isReady) {
     console.warn("Forcing load completion due to timeout.");
     loadedAssets = totalAssets;
     registerAssetLoaded();
   }
-}, 10000);
+}, 4000); 
 
 // ---- Setup Scene ----
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -564,6 +563,11 @@ VIDEOS.forEach(v => {
   };
   vidEl.addEventListener('loadedmetadata', loadHandler);
   vidEl.addEventListener('error', loadHandler);
+  
+  // Bugfix: If the video loads instantly from cache, 'loadedmetadata' may be skipped.
+  if (vidEl.readyState >= 1) { 
+    loadHandler();
+  }
 
   const videoTex = new THREE.VideoTexture(vidEl);
   videoTex.colorSpace = THREE.SRGBColorSpace;
@@ -800,7 +804,7 @@ function triggerInteraction() {
   
   if (activeInteractable === 'exit_door') {
     isOverlayOpen = true;
-    document.exitPointerLock();
+    if(document.pointerLockElement) document.exitPointerLock();
     document.getElementById('confirm-overlay').classList.add('visible');
 
   } else if (activeInteractable === 'door') {
@@ -814,7 +818,7 @@ function triggerInteraction() {
 
   } else if (activeInteractable === 'video' && activeScreen) {
     isOverlayOpen = true;
-    document.exitPointerLock();
+    if(document.pointerLockElement) document.exitPointerLock();
     
     const data = activeScreen.data;
     document.getElementById('overlay-brand').textContent = data.brand;
@@ -825,7 +829,7 @@ function triggerInteraction() {
     
     overlayVid.src = data.file;
     overlayVid.volume = 1;
-    overlayVid.play(); 
+    overlayVid.play().catch(e => console.warn(e)); 
     
     document.getElementById('overlay').classList.add('visible');
   }
@@ -948,6 +952,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   if (mixer) mixer.update(dt);
+  
   if (timMixer) {
     const isTimMoving = (timState === 'walking');
     timCurrentWeight = THREE.MathUtils.lerp(timCurrentWeight, isTimMoving ? 1 : 0, 0.15);
@@ -964,7 +969,8 @@ function animate() {
     }
   }
 
-  if (timState === 'walking') {
+  // Safety check added: ensuring `tim` object is loaded before evaluating AI steps
+  if (timState === 'walking' && tim) {
     const target = timWaypoints[currentWaypoint];
     const dx = target.x - tim.position.x;
     const dz = target.z - tim.position.z;
@@ -1002,6 +1008,7 @@ function animate() {
     }
   }
 
+  // Safety check added: ensuring character is loaded before updating camera logic
   if (character && audioUnlocked && !isOverlayOpen) {
     const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     
@@ -1060,7 +1067,6 @@ function animate() {
 
     // ---- Proximity, Visibility & Spatial Audio ----
     
-    // Evaluate proximity from the CHARACTER position instead of camera
     let distToPanel = character.position.distanceTo(panelMesh.position);
     let showPanelPrompt = (distToPanel < 2.5 && doorState === 'closed');
     
