@@ -235,9 +235,9 @@
 await document.fonts.ready;
 
 // ---- SPATIAL ENVIRONMENT & SCREEN POSITIONS ----
-const ROOM_WIDTH = 1800; // Expanded Room Width
-const WORLD_WIDTH = ROOM_WIDTH * 4; // 4 Rooms = 7200px Map Width
-const MIN_Y = 415; // Bottom-center playable bounds in 2.5D space
+const ROOM_WIDTH = 1800; 
+const WORLD_WIDTH = ROOM_WIDTH * 4; 
+const MIN_Y = 415; 
 const MAX_Y = 680;
 
 const VIDEOS = [
@@ -271,7 +271,7 @@ const ROOM_THEMES = {
 
 // ---- PRELOAD ASSETS SYSTEM ----
 let loadedCount = 0;
-const totalAssets = 4; // greg_idle, greg_walk, tim_idle, tim_walk
+const totalAssets = 4; 
 let isReady = false;
 let audioUnlocked = false;
 
@@ -309,7 +309,7 @@ Object.keys(characters).forEach(key => {
   };
   characters[key].img.onerror = () => {
     console.error(`Missing asset characters/${key}.png`);
-    onAssetLoaded(); // Fallback
+    onAssetLoaded(); 
   };
   characters[key].img.src = characters[key].src;
 });
@@ -334,7 +334,7 @@ ctx.imageSmoothingEnabled = false;
 // ---- SPRITE STRUCTS ----
 class Entity {
   constructor(type, x, y, isPlayer = false) {
-    this.type = type; // 'greg' or 'tim'
+    this.type = type; 
     this.x = x;
     this.y = y;
     this.isPlayer = isPlayer;
@@ -343,27 +343,24 @@ class Entity {
     this.vy = 0;
     this.speed = 260; 
     
-    this.state = 'idle'; // 'idle' or 'walk'
+    this.state = 'idle'; 
     this.currentFrame = 0;
     this.frameTimer = 0;
-    this.frameInterval = 0.12; // 120ms frame swap
-    this.facing = 1; // 1 = Left, -1 = Right
+    this.frameInterval = 0.12; 
+    this.facing = 1; 
   }
 
   update(dt) {
-    // Determine active sheet config dynamically based on current state
     const currentSheetKey = `${this.type}_${this.state}`;
     const meta = characters[currentSheetKey];
     if (!meta || !meta.ready) return;
 
-    // Handle Frame swapping logic inside target sheet boundaries
     this.frameTimer += dt;
     if (this.frameTimer >= this.frameInterval) {
       this.frameTimer = 0;
       this.currentFrame = (this.currentFrame + 1) % meta.cols;
     }
 
-    // Adjust horizontal face-direction
     if (Math.abs(this.vx) > 0.1) {
       this.facing = this.vx > 0 ? -1 : 1;
     }
@@ -375,32 +372,29 @@ class Entity {
     if (!meta || !meta.ready) return;
 
     const img = meta.img;
-    
-    // MATHEMATICAL BLEED REMOVAL:
-    // We compute the raw width (fW) per frame in the spritesheet
     const fW = img.width / meta.cols;
     const fH = img.height;
-    
-    // Safety crop coordinate margins by exactly 0.5px on all boundaries.
-    // This removes adjacent frame border bleeding due to Canvas scaling interpolation.
-    const sourceX = (this.currentFrame * fW) + 0.5;
-    const sourceY = 0.5;
-    const sourceW = fW - 1.0;
-    const sourceH = fH - 1.0;
+
+    // ELIMINATE ARTIFACT BLEEDING:
+    // Crop exactly 3px off the left and right boundaries of each frame source.
+    // Also, snap all frame calculations using Math.floor to prevent sampling errors.
+    const cropMargin = 3;
+    const sourceX = Math.floor((this.currentFrame * fW) + cropMargin);
+    const sourceY = 0;
+    const sourceW = Math.floor(fW - (cropMargin * 2));
+    const sourceH = fH;
 
     const aspect = sourceW / sourceH;
 
-    // Calculate dynamic depth-scaling factors within room bounds
+    // Dynamic depth scale
     const scaleFactor = 0.75 + ((this.y - MIN_Y) / (MAX_Y - MIN_Y)) * 0.45;
     
-    // Normalizing sprite scale to look beautifully proportional:
-    // We lock visual target display height to 175px on screen and scale dynamically
+    // Fixed reference height: 175px scaled dynamically
     const baseHeight = 175; 
     const drawH = baseHeight * scaleFactor;
     const drawW = drawH * aspect;
 
     ctx.save();
-    // Translate rendering origin directly to the bottom footprint coordinate
     ctx.translate(this.x - cameraX, this.y);
     ctx.scale(this.facing, 1);
 
@@ -411,7 +405,7 @@ class Entity {
     );
     ctx.restore();
     
-    // Draw grounding shadow ellipse
+    // Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
     ctx.ellipse(this.x - cameraX, this.y + 6, 24 * scaleFactor, 7 * scaleFactor, 0, 0, Math.PI * 2);
@@ -594,11 +588,11 @@ function drawEnvironment(ctx, cameraX) {
 
   // Draw benches 
   benches.forEach(b => {
-    ctx.fillStyle = '#22140a'; // Legs
+    ctx.fillStyle = '#22140a'; 
     ctx.fillRect(b.x - b.w/2 + 14 - cameraX, b.y, 10, 20);
     ctx.fillRect(b.x + b.w/2 - 24 - cameraX, b.y, 10, 20);
 
-    ctx.fillStyle = '#3c2513'; // Cushions
+    ctx.fillStyle = '#3c2513'; 
     ctx.fillRect(b.x - b.w/2 - cameraX, b.y - 18, b.w, 18);
     ctx.fillStyle = '#9e6234'; 
     ctx.fillRect(b.x - b.w/2 - cameraX, b.y - 18, b.w, 4);
