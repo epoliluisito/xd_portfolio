@@ -375,9 +375,20 @@ class Entity {
     if (!meta || !meta.ready) return;
 
     const img = meta.img;
+    
+    // MATHEMATICAL BLEED REMOVAL:
+    // We compute the raw width (fW) per frame in the spritesheet
     const fW = img.width / meta.cols;
-    const fH = img.height; // Single row assumptions across both separate sheets
-    const aspect = fW / fH;
+    const fH = img.height;
+    
+    // Safety crop coordinate margins by exactly 0.5px on all boundaries.
+    // This removes adjacent frame border bleeding due to Canvas scaling interpolation.
+    const sourceX = (this.currentFrame * fW) + 0.5;
+    const sourceY = 0.5;
+    const sourceW = fW - 1.0;
+    const sourceH = fH - 1.0;
+
+    const aspect = sourceW / sourceH;
 
     // Calculate dynamic depth-scaling factors within room bounds
     const scaleFactor = 0.75 + ((this.y - MIN_Y) / (MAX_Y - MIN_Y)) * 0.45;
@@ -393,11 +404,9 @@ class Entity {
     ctx.translate(this.x - cameraX, this.y);
     ctx.scale(this.facing, 1);
 
-    const sourceX = this.currentFrame * fW;
-
     ctx.drawImage(
       img,
-      sourceX, 0, fW, fH,
+      sourceX, sourceY, sourceW, sourceH,
       -drawW / 2, -drawH + 8, drawW, drawH
     );
     ctx.restore();
