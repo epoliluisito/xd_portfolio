@@ -189,12 +189,13 @@ function lerpAngle(start, end, amt) {
 }
 
 // ---- SPATIAL LAYOUT, FILMS & CONTENT ----
+// Re-spaced Nivea_2 and Nivea_3 to -11 and -20 to completely clear the corridor wall collision.
 const VIDEOS = [
   { id: 'nivea_1', room: 'L1', brand: 'NIVEA', title: 'Disney Collaboration', desc: 'A magical journey exploring the intersection of skincare and timeless storytelling.\n\nCreated in collaboration with Disney.', file: 'nivea_disney.mp4', x: -15.5, z: 0, rot: 0 },
   { id: 'nivea_5', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Cheetah', desc: 'Unleash your inner speed and precision.\n\nExperience the power of the Deep Cheetah campaign.', file: 'nivea_men_deep_cheetah.mp4', x: -25, z: 8, rot: Math.PI/2 },
   { id: 'nivea_4', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Tennis', desc: 'Stay fresh under pressure.\n\nHigh-performance care for high-intensity moments.', file: 'nivea_men_deep_tennis.mp4', x: -25, z: 21, rot: Math.PI/2 },
-  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -9, z: 29.5, rot: Math.PI },
-  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -19, z: 29.5, rot: Math.PI },
+  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -11, z: 29.5, rot: Math.PI },
+  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -20, z: 29.5, rot: Math.PI },
   { id: 'always_1', room: 'R1', brand: 'ALWAYS', title: 'Get Unnoticed', desc: 'Confidence that lets you focus on what matters.\n\nAn empowering narrative for everyday heroes.', file: 'always_get_unnoticed.mp4', x: 15.5, z: 0, rot: 0 },
   { id: 'always_2', room: 'R1', brand: 'ALWAYS', title: 'Snap Poof Gone', desc: 'Fast, effective, and invisible.\n\nDiscover the freedom of total protection.', file: 'always_snap_poof_gone.mp4', x: 25, z: 10, rot: -Math.PI/2 },
   { id: 'kellogs', room: 'R2', brand: 'KELLOGGS', title: 'Tresor', desc: 'Unleash the ultimate chocolatey experience.\n\nA thrilling ride for the tastebuds.', file: 'kellogs_tresor.mp4', x: 25, z: 30, rot: -Math.PI/2, scale: 1.4 },
@@ -320,14 +321,12 @@ function createRetroSignTexture(text) {
   ctx.fillStyle = '#0a0a0a';
   ctx.fillRect(0, 0, 1024, 256);
   
-  // Subtler border
   ctx.strokeStyle = 'rgba(232, 197, 71, 0.4)';
   ctx.lineWidth = 4;
   ctx.shadowColor = 'rgba(232, 197, 71, 0.6)';
   ctx.shadowBlur = 12;
   ctx.strokeRect(20, 20, 984, 216);
   
-  // Subtler text
   ctx.textAlign = 'center'; 
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
@@ -367,9 +366,6 @@ function registerAssetLoaded() {
     
     btn.addEventListener('click', () => {
       audioUnlocked = true;
-      screens.forEach(s => {
-        s.video.play().catch(e => console.warn('Autoplay blocked:', e));
-      });
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
       
@@ -380,7 +376,6 @@ function registerAssetLoaded() {
   }
 }
 
-// Reduced fallback timeout to 4s to prevent hanging if media loading gets completely blocked
 setTimeout(() => {
   if(!isReady) {
     console.warn("Forcing load completion due to timeout.");
@@ -525,7 +520,6 @@ retroSignMesh.position.set(0, 4.2, 59.95);
 retroSignMesh.rotation.y = Math.PI; 
 scene.add(retroSignMesh);
 
-// Toned down ambient lighting for the sign
 const retroLight = new THREE.PointLight(0xe8c547, 0.5, 8);
 retroLight.position.set(0, 4.2, 59.6);
 scene.add(retroLight);
@@ -564,10 +558,7 @@ VIDEOS.forEach(v => {
   vidEl.addEventListener('loadedmetadata', loadHandler);
   vidEl.addEventListener('error', loadHandler);
   
-  // Bugfix: If the video loads instantly from cache, 'loadedmetadata' may be skipped.
-  if (vidEl.readyState >= 1) { 
-    loadHandler();
-  }
+  if (vidEl.readyState >= 1) loadHandler();
 
   const videoTex = new THREE.VideoTexture(vidEl);
   videoTex.colorSpace = THREE.SRGBColorSpace;
@@ -630,7 +621,7 @@ VIDEOS.forEach(v => {
   spot.shadow.bias = -0.001; 
   scene.add(spot);
 
-  screens.push({ mesh: group, data: v, video: vidEl, normal: normal });
+  screens.push({ mesh: group, data: v, video: vidEl, normal: normal, targetVolume: 0 });
 });
 
 // ---- Character Loaders ----
@@ -753,7 +744,7 @@ document.addEventListener('mousemove', e => {
   walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
 });
 
-// ---- Level Transition Logic ----
+// ---- Level Transition Logic with Preloader iframe ----
 function startLevelTransition() {
   const loadingScreen = document.getElementById('loading');
   const loadText = document.getElementById('load-text');
@@ -768,20 +759,35 @@ function startLevelTransition() {
   loadingScreen.style.display = 'flex';
   loadingScreen.style.opacity = '1';
   loadingScreen.style.pointerEvents = 'all';
+
+  // Create an invisible iframe to actively preload the next 2D world into browser cache
+  const preloadFrame = document.createElement('iframe');
+  preloadFrame.style.display = 'none';
+  let iframeLoaded = false;
+  preloadFrame.onload = () => { iframeLoaded = true; };
+  preloadFrame.src = './2d/';
+  document.body.appendChild(preloadFrame);
   
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      loadFill.style.transition = 'width 2s cubic-bezier(0.4, 0, 0.2, 1)';
+      loadFill.style.transition = 'width 2.5s cubic-bezier(0.4, 0, 0.2, 1)';
       loadFill.style.width = '100%';
       
-      setTimeout(() => {
-        window.location.href = './2d/';
-      }, 2100);
+      let elapsedWait = 0;
+      const checkInterval = setInterval(() => {
+        elapsedWait += 100;
+        // Wait for visual bar finish (2.5s) AND check if iframe downloaded the content
+        if (elapsedWait >= 2500) {
+          if (iframeLoaded || elapsedWait >= 6000) { // Max fallback 6s to prevent lockup
+            clearInterval(checkInterval);
+            window.location.href = './2d/';
+          }
+        }
+      }, 100);
     });
   });
 }
 
-// Confirmation UI Events
 document.getElementById('btn-cancel-travel').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.remove('visible');
   isOverlayOpen = false;
@@ -825,7 +831,11 @@ function triggerInteraction() {
     document.getElementById('overlay-title').textContent = data.title;
     document.getElementById('overlay-desc').textContent = data.desc;
     
-    screens.forEach(s => s.video.volume = 0);
+    // Hard-pause all gallery screens for max performance while overlay is open
+    screens.forEach(s => {
+      s.video.volume = 0;
+      if (!s.video.paused) s.video.pause();
+    });
     
     overlayVid.src = data.file;
     overlayVid.volume = 1;
@@ -857,7 +867,6 @@ function drawMap() {
 
   mapCtx.fillStyle = 'rgba(255,255,255,0.2)';
   WALLS.forEach(w => {
-    // Invert X coordinate so what is physically to the user's left (in 3D +Z space) displays on the left side of the map
     const cx = offsetX - w.x * scale; 
     const cy = offsetY - w.z * scale; 
     mapCtx.fillRect(cx - (w.w*scale)/2, cy - (w.d*scale)/2, w.w*scale, w.d*scale);
@@ -867,7 +876,6 @@ function drawMap() {
   mapCtx.fillRect(offsetX - doorL.position.x * scale - (5.5 * scale)/2, offsetY - (doorL.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
   mapCtx.fillRect(offsetX - doorR.position.x * scale - (5.5 * scale)/2, offsetY - (doorR.position.z + 0.4) * scale, 5.5 * scale, 0.8 * scale);
 
-  // Far Exit Door
   mapCtx.fillStyle = 'rgba(100,200,255,0.8)';
   mapCtx.fillRect(offsetX - exitDoor.position.x * scale - (3 * scale)/2, offsetY - (exitDoor.position.z + 0.2) * scale, 3 * scale, 0.4 * scale);
 
@@ -895,7 +903,6 @@ function drawMap() {
 function checkCollision(pos, radius) {
   for(let i=0; i<WALLS.length; i++) {
     const w = WALLS[i];
-    // Exclude lintels/overhead walls from floor-level collision checks
     if(w.y && w.y > 4) continue;
     
     const hw = w.w / 2;
@@ -906,7 +913,6 @@ function checkCollision(pos, radius) {
     }
   }
 
-  // Entrance door check
   if (doorState !== 'open') {
     let hw = 5.5 / 2; let hd = 0.8 / 2;
     let dxL = doorL.position.x; let dzL = doorL.position.z;
@@ -916,7 +922,6 @@ function checkCollision(pos, radius) {
     if (pos.x + radius > dxR - hw && pos.x - radius < dxR + hw && pos.z + radius > dzR - hd && pos.z - radius < dzR + hd) return true;
   }
 
-  // Exit door check
   let hwE = 3 / 2; let hdE = 0.4 / 2;
   let dxE = exitDoor.position.x; let dzE = exitDoor.position.z;
   if (pos.x + radius > dxE - hwE && pos.x - radius < dxE + hwE && pos.z + radius > dzE - hdE && pos.z - radius < dzE + hdE) return true;
@@ -969,7 +974,6 @@ function animate() {
     }
   }
 
-  // Safety check added: ensuring `tim` object is loaded before evaluating AI steps
   if (timState === 'walking' && tim) {
     const target = timWaypoints[currentWaypoint];
     const dx = target.x - tim.position.x;
@@ -1008,7 +1012,6 @@ function animate() {
     }
   }
 
-  // Safety check added: ensuring character is loaded before updating camera logic
   if (character && audioUnlocked && !isOverlayOpen) {
     const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     
@@ -1065,7 +1068,7 @@ function animate() {
     camera.position.lerp(tPos, 0.25); 
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
 
-    // ---- Proximity, Visibility & Spatial Audio ----
+    // ---- Proximity, Visibility, Performance Culling & Advanced Audio Ducking ----
     
     let distToPanel = character.position.distanceTo(panelMesh.position);
     let showPanelPrompt = (distToPanel < 2.5 && doorState === 'closed');
@@ -1078,37 +1081,62 @@ function animate() {
     
     const MAX_AUDIO_DIST = 14.0; 
     const MIN_AUDIO_DIST = 4.0; 
-    
     const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
 
     screens.forEach(s => {
-      const dist = camera.position.distanceTo(s.mesh.position);
+      const dist = character.position.distanceTo(s.mesh.position);
       const dirToScreen = s.mesh.position.clone().sub(camera.position).normalize();
       const camGazeDot = camForward.dot(dirToScreen); 
       
       const dirToCam = camera.position.clone().sub(s.mesh.position).normalize();
       const isFacingFront = s.normal.dot(dirToCam) > 0.15; 
-      
       const hasLOS = checkLineOfSight(camera.position, s.mesh.position);
       
-      if (s.video.paused) s.video.play().catch(()=>{});
-
-      if (isFacingFront && hasLOS && dist < MAX_AUDIO_DIST) {
-        let distVol = 1.0 - ((dist - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
-        distVol = Math.max(0, Math.min(1, distVol));
-        let gazeVol = Math.max(0.15, (camGazeDot + 0.5) / 1.5); 
-        s.video.volume = distVol * gazeVol;
+      // 1. HARD PERFORMANCE CULLING
+      // If a screen is further than 20 meters, or completely behind us, actively pause it!
+      const inRange = dist < 20;
+      const isVisible = camGazeDot > -0.4;
+      
+      if (inRange && (isVisible || dist < 6) && hasLOS) {
+        if (s.video.paused) s.video.play().catch(()=>{});
       } else {
-        s.video.volume = 0; 
+        if (!s.video.paused) s.video.pause();
       }
 
-      if (isFacingFront && hasLOS && dist < 10 && camGazeDot > 0.75) {
-        const score = (camGazeDot * 20) - dist; 
+      // 2. FOCUS SCORING (Determine which screen the user is actively watching)
+      if (!s.video.paused && isFacingFront && hasLOS && dist < 12 && camGazeDot > 0.6) {
+        const score = (camGazeDot * 25) - dist; 
         if (score > bestScore) {
           bestScore = score;
           closestScreen = s;
         }
       }
+
+      // 3. BASE AUDIO CALCULATION
+      if (!s.video.paused && isFacingFront && hasLOS && dist < MAX_AUDIO_DIST) {
+        let distVol = 1.0 - ((dist - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
+        distVol = Math.max(0, Math.min(1, distVol));
+        let gazeVol = Math.max(0.1, (camGazeDot + 0.3) / 1.3); 
+        s.targetVolume = distVol * gazeVol;
+      } else {
+        s.targetVolume = 0; 
+      }
+    });
+
+    // 4. AUDIO DUCKING APPLICATION
+    // If a primary screen is locked, aggressively duck the audio of everything else
+    screens.forEach(s => {
+      if (closestScreen) {
+        if (s === closestScreen) {
+          s.targetVolume = Math.min(1.0, s.targetVolume * 1.5); // Boost the active focus film
+        } else {
+          s.targetVolume *= 0.10; // 90% audio reduction for non-focused background films
+        }
+      }
+      
+      // Safety sync and smooth volume transitions
+      if (s.video.paused) s.targetVolume = 0;
+      s.video.volume = THREE.MathUtils.lerp(s.video.volume, s.targetVolume, 0.08);
     });
 
     if (showPanelPrompt) {
