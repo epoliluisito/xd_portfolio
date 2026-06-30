@@ -3,165 +3,164 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Nimble — green glass mascot</title>
+<title>Nimble — playable glass mascot</title>
 <style>
-  html,body{margin:0;height:100%;background:#10131a;overflow:hidden;font-family:system-ui,sans-serif}
-  #info{position:fixed;top:10px;left:12px;color:#8aa;font-size:12px;opacity:.7}
+  html,body{margin:0;height:100%;background:#0e1118;overflow:hidden;
+            font-family:system-ui,-apple-system,sans-serif;color:#cfe}
+  #legend{position:fixed;top:14px;left:14px;background:rgba(16,20,30,.78);
+          backdrop-filter:blur(6px);border:1px solid #2a3550;border-radius:12px;
+          padding:12px 14px;font-size:13px;line-height:1.1;min-width:170px}
+  #legend h1{font-size:13px;margin:0 0 8px;letter-spacing:.08em;color:#7fe3a0;text-transform:uppercase}
+  .row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:7px;cursor:pointer}
+  .row:hover{background:rgba(127,227,160,.10)}
+  .row.active{background:rgba(127,227,160,.22)}
+  .key{display:inline-flex;justify-content:center;min-width:22px;padding:2px 6px;
+       background:#1c2740;border:1px solid #38507a;border-radius:6px;
+       font-weight:700;font-size:12px;color:#bfe}
+  .name{opacity:.9;text-transform:capitalize}
+  #hint{position:fixed;bottom:12px;left:14px;font-size:11px;opacity:.45}
 </style>
-<!-- Three.js via importmap. Pin a version so this keeps working. -->
 <script type="importmap">
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-    "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.esm.js"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
   }
 }
 </script>
 </head>
 <body>
-<div id="info">drag to orbit · scroll to zoom</div>
+<div id="legend"><h1>Nimble · controls</h1><div id="rows"></div></div>
+<div id="hint">drag to orbit · scroll to zoom · click a row or press its key</div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import GUI from 'lil-gui';
 
-// ---------- renderer / scene / camera ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// clip -> {key, loop, next}.  loop:false = one-shot, then go to `next` (default idle).
+const CLIPS = {
+  idle:          { key:'I', loop:true  },
+  jump:          { key:'J', loop:false },
+  dance:         { key:'D', loop:true  },
+  laugh:         { key:'L', loop:false },
+  running:       { key:'R', loop:true  },
+  running_slide: { key:'S', loop:false, next:'running' },
+  skateboard:    { key:'B', loop:true  },
+  skating_start: { key:'K', loop:false, next:'skateboard' },
+  dive:          { key:'V', loop:false, next:'swim' },
+  swim:          { key:'W', loop:true  },
+  tread:         { key:'T', loop:true  },
+};
+const BYKEY = Object.fromEntries(Object.entries(CLIPS).map(([n,c])=>[c.key, n]));
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x10131a);
-
-// Environment map — THIS is what produces the reflections on the glass.
-// RoomEnvironment is a cheap procedural studio; swap for an HDR (RGBELoader) for production.
+scene.background = new THREE.Color(0x0e1118);
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; // <- reflections
 
 const camera = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.01, 100);
-camera.position.set(0.9, 1.0, 2.2);
-
+camera.position.set(1.1, 1.0, 2.4);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.8, 0);
-controls.enableDamping = true;
+controls.target.set(0, 0.85, 0); controls.enableDamping = true;
 
-// A little ground + a couple of colored blocks so refraction has something to bend.
 scene.add(new THREE.Mesh(
-  new THREE.CircleGeometry(6, 48).rotateX(-Math.PI/2),
-  new THREE.MeshStandardMaterial({ color: 0x20242e, roughness: 0.9 })
-));
-for (const [x,c] of [[-1.2,0xff5544],[1.2,0x4488ff]]) {
-  const b = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.4,0.4),
-            new THREE.MeshStandardMaterial({ color:c, roughness:0.4 }));
-  b.position.set(x, 0.2, -0.6); scene.add(b);
+  new THREE.CircleGeometry(8,48).rotateX(-Math.PI/2),
+  new THREE.MeshStandardMaterial({ color:0x161b26, roughness:0.95 })));
+for (const [x,c] of [[-1.3,0xff5544],[1.3,0x4488ff]]){
+  const b=new THREE.Mesh(new THREE.BoxGeometry(0.35,0.35,0.35),
+        new THREE.MeshStandardMaterial({color:c,roughness:0.4}));
+  b.position.set(x,0.18,-0.7); scene.add(b);
 }
-scene.add(new THREE.DirectionalLight(0xffffff, 1.2).translateY(3).translateZ(2));
+const dl=new THREE.DirectionalLight(0xffffff,1.2); dl.position.set(2,4,3); scene.add(dl);
 
-// ---------- glass parameters (tune live in the panel) ----------
-const params = {
-  transmission: 1.0,      // 1 = fully see-through glass
-  ior: 1.45,              // dish soap / glass ~1.45
-  roughness: 0.08,        // low = crisp; raise for frosted
-  thickness: 0.6,         // overall depth; multiplied by the baked thickness map
-  attenuationDistance: 0.6,
-  attenuationColor: '#27c24a',  // the GREEN lives here (volumetric absorption), not in base color
-  clearcoat: 1.0,         // wet, candy shell highlight
-  clearcoatRoughness: 0.08,
-  envMapIntensity: 1.4,   // strength of reflections
-  keepFace: true          // keep Meshy's base-color map so eyes/mouth stay colored
-};
-
-// ---------- load asset ----------
-let mixer, glassMat;
-const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => {
-  t.flipY = false;                 // glTF UV convention
-  t.colorSpace = THREE.NoColorSpace;
+// ---------- glass material (same recipe as before) ----------
+function makeGlass(src){
+  const m = new THREE.MeshPhysicalMaterial({
+    map: src.map || null,            // keeps eyes/mouth coloring under the glass
+    normalMap: src.normalMap || null,
+    metalness: 0.0, roughness: 0.08,
+    transmission: 1.0, ior: 1.45,
+    thickness: 0.6, thicknessMap: thicknessTex,
+    attenuationColor: new THREE.Color('#27c24a'),  // the green lives here
+    attenuationDistance: 0.6,
+    clearcoat: 1.0, clearcoatRoughness: 0.08,
+    envMapIntensity: 1.4, transparent: true,
+  });
+  if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+  return m;
+}
+const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t=>{
+  t.flipY=false; t.colorSpace=THREE.NoColorSpace;
 });
 
-new GLTFLoader().load('./nimble_run.glb', (gltf) => {
-  const root = gltf.scene;
-  scene.add(root);
+// ---------- load + wire animations ----------
+let mixer, actions={}, current=null;
+new GLTFLoader().load('./nimble_character.glb', (gltf)=>{
+  const root = gltf.scene; scene.add(root);
+  root.traverse(o=>{ if(o.isMesh){ o.material=makeGlass(o.material); o.frustumCulled=false; }});
 
-  root.traverse(o => {
-    if (!o.isMesh) return;
-    const src = o.material; // what Meshy baked (has map + normalMap)
-
-    glassMat = new THREE.MeshPhysicalMaterial({
-      // keep surface detail + (optionally) the face coloring from the bake
-      map: params.keepFace ? src.map : null,
-      normalMap: src.normalMap || null,
-      // glass
-      metalness: 0.0,
-      roughness: params.roughness,
-      transmission: params.transmission,
-      ior: params.ior,
-      thickness: params.thickness,
-      thicknessMap: thicknessTex,
-      attenuationColor: new THREE.Color(params.attenuationColor),
-      attenuationDistance: params.attenuationDistance,
-      clearcoat: params.clearcoat,
-      clearcoatRoughness: params.clearcoatRoughness,
-      envMapIntensity: params.envMapIntensity,
-      transparent: true
-    });
-    if (glassMat.map) glassMat.map.colorSpace = THREE.SRGBColorSpace;
-    o.material = glassMat;
-    o.frustumCulled = false;
-  });
-
-  // play the run cycle
-  if (gltf.animations.length) {
-    mixer = new THREE.AnimationMixer(root);
-    mixer.clipAction(gltf.animations[0]).play();
+  mixer = new THREE.AnimationMixer(root);
+  for (const clip of gltf.animations){
+    const a = mixer.clipAction(clip);
+    const cfg = CLIPS[clip.name] || {loop:false};
+    if (!cfg.loop){ a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+    actions[clip.name] = a;
   }
-  buildGUI();
-}, undefined, e => console.error('GLB load failed', e));
+  mixer.addEventListener('finished', ()=>{
+    const cfg = CLIPS[current] || {};
+    play(cfg.next || 'idle');
+  });
+  buildLegend();
+  play('idle');
+}, undefined, e=>console.error('GLB load failed', e));
 
-// ---------- live tuning panel ----------
-function buildGUI(){
-  const gui = new GUI();
-  const apply = () => {
-    glassMat.transmission = params.transmission;
-    glassMat.ior = params.ior;
-    glassMat.roughness = params.roughness;
-    glassMat.thickness = params.thickness;
-    glassMat.attenuationDistance = params.attenuationDistance;
-    glassMat.attenuationColor.set(params.attenuationColor);
-    glassMat.clearcoat = params.clearcoat;
-    glassMat.clearcoatRoughness = params.clearcoatRoughness;
-    glassMat.envMapIntensity = params.envMapIntensity;
-    glassMat.map = params.keepFace ? glassMat.userData.faceMap || glassMat.map : null;
-    glassMat.needsUpdate = true;
-  };
-  glassMat.userData.faceMap = glassMat.map;
-  gui.add(params,'transmission',0,1,0.01).onChange(apply);
-  gui.add(params,'ior',1,2,0.01).onChange(apply);
-  gui.add(params,'roughness',0,0.6,0.01).onChange(apply);
-  gui.add(params,'thickness',0,3,0.01).onChange(apply);
-  gui.add(params,'attenuationDistance',0.05,3,0.01).onChange(apply);
-  gui.addColor(params,'attenuationColor').onChange(apply);
-  gui.add(params,'clearcoat',0,1,0.01).onChange(apply);
-  gui.add(params,'clearcoatRoughness',0,0.6,0.01).onChange(apply);
-  gui.add(params,'envMapIntensity',0,3,0.01).onChange(apply);
-  gui.add(params,'keepFace').onChange(apply);
+function play(name, fade=0.3){
+  const next = actions[name]; if(!next || name===current) return;
+  const prev = actions[current];
+  next.reset();
+  if (prev){ next.crossFadeFrom(prev, fade, false); }
+  next.play();
+  current = name;
+  // legend highlight
+  document.querySelectorAll('.row').forEach(r=>
+    r.classList.toggle('active', r.dataset.clip===name));
 }
+
+// ---------- legend / input ----------
+function buildLegend(){
+  const rows = document.getElementById('rows');
+  for (const [name,cfg] of Object.entries(CLIPS)){
+    const r=document.createElement('div');
+    r.className='row'; r.dataset.clip=name;
+    r.innerHTML=`<span class="key">${cfg.key}</span><span class="name">${name.replace('_',' ')}</span>`;
+    r.onclick=()=>play(name);
+    rows.appendChild(r);
+  }
+}
+addEventListener('keydown', e=>{
+  const name = BYKEY[e.key.toUpperCase()];
+  if (name) play(name);
+});
 
 // ---------- loop ----------
-const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
-  if (mixer) mixer.update(clock.getDelta());
+const clock=new THREE.Clock();
+renderer.setAnimationLoop(()=>{
+  if(mixer) mixer.update(clock.getDelta());
   controls.update();
-  renderer.render(scene, camera);
+  renderer.render(scene,camera);
 });
-addEventListener('resize', () => {
-  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
 });
 </script>
 </body>
