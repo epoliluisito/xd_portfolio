@@ -12,7 +12,7 @@
   canvas { display: block; width: 100vw; height: 100vh; }
   
   /* ---- UI Overlays ---- */
-  #ui { position: fixed; inset: 0; pointer-events: none; }
+  #ui { position: fixed; inset: 0; pointer-events: none; z-index: 100; }
   
   /* User Guide */
   #guide-panel {
@@ -46,7 +46,7 @@
 
   /* Loading & Entry Screen */
   #loading {
-    position: fixed; inset: 0; background: #030408; z-index: 300;
+    position: fixed; inset: 0; background: #030408; z-index: 999;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     transition: opacity 0.8s ease; pointer-events: all;
   }
@@ -181,6 +181,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
+await document.fonts.ready;
+
 function lerpAngle(start, end, amt) {
   let delta = end - start;
   while (delta > Math.PI) delta -= Math.PI * 2;
@@ -189,13 +191,13 @@ function lerpAngle(start, end, amt) {
 }
 
 // ---- SPATIAL LAYOUT, FILMS & CONTENT ----
-// Re-spaced Nivea_2 and Nivea_3 to -11 and -20 to completely clear the corridor wall collision.
+// FIXED: Flawless mathematical placement to ensure 0.8m gap between screens and perfect wall margins.
 const VIDEOS = [
   { id: 'nivea_1', room: 'L1', brand: 'NIVEA', title: 'Disney Collaboration', desc: 'A magical journey exploring the intersection of skincare and timeless storytelling.\n\nCreated in collaboration with Disney.', file: 'nivea_disney.mp4', x: -15.5, z: 0, rot: 0 },
   { id: 'nivea_5', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Cheetah', desc: 'Unleash your inner speed and precision.\n\nExperience the power of the Deep Cheetah campaign.', file: 'nivea_men_deep_cheetah.mp4', x: -25, z: 8, rot: Math.PI/2 },
   { id: 'nivea_4', room: 'L1', brand: 'NIVEA MEN', title: 'Deep Tennis', desc: 'Stay fresh under pressure.\n\nHigh-performance care for high-intensity moments.', file: 'nivea_men_deep_tennis.mp4', x: -25, z: 21, rot: Math.PI/2 },
-  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -11, z: 29.5, rot: Math.PI },
-  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -20, z: 29.5, rot: Math.PI },
+  { id: 'nivea_2', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Caucasian)', desc: 'Celebrating the bond between fathers and their children.\n\nA heartfelt tribute to paternal care.', file: 'nivea_fathers_day_caucasian.mp4', x: -9.2, z: 29.5, rot: Math.PI },
+  { id: 'nivea_3', room: 'L1', brand: 'NIVEA', title: 'Father\'s Day (Thai)', desc: 'A touching story of family, respect, and tradition.\n\nCrafted specifically for the Thai audience.', file: 'nivea_fathers_day_thai.mp4', x: -19.2, z: 29.5, rot: Math.PI },
   { id: 'always_1', room: 'R1', brand: 'ALWAYS', title: 'Get Unnoticed', desc: 'Confidence that lets you focus on what matters.\n\nAn empowering narrative for everyday heroes.', file: 'always_get_unnoticed.mp4', x: 15.5, z: 0, rot: 0 },
   { id: 'always_2', room: 'R1', brand: 'ALWAYS', title: 'Snap Poof Gone', desc: 'Fast, effective, and invisible.\n\nDiscover the freedom of total protection.', file: 'always_snap_poof_gone.mp4', x: 25, z: 10, rot: -Math.PI/2 },
   { id: 'kellogs', room: 'R2', brand: 'KELLOGGS', title: 'Tresor', desc: 'Unleash the ultimate chocolatey experience.\n\nA thrilling ride for the tastebuds.', file: 'kellogs_tresor.mp4', x: 25, z: 30, rot: -Math.PI/2, scale: 1.4 },
@@ -213,9 +215,9 @@ const WALLS = [
   {x: 15.5, z: -0.5, w: 21, d: 1},  
   
   // Tighter Gallery End with a 3m gap in the center for the exit door
-  {x: -13.75, z: 60.5, w: 24.5, d: 1}, // Left of the far exit door
-  {x: 13.75, z: 60.5, w: 24.5, d: 1},  // Right of the far exit door
-  {x: 0, z: 60.5, w: 3, d: 1, y: 5.5, h: 5}, // Lintel over the exit door
+  {x: -13.75, z: 60.5, w: 24.5, d: 1}, 
+  {x: 13.75, z: 60.5, w: 24.5, d: 1},  
+  {x: 0, z: 60.5, w: 3, d: 1, y: 5.5, h: 5}, // Lintel
 
   // Elongated Side Boundaries
   {x: -25.5, z: 30, w: 1, d: 61}, 
@@ -366,6 +368,13 @@ function registerAssetLoaded() {
     
     btn.addEventListener('click', () => {
       audioUnlocked = true;
+      screens.forEach(s => {
+        const p = s.video.play();
+        if(p !== undefined) {
+          p.then(() => { s.video.pause(); }).catch(e => console.warn(e));
+        }
+      });
+
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
       
@@ -382,7 +391,7 @@ setTimeout(() => {
     loadedAssets = totalAssets;
     registerAssetLoaded();
   }
-}, 4000); 
+}, 8000); 
 
 // ---- Setup Scene ----
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -474,7 +483,7 @@ roomTitles.forEach(rt => {
   scene.add(plane);
 });
 
-// ---- Entrance System: Sliding Doors & Buttons ----
+// ---- Entrance System ----
 let doorState = 'closed';
 
 const doorMat = new THREE.MeshStandardMaterial({color: 0x333333, metalness: 0.8, roughness: 0.2});
@@ -540,7 +549,6 @@ roomCenters.forEach(pos => {
 const screens = [];
 VIDEOS.forEach(v => {
   const vidEl = document.createElement('video');
-  vidEl.src = v.file;
   vidEl.crossOrigin = 'anonymous';
   vidEl.loop = true;
   vidEl.playsInline = true;
@@ -555,10 +563,10 @@ VIDEOS.forEach(v => {
       registerAssetLoaded();
     }
   };
-  vidEl.addEventListener('loadedmetadata', loadHandler);
+  vidEl.addEventListener('loadeddata', loadHandler);
   vidEl.addEventListener('error', loadHandler);
   
-  if (vidEl.readyState >= 1) loadHandler();
+  vidEl.src = v.file;
 
   const videoTex = new THREE.VideoTexture(vidEl);
   videoTex.colorSpace = THREE.SRGBColorSpace;
@@ -713,7 +721,7 @@ window.addEventListener('keydown', e => {
   if(isOverlayOpen) {
     if(e.key === 'Escape') {
       closeOverlay();
-      document.getElementById('confirm-overlay').classList.remove('visible');
+      document.getElementById('confirm-overlay').style.display = 'none';
     }
     return;
   }
@@ -744,7 +752,7 @@ document.addEventListener('mousemove', e => {
   walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
 });
 
-// ---- Level Transition Logic with Preloader iframe ----
+// ---- Level Transition Logic (Prefetch instead of iframe) ----
 function startLevelTransition() {
   const loadingScreen = document.getElementById('loading');
   const loadText = document.getElementById('load-text');
@@ -756,40 +764,30 @@ function startLevelTransition() {
   loadFill.style.transition = 'none';
   loadFill.style.width = '0%';
   
+  const prefetch = document.createElement('link');
+  prefetch.rel = 'prefetch';
+  prefetch.href = './2d/';
+  document.head.appendChild(prefetch);
+  
   loadingScreen.style.display = 'flex';
   loadingScreen.style.opacity = '1';
   loadingScreen.style.pointerEvents = 'all';
 
-  // Create an invisible iframe to actively preload the next 2D world into browser cache
-  const preloadFrame = document.createElement('iframe');
-  preloadFrame.style.display = 'none';
-  let iframeLoaded = false;
-  preloadFrame.onload = () => { iframeLoaded = true; };
-  preloadFrame.src = './2d/';
-  document.body.appendChild(preloadFrame);
-  
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       loadFill.style.transition = 'width 2.5s cubic-bezier(0.4, 0, 0.2, 1)';
       loadFill.style.width = '100%';
       
-      let elapsedWait = 0;
-      const checkInterval = setInterval(() => {
-        elapsedWait += 100;
-        // Wait for visual bar finish (2.5s) AND check if iframe downloaded the content
-        if (elapsedWait >= 2500) {
-          if (iframeLoaded || elapsedWait >= 6000) { // Max fallback 6s to prevent lockup
-            clearInterval(checkInterval);
-            window.location.href = './2d/';
-          }
-        }
-      }, 100);
+      setTimeout(() => {
+        window.location.href = './2d/';
+      }, 2600);
     });
   });
 }
 
 document.getElementById('btn-cancel-travel').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.remove('visible');
+  setTimeout(() => document.getElementById('confirm-overlay').style.display = 'none', 500);
   isOverlayOpen = false;
 });
 
@@ -811,7 +809,8 @@ function triggerInteraction() {
   if (activeInteractable === 'exit_door') {
     isOverlayOpen = true;
     if(document.pointerLockElement) document.exitPointerLock();
-    document.getElementById('confirm-overlay').classList.add('visible');
+    document.getElementById('confirm-overlay').style.display = 'flex';
+    requestAnimationFrame(() => document.getElementById('confirm-overlay').classList.add('visible'));
 
   } else if (activeInteractable === 'door') {
     doorState = 'opening';
@@ -831,7 +830,6 @@ function triggerInteraction() {
     document.getElementById('overlay-title').textContent = data.title;
     document.getElementById('overlay-desc').textContent = data.desc;
     
-    // Hard-pause all gallery screens for max performance while overlay is open
     screens.forEach(s => {
       s.video.volume = 0;
       if (!s.video.paused) s.video.pause();
@@ -1092,18 +1090,20 @@ function animate() {
       const isFacingFront = s.normal.dot(dirToCam) > 0.15; 
       const hasLOS = checkLineOfSight(camera.position, s.mesh.position);
       
-      // 1. HARD PERFORMANCE CULLING
-      // If a screen is further than 20 meters, or completely behind us, actively pause it!
-      const inRange = dist < 20;
+      // HARD PERFORMANCE CULLING
+      const inRange = dist < 22;
       const isVisible = camGazeDot > -0.4;
       
       if (inRange && (isVisible || dist < 6) && hasLOS) {
-        if (s.video.paused) s.video.play().catch(()=>{});
+        if (s.video.paused) {
+          const playPromise = s.video.play();
+          if (playPromise !== undefined) playPromise.catch(()=>{});
+        }
       } else {
         if (!s.video.paused) s.video.pause();
       }
 
-      // 2. FOCUS SCORING (Determine which screen the user is actively watching)
+      // FOCUS SCORING
       if (!s.video.paused && isFacingFront && hasLOS && dist < 12 && camGazeDot > 0.6) {
         const score = (camGazeDot * 25) - dist; 
         if (score > bestScore) {
@@ -1112,7 +1112,7 @@ function animate() {
         }
       }
 
-      // 3. BASE AUDIO CALCULATION
+      // BASE AUDIO CALCULATION
       if (!s.video.paused && isFacingFront && hasLOS && dist < MAX_AUDIO_DIST) {
         let distVol = 1.0 - ((dist - MIN_AUDIO_DIST) / (MAX_AUDIO_DIST - MIN_AUDIO_DIST));
         distVol = Math.max(0, Math.min(1, distVol));
@@ -1123,18 +1123,16 @@ function animate() {
       }
     });
 
-    // 4. AUDIO DUCKING APPLICATION
-    // If a primary screen is locked, aggressively duck the audio of everything else
+    // AUDIO DUCKING APPLICATION
     screens.forEach(s => {
       if (closestScreen) {
         if (s === closestScreen) {
-          s.targetVolume = Math.min(1.0, s.targetVolume * 1.5); // Boost the active focus film
+          s.targetVolume = Math.min(1.0, s.targetVolume * 1.5); 
         } else {
-          s.targetVolume *= 0.10; // 90% audio reduction for non-focused background films
+          s.targetVolume *= 0.10; 
         }
       }
       
-      // Safety sync and smooth volume transitions
       if (s.video.paused) s.targetVolume = 0;
       s.video.volume = THREE.MathUtils.lerp(s.video.volume, s.targetVolume, 0.08);
     });
