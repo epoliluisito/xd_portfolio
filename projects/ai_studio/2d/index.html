@@ -235,7 +235,7 @@
 await document.fonts.ready;
 
 // ---- SPATIAL ENVIRONMENT & SCREEN POSITIONS ----
-const ROOM_WIDTH = 1800; // Expanded Room Width for a much wider experience
+const ROOM_WIDTH = 1800; // Expanded Room Width
 const WORLD_WIDTH = ROOM_WIDTH * 4; // 4 Rooms = 7200px Map Width
 const MIN_Y = 415; // Bottom-center playable bounds in 2.5D space
 const MAX_Y = 680;
@@ -261,7 +261,7 @@ const VIDEOS = [
   { id: 'vicks', file: 'traditional/vicks_treno_per_milano.mov', brand: 'Vicks', title: 'Treno per Milano', desc: 'Warm relief on a retro cold-day commute to Milan.\n\nKeeping your family travels moving smoothly.', x: 6450, room: 4 }
 ];
 
-// Room Style Configs (Procedural Pixel Art Color Grading)
+// Room Style Configs
 const ROOM_THEMES = {
   1: { wall: '#151622', panel: '#0f1018', banner: '#e8c547', name: 'Entrance & Fashion Wing' },
   2: { wall: '#102219', panel: '#0b1611', banner: '#50e3c2', name: 'Living & Lifestyle Pavilion' },
@@ -271,13 +271,16 @@ const ROOM_THEMES = {
 
 // ---- PRELOAD ASSETS SYSTEM ----
 let loadedCount = 0;
-const totalAssets = 2; // greg.png and tim.png
+const totalAssets = 4; // greg_idle, greg_walk, tim_idle, tim_walk
 let isReady = false;
 let audioUnlocked = false;
 
+// Decoupled Multi-spritesheet registry
 const characters = {
-  greg: { img: new Image(), src: 'characters/greg.png', ready: false },
-  tim: { img: new Image(), src: 'characters/tim.png', ready: false }
+  greg_idle: { img: new Image(), src: 'characters/greg_idle.png', ready: false, cols: 1 },
+  greg_walk: { img: new Image(), src: 'characters/greg_walk.png', ready: false, cols: 8 },
+  tim_idle: { img: new Image(), src: 'characters/tim_idle.png', ready: false, cols: 1 },
+  tim_walk: { img: new Image(), src: 'characters/tim_walk.png', ready: false, cols: 8 }
 };
 
 function onAssetLoaded() {
@@ -291,7 +294,6 @@ function onAssetLoaded() {
     btn.style.display = 'block';
     btn.addEventListener('click', () => {
       audioUnlocked = true;
-      // Play all muted canvas video instances
       VIDEOS.forEach(v => v.video.play().catch(e => console.warn("Autoplay deferred", e)));
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
@@ -299,7 +301,7 @@ function onAssetLoaded() {
   }
 }
 
-// Prepare Sprite Image Objects
+// Load separate idle and walking PNG sheets
 Object.keys(characters).forEach(key => {
   characters[key].img.onload = () => {
     characters[key].ready = true;
@@ -307,12 +309,12 @@ Object.keys(characters).forEach(key => {
   };
   characters[key].img.onerror = () => {
     console.error(`Missing asset characters/${key}.png`);
-    onAssetLoaded(); // Fallback to avoid complete freeze
+    onAssetLoaded(); // Fallback
   };
   characters[key].img.src = characters[key].src;
 });
 
-// Setup video playback instances for Canvas rendering
+// Setup video instances
 VIDEOS.forEach(v => {
   const vid = document.createElement('video');
   vid.src = v.file;
@@ -339,10 +341,8 @@ class Entity {
     
     this.vx = 0;
     this.vy = 0;
-    this.speed = 260; // Smooth gameplay walk speed
+    this.speed = 260; 
     
-    this.cols = 8;
-    this.rows = 2;
     this.state = 'idle'; // 'idle' or 'walk'
     this.currentFrame = 0;
     this.frameTimer = 0;
@@ -351,69 +351,66 @@ class Entity {
   }
 
   update(dt) {
-    const meta = characters[this.type];
-    if (!meta.ready) return;
+    // Determine active sheet config dynamically based on current state
+    const currentSheetKey = `${this.type}_${this.state}`;
+    const meta = characters[currentSheetKey];
+    if (!meta || !meta.ready) return;
 
-    // Handle Animation Cycles
+    // Handle Frame swapping logic inside target sheet boundaries
     this.frameTimer += dt;
     if (this.frameTimer >= this.frameInterval) {
       this.frameTimer = 0;
-      if (this.state === 'walk') {
-        this.currentFrame = (this.currentFrame + 1) % 8; // Row 0: 8 walk frames
-      } else {
-        // Idle state resets to first static frame facing forward
-        this.currentFrame = 0;
-      }
+      this.currentFrame = (this.currentFrame + 1) % meta.cols;
     }
 
-    // Facing calculation
+    // Adjust horizontal face-direction
     if (Math.abs(this.vx) > 0.1) {
       this.facing = this.vx > 0 ? -1 : 1;
     }
   }
 
   draw(ctx, cameraX) {
-    const meta = characters[this.type];
-    if (!meta.ready) return;
+    const currentSheetKey = `${this.type}_${this.state}`;
+    const meta = characters[currentSheetKey];
+    if (!meta || !meta.ready) return;
 
     const img = meta.img;
-    const fW = img.width / this.cols;
-    const fH = img.height / this.rows;
+    const fW = img.width / meta.cols;
+    const fH = img.height; // Single row assumptions across both separate sheets
     const aspect = fW / fH;
 
-    // Calculate depth scale based on Y-axis coordinates inside playarea bounds
+    // Calculate dynamic depth-scaling factors within room bounds
     const scaleFactor = 0.75 + ((this.y - MIN_Y) / (MAX_Y - MIN_Y)) * 0.45;
     
-    // DECUPLED SIZE FIX: Calculate display sizes mathematically based on a fixed 
-    // baseline height of 150px, completely ignoring raw source file dimensions!
-    const baseHeight = 150; 
+    // Normalizing sprite scale to look beautifully proportional:
+    // We lock visual target display height to 175px on screen and scale dynamically
+    const baseHeight = 175; 
     const drawH = baseHeight * scaleFactor;
     const drawW = drawH * aspect;
 
     ctx.save();
-    // Translate rendering origin to bottom-center footprint coordinate
+    // Translate rendering origin directly to the bottom footprint coordinate
     ctx.translate(this.x - cameraX, this.y);
     ctx.scale(this.facing, 1);
 
-    const sourceY = (this.state === 'walk' ? 0 : 1) * fH;
     const sourceX = this.currentFrame * fW;
 
     ctx.drawImage(
       img,
-      sourceX, sourceY, fW, fH,
-      -drawW / 2, -drawH + 4, drawW, drawH
+      sourceX, 0, fW, fH,
+      -drawW / 2, -drawH + 8, drawW, drawH
     );
     ctx.restore();
     
-    // Draw visual floor grounding shadow ellipse
+    // Draw grounding shadow ellipse
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
-    ctx.ellipse(this.x - cameraX, this.y + 4, 24 * scaleFactor, 7 * scaleFactor, 0, 0, Math.PI * 2);
+    ctx.ellipse(this.x - cameraX, this.y + 6, 24 * scaleFactor, 7 * scaleFactor, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
-// Instantiate Players
+// Instantiate players
 const greg = new Entity('greg', 250, 520, true);
 const tim = new Entity('tim', 550, 540, false);
 
@@ -426,11 +423,9 @@ const benches = [
 ];
 
 function checkWallCollision(targetX, targetY) {
-  // Hard Bounds
   if (targetX < 40 || targetX > WORLD_WIDTH - 40) return true;
   if (targetY < MIN_Y || targetY > MAX_Y) return true;
   
-  // Object Benches
   for (let b of benches) {
     if (targetX + 20 > b.x - b.w/2 && targetX - 20 < b.x + b.w/2 &&
         targetY + 14 > b.y - b.h/2 && targetY - 14 < b.y + b.h/2) {
@@ -475,10 +470,9 @@ function updateTimAI(dt) {
     timWaitTimer = wp.wait;
   } else {
     tim.state = 'walk';
-    tim.vx = Math.sign(diffX) * 140; // Tim walks slightly slower
+    tim.vx = Math.sign(diffX) * 140; 
     tim.x += tim.vx * dt;
     
-    // Smoothly transition Tim's depth coordinates as he navigates
     const targetY = 480 + (wp.x % 120);
     tim.y += (targetY - tim.y) * 0.05;
   }
@@ -519,8 +513,6 @@ function triggerInteraction() {
   if (isOverlayOpen) return;
   if (activeScreen) {
     isOverlayOpen = true;
-    
-    // Stop ambient canvas videos to preserve performance & isolate active audio
     VIDEOS.forEach(v => v.video.volume = 0);
 
     const overlay = document.getElementById('overlay');
@@ -558,19 +550,19 @@ function drawEnvironment(ctx, cameraX) {
 
     const startX = (r - 1) * ROOM_WIDTH - cameraX;
 
-    // 1. Draw Wall Backdrops (Y: 0 to 400)
+    // 1. Draw Walls
     ctx.fillStyle = roomTheme.wall;
     ctx.fillRect(startX, 0, ROOM_WIDTH, 400);
 
-    // Decorative horizontal baseboards
+    // Decorative baseboards
     ctx.fillStyle = roomTheme.panel;
     ctx.fillRect(startX, 375, ROOM_WIDTH, 25);
 
-    // Separating dark border line
+    // Dark split separator line
     ctx.fillStyle = '#050508';
     ctx.fillRect(startX, 396, ROOM_WIDTH, 4);
 
-    // 2. Draw Wooden Gallery Floorboards (Y: 400 to 720)
+    // 2. Draw Floorboards
     ctx.fillStyle = '#1c171d';
     ctx.fillRect(startX, 400, ROOM_WIDTH, 320);
 
@@ -584,7 +576,7 @@ function drawEnvironment(ctx, cameraX) {
       ctx.stroke();
     }
 
-    // 3. Architectural pillars dividing wings
+    // 3. Columns separating the wings
     ctx.fillStyle = '#08080d';
     ctx.fillRect(startX, 0, 24, 720);
     ctx.fillStyle = '#1a1a26';
@@ -593,25 +585,25 @@ function drawEnvironment(ctx, cameraX) {
 
   // Draw benches 
   benches.forEach(b => {
-    ctx.fillStyle = '#22140a'; // Wooden legs
+    ctx.fillStyle = '#22140a'; // Legs
     ctx.fillRect(b.x - b.w/2 + 14 - cameraX, b.y, 10, 20);
     ctx.fillRect(b.x + b.w/2 - 24 - cameraX, b.y, 10, 20);
 
-    ctx.fillStyle = '#3c2513'; // Cushion board
+    ctx.fillStyle = '#3c2513'; // Cushions
     ctx.fillRect(b.x - b.w/2 - cameraX, b.y - 18, b.w, 18);
-    ctx.fillStyle = '#9e6234'; // Cushion highlights
+    ctx.fillStyle = '#9e6234'; 
     ctx.fillRect(b.x - b.w/2 - cameraX, b.y - 18, b.w, 4);
   });
 }
 
 function drawScreens(ctx, cameraX) {
   VIDEOS.forEach(v => {
-    const screenW = 280; // Sized perfectly to the wider 1280x720 coordinates
+    const screenW = 280; 
     const screenH = 158;
     const sx = v.x - screenW / 2 - cameraX;
     const sy = 160;
 
-    // Hanging Gallery Spotlight Cone
+    // Hanging Spotlight Cone
     ctx.fillStyle = 'rgba(232, 197, 71, 0.05)';
     ctx.beginPath();
     ctx.moveTo(v.x - cameraX - 10, 0);
@@ -621,30 +613,29 @@ function drawScreens(ctx, cameraX) {
     ctx.closePath();
     ctx.fill();
 
-    // Spot ambient light pool on wall
+    // Spotlight glow on backwall
     const spotlightGrad = ctx.createRadialGradient(v.x - cameraX, sy + 60, 2, v.x - cameraX, sy + 80, 240);
     spotlightGrad.addColorStop(0, 'rgba(232, 197, 71, 0.22)');
     spotlightGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = spotlightGrad;
     ctx.fillRect(v.x - 300 - cameraX, 0, 600, 400);
 
-    // Retro Screen Frame Borders
+    // Screen frame borders
     ctx.fillStyle = '#110a05';
     ctx.fillRect(sx - 12, sy - 12, screenW + 24, screenH + 24);
     ctx.fillStyle = '#23180f';
     ctx.fillRect(sx - 8, sy - 8, screenW + 16, screenH + 16);
 
-    // Interactive Status LED indicator
+    // Status light indicator
     ctx.fillStyle = (activeScreen === v) ? '#00ff66' : '#ff3333';
     ctx.beginPath();
     ctx.arc(v.x - cameraX, sy + screenH + 8, 3, 0, Math.PI * 2);
     ctx.fill();
 
-    // Actual Screen Content Blit
+    // Draw video stream onto TV screen
     if (v.video && v.video.readyState >= 2) {
       ctx.drawImage(v.video, sx, sy, screenW, screenH);
     } else {
-      // Direct static fallback display
       ctx.fillStyle = '#06060a';
       ctx.fillRect(sx, sy, screenW, screenH);
       ctx.fillStyle = '#e8c547';
@@ -652,7 +643,7 @@ function drawScreens(ctx, cameraX) {
       ctx.fillText("LOADING DATA...", sx + 75, sy + 84);
     }
 
-    // Placard Description Frame next to Display Screen
+    // Placard plate
     const placardX = v.x + screenW/2 + 25 - cameraX;
     const placardY = sy + 40;
     ctx.fillStyle = '#eaeaea';
@@ -661,9 +652,9 @@ function drawScreens(ctx, cameraX) {
     ctx.strokeRect(placardX, placardY, 40, 55);
 
     ctx.fillStyle = '#111';
-    ctx.fillRect(placardX + 5, placardY + 5, 30, 4); // Brand indicator
+    ctx.fillRect(placardX + 5, placardY + 5, 30, 4);
     ctx.fillStyle = '#777';
-    ctx.fillRect(placardX + 5, placardY + 16, 24, 3); // Simulated text details
+    ctx.fillRect(placardX + 5, placardY + 16, 24, 3);
     ctx.fillRect(placardX + 5, placardY + 24, 30, 3);
     ctx.fillRect(placardX + 5, placardY + 32, 18, 3);
   });
@@ -679,13 +670,11 @@ function drawMinimap() {
   const mh = miniCanvas.height;
   miniCtx.clearRect(0, 0, mw, mh);
 
-  // Background map track
   miniCtx.fillStyle = '#101216';
   miniCtx.fillRect(0, 0, mw, mh);
   miniCtx.strokeStyle = 'rgba(255,255,255,0.1)';
   miniCtx.strokeRect(0, 0, mw, mh);
 
-  // Segment Room Bounds
   miniCtx.strokeStyle = 'rgba(255,255,255,0.2)';
   for (let r = 1; r < 4; r++) {
     const rx = (r * ROOM_WIDTH / WORLD_WIDTH) * mw;
@@ -695,23 +684,20 @@ function drawMinimap() {
     miniCtx.stroke();
   }
 
-  // Draw Screens representation
   miniCtx.fillStyle = '#e8c547';
   VIDEOS.forEach(v => {
     const mx = (v.x / WORLD_WIDTH) * mw;
     miniCtx.fillRect(mx - 1, 4, 2, 4);
   });
 
-  // Draw Players
   const gregX = (greg.x / WORLD_WIDTH) * mw;
-  miniCtx.fillStyle = '#00ffcc'; // Greg player tracker
+  miniCtx.fillStyle = '#00ffcc'; 
   miniCtx.fillRect(gregX - 2, mh / 2 - 3, 4, 6);
 
   const timX = (tim.x / WORLD_WIDTH) * mw;
-  miniCtx.fillStyle = '#ff6666'; // Tim tracker
+  miniCtx.fillStyle = '#ff6666'; 
   miniCtx.fillRect(timX - 2, mh / 2 - 3, 3, 5);
 
-  // Update room label text
   const currentRoom = Math.min(4, Math.max(1, Math.floor(greg.x / ROOM_WIDTH) + 1));
   document.getElementById('minimap-info').textContent = ROOM_THEMES[currentRoom].name;
 }
@@ -721,13 +707,13 @@ let lastTime = 0;
 let cameraX = 0;
 
 function gameLoop(time) {
-  const dt = Math.min((time - lastTime) / 1000, 0.1); // prevent extreme frame drops
+  const dt = Math.min((time - lastTime) / 1000, 0.1); 
   lastTime = time;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (isReady && !isOverlayOpen) {
-    // 1. Process Player Input
+    // 1. Process player input
     greg.vx = 0;
     greg.vy = 0;
     greg.state = 'idle';
@@ -737,37 +723,36 @@ function gameLoop(time) {
     if (keys['a'] || keys['arrowleft']) { greg.vx = -greg.speed; greg.state = 'walk'; }
     if (keys['d'] || keys['arrowright']) { greg.vx = greg.speed; greg.state = 'walk'; }
 
-    // Walk physics frame apply
     const nextX = greg.x + greg.vx * dt;
     const nextY = greg.y + greg.vy * dt;
 
     if (!checkWallCollision(nextX, greg.y)) greg.x = nextX;
     if (!checkWallCollision(greg.x, nextY)) greg.y = nextY;
 
-    // AI Updates
+    // AI waypoint routine
     updateTimAI(dt);
 
     greg.update(dt);
     tim.update(dt);
 
-    // Smooth Scrolling Camera logic tracking Greg
+    // Smooth horizontal camera tracking
     const targetCamX = greg.x - canvas.width / 2;
     cameraX += (targetCamX - cameraX) * 0.08;
     cameraX = Math.max(0, Math.min(WORLD_WIDTH - canvas.width, cameraX));
 
-    // Proximity logic & Interactive Prompt detection
+    // Dynamic proximities
     let closestScreen = null;
     let minDistance = Infinity;
 
     VIDEOS.forEach(v => {
       const distance = Math.hypot(greg.x - v.x, greg.y - 400);
       
-      // Dynamic Spatial Audio Calculation
+      // Proximity spatial sound fade
       if (audioUnlocked) {
-        const volumeFadeRadius = 550; // Dynamic audibility radius for wider floor
+        const volumeFadeRadius = 550; 
         if (distance < volumeFadeRadius) {
           const attenuation = 1.0 - (distance / volumeFadeRadius);
-          v.video.volume = Math.pow(attenuation, 1.8); // exponential volume curve
+          v.video.volume = Math.pow(attenuation, 1.8); 
           if (v.video.paused) v.video.play().catch(() => {});
         } else {
           v.video.volume = 0;
@@ -792,11 +777,11 @@ function gameLoop(time) {
     }
   }
 
-  // ---- DRAW SCENE ----
+  // Draw background environment and screens
   drawEnvironment(ctx, cameraX);
   drawScreens(ctx, cameraX);
 
-  // Depth sorting render loop
+  // Depth rendering sorting check
   if (greg.y <= tim.y) {
     greg.draw(ctx, cameraX);
     tim.draw(ctx, cameraX);
@@ -805,15 +790,13 @@ function gameLoop(time) {
     greg.draw(ctx, cameraX);
   }
 
-  // Draw minimap overlay
   drawMinimap();
 
   requestAnimationFrame(gameLoop);
 }
 
-// Responsive fitting maintaining 16:9 ratio
+// Layout scale ratio fitting helper
 function handleResize() {
-  const container = document.getElementById('game-container');
   const w = window.innerWidth;
   const h = window.innerHeight;
   const aspect = 16 / 9;
@@ -829,7 +812,6 @@ function handleResize() {
 window.addEventListener('resize', handleResize);
 handleResize();
 
-// Initiate game loop
 requestAnimationFrame(gameLoop);
 </script>
 </body>
