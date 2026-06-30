@@ -292,9 +292,15 @@ function onAssetLoaded() {
     document.getElementById('load-text').textContent = 'Exhibition Ready.';
     const btn = document.getElementById('enter-btn');
     btn.style.display = 'block';
+    
+    // UNMUTE AND PLAY ALL VIDEOS ON USER GESTURE
     btn.addEventListener('click', () => {
       audioUnlocked = true;
-      VIDEOS.forEach(v => v.video.play().catch(e => console.warn("Autoplay deferred", e)));
+      VIDEOS.forEach(v => {
+        v.video.muted = false; // Must explicitly unmute for our dynamic volume slider to work
+        v.video.volume = 0;    // Start silent
+        v.video.play().catch(e => console.warn("Autoplay deferred", e));
+      });
       document.getElementById('loading').style.opacity = '0';
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
     });
@@ -318,7 +324,7 @@ Object.keys(characters).forEach(key => {
 VIDEOS.forEach(v => {
   const vid = document.createElement('video');
   vid.src = v.file;
-  vid.muted = true;
+  vid.muted = true; // Auto-play requires initial mute state
   vid.loop = true;
   vid.playsInline = true;
   vid.preload = 'metadata';
@@ -510,6 +516,7 @@ function triggerInteraction() {
   if (isOverlayOpen) return;
   if (activeScreen) {
     isOverlayOpen = true;
+    // Mute all environment audio when viewing fullscreen
     VIDEOS.forEach(v => v.video.volume = 0);
 
     const overlay = document.getElementById('overlay');
@@ -752,32 +759,38 @@ function gameLoop(time) {
     cameraX += (targetCamX - cameraX) * 0.08;
     cameraX = Math.max(0, Math.min(WORLD_WIDTH - canvas.width, cameraX));
 
-    // Dynamic proximities
+    // Dynamic proximities & EXCLUSIVE Audio Control
     let closestScreen = null;
     let minDistance = Infinity;
 
+    // Pass 1: Find the absolute closest screen
     VIDEOS.forEach(v => {
-      const distance = Math.hypot(greg.x - v.x, greg.y - 400);
-      
-      // Proximity spatial sound fade
-      if (audioUnlocked) {
-        const volumeFadeRadius = 550; 
-        if (distance < volumeFadeRadius) {
-          const attenuation = 1.0 - (distance / volumeFadeRadius);
-          v.video.volume = Math.pow(attenuation, 1.8); 
-          if (v.video.paused) v.video.play().catch(() => {});
-        } else {
-          v.video.volume = 0;
-        }
-      }
-
+      const distance = Math.hypot(greg.x - v.x, greg.y - 400); // 400 represents approximate Y of the monitors
       if (distance < minDistance) {
         minDistance = distance;
         closestScreen = v;
       }
     });
 
+    // Pass 2: Apply strictly exclusive audio rules
+    const volumeFadeRadius = 450; 
     const activeRange = 140;
+
+    VIDEOS.forEach(v => {
+      if (audioUnlocked) {
+        // ONLY the singular closest video can make sound, fully preventing overlapping audio.
+        if (v === closestScreen && minDistance < volumeFadeRadius && !isOverlayOpen) {
+          const attenuation = 1.0 - (minDistance / volumeFadeRadius);
+          // Math.pow ensures a smooth audio ramp instead of a harsh linear volume cut
+          v.video.volume = Math.pow(attenuation, 1.8);
+          if (v.video.paused) v.video.play().catch(() => {});
+        } else {
+          v.video.volume = 0;
+        }
+      }
+    });
+
+    // Prompt HUD display logic
     if (minDistance < activeRange) {
       activeScreen = closestScreen;
       const prompt = document.getElementById('proximity-prompt');
