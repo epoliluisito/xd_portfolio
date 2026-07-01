@@ -182,7 +182,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-await document.fonts.ready;
+await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 3000))]).catch(()=>{});
 
 function lerpAngle(start, end, amt) {
   let delta = end - start;
@@ -406,6 +406,8 @@ renderer.toneMappingExposure = 1.0;
 const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 document.body.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); console.warn('WebGL context lost — pausing.'); }, false);
+window.addEventListener('error', (e) => console.warn('runtime error (continuing):', e.message));
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
@@ -417,9 +419,9 @@ scene.environment = pmremGen.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, 2000);
 
-const ambient = new THREE.AmbientLight(0xffffff, 0.06); 
+const ambient = new THREE.AmbientLight(0xffffff, 0.045); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x141a26, 0.10); 
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x141a26, 0.08); 
 scene.add(hemiLight);
 
 // Single shadow-casting directional light that follows the player
@@ -559,16 +561,23 @@ const retroLight = new THREE.PointLight(0xe8c547, 0.5, 8);
 retroLight.position.set(0, 4.2, 59.6);
 scene.add(retroLight);
 
-// ---- Room Lights ----
-const roomCenters = [
-  {x: 0, z: -8}, {x: -15.5, z: 15}, {x: 15.5, z: 10}, 
-  {x: 15.5, z: 30}, {x: -15.5, z: 37.5}, {x: 15.5, z: 50}, 
-  {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}, {x: 0, z: 57}
-];
-roomCenters.forEach(pos => {
-  const light = new THREE.PointLight(0xfff5e6, 0.16, 30);
-  light.position.set(pos.x, 6.0, pos.z);
-  scene.add(light);
+// ---- Interior lighting: corridor ceiling spots (visible source) + soft room fill ----
+const _fixtureMat = new THREE.MeshBasicMaterial({ color: 0xffe9c8, toneMapped: false, fog: false });
+const _fixtureGeo = new THREE.CircleGeometry(0.32, 20); _fixtureGeo.rotateX(Math.PI/2);
+[-6, 6, 18, 30, 42, 54].forEach(z => {
+  const spot = new THREE.SpotLight(0xffe3ba, 6.5, 18, Math.PI/5.2, 0.78, 1.3);
+  spot.position.set(0, 7.7, z);
+  spot.target.position.set(0, 0, z);
+  scene.add(spot); scene.add(spot.target);
+  const fix = new THREE.Mesh(_fixtureGeo, _fixtureMat);
+  fix.position.set(0, 7.94, z);
+  scene.add(fix);
+});
+// soft, low, warm diffused fill in the side screen-rooms
+[{x:-15.5,z:12},{x:15.5,z:12},{x:15.5,z:30},{x:-15.5,z:37.5},{x:15.5,z:50},{x:-15.5,z:52.5}].forEach(p => {
+  const l = new THREE.PointLight(0xffeeda, 0.11, 17);
+  l.position.set(p.x, 5.6, p.z);
+  scene.add(l);
 });
 
 // ---- Video Screens ----
@@ -734,7 +743,7 @@ groundGeo.rotateX(-Math.PI/2);
   groundGeo.setAttribute('uv2', new THREE.BufferAttribute(new Float32Array(guv.array), 2));
 }
 const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-groundMesh.position.set(EXT_CENTER.x, -0.03, EXT_CENTER.z);
+groundMesh.position.set(EXT_CENTER.x, -0.35, EXT_CENTER.z);
 groundMesh.receiveShadow = true;
 groundMesh.layers.enable(1);
 scene.add(groundMesh);
@@ -960,7 +969,7 @@ gltfLoader.load('greg.glb', (gltf) => {
   character = gltf.scene;
   character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); } });
   
-  character.position.set(0, 0, -30);
+  character.position.set(0, -0.35, -30);
   character.rotation.y = Math.PI; 
   scene.add(character);
   
@@ -978,8 +987,10 @@ gltfLoader.load('greg.glb', (gltf) => {
       walkAction = mixer.clipAction(walk);
       walkAction.play();
       walkAction.setEffectiveWeight(0);
+      walkAction.timeScale = 1.3;
     }
   }
+  try { const _gb = new THREE.Box3().setFromObject(character); GREG_HEIGHT = Math.max(1.2, _gb.max.y - _gb.min.y); } catch(e){}
   registerAssetLoaded();
 }, undefined, (err) => { console.error('Error loading greg:', err); registerAssetLoaded(); });
 
@@ -1109,7 +1120,8 @@ document.getElementById('btn-cancel-travel').addEventListener('click', () => {
 
 document.getElementById('btn-confirm-travel').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.remove('visible');
-  startLevelTransition();
+  if (confirmMode === 'nimble') { window.location.href = 'https://xd.enricopoli.com/projects/nimble/test/'; }
+  else { startLevelTransition(); }
 });
 
 
@@ -1123,10 +1135,10 @@ function triggerInteraction() {
   if(isOverlayOpen) return;
   
   if (activeInteractable === 'exit_door') {
-    isOverlayOpen = true;
-    if(document.pointerLockElement) document.exitPointerLock();
-    document.getElementById('confirm-overlay').style.display = 'flex';
-    requestAnimationFrame(() => document.getElementById('confirm-overlay').classList.add('visible'));
+    openConfirm('exit', 'Travel Initiated', "Please confirm you'd like to travel to the traditional production room.");
+
+  } else if (activeInteractable === 'nimble') {
+    openConfirm('nimble', 'Play with Nimble', 'Leave the gallery and go play with Nimble?');
 
   } else if (activeInteractable === 'door') {
     doorState = 'opening';
@@ -1268,9 +1280,216 @@ const clock = new THREE.Clock();
 const _frustum = new THREE.Frustum();
 const _projScreen = new THREE.Matrix4();
 
+
+// =====================================================================
+//  GROUND HEIGHT, FOOTPRINTS, NIMBLE  (added features)
+// =====================================================================
+const GROUND_Y = -0.35; // snow ground mesh offset (kept below the carpet at y=0)
+
+// world snow height at (x,z) — mirrors the ground displacement so the player & footprints sit on it
+function groundHeightAt(wx, wz){
+  const x = wx - EXT_CENTER.x, z = wz - EXT_CENTER.z;
+  const r = Math.hypot(x, z);
+  const mask = (function(t){ t=Math.max(0,Math.min(1,(t-60)/(120-60))); return t*t*(3-2*t); })(r);
+  let h = 0;
+  h += SN(x*0.010, z*0.010) * 4.6;
+  h += SN(x*0.021 + 10, z*0.021 - 4) * 1.7;
+  const mnd = SN(x*0.05 + 40, z*0.05 - 25);
+  h += Math.pow(Math.max(0, mnd), 2.0) * 1.6;
+  return h * mask + GROUND_Y;
+}
+function isInsideBuilding(x, z){ return Math.abs(x) < 25.4 && z > -0.4 && z < 60.4; }
+
+// ---- FOOTPRINTS (pooled fading decals; snow depressions + wet carpet traces) ----
+const _footCanvas = document.createElement('canvas'); _footCanvas.width = _footCanvas.height = 64;
+{
+  const c = _footCanvas.getContext('2d');
+  const g = c.createRadialGradient(32,32,2,32,32,30);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.55,'rgba(255,255,255,0.55)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  c.fillStyle=g; c.fillRect(0,0,64,64);
+}
+const _footTex = new THREE.CanvasTexture(_footCanvas);
+const FOOT_N = 46;
+const _footGeo = new THREE.PlaneGeometry(1,1); _footGeo.rotateX(-Math.PI/2);
+const footPool = [];
+for (let i=0;i<FOOT_N;i++){
+  const mat = new THREE.MeshBasicMaterial({ map:_footTex, transparent:true, opacity:0, depthWrite:false,
+    color:0x8a97a8, fog:true, toneMapped:false,
+    polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-6 });
+  const m = new THREE.Mesh(_footGeo, mat);
+  m.visible = false; m.scale.set(0.32, 1, 0.52); m.renderOrder = 2;
+  scene.add(m);
+  footPool.push({ mesh:m, life:0, max:1, startOp:0 });
+}
+let _footIdx = 0, _footToggle = 1;
+const _lastFoot = new THREE.Vector3(9999,0,9999);
+function placeFootprint(x, z, yaw, inside){
+  const fp = footPool[_footIdx]; _footIdx = (_footIdx+1)%FOOT_N;
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);        // right vector
+  const off = 0.17 * _footToggle; _footToggle *= -1;
+  const gy = inside ? 0.015 : groundHeightAt(x, z) + 0.02;
+  fp.mesh.position.set(x + rx*off, gy, z + rz*off);
+  fp.mesh.rotation.y = yaw + (Math.random()-0.5)*0.25;
+  fp.mesh.visible = true;
+  fp.life = 0;
+  if (inside){ fp.mesh.material.color.setHex(0x141210); fp.max = 16; fp.startOp = 0.40; }  // wet dark trace
+  else       { fp.mesh.material.color.setHex(0x9fb0c4); fp.max = 26; fp.startOp = 0.28; }  // snow depression
+}
+function updateFootprints(dt){
+  for (let i=0;i<FOOT_N;i++){
+    const fp = footPool[i];
+    if (!fp.mesh.visible) continue;
+    fp.life += dt;
+    const t = fp.life / fp.max;
+    if (t >= 1){ fp.mesh.visible = false; fp.mesh.material.opacity = 0; }
+    else fp.mesh.material.opacity = fp.startOp * (1 - t) * (1 - t);
+  }
+}
+// call from the movement code while walking
+function trackFootsteps(pos, yaw){
+  if (Math.hypot(pos.x - _lastFoot.x, pos.z - _lastFoot.z) > 0.82){
+    placeFootprint(pos.x, pos.z, yaw, isInsideBuilding(pos.x, pos.z));
+    _lastFoot.set(pos.x, 0, pos.z);
+  }
+}
+
+// ---- SHARED CONFIRM DIALOG (exit door + nimble) ----
+let confirmMode = 'exit';
+function openConfirm(mode, title, body){
+  confirmMode = mode;
+  const panel = document.getElementById('confirm-panel');
+  panel.querySelector('h3').textContent = title;
+  panel.querySelector('p').textContent = body;
+  isOverlayOpen = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+  const ov = document.getElementById('confirm-overlay');
+  ov.style.display = 'flex';
+  requestAnimationFrame(() => ov.classList.add('visible'));
+}
+
+// ---- NIMBLE ----
+let nimble=null, nimbleMixer=null, nimbleNaturalH=1.877, nimbleFootY=0;
+const nimbleActions = {};
+let nimbleCurrentName = null;
+let nimbleActive = false, nimbleReady = false;
+let nimbleClock = 0;               // seconds since experience start (audioUnlocked)
+let nimbleState = 'running';       // running | performing | engaged
+let nimbleTarget = { x:0, z:20, face:0 };
+let nimbleTimer = 0, nimbleStuck = 0;
+let nimbleShowPrompt = false;
+let GREG_HEIGHT = 1.8;             // refined once greg is measured
+
+gltfLoader.load('nimble_character.glb', (gltf) => {
+  try {
+    nimble = gltf.scene;
+    // hide the hat and the skateboard
+    nimble.traverse(o => {
+      if (o.isMesh){
+        o.castShadow = true; o.receiveShadow = true; o.layers.enable(1);
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        const nm = (mats[0] && mats[0].name) ? mats[0].name.toLowerCase() : '';
+        if (nm.includes('hat') || nm.includes('board')) o.visible = false;
+      }
+    });
+    const nb = new THREE.Box3().setFromObject(nimble);
+    nimbleNaturalH = Math.max(0.1, nb.max.y - nb.min.y);
+    nimble.visible = false;
+    scene.add(nimble);
+    nimbleMixer = new THREE.AnimationMixer(nimble);
+    const find = n => gltf.animations.find(a => a.name.toLowerCase() === n)
+              || gltf.animations.find(a => a.name.toLowerCase().includes(n));
+    ['running','idle','laugh','dance'].forEach(n => {
+      const clip = find(n); if (clip) nimbleActions[n] = nimbleMixer.clipAction(clip);
+    });
+    nimbleReady = !!nimbleActions['idle'] || !!nimbleActions['running'];
+  } catch(e){ console.warn('nimble init failed', e); }
+}, undefined, (err) => { console.warn('Error loading nimble:', err); });
+
+function nimbleSetAnim(name){
+  if (!nimbleActions[name] || nimbleCurrentName === name) return;
+  const next = nimbleActions[name];
+  const prev = nimbleCurrentName ? nimbleActions[nimbleCurrentName] : null;
+  next.enabled = true; next.setEffectiveTimeScale(1); next.setEffectiveWeight(1);
+  next.reset().play();
+  if (prev && prev !== next) prev.crossFadeTo(next, 0.3, false);
+  nimbleCurrentName = name;
+}
+function pickNimbleTarget(avoid){
+  let best=null, bestD=-1;
+  for (let k=0;k<6;k++){
+    const s = screens[Math.floor(Math.random()*screens.length)];
+    const nx = s.data.x + s.normal.x*3.4, nz = s.data.z + s.normal.z*3.4;
+    const d = avoid ? Math.hypot(nx-avoid.x, nz-avoid.z) : Math.random();
+    if (d > bestD){ bestD=d; best={ x:nx, z:nz, face: Math.atan2(s.data.x-nx, s.data.z-nz) }; }
+  }
+  nimbleTarget = best;
+}
+function activateNimble(){
+  if (!nimble || !nimbleReady) return;
+  nimbleActive = true;
+  const scale = (0.66 * GREG_HEIGHT) / nimbleNaturalH;   // ~2/3 of greg's height
+  nimble.scale.setScalar(scale);
+  const nb = new THREE.Box3().setFromObject(nimble);
+  nimbleFootY = -nb.min.y;                                // lift feet to floor
+  // spawn far from the player, in front of a screen
+  pickNimbleTarget(character ? character.position : {x:0,z:30});
+  nimble.position.set(nimbleTarget.x, nimbleFootY, nimbleTarget.z);
+  pickNimbleTarget(nimble.position);
+  nimble.visible = true;
+  nimbleState = 'running'; nimbleStuck = 0;
+  nimbleSetAnim('running');
+}
+function updateNimble(dt){
+  if (!nimbleActive || !nimble) return;
+  nimbleMixer.update(dt);
+  nimble.position.y = isInsideBuilding(nimble.position.x, nimble.position.z) ? nimbleFootY : nimbleFootY + GROUND_Y;
+
+  const gp = character ? character.position : null;
+  const near = gp ? Math.hypot(gp.x - nimble.position.x, gp.z - nimble.position.z) : 99;
+
+  if (near < 4.6){
+    // player is close: Nimble stops and faces them, offer to play
+    if (nimbleState !== 'engaged'){ nimbleSetAnim('idle'); nimbleState = 'engaged'; }
+    if (gp){
+      const a = Math.atan2(gp.x - nimble.position.x, gp.z - nimble.position.z);
+      nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.12);
+    }
+    nimbleShowPrompt = true;
+    return;
+  }
+  nimbleShowPrompt = false;
+  if (nimbleState === 'engaged'){ nimbleState = 'performing'; nimbleTimer = 0.6; }
+
+  if (nimbleState === 'running'){
+    const t = nimbleTarget;
+    const dx = t.x - nimble.position.x, dz = t.z - nimble.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.7){
+      nimble.rotation.y = t.face;
+      nimbleState = 'performing'; nimbleTimer = 2.4 + Math.random()*3.4;
+      nimbleSetAnim(['idle','laugh','dance','idle'][Math.floor(Math.random()*4)]);
+    } else {
+      const sp = 3.1 * dt;
+      const nx = nimble.position.x + (dx/d)*sp, nz = nimble.position.z + (dz/d)*sp;
+      if (!checkCollision({x:nx, z:nimble.position.z}, 0.45)) nimble.position.x = nx;
+      if (!checkCollision({x:nimble.position.x, z:nz}, 0.45)) nimble.position.z = nz;
+      nimble.rotation.y = lerpAngle(nimble.rotation.y, Math.atan2(dx, dz), 0.15);
+      nimbleStuck += dt;
+      if (nimbleStuck > 5){ pickNimbleTarget(nimble.position); nimbleStuck = 0; }
+    }
+  } else if (nimbleState === 'performing'){
+    nimbleTimer -= dt;
+    if (nimbleTimer <= 0){ pickNimbleTarget(nimble.position); nimbleState = 'running'; nimbleStuck = 0; nimbleSetAnim('running'); }
+  }
+}
+// =====================================================================
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
+  try {
 
   // falling snow (outdoors only)
   if (character) {
@@ -1280,6 +1499,10 @@ function animate() {
   }
 
   if (mixer) mixer.update(dt);
+
+  updateFootprints(dt);
+  if (audioUnlocked) { nimbleClock += dt; if (nimbleReady && !nimbleActive && nimbleClock > 60) activateNimble(); }
+  updateNimble(dt);
   
   if (timMixer) {
     const isTimMoving = (timState === 'walking');
@@ -1356,7 +1579,7 @@ function animate() {
       
       if (move.lengthSq() > 0) {
         move.normalize();
-        const speed = 4.5 * dt;
+        const speed = 3.5 * dt;
         
         targetRot = Math.atan2(move.x, move.z);
 
@@ -1370,10 +1593,17 @@ function animate() {
         if (!checkCollision({x: character.position.x, z: nextZ}, radius) && inRoam(character.position.x, nextZ)) {
           character.position.z = nextZ;
         }
+        trackFootsteps(character.position, targetRot);
       }
     }
     
     character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
+    // follow ground/carpet height (removes any coincident-plane z-fighting need)
+    {
+      const _inb = isInsideBuilding(character.position.x, character.position.z);
+      const _ty = _inb ? 0 : groundHeightAt(character.position.x, character.position.z);
+      character.position.y = THREE.MathUtils.lerp(character.position.y, _ty, 0.18);
+    }
 
     const camDist = 5.0;
     const camHeight = 2.0;
@@ -1422,16 +1652,15 @@ function animate() {
       const isFacingFront = s.normal.dot(dirToCam) > 0.15; 
       const hasLOS = checkLineOfSight(camera.position, s.mesh.position);
       
-      // HARD PERFORMANCE CULLING (frustum + range + line-of-sight)
-      const inRange = dist < 22;
+      // PRE-WARM + HYSTERESIS CULLING (smoother; avoids thumbnail stalls, keeps perf)
       const inView = _frustum.intersectsSphere(s.sphere);
-      
-      if (inRange && (inView || dist < 6) && hasLOS) {
+      const wantPlay = hasLOS && (dist < 27 || (inView && dist < 46));
+      if (wantPlay) {
         if (s.video.paused) {
           const playPromise = s.video.play();
           if (playPromise !== undefined) playPromise.catch(()=>{});
         }
-      } else {
+      } else if (!hasLOS || dist > 33) {
         if (!s.video.paused) s.video.pause();
       }
 
@@ -1469,7 +1698,11 @@ function animate() {
       s.video.volume = THREE.MathUtils.lerp(s.video.volume, s.targetVolume, 0.08);
     });
 
-    if (showPanelPrompt) {
+    if (nimbleShowPrompt) {
+      activeInteractable = 'nimble'; activeScreen = null;
+      promptEl.textContent = "Press [ E ] to Play with Nimble";
+      promptEl.classList.add('visible');
+    } else if (showPanelPrompt) {
       activeInteractable = 'door';
       promptEl.textContent = "Press [ E ] to Open Door";
       promptEl.classList.add('visible');
@@ -1495,6 +1728,7 @@ function animate() {
   }
 
   renderer.render(scene, camera);
+  } catch (err) { if (!window.__animErrLogged) { console.error('animate error (continuing):', err); window.__animErrLogged = true; } }
 }
 
 window.addEventListener('resize', () => {
