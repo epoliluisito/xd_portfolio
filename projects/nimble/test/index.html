@@ -89,7 +89,7 @@ const LEVEL1_END = 200;                  // travel this far right to reach Level
 
 // --- Game State ---
 const state = {
-  level: 1, score: 0, ammo: 10, lives: 200,
+  level: 1, score: 0, ammo: 20, lives: 200,
   baseSpeed: 6.5, speedMultiplier: 1.0,
   gravity: 15, jumpPower: 6.5,
   onGround: true, isSliding: false, facingRight: true, isGameOver: false
@@ -102,14 +102,14 @@ const angleCheat = 0.49;
 // Per-model tuning: target size (so nothing is giant), gameplay type, and placement.
 // floatY = collectible hovers at this height (needs a jump/depth move); else it rests ON the counter.
 const typeCfg = {
-  emerald: { type:'ammo',      chance:0.16, size:0.55, floatY:[1.4, 2.5] },
-  star:    { type:'score',     chance:0.06, size:0.8,  floatY:[2.5, 3.4] },
-  slime:   { type:'enemy',     chance:0.14, size:1.0,  ground:true },
-  oil:     { type:'hazard', subType:'slide',  chance:0.10, size:1.6, ground:true },
-  plant:   { type:'hazard', subType:'damage', chance:0.10, size:1.3, ground:true, sway:true },
-  salt:    { type:'hazard', subType:'slow',   chance:0.10, size:0.8, ground:true, roll:true },
-  fork:    { type:'cleanable', chance:0.12, size:1.1, ground:true, bounce:true },
-  plates:  { type:'cleanable', chance:0.22, size:1.3, ground:true, bounce:true }
+  emerald: { type:'ammo',      chance:0.26, size:0.55, floatY:[1.3, 2.4] },
+  star:    { type:'score',     chance:0.06, size:0.8,  floatY:[2.4, 3.3] },
+  slime:   { type:'enemy',     chance:0.11, size:1.0,  ground:true },
+  oil:     { type:'hazard', subType:'slide',  chance:0.07, size:1.6, ground:true },
+  plant:   { type:'hazard', subType:'damage', chance:0.08, size:1.3, ground:true, sway:true },
+  salt:    { type:'hazard', subType:'slow',   chance:0.07, size:0.8, ground:true, roll:true },
+  fork:    { type:'cleanable', chance:0.10, size:1.1, ground:true, bounce:true },
+  plates:  { type:'cleanable', chance:0.14, size:1.3, ground:true, bounce:true }
 };
 
 // --- Renderer / Scene / Camera ---
@@ -143,11 +143,32 @@ scene.add(new THREE.AmbientLight(0xffe0c0, 0.6));
 const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
 const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
 
+// --- Contact shadow blobs: the depth cue. Each object drops a soft footprint on the
+// counter so you can read its X-Z position; a collectible's blob turns green when you're
+// lined up in its depth lane (then jump/grab). ---
+function makeBlobTexture(){
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 64;
+  const g = cnv.getContext('2d');
+  const grd = g.createRadialGradient(32,32,2,32,32,30);
+  grd.addColorStop(0,'rgba(255,255,255,0.55)'); grd.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(cnv);
+}
+const blobTex = makeBlobTexture();
+function makeBlob(radius, colorHex){
+  const mat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, color: colorHex });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(radius*3.0, radius*3.0), mat);
+  m.rotation.x = -Math.PI/2; m.position.y = 0.02; m.renderOrder = 1;
+  return m;
+}
+
 // --- Player ---
 let playerGroup = new THREE.Group();
 playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
 playerGroup.position.set(0, 0, START_Z);
 scene.add(playerGroup);
+const playerBlob = makeBlob(0.75, 0x7fe3a0);   // Nimble's green footprint
+scene.add(playerBlob);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
 let hatParts = [], boardParts = [];
@@ -329,8 +350,11 @@ function generateLevel(models) {
     mesh.position.set(x, y, z);
     mesh.rotation.y = Math.random() * Math.PI * 2;
     scene.add(mesh);
+    const shadow = makeBlob(cfg.size * 0.5, 0x000000);   // footprint on the counter
+    shadow.position.set(x, 0.02, z);
+    scene.add(shadow);
     entities.push({
-      mesh, type: cfg.type, subType: cfg.subType, cfg,
+      mesh, shadow, type: cfg.type, subType: cfg.subType, cfg,
       radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
       baseY: y, phase: Math.random() * 6.28, active: true, isClean: false
     });
@@ -453,21 +477,28 @@ function gameLoop() {
       if (c.roll)   { m.rotation.x += dt * 4.0; }                                            // salt rolling
       if (c.sway)   m.rotation.z = Math.sin(t*1.5 + ent.phase) * 0.12;                       // plant swaying
 
+      // keep the footprint under the object; reset collectible tint each frame
+      if (ent.shadow) {
+        ent.shadow.position.x = m.position.x; ent.shadow.position.z = m.position.z;
+        if (ent.type === 'ammo' || ent.type === 'score') ent.shadow.material.color.setHex(0x000000);
+      }
+
       // --- collision (X-Z proximity, then vertical) ---
       const dx = px - m.position.x, dz = pz - m.position.z;
       const hdist = Math.hypot(dx, dz);
       if (hdist < playerR + ent.radius) {
         if (ent.type === 'ammo' || ent.type === 'score') {
+          if (ent.shadow) ent.shadow.material.color.setHex(0x39d24e);   // lined up in this depth lane -> grab / jump
           const ey = m.position.y;                       // must be within reach (jump/height)
           if (ey >= py + 0.1 && ey <= playerReachTop) {
-            if (ent.type === 'ammo') { state.ammo += 5; } else { state.score += 500; }
-            updateHUD(); ent.active = false; scene.remove(m);
+            if (ent.type === 'ammo') { state.ammo += 8; } else { state.score += 500; }
+            updateHUD(); ent.active = false; scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
           }
         } else {
           const top = m.position.y + ent.height;
           if (py < top - 0.15) {                          // not cleared by a jump
             if (ent.type === 'enemy' || (ent.type === 'cleanable' && !ent.isClean) || (ent.type === 'hazard' && ent.subType === 'damage')) {
-              takeDamage(); ent.active = false; if (ent.type === 'enemy') scene.remove(m);
+              takeDamage(); ent.active = false; if (ent.type === 'enemy') { scene.remove(m); if (ent.shadow) scene.remove(ent.shadow); }
             } else if (ent.type === 'hazard' && ent.subType === 'slide') {
               if (!state.isSliding && state.onGround) {
                 state.isSliding = true; playAnim('running_slide'); takeDamage();
@@ -495,7 +526,8 @@ function gameLoop() {
             ent.isClean = true; ent.mesh.traverse(ch => { if(ch.isMesh) ch.material = cleanMat; });
             state.score += 100; updateHUD(); hit = true; break;
           } else if (ent.type === 'enemy') {
-            ent.active = false; scene.remove(ent.mesh); state.score += 50; updateHUD(); hit = true; break;
+            ent.active = false; scene.remove(ent.mesh); if (ent.shadow) scene.remove(ent.shadow);
+            state.score += 50; updateHUD(); hit = true; break;
           }
         }
       }
@@ -503,6 +535,7 @@ function gameLoop() {
     }
   }
 
+  playerBlob.position.set(playerGroup.position.x, 0.02, playerGroup.position.z);   // Nimble's footprint
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
   camera.lookAt(camera.position.x, 1.8, 0);
   document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
