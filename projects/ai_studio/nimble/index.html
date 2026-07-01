@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nimble's Dish Dash</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    font-family: system-ui, -apple-system, sans-serif;
+    background: url('./BACKGROUND.png') repeat-x left bottom;
+    background-size: auto 100%;
+    background-color: #0e1118;
+  }
+  #loading {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #0e1118; color: #7fe3a0; z-index: 100;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    font-size: 24px; font-weight: bold; letter-spacing: 2px; transition: opacity 0.5s;
+  }
+  .spinner { margin-top: 20px; width: 40px; height: 40px; border: 4px solid rgba(127,227,160,0.3); border-top-color: #7fe3a0; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { 100% { transform: rotate(360deg); } }
+  #hud {
+    position: absolute; top: 20px; left: 20px; z-index: 10;
+    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
+    padding: 15px 20px; color: #fff; font-weight: bold; width: 220px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  .hud-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 16px; }
+  .hud-row:last-child { margin-bottom: 0; }
+  .fairy-text { color: #39d24e; }
+  .danger-text { color: #ff5544; }
+  .level-text { color: #7fe3a0; }
+  #controls-help {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
+    border-radius: 8px; padding: 10px 20px; color: #cfe; font-size: 13px; text-align: center;
+    letter-spacing: 0.05em; border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .key {
+    display: inline-block; background: #1c2740; border: 1px solid #38507a;
+    border-radius: 4px; padding: 2px 6px; margin: 0 4px; color: #bfe; font-weight: bold;
+  }
+  #banner {
+    position: absolute; top: 38%; left: 50%; transform: translateX(-50%); z-index: 20;
+    color: #fff; font-size: 46px; font-weight: 900; letter-spacing: 3px;
+    text-shadow: 0 3px 18px rgba(0,0,0,0.6), 0 0 20px rgba(127,227,160,0.6);
+    opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center;
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<div id="loading"><div>PREPARING THE KITCHEN...</div><div class="spinner"></div></div>
+
+<div id="hud">
+  <div class="hud-row"><span class="level-text">Level:</span> <span id="level" class="level-text">1</span></div>
+  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">200</span></div>
+  <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
+  <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
+</div>
+
+<div id="banner"></div>
+
+<div id="controls-help">
+  <span class="key">&larr;</span><span class="key">&rarr;</span><span class="key">&uarr;</span><span class="key">&darr;</span> Move &nbsp;|&nbsp;
+  <span class="key">SPACE</span> Jump &nbsp;|&nbsp;
+  <span class="key">SHIFT</span> Slide &nbsp;|&nbsp;
+  <span class="key">F</span> Fire Soap
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// --- Playfield bounds (the countertop the player roams on) ---
+const ZMIN = -0.5, ZMAX = 5.0;          // depth range: back edge (far) -> front (near camera)
+const START_Z = (ZMIN + ZMAX) / 2;      // Nimble starts mid-depth
+const XMIN = 0;                          // can't retreat off the left of the screen
+const LEVEL1_END = 200;                  // travel this far right to reach Level 2
+
+// --- Game State ---
+const state = {
+  level: 1, score: 0, ammo: 20, lives: 200,
+  baseSpeed: 6.5, speedMultiplier: 1.0,
+  gravity: 15, jumpPower: 6.5,
+  onGround: true, isSliding: false, facingRight: true, isGameOver: false
+};
+const keys = { right: false, left: false, up: false, down: false };
+const entities = [];
+const soaps = [];
+const angleCheat = 0.49;
+
+// Per-model tuning: target size (so nothing is giant), gameplay type, and placement.
+// floatY = collectible hovers at this height (needs a jump/depth move); else it rests ON the counter.
+const typeCfg = {
+  emerald: { type:'ammo',      chance:0.26, size:0.55, floatY:[1.3, 2.4] },
+  star:    { type:'score',     chance:0.06, size:0.8,  floatY:[2.4, 3.3] },
+  slime:   { type:'enemy',     chance:0.11, size:1.0,  ground:true },
+  oil:     { type:'hazard', subType:'slide',  chance:0.07, size:1.6, ground:true },
+  plant:   { type:'hazard', subType:'damage', chance:0.08, size:1.3, ground:true, sway:true },
+  salt:    { type:'hazard', subType:'slow',   chance:0.07, size:0.8, ground:true, roll:true },
+  fork:    { type:'cleanable', chance:0.10, size:1.1, ground:true, bounce:true },
+  plates:  { type:'cleanable', chance:0.14, size:1.3, ground:true, bounce:true }
+};
+
+// --- Renderer / Scene / Camera ---
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(0, 3.0, 17);        // low, flat framing
+
+const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.8);
+dirLight.position.set(8, 8, 4);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 0.5; dirLight.shadow.camera.far = 30;
+dirLight.shadow.camera.left = -15; dirLight.shadow.camera.right = 15;
+dirLight.shadow.bias = -0.001;
+scene.add(dirLight); scene.add(dirLight.target);
+scene.add(new THREE.AmbientLight(0xffe0c0, 0.6));
+
+const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
+const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
+
+// --- Contact shadow blobs: the depth cue. Each object drops a soft footprint on the
+// counter so you can read its X-Z position; a collectible's blob turns green when you're
+// lined up in its depth lane (then jump/grab). ---
+function makeBlobTexture(){
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 64;
+  const g = cnv.getContext('2d');
+  const grd = g.createRadialGradient(32,32,2,32,32,30);
+  grd.addColorStop(0,'rgba(255,255,255,0.55)'); grd.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(cnv);
+}
+const blobTex = makeBlobTexture();
+function makeBlob(radius, colorHex){
+  const mat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, color: colorHex });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(radius*3.0, radius*3.0), mat);
+  m.rotation.x = -Math.PI/2; m.position.y = 0.02; m.renderOrder = 1;
+  return m;
+}
+
+// --- Player ---
+let playerGroup = new THREE.Group();
+playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
+playerGroup.position.set(0, 0, START_Z);
+scene.add(playerGroup);
+const playerBlob = makeBlob(0.75, 0x7fe3a0);   // Nimble's green footprint
+scene.add(playerBlob);
+const velocity = new THREE.Vector3(0, 0, 0);
+let mixer, actions = {}, currentAnim = null;
+let hatParts = [], boardParts = [];
+
+// Body glass (transmission 0.985) + foam material for hat/board
+const P = { transmission: 0.985, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
+const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
+function getGlassMat(src) {
+  let mat = new THREE.MeshPhysicalMaterial({
+    map: src.map || null, normalMap: src.normalMap || null,
+    metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
+    thickness: P.thickness, thicknessMap: thicknessTex,
+    attenuationColor: new THREE.Color(P.attenuationColor), attenuationDistance: P.attenuationDistance,
+    clearcoat: P.clearcoat, clearcoatRoughness: 0.08, transparent: true
+  });
+  if(mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+  return mat;
+}
+const bubbleTex = new THREE.TextureLoader().load('./bubble_normal.png', t => {
+  t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(4,4);
+});
+function getFoamMat() {
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#f4f8ff'), roughness: 0.55, metalness: 0,
+    sheen: 1.0, sheenRoughness: 0.4, sheenColor: new THREE.Color('#ffffff'),
+    transmission: 0.08, ior: 1.33, thickness: 0.15,
+    clearcoat: 0.4, clearcoatRoughness: 0.3, iridescence: 0.35, iridescenceIOR: 1.30,
+    normalMap: bubbleTex, normalScale: new THREE.Vector2(0.7, 0.7),
+    envMapIntensity: 1.1, transparent: true
+  });
+}
+
+// ----------------------------------------------------
+// ASYNC ASSET LOADING
+// ----------------------------------------------------
+async function initGame() {
+  const gltfLoader = new GLTFLoader();
+  const texLoader = new THREE.TextureLoader();
+
+  // Countertop (shallow slab; back edge just behind the run area)
+  const counterTex = await texLoader.loadAsync('./couter_top_texture.png');
+  counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping;
+  counterTex.repeat.set(150, 3);
+  const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
+  floor.position.set(250, -5, 6);        // top surface at y=0; back edge z=-1, front z=13
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // 2D foreground decor
+  const fgNames = ['bottle.png','bowl.png','cloth.png','fork.png','plant_02.png','plant.png','salt.png','spoon.png','wood_surface.png'];
+  const fgTextures = [];
+  for (const name of fgNames) {
+    try { fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`)); }
+    catch(e) { console.warn("Missing foreground element: " + name); }
+  }
+  if(fgTextures.length > 0) {
+    for (let x = -20; x < 500; x += 18 + Math.random() * 20) {
+      const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+      const aspect = tex.image.width / tex.image.height;
+      const h = 5 + Math.random() * 5;
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(h*aspect, h), mat);
+      plane.position.set(x, (Math.random()*1.5) - h/2, 11 + Math.random()*3);
+      scene.add(plane);
+    }
+  }
+
+  // 3D element models: measure each, compute a scale (so nothing is giant) and a
+  // ground offset (so it rests ON the counter instead of clipping through it).
+  const models = {};
+  const modelPaths = {
+    emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
+    slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
+    plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
+    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
+  };
+  for (const [key, path] of Object.entries(modelPaths)) {
+    try {
+      const gltf = await gltfLoader.loadAsync(path);
+      const obj = gltf.scene;
+      obj.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const cfg = typeCfg[key];
+      cfg.scaleFactor = cfg.size / maxDim;
+      cfg.groundOffset = -box.min.y * cfg.scaleFactor;     // lifts bottom to y=0
+      cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
+      obj.traverse(c => { if(c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
+      models[key] = obj;
+    } catch(e) { console.warn("Missing model: " + path); }
+  }
+
+  // Nimble
+  const nimbleGltf = await gltfLoader.loadAsync('./nimble_character.glb');
+  const root = nimbleGltf.scene;
+  root.scale.set(1.58, 1.58, 1.58);
+  root.traverse(o => {
+    if(!o.isMesh) return;
+    o.castShadow = true;
+    const mn = o.material ? o.material.name : '';
+    if(mn === 'hat_foam')   { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
+    else if(mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    else { o.material = getGlassMat(o.material); }
+  });
+  playerGroup.add(root);
+
+  mixer = new THREE.AnimationMixer(root);
+  const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true}, jump:{loop:false}, running_slide:{loop:false} };
+  for(const clip of nimbleGltf.animations) {
+    clip.tracks.forEach(track => {                 // strip root motion so he stays put
+      if (track.name.endsWith('.position')) {
+        let maxDiff = 0;
+        for(let i=0;i<track.values.length;i+=3)
+          maxDiff = Math.max(maxDiff, Math.abs(track.values[i]-track.values[0]), Math.abs(track.values[i+2]-track.values[2]));
+        if (maxDiff > 0.1) {
+          const sx=track.values[0], sz=track.values[2];
+          for(let i=0;i<track.values.length;i+=3){ track.values[i]=sx; track.values[i+2]=sz; }
+        }
+      }
+    });
+    if(animCfgs[clip.name]) {
+      const a = mixer.clipAction(clip);
+      if(!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+      actions[clip.name] = a;
+    }
+  }
+  mixer.addEventListener('finished', (e) => {
+    const moveAnim = state.level === 2 ? 'skateboard' : 'running';
+    if(e.action === actions['jump']) { state.onGround = true; playAnim(isMoving() ? moveAnim : 'idle'); }
+    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(isMoving() ? moveAnim : 'idle'); }
+  });
+
+  playAnim('idle');
+  generateLevel(models);
+  updateHUD();
+
+  document.getElementById('loading').style.opacity = '0';
+  setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
+  renderer.setAnimationLoop(gameLoop);
+}
+
+// ----------------------------------------------------
+// LEVEL PROGRESSION
+// ----------------------------------------------------
+function goToLevel2() {
+  if(state.level === 2) return;
+  state.level = 2;
+  boardParts.forEach(m => m.visible = true);
+  hatParts.forEach(m => m.visible = true);
+  document.body.style.backgroundImage = "url('./BACKGROUND_02.png')";
+  updateHUD();
+  showBanner('LEVEL 2 &middot; SKATE!');
+  if(currentAnim === 'running') playAnim('skateboard');
+}
+let bannerTimer = null;
+function showBanner(text) {
+  const b = document.getElementById('banner');
+  b.innerHTML = text; b.style.opacity = '1';
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { b.style.opacity = '0'; }, 1800);
+}
+
+// ----------------------------------------------------
+// LEVEL GENERATION (spread across X and across depth lanes Z)
+// ----------------------------------------------------
+function generateLevel(models) {
+  const list = Object.entries(typeCfg);
+  for (let x = 15; x < 450; x += 5 + Math.random() * 4) {
+    let r = Math.random(), cum = 0, key = null;
+    for (const [k, c] of list) { cum += c.chance; if (r < cum) { key = k; break; } }
+    if (!key || !models[key]) continue;
+    const cfg = typeCfg[key];
+    const mesh = models[key].clone();
+    mesh.scale.setScalar(cfg.scaleFactor);
+    const z = ZMIN + 0.4 + Math.random() * (ZMAX - ZMIN - 0.8);   // random depth lane
+    const y = cfg.floatY ? (cfg.floatY[0] + Math.random()*(cfg.floatY[1]-cfg.floatY[0])) : cfg.groundOffset;
+    mesh.position.set(x, y, z);
+    mesh.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(mesh);
+    const shadow = makeBlob(cfg.size * 0.5, 0x000000);   // footprint on the counter
+    shadow.position.set(x, 0.02, z);
+    scene.add(shadow);
+    entities.push({
+      mesh, shadow, type: cfg.type, subType: cfg.subType, cfg,
+      radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
+      baseY: y, phase: Math.random() * 6.28, active: true, isClean: false
+    });
+  }
+}
+
+// ----------------------------------------------------
+// HELPERS
+// ----------------------------------------------------
+function isMoving() { return keys.left || keys.right || keys.up || keys.down; }
+
+function playAnim(name, fade = 0.2) {
+  if(!actions[name] || name === currentAnim) return;
+  const next = actions[name], prev = actions[currentAnim];
+  next.reset();
+  if(prev) next.crossFadeFrom(prev, fade, false);
+  next.play();
+  currentAnim = name;
+}
+
+function fireSoap() {
+  if(state.ammo <= 0 || state.isGameOver) return;
+  state.ammo--; updateHUD();
+  const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
+  const dir = state.facingRight ? 1 : -1;
+  soap.position.set(playerGroup.position.x + dir*0.5, playerGroup.position.y + 1.25, playerGroup.position.z);
+  soap.castShadow = true;
+  scene.add(soap);
+  soaps.push({ mesh: soap, dir, life: 1.5 });
+}
+
+function takeDamage() {
+  if(state.isGameOver) return;
+  state.lives--; updateHUD();
+  playerGroup.traverse(child => {
+    if(child.isMesh && child.material && child.material.attenuationColor) {
+      let orig = child.material.attenuationColor.getHex();
+      child.material.attenuationColor.setHex(0xff0000);
+      setTimeout(() => { if(child.material) child.material.attenuationColor.setHex(orig); }, 300);
+    }
+  });
+  if (state.lives <= 0) { state.isGameOver = true; playAnim('idle'); alert("Game Over! Final Score: " + state.score); }
+}
+
+function updateHUD() {
+  document.getElementById('score').innerText = state.score;
+  document.getElementById('ammo').innerText = state.ammo;
+  document.getElementById('lives').innerText = state.lives;
+  document.getElementById('level').innerText = state.level;
+}
+
+// ----------------------------------------------------
+// MAIN LOOP
+// ----------------------------------------------------
+const clock = new THREE.Clock();
+function gameLoop() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const t = clock.elapsedTime;
+  if (mixer) mixer.update(dt);
+
+  if (!state.isGameOver) {
+    const moveSpeed = state.baseSpeed * state.speedMultiplier;
+    const moveAnim = state.level === 2 ? 'skateboard' : 'running';
+
+    // --- 2-axis free movement on the counter ---
+    if (state.isSliding) {
+      playerGroup.position.x += moveSpeed * 1.3 * (state.facingRight ? 1 : -1) * dt;
+    } else {
+      let vx = (keys.right?1:0) - (keys.left?1:0);
+      let vz = (keys.down?1:0) - (keys.up?1:0);   // down = toward camera (+z), up = away (-z)
+      if (vx || vz) {
+        const len = Math.hypot(vx, vz); vx/=len; vz/=len;
+        playerGroup.position.x += vx * moveSpeed * dt;
+        playerGroup.position.z += vz * moveSpeed * dt;
+        if (vx > 0.01) { state.facingRight = true;  playerGroup.rotation.y = (Math.PI/2) - angleCheat; }
+        else if (vx < -0.01) { state.facingRight = false; playerGroup.rotation.y = -(Math.PI/2) + angleCheat; }
+        if (state.onGround) playAnim(moveAnim);
+      } else if (state.onGround) {
+        playAnim('idle');
+      }
+    }
+
+    // clamp to the countertop
+    if (playerGroup.position.x < XMIN) playerGroup.position.x = XMIN;
+    playerGroup.position.z = THREE.MathUtils.clamp(playerGroup.position.z, ZMIN, ZMAX);
+
+    if (state.level === 1 && playerGroup.position.x > LEVEL1_END) goToLevel2();
+
+    // gravity / jump
+    if (!state.onGround) {
+      velocity.y -= state.gravity * dt;
+      playerGroup.position.y += velocity.y * dt;
+      if (playerGroup.position.y <= 0) {
+        playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
+        if (!isMoving()) playAnim('idle');
+      }
+    }
+
+    // player collision volume
+    const px = playerGroup.position.x, py = playerGroup.position.y, pz = playerGroup.position.z;
+    const playerR = state.isSliding ? 0.5 : 0.7;
+    const playerReachTop = py + (state.isSliding ? 1.0 : 2.4);   // how high he can grab
+
+    for (let ent of entities) {
+      if (!ent.active) continue;
+      const m = ent.mesh, c = ent.cfg;
+
+      // --- give the props life ---
+      if (ent.type === 'enemy') {
+        m.position.x -= 2.0 * dt;
+        m.position.y = ent.baseY + 0.15 + Math.sin(t*5 + ent.phase) * 0.12;
+        m.position.z = THREE.MathUtils.clamp(ent.mesh.position.z + Math.sin(t*1.2 + ent.phase)*0.5*dt, ZMIN, ZMAX);
+        m.rotation.y += dt;
+      } else if (ent.type === 'ammo') {
+        m.rotation.y += dt * 1.6; m.position.y = ent.baseY + Math.sin(t*3 + ent.phase) * 0.12;
+      } else if (ent.type === 'score') {
+        m.rotation.y += dt * 2.5; m.position.y = ent.baseY + Math.sin(t*2 + ent.phase) * 0.1;
+      }
+      if (c.bounce) m.position.y = ent.baseY + Math.abs(Math.sin(t*3 + ent.phase)) * 0.18;   // plates/fork bouncing
+      if (c.roll)   { m.rotation.x += dt * 4.0; }                                            // salt rolling
+      if (c.sway)   m.rotation.z = Math.sin(t*1.5 + ent.phase) * 0.12;                       // plant swaying
+
+      // keep the footprint under the object; reset collectible tint each frame
+      if (ent.shadow) {
+        ent.shadow.position.x = m.position.x; ent.shadow.position.z = m.position.z;
+        if (ent.type === 'ammo' || ent.type === 'score') ent.shadow.material.color.setHex(0x000000);
+      }
+
+      // --- collision (X-Z proximity, then vertical) ---
+      const dx = px - m.position.x, dz = pz - m.position.z;
+      const hdist = Math.hypot(dx, dz);
+      if (hdist < playerR + ent.radius) {
+        if (ent.type === 'ammo' || ent.type === 'score') {
+          if (ent.shadow) ent.shadow.material.color.setHex(0x39d24e);   // lined up in this depth lane -> grab / jump
+          const ey = m.position.y;                       // must be within reach (jump/height)
+          if (ey >= py + 0.1 && ey <= playerReachTop) {
+            if (ent.type === 'ammo') { state.ammo += 8; } else { state.score += 500; }
+            updateHUD(); ent.active = false; scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
+          }
+        } else {
+          const top = m.position.y + ent.height;
+          if (py < top - 0.15) {                          // not cleared by a jump
+            if (ent.type === 'enemy' || (ent.type === 'cleanable' && !ent.isClean) || (ent.type === 'hazard' && ent.subType === 'damage')) {
+              takeDamage(); ent.active = false; if (ent.type === 'enemy') { scene.remove(m); if (ent.shadow) scene.remove(ent.shadow); }
+            } else if (ent.type === 'hazard' && ent.subType === 'slide') {
+              if (!state.isSliding && state.onGround) {
+                state.isSliding = true; playAnim('running_slide'); takeDamage();
+                ent.active = false; setTimeout(() => { state.isSliding = false; }, 1200);
+              }
+            } else if (ent.type === 'hazard' && ent.subType === 'slow') {
+              state.speedMultiplier = 0.5; ent.active = false;
+              setTimeout(() => { state.speedMultiplier = 1.0; }, 2000);
+            }
+          }
+        }
+      }
+    }
+
+    // soap projectiles (travel along the player's current depth lane)
+    for (let i = soaps.length - 1; i >= 0; i--) {
+      const s = soaps[i];
+      s.mesh.position.x += 12 * s.dir * dt; s.life -= dt;
+      let hit = false;
+      for (let ent of entities) {
+        if (!ent.active) continue;
+        const dx = s.mesh.position.x - ent.mesh.position.x, dz = s.mesh.position.z - ent.mesh.position.z;
+        if (Math.hypot(dx, dz) < ent.radius + 0.3) {
+          if (ent.type === 'cleanable' && !ent.isClean) {
+            ent.isClean = true; ent.mesh.traverse(ch => { if(ch.isMesh) ch.material = cleanMat; });
+            state.score += 100; updateHUD(); hit = true; break;
+          } else if (ent.type === 'enemy') {
+            ent.active = false; scene.remove(ent.mesh); if (ent.shadow) scene.remove(ent.shadow);
+            state.score += 50; updateHUD(); hit = true; break;
+          }
+        }
+      }
+      if (s.life <= 0 || hit) { scene.remove(s.mesh); soaps.splice(i, 1); }
+    }
+  }
+
+  playerBlob.position.set(playerGroup.position.x, 0.02, playerGroup.position.z);   // Nimble's footprint
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
+  camera.lookAt(camera.position.x, 1.8, 0);
+  document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
+  dirLight.position.x = camera.position.x + 8;
+  dirLight.target.position.set(camera.position.x, 0, 0);
+  renderer.render(scene, camera);
+}
+
+// ----------------------------------------------------
+// INPUT  (arrows = move; SPACE = jump; SHIFT = slide; F = fire)
+// ----------------------------------------------------
+window.addEventListener('keydown', e => {
+  if(state.isGameOver) return;
+  if(e.code === 'ArrowRight') keys.right = true;
+  if(e.code === 'ArrowLeft')  keys.left = true;
+  if(e.code === 'ArrowUp')    keys.up = true;
+  if(e.code === 'ArrowDown')  keys.down = true;
+  if(e.code === 'Space' && state.onGround && !state.isSliding) {
+    velocity.y = state.jumpPower; state.onGround = false; playAnim('jump');
+  }
+  if((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && state.onGround && !state.isSliding) {
+    state.isSliding = true; playAnim('running_slide');
+    setTimeout(() => { state.isSliding = false; }, 900);
+  }
+  if(e.code === 'KeyF' && !e.repeat) fireSoap();
+});
+window.addEventListener('keyup', e => {
+  if(e.code === 'ArrowRight') keys.right = false;
+  if(e.code === 'ArrowLeft')  keys.left = false;
+  if(e.code === 'ArrowUp')    keys.up = false;
+  if(e.code === 'ArrowDown')  keys.down = false;
+});
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+initGame();
+</script>
+</body>
+</html>
