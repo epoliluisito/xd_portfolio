@@ -3,189 +3,559 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Nimble — playable glass mascot</title>
+<title>Nimble's Dish Dash</title>
 <style>
-  html,body{margin:0;height:100%;background:#0e1118;overflow:hidden;
-            font-family:system-ui,-apple-system,sans-serif;color:#cfe}
-  #legend{position:fixed;top:14px;left:14px;background:rgba(16,20,30,.78);
-          backdrop-filter:blur(6px);border:1px solid #2a3550;border-radius:12px;
-          padding:12px 14px;font-size:13px;line-height:1.1;min-width:180px;z-index:5}
-  #legend h1{font-size:13px;margin:0 0 8px;letter-spacing:.08em;color:#7fe3a0;text-transform:uppercase}
-  .row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:7px;cursor:pointer}
-  .row:hover{background:rgba(127,227,160,.10)}
-  .row.active{background:rgba(127,227,160,.22)}
-  .row.on .key{background:#1f5f3a;border-color:#3fa06a}
-  .key{display:inline-flex;justify-content:center;min-width:22px;padding:2px 6px;
-       background:#1c2740;border:1px solid #38507a;border-radius:6px;font-weight:700;font-size:12px;color:#bfe}
-  .name{opacity:.9;text-transform:capitalize}
-  .sep{height:1px;background:#2a3550;margin:8px 2px}
-  #hint{position:fixed;bottom:12px;left:14px;font-size:11px;opacity:.45}
+  html, body { 
+    margin: 0; height: 100%; overflow: hidden; 
+    font-family: system-ui, -apple-system, sans-serif; 
+    background: url('./BACKGROUND.png') repeat-x left bottom;
+    background-size: auto 100%; 
+    background-color: #0e1118;
+  }
+  
+  /* Loading Screen */
+  #loading {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: #0e1118; color: #7fe3a0; z-index: 100;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    font-size: 24px; font-weight: bold; letter-spacing: 2px; transition: opacity 0.5s;
+  }
+  .spinner { margin-top: 20px; width: 40px; height: 40px; border: 4px solid rgba(127,227,160,0.3); border-top-color: #7fe3a0; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { 100% { transform: rotate(360deg); } }
+
+  /* UI HUD */
+  #hud {
+    position: absolute; top: 20px; left: 20px; z-index: 10;
+    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
+    padding: 15px 20px; color: #fff; font-weight: bold; width: 220px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  .hud-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 16px; }
+  .hud-row:last-child { margin-bottom: 0; }
+  .fairy-text { color: #39d24e; }
+  .danger-text { color: #ff5544; }
+  
+  #controls-help {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
+    border-radius: 8px; padding: 10px 20px; color: #cfe; font-size: 13px; text-align: center;
+    letter-spacing: 0.05em; border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .key {
+    display: inline-block; background: #1c2740; border: 1px solid #38507a; 
+    border-radius: 4px; padding: 2px 6px; margin: 0 4px; color: #bfe; font-weight: bold;
+  }
 </style>
+
+<!-- Import Maps -->
 <script type="importmap">
 { "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-    "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.esm.js"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
 } }
 </script>
 </head>
 <body>
-<div id="legend"><h1>Nimble · controls</h1><div id="rows"></div></div>
-<div id="hint">drag to orbit · scroll to zoom · click a row or press its key</div>
+
+<div id="loading">
+  <div>PREPARING THE KITCHEN...</div>
+  <div class="spinner"></div>
+</div>
+
+<div id="hud">
+  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">3</span></div>
+  <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
+  <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
+</div>
+
+<div id="controls-help">
+  <span class="key">←</span> <span class="key">→</span> Move &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">↑</span> Jump &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">↓</span> Slide &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">SPACE</span> Fire Soap
+</div>
+
 <script type="module">
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import GUI from 'lil-gui';
 
-const CLIPS = {
-  idle:{key:'I',loop:true}, jump:{key:'J',loop:false}, dance:{key:'D',loop:true},
-  laugh:{key:'L',loop:false}, running:{key:'R',loop:true},
-  running_slide:{key:'S',loop:false,next:'running'}, skateboard:{key:'B',loop:true},
-  skating_start:{key:'K',loop:false,next:'skateboard'}, dive:{key:'V',loop:false,next:'swim'},
-  swim:{key:'W',loop:true}, tread:{key:'T',loop:true},
+// --- Game State ---
+const state = {
+  score: 0,
+  ammo: 10,
+  lives: 3,
+  baseSpeed: 5.5,
+  speedMultiplier: 1.0,
+  gravity: 15,
+  jumpPower: 6.5,
+  onGround: true,
+  isSliding: false,
+  facingRight: true,
+  isGameOver: false
 };
-const BYKEY=Object.fromEntries(Object.entries(CLIPS).map(([n,c])=>[c.key,n]));
-const SKATE=new Set(['skateboard','skating_start']);
 
-// ---------- renderer / scene ----------
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth,innerHeight);
-renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.25;
+const keys = { right: false, left: false, up: false, down: false, fire: false };
+const entities = []; 
+const soaps = [];
+const angleCheat = 0.49; // Nimble turned towards camera
+
+// --- Initialization & Loaders ---
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x000000, 0); 
 document.body.appendChild(renderer.domElement);
 
-const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x0e1118);
-const pmrem=new THREE.PMREMGenerator(renderer);
-scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-const camera=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,0.01,100);
-camera.position.set(1.0,0.95,2.3);
-const controls=new OrbitControls(camera,renderer.domElement);
-controls.target.set(0,0.85,0); controls.enableDamping=true;
+const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(0, 3.5, 16); 
 
-scene.add(new THREE.Mesh(new THREE.CircleGeometry(8,48).rotateX(-Math.PI/2),
-          new THREE.MeshStandardMaterial({color:0x161b26,roughness:0.95})));
-const dl=new THREE.DirectionalLight(0xffffff,1.3); dl.position.set(2,4,3); scene.add(dl);
+const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.8);
+dirLight.position.set(8, 8, 4); 
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 30;
+dirLight.shadow.camera.left = -15;
+dirLight.shadow.camera.right = 15;
+dirLight.shadow.bias = -0.001; 
+scene.add(dirLight);
+scene.add(dirLight.target);
 
-// ---------- body glass (tune via panel) ----------
-const P={ transmission:0.92, ior:1.45, roughness:0.06, thickness:0.4,
-  attenuationDistance:1.4, attenuationColor:'#39d24e',
-  clearcoat:1.0, envMapIntensity:1.6, exposure:1.25 };
-const thicknessTex=new THREE.TextureLoader().load('./nimble_thickness.png',t=>{t.flipY=false;t.colorSpace=THREE.NoColorSpace;});
-let bodyMat=null;
-function glassBody(src){
-  bodyMat=new THREE.MeshPhysicalMaterial({
-    map:src.map||null, normalMap:src.normalMap||null,
-    metalness:0, roughness:P.roughness, transmission:P.transmission, ior:P.ior,
-    thickness:P.thickness, thicknessMap:thicknessTex,
-    attenuationColor:new THREE.Color(P.attenuationColor), attenuationDistance:P.attenuationDistance,
-    clearcoat:P.clearcoat, clearcoatRoughness:0.08, envMapIntensity:P.envMapIntensity, transparent:true });
-  if(bodyMat.map) bodyMat.map.colorSpace=THREE.SRGBColorSpace;
-  return bodyMat;
-}
-// white frothy soap-foam material (for the foam-cloud hat + skateboard)
-const bubbleTex=new THREE.TextureLoader().load('./bubble_normal.png',t=>{
-  t.flipY=false; t.colorSpace=THREE.NoColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(4,4);
-});
-function foamMat(){
-  return new THREE.MeshPhysicalMaterial({
-    color:new THREE.Color('#f4f8ff'), roughness:0.55, metalness:0,
-    sheen:1.0, sheenRoughness:0.45, sheenColor:new THREE.Color('#ffffff'),
-    transmission:0.10, ior:1.33, thickness:0.15,
-    clearcoat:0.35, clearcoatRoughness:0.35,
-    normalMap:bubbleTex, normalScale:new THREE.Vector2(0.7,0.7),
-    envMapIntensity:1.0, transparent:true });
-}
+scene.add(new THREE.AmbientLight(0xffe0c0, 0.6));
 
-// ---------- load ----------
-let mixer, actions={}, current=null, hatParts=[], boardParts=[];
-new GLTFLoader().load('./nimble_character.glb',(gltf)=>{
-  const root=gltf.scene; scene.add(root);
-  root.traverse(o=>{
-    if(!o.isMesh) return; o.frustumCulled=false;
-    const mn=o.material?o.material.name:'';
-    if(mn==='hat_foam'){ o.material=foamMat(); hatParts.push(o); }
-    else if(mn==='board_foam'){ o.material=foamMat(); boardParts.push(o); o.visible=false; }
-    else { o.material=glassBody(o.material); }
+// Global Materials
+const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
+const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
+
+// Player setup
+let playerGroup = new THREE.Group();
+playerGroup.rotation.y = (Math.PI / 2) - angleCheat; 
+scene.add(playerGroup);
+const velocity = new THREE.Vector3(0, 0, 0);
+let mixer, actions = {}, currentAnim = null;
+
+// Glass material logic for Nimble
+const P = { transmission: 0.92, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
+const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
+function getGlassMat(src) {
+  let mat = new THREE.MeshPhysicalMaterial({
+    map: src.map || null, normalMap: src.normalMap || null,
+    metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
+    thickness: P.thickness, thicknessMap: thicknessTex,
+    attenuationColor: new THREE.Color(P.attenuationColor), attenuationDistance: P.attenuationDistance,
+    clearcoat: P.clearcoat, clearcoatRoughness: 0.08, transparent: true
   });
-  mixer=new THREE.AnimationMixer(root);
-  for(const clip of gltf.animations){
-    const a=mixer.clipAction(clip); const cfg=CLIPS[clip.name]||{loop:false};
-    if(!cfg.loop){ a.setLoop(THREE.LoopOnce); a.clampWhenFinished=true; }
-    actions[clip.name]=a;
+  if(mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+  return mat;
+}
+
+// ----------------------------------------------------
+// ASYNC ASSET LOADING
+// ----------------------------------------------------
+async function initGame() {
+  const gltfLoader = new GLTFLoader();
+  const texLoader = new THREE.TextureLoader();
+
+  // 1. Load Countertop Texture
+  const counterTex = await texLoader.loadAsync('./couter_top_texture.png');
+  counterTex.wrapS = THREE.RepeatWrapping;
+  counterTex.wrapT = THREE.RepeatWrapping;
+  counterTex.repeat.set(150, 6); // Stretch over long geometry
+  
+  const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1500, 40), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(250, 0, -5); // Shifted back slightly
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // 2. Load 2D Foreground Elements
+  const fgNames = ['bottle.png', 'bowl.png', 'cloth.png', 'fork.png', 'plant_02.png', 'plant.png', 'salt.png', 'spoon.png', 'wood_surface.png'];
+  const fgTextures = [];
+  for (const name of fgNames) {
+    fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`));
   }
-  mixer.addEventListener('finished',()=>{ const c=CLIPS[current]||{}; play(c.next||'idle'); });
-  window.nimble={ play, showHat:setHat, showBoard:setBoard, clips:Object.keys(CLIPS) };
-  buildLegend(); buildGUI(); play('idle'); refreshToggleUI();
-},undefined,e=>console.error('GLB load failed',e));
 
-function play(name,fade=0.3){
-  const next=actions[name]; if(!next||name===current) return;
-  const prev=actions[current];
-  next.reset(); if(prev) next.crossFadeFrom(prev,fade,false); next.play();
-  current=name;
-  if(SKATE.has(name)) setBoard(true);          // board auto-appears when skating
-  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active',r.dataset.clip===name));
-}
-
-// ---------- prop toggles ----------
-let hatOn=true, boardOn=false;
-function setHat(v){ hatOn=v; hatParts.forEach(m=>m.visible=v); refreshToggleUI(); }
-function setBoard(v){ boardOn=v; boardParts.forEach(m=>m.visible=v); refreshToggleUI(); }
-function refreshToggleUI(){
-  const h=document.getElementById('t_hat'), b=document.getElementById('t_board');
-  if(h) h.classList.toggle('on',hatOn);
-  if(b) b.classList.toggle('on',boardOn);
-}
-
-// ---------- legend / input ----------
-function buildLegend(){
-  const rows=document.getElementById('rows');
-  for(const [name,cfg] of Object.entries(CLIPS)){
-    const r=document.createElement('div'); r.className='row'; r.dataset.clip=name;
-    r.innerHTML=`<span class="key">${cfg.key}</span><span class="name">${name.replace('_',' ')}</span>`;
-    r.onclick=()=>play(name); rows.appendChild(r);
+  // Generate Foreground Planes
+  for (let x = -20; x < 500; x += 15 + Math.random() * 15) {
+    const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+    const aspect = tex.image.width / tex.image.height;
+    const h = 4 + Math.random() * 4; // random height
+    const w = h * aspect;
+    
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    
+    // Position randomly in the foreground (Z between 5 and 9)
+    plane.position.set(x, h/2 - 1.5, 5 + Math.random() * 4);
+    scene.add(plane);
   }
-  const sep=document.createElement('div'); sep.className='sep'; rows.appendChild(sep);
-  const h=document.createElement('div'); h.className='row on'; h.id='t_hat';
-  h.innerHTML=`<span class="key">H</span><span class="name">hat on/off</span>`;
-  h.onclick=()=>setHat(!hatOn); rows.appendChild(h);
-  const b=document.createElement('div'); b.className='row'; b.id='t_board';
-  b.innerHTML=`<span class="key">G</span><span class="name">skateboard on/off</span>`;
-  b.onclick=()=>setBoard(!boardOn); rows.appendChild(b);
-}
-addEventListener('keydown',e=>{ const k=e.key.toUpperCase();
-  if(k==='H'){setHat(!hatOn);return;} if(k==='G'){setBoard(!boardOn);return;}
-  const name=BYKEY[k]; if(name) play(name); });
 
-// ---------- live tuning panel (delete this block to ship without it) ----------
-function buildGUI(){
-  const gui=new GUI({title:'Nimble · glass'}); gui.close();
-  const apply=()=>{ if(!bodyMat) return;
-    bodyMat.transmission=P.transmission; bodyMat.ior=P.ior; bodyMat.roughness=P.roughness;
-    bodyMat.thickness=P.thickness; bodyMat.attenuationDistance=P.attenuationDistance;
-    bodyMat.attenuationColor.set(P.attenuationColor); bodyMat.clearcoat=P.clearcoat;
-    bodyMat.envMapIntensity=P.envMapIntensity; renderer.toneMappingExposure=P.exposure;
-    bodyMat.needsUpdate=true; };
-  gui.add(P,'transmission',0,1,0.01).onChange(apply);
-  gui.add(P,'ior',1,2,0.01).onChange(apply);
-  gui.add(P,'roughness',0,0.6,0.01).onChange(apply);
-  gui.add(P,'thickness',0,3,0.01).onChange(apply);
-  gui.add(P,'attenuationDistance',0.1,4,0.01).onChange(apply);
-  gui.addColor(P,'attenuationColor').onChange(apply);
-  gui.add(P,'clearcoat',0,1,0.01).onChange(apply);
-  gui.add(P,'envMapIntensity',0,3,0.01).onChange(apply);
-  gui.add(P,'exposure',0.4,2.5,0.01).onChange(apply);
+  // 3. Load 3D Element Models
+  const models = {};
+  const modelPaths = {
+    emerald: './3d_elements/emerald_droplets.glb',
+    star: './3d_elements/golden_star.glb',
+    slime: './3d_elements/grumpy_slime.glb',
+    oil: './3d_elements/oil_slick.glb',
+    plant: './3d_elements/plant.glb',
+    salt: './3d_elements/salt.glb',
+    fork: './3d_elements/fork.glb',
+    plates: './3d_elements/dirty_plates.glb'
+  };
+
+  for (const [key, path] of Object.entries(modelPaths)) {
+    try {
+      const gltf = await gltfLoader.loadAsync(path);
+      const obj = gltf.scene;
+      obj.traverse(child => { if(child.isMesh) { child.castShadow = true; child.receiveShadow = true; }});
+      models[key] = obj;
+    } catch(e) { console.warn("Missing model: " + path); }
+  }
+
+  // 4. Load Nimble Character
+  const nimbleGltf = await gltfLoader.loadAsync('./nimble_character.glb');
+  const root = nimbleGltf.scene;
+  
+  // PREVIOUS SCALE: 1.15. INCREASE BY 15% MORE -> 1.15 * 1.15 = 1.32
+  root.scale.set(1.32, 1.32, 1.32);
+  
+  root.traverse(o => { if(o.isMesh) { o.material = getGlassMat(o.material); o.castShadow = true; }});
+  playerGroup.add(root);
+
+  mixer = new THREE.AnimationMixer(root);
+  const animCfgs = { idle: { loop: true }, running: { loop: true }, jump: { loop: false }, running_slide: { loop: false } };
+  for(const clip of nimbleGltf.animations) {
+    if(animCfgs[clip.name]) {
+      const a = mixer.clipAction(clip);
+      if(!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+      actions[clip.name] = a;
+    }
+  }
+
+  mixer.addEventListener('finished', (e) => {
+    if(e.action === actions['jump']) { state.onGround = true; playAnim(keys.left || keys.right ? 'running' : 'idle'); }
+    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(keys.left || keys.right ? 'running' : 'idle'); }
+  });
+
+  playAnim('idle');
+
+  // Generate Level using loaded models
+  generateLevel(models);
+
+  // Hide loading screen
+  document.getElementById('loading').style.opacity = '0';
+  setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
+
+  // Start Loop
+  renderer.setAnimationLoop(gameLoop);
 }
 
-// ---------- loop ----------
-const clock=new THREE.Clock();
-renderer.setAnimationLoop(()=>{ if(mixer) mixer.update(clock.getDelta()); controls.update(); renderer.render(scene,camera); });
-addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+// ----------------------------------------------------
+// LEVEL GENERATION
+// ----------------------------------------------------
+function generateLevel(models) {
+  const elements = [
+    { key: 'emerald', chance: 0.15, isY: 1.5, type: 'ammo', radius: 0.6 },
+    { key: 'star', chance: 0.05, isY: 2.5, type: 'score', radius: 0.6 },
+    { key: 'slime', chance: 0.15, isY: 0.5, type: 'enemy', radius: 0.8 },
+    { key: 'oil', chance: 0.10, isY: 0.05, type: 'hazard', subType: 'slide', radius: 1.2 },
+    { key: 'plant', chance: 0.10, isY: 0, type: 'hazard', subType: 'damage', radius: 0.8 },
+    { key: 'salt', chance: 0.10, isY: 0.1, type: 'hazard', subType: 'slow', radius: 1.0 },
+    { key: 'fork', chance: 0.10, isY: 0, type: 'cleanable', radius: 1.0 },
+    { key: 'plates', chance: 0.15, isY: 0, type: 'cleanable', radius: 1.0 }
+  ];
+
+  for (let x = 15; x < 450; x += 6 + Math.random() * 4) {
+    let rand = Math.random();
+    let cumulative = 0;
+    let chosen = null;
+    
+    for (let el of elements) {
+      cumulative += el.chance;
+      if (rand < cumulative) { chosen = el; break; }
+    }
+
+    if (chosen && models[chosen.key]) {
+      let mesh = models[chosen.key].clone();
+      mesh.position.set(x, chosen.isY, 0);
+      
+      // Random rotation for variation (except for enemies)
+      if(chosen.type !== 'enemy') mesh.rotation.y = Math.random() * Math.PI * 2;
+
+      scene.add(mesh);
+      entities.push({
+        mesh: mesh, type: chosen.type, subType: chosen.subType,
+        radius: chosen.radius, active: true, isClean: false
+      });
+    }
+  }
+}
+
+// ----------------------------------------------------
+// GAMEPLAY MECHANICS
+// ----------------------------------------------------
+function playAnim(name, fade = 0.2) {
+  if(!actions[name] || name === currentAnim) return;
+  const next = actions[name];
+  const prev = actions[currentAnim];
+  next.reset();
+  if(prev) next.crossFadeFrom(prev, fade, false);
+  next.play();
+  currentAnim = name;
+}
+
+function fireSoap() {
+  if(state.ammo <= 0 || state.isGameOver) return;
+  state.ammo--;
+  updateHUD();
+  
+  const geo = new THREE.SphereGeometry(0.15, 16, 16);
+  const soap = new THREE.Mesh(geo, soapMat);
+  
+  const direction = state.facingRight ? 1 : -1;
+  soap.position.copy(playerGroup.position);
+  // Adjusted up because character is 32% bigger
+  soap.position.y += 1.05; 
+  soap.position.x += direction * 0.5;
+  soap.position.z += 0.2; 
+  soap.castShadow = true;
+  
+  scene.add(soap);
+  soaps.push({ mesh: soap, dir: direction, life: 1.5 });
+}
+
+function takeDamage() {
+  if(state.isGameOver) return;
+  state.lives--;
+  updateHUD();
+  
+  // Flash red
+  playerGroup.traverse(child => {
+    if(child.isMesh && child.material && child.material.attenuationColor) {
+      let orig = child.material.attenuationColor.getHex();
+      child.material.attenuationColor.setHex(0xff0000);
+      setTimeout(() => { if(child.material) child.material.attenuationColor.setHex(orig); }, 300);
+    }
+  });
+
+  if (state.lives <= 0) {
+    state.isGameOver = true;
+    playAnim('idle'); // Or 'laugh' as game over
+    alert("Game Over! Final Score: " + state.score);
+  }
+}
+
+function updateHUD() {
+  document.getElementById('score').innerText = state.score;
+  document.getElementById('ammo').innerText = state.ammo;
+  document.getElementById('lives').innerText = state.lives;
+}
+
+// ----------------------------------------------------
+// MAIN LOOP
+// ----------------------------------------------------
+const clock = new THREE.Clock();
+
+function gameLoop() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  if (mixer) mixer.update(dt);
+
+  if (!state.isGameOver) {
+    const moveSpeed = state.baseSpeed * state.speedMultiplier;
+
+    // Movement
+    if(keys.right && !state.isSliding) {
+      playerGroup.position.x += moveSpeed * dt;
+      playerGroup.rotation.y = (Math.PI / 2) - angleCheat; 
+      state.facingRight = true;
+      if(state.onGround) playAnim('running');
+    } 
+    else if(keys.left && !state.isSliding) {
+      playerGroup.position.x -= moveSpeed * dt;
+      playerGroup.rotation.y = -(Math.PI / 2) + angleCheat; 
+      state.facingRight = false;
+      if(state.onGround) playAnim('running');
+    } 
+    else {
+      if(state.onGround && !state.isSliding) playAnim('idle');
+    }
+
+    // Gravity & Jump
+    if(!state.onGround) {
+      velocity.y -= state.gravity * dt;
+      playerGroup.position.y += velocity.y * dt;
+      if(playerGroup.position.y <= 0) {
+        playerGroup.position.y = 0;
+        velocity.y = 0;
+        state.onGround = true;
+        if(!keys.left && !keys.right) playAnim('idle');
+      }
+    }
+
+    // Adjust Hitbox size based on character 1.32x scaling
+    const playerHitRadius = state.isSliding ? 0.55 : 1.1; 
+    const playerCenterY = playerGroup.position.y + playerHitRadius;
+    const playerPos2D = new THREE.Vector2(playerGroup.position.x, playerCenterY);
+
+    // Update Entities & Collisions
+    for (let ent of entities) {
+      if (!ent.active) continue;
+
+      // Enemy specific movement (Slime moves left)
+      if (ent.type === 'enemy') {
+        ent.mesh.position.x -= 2.0 * dt;
+        ent.mesh.position.y = 0.4 + Math.sin(clock.elapsedTime * 5 + ent.mesh.position.x) * 0.1; // bouncing
+      }
+      if (ent.type === 'ammo') {
+        ent.mesh.rotation.y += dt;
+        ent.mesh.position.y += Math.sin(clock.elapsedTime * 3 + ent.mesh.position.x) * 0.003;
+      }
+      if (ent.type === 'score') {
+        ent.mesh.rotation.y += dt * 2;
+      }
+
+      // Collision detection (approximate 2D circle intersection)
+      let entPos2D = new THREE.Vector2(ent.mesh.position.x, ent.mesh.position.y + ent.radius/2);
+      let dist = playerPos2D.distanceTo(entPos2D);
+
+      if (dist < playerHitRadius + ent.radius - 0.2) { // 0.2 forgiveness
+        
+        if (ent.type === 'ammo') {
+          state.ammo += 5; updateHUD();
+          ent.active = false; scene.remove(ent.mesh);
+        } 
+        else if (ent.type === 'score') {
+          state.score += 500; updateHUD();
+          ent.active = false; scene.remove(ent.mesh);
+        }
+        else if (ent.type === 'enemy' || (ent.type === 'cleanable' && !ent.isClean) || (ent.type === 'hazard' && ent.subType === 'damage')) {
+          takeDamage();
+          ent.active = false; // Prevents taking damage every frame
+          // If it's a slime, it disappears. If it's a dirty plate, it stays but can't hurt you again.
+          if (ent.type === 'enemy') scene.remove(ent.mesh); 
+        }
+        else if (ent.type === 'hazard' && ent.subType === 'slide') {
+          if (!state.isSliding && state.onGround) {
+            state.isSliding = true;
+            playAnim('running_slide');
+            takeDamage();
+            ent.active = false; // Only trigger once
+            setTimeout(() => { state.isSliding = false; }, 1200);
+          }
+        }
+        else if (ent.type === 'hazard' && ent.subType === 'slow') {
+          state.speedMultiplier = 0.5;
+          ent.active = false;
+          setTimeout(() => { state.speedMultiplier = 1.0; }, 2000);
+        }
+      }
+    }
+
+    // Update Projectiles (Soap)
+    for(let i = soaps.length - 1; i >= 0; i--) {
+      let s = soaps[i];
+      s.mesh.position.x += 12 * s.dir * dt;
+      s.life -= dt;
+      
+      let hit = false;
+      let soapPos = new THREE.Vector2(s.mesh.position.x, s.mesh.position.y);
+
+      for(let ent of entities) {
+        if(!ent.active) continue;
+        
+        let entPos2D = new THREE.Vector2(ent.mesh.position.x, ent.mesh.position.y + ent.radius/2);
+        
+        if(soapPos.distanceTo(entPos2D) < ent.radius + 0.3) {
+          
+          if(ent.type === 'cleanable' && !ent.isClean) {
+            ent.isClean = true;
+            ent.mesh.traverse(child => { if(child.isMesh) child.material = cleanMat; });
+            state.score += 100; updateHUD();
+            hit = true; break;
+          }
+          else if(ent.type === 'enemy') {
+            ent.active = false;
+            scene.remove(ent.mesh);
+            state.score += 50; updateHUD();
+            hit = true; break;
+          }
+        }
+      }
+
+      if(s.life <= 0 || hit) {
+        scene.remove(s.mesh);
+        soaps.splice(i, 1);
+      }
+    }
+  }
+
+  // Camera Follow (Tracking player with offset)
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
+  camera.lookAt(camera.position.x, 1.5, 0);
+
+  // Background Parallax
+  document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
+  
+  // Track Light
+  dirLight.position.x = camera.position.x + 8; 
+  dirLight.target.position.set(camera.position.x, 0, 0);
+
+  renderer.render(scene, camera);
+}
+
+// ----------------------------------------------------
+// INPUT HANDLING
+// ----------------------------------------------------
+window.addEventListener('keydown', e => {
+  if(state.isGameOver) return;
+  if(e.code === 'ArrowRight') keys.right = true;
+  if(e.code === 'ArrowLeft') keys.left = true;
+  if(e.code === 'ArrowUp' && state.onGround && !state.isSliding) {
+    keys.up = true;
+    velocity.y = state.jumpPower;
+    state.onGround = false;
+    playAnim('jump');
+  }
+  if(e.code === 'ArrowDown' && state.onGround && !state.isSliding) {
+    keys.down = true;
+    state.isSliding = true;
+    playAnim('running_slide');
+  }
+  if(e.code === 'Space' && !keys.fire) {
+    keys.fire = true;
+    fireSoap();
+  }
+});
+
+window.addEventListener('keyup', e => {
+  if(e.code === 'ArrowRight') keys.right = false;
+  if(e.code === 'ArrowLeft') keys.left = false;
+  if(e.code === 'ArrowUp') keys.up = false;
+  if(e.code === 'ArrowDown') keys.down = false;
+  if(e.code === 'Space') keys.fire = false;
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Kickoff
+initGame();
+
 </script>
 </body>
 </html>
