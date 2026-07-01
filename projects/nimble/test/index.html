@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nimble's Dish Dash</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1118; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
+  
+  /* UI HUD styling */
+  #hud {
+    position: absolute; top: 20px; left: 20px; z-index: 10;
+    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px;
+    padding: 15px 20px; color: #fff; font-weight: bold; width: 200px;
+  }
+  .hud-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 16px; }
+  .hud-row:last-child { margin-bottom: 0; }
+  .fairy-text { color: #39d24e; }
+  
+  #controls-help {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(10px);
+    border-radius: 8px; padding: 10px 20px; color: #cfe; font-size: 13px; text-align: center;
+    letter-spacing: 0.05em; border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .key {
+    display: inline-block; background: #1c2740; border: 1px solid #38507a; 
+    border-radius: 4px; padding: 2px 6px; margin: 0 4px; color: #bfe; font-weight: bold;
+  }
+</style>
+
+<!-- Import Maps -->
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-row"><span>Dishes Cleaned:</span> <span id="score">0</span></div>
+  <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
+</div>
+
+<div id="controls-help">
+  <span class="key">←</span> <span class="key">→</span> Move &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">↑</span> Jump &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">↓</span> Slide &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">SPACE</span> Fire Soap
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// --- Game State ---
+const state = {
+  score: 0,
+  ammo: 10,
+  speed: 4.5,
+  gravity: 15,
+  jumpPower: 6.5,
+  onGround: true,
+  isSliding: false
+};
+
+const keys = { right: false, left: false, up: false, down: false, fire: false };
+const entities = { drops: [], dishes: [], obstacles: [], soaps: [] };
+
+// --- Scene Setup ---
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1118);
+// Photorealistic Environment Reflections
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// 2.5D Camera (Locked Y and Z, follows X)
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(0, 2, 8);
+
+// Lights for shadows
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+dirLight.position.set(5, 10, 7);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 25;
+dirLight.shadow.camera.left = -15;
+dirLight.shadow.camera.right = 15;
+scene.add(dirLight);
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+scene.add(ambientLight);
+
+// --- Materials (Photorealistic look) ---
+// Floor (Glossy dark surface to reflect the glass)
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x111620, roughness: 0.15, metalness: 0.1 });
+const floor = new THREE.Mesh(new THREE.BoxGeometry(200, 1, 6), floorMat);
+floor.position.set(40, -0.5, 0);
+floor.receiveShadow = true;
+scene.add(floor);
+
+// Dirty vs Clean Dish Materials
+const dirtyMat = new THREE.MeshStandardMaterial({ color: 0x5a4634, roughness: 0.9, metalness: 0 });
+const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05 });
+
+// Fairy Drop (Glowing Green)
+const dropMat = new THREE.MeshPhysicalMaterial({
+  color: 0x39d24e, emissive: 0x114411, transmission: 0.8, ior: 1.5, roughness: 0.1
+});
+
+// Soap Bubbles (Frothy White)
+const soapMat = new THREE.MeshPhysicalMaterial({ 
+  color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 
+});
+
+// Grime Obstacles
+const grimeMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1.0 });
+
+// --- Player (Nimble) Setup ---
+let playerGroup = new THREE.Group();
+scene.add(playerGroup);
+
+const velocity = new THREE.Vector3(0, 0, 0);
+let mixer, actions = {}, currentAnim = null;
+
+// Glass material from your settings
+const P = { transmission: 0.92, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
+const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
+
+function getGlassMat(src) {
+  let mat = new THREE.MeshPhysicalMaterial({
+    map: src.map || null, normalMap: src.normalMap || null,
+    metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
+    thickness: P.thickness, thicknessMap: thicknessTex,
+    attenuationColor: new THREE.Color(P.attenuationColor), attenuationDistance: P.attenuationDistance,
+    clearcoat: P.clearcoat, clearcoatRoughness: 0.08, transparent: true
+  });
+  if(mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+  return mat;
+}
+
+new GLTFLoader().load('./nimble_character.glb', (gltf) => {
+  const root = gltf.scene;
+  root.traverse(o => { 
+    if(o.isMesh) { 
+      o.material = getGlassMat(o.material); 
+      o.castShadow = true; 
+    }
+  });
+  playerGroup.add(root);
+
+  // Setup animations
+  mixer = new THREE.AnimationMixer(root);
+  const animCfgs = {
+    idle: { loop: true }, running: { loop: true }, jump: { loop: false }, running_slide: { loop: false }
+  };
+  for(const clip of gltf.animations) {
+    if(animCfgs[clip.name]) {
+      const a = mixer.clipAction(clip);
+      if(!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+      actions[clip.name] = a;
+    }
+  }
+
+  // Handle animation transitions
+  mixer.addEventListener('finished', (e) => {
+    if(e.action === actions['jump']) { state.onGround = true; playAnim(keys.left || keys.right ? 'running' : 'idle'); }
+    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(keys.left || keys.right ? 'running' : 'idle'); }
+  });
+
+  playAnim('idle');
+  generateLevel();
+});
+
+function playAnim(name, fade = 0.2) {
+  if(!actions[name] || name === currentAnim) return;
+  const next = actions[name];
+  const prev = actions[currentAnim];
+  next.reset();
+  if(prev) next.crossFadeFrom(prev, fade, false);
+  next.play();
+  currentAnim = name;
+}
+
+// --- Level Generation ---
+function generateLevel() {
+  const dishGeo = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 32).rotateX(Math.PI/2);
+  const dropGeo = new THREE.SphereGeometry(0.2, 16, 16);
+  const grimeGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+
+  for(let x = 10; x < 150; x += 5) {
+    let rand = Math.random();
+    
+    if(rand < 0.3) {
+      // Spawn Dirty Dish
+      let d = new THREE.Mesh(dishGeo, dirtyMat);
+      d.position.set(x, 0.6, 0);
+      d.castShadow = true;
+      d.isClean = false;
+      scene.add(d);
+      entities.dishes.push(d);
+    } 
+    else if(rand < 0.6) {
+      // Spawn Fairy Drop
+      let d = new THREE.Mesh(dropGeo, dropMat);
+      d.position.set(x, 1.2, 0); // slightly elevated
+      scene.add(d);
+      entities.drops.push(d);
+    }
+    else if(rand < 0.8) {
+      // Spawn Obstacle (Grime)
+      let heightType = Math.random() > 0.5 ? 'low' : 'high';
+      let o = new THREE.Mesh(grimeGeo, grimeMat);
+      o.position.set(x, heightType === 'low' ? 0.4 : 1.4, 0);
+      o.castShadow = true;
+      scene.add(o);
+      entities.obstacles.push(o);
+    }
+  }
+}
+
+// --- Interactions ---
+function fireSoap() {
+  if(state.ammo <= 0) return;
+  state.ammo--;
+  updateHUD();
+  
+  const geo = new THREE.SphereGeometry(0.15, 16, 16);
+  const soap = new THREE.Mesh(geo, soapMat);
+  
+  // Fire from Nimble's height, towards facing direction
+  const direction = playerGroup.rotation.y === 0 ? 1 : -1;
+  soap.position.copy(playerGroup.position);
+  soap.position.y += 0.8;
+  soap.position.x += direction * 0.5;
+  
+  scene.add(soap);
+  entities.soaps.push({ mesh: soap, dir: direction, life: 1.5 });
+}
+
+function updateHUD() {
+  document.getElementById('score').innerText = state.score;
+  document.getElementById('ammo').innerText = state.ammo;
+}
+
+// --- Input Handling ---
+window.addEventListener('keydown', e => {
+  if(e.code === 'ArrowRight') keys.right = true;
+  if(e.code === 'ArrowLeft') keys.left = true;
+  if(e.code === 'ArrowUp' && state.onGround && !state.isSliding) {
+    keys.up = true;
+    velocity.y = state.jumpPower;
+    state.onGround = false;
+    playAnim('jump');
+  }
+  if(e.code === 'ArrowDown' && state.onGround && !state.isSliding) {
+    keys.down = true;
+    state.isSliding = true;
+    playAnim('running_slide');
+  }
+  if(e.code === 'Space' && !keys.fire) {
+    keys.fire = true;
+    fireSoap();
+  }
+});
+
+window.addEventListener('keyup', e => {
+  if(e.code === 'ArrowRight') keys.right = false;
+  if(e.code === 'ArrowLeft') keys.left = false;
+  if(e.code === 'ArrowUp') keys.up = false;
+  if(e.code === 'ArrowDown') keys.down = false;
+  if(e.code === 'Space') keys.fire = false;
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// --- Game Loop ---
+const clock = new THREE.Clock();
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  
+  if (mixer) mixer.update(dt);
+
+  // Player Physics & Movement
+  if(keys.right && !state.isSliding) {
+    playerGroup.position.x += state.speed * dt;
+    playerGroup.rotation.y = Math.PI / 2; // face right
+    if(state.onGround) playAnim('running');
+  } 
+  else if(keys.left && !state.isSliding) {
+    playerGroup.position.x -= state.speed * dt;
+    playerGroup.rotation.y = -Math.PI / 2; // face left
+    if(state.onGround) playAnim('running');
+  } 
+  else {
+    if(state.onGround && !state.isSliding) playAnim('idle');
+  }
+
+  // Jump Gravity
+  if(!state.onGround) {
+    velocity.y -= state.gravity * dt;
+    playerGroup.position.y += velocity.y * dt;
+    if(playerGroup.position.y <= 0) {
+      playerGroup.position.y = 0;
+      velocity.y = 0;
+      state.onGround = true;
+      if(!keys.left && !keys.right) playAnim('idle');
+    }
+  }
+
+  // Camera Follow smoothly (2.5D constraint)
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (playerGroup.rotation.y > 0 ? 3 : -3), 4 * dt);
+  dirLight.position.x = camera.position.x + 5; // keep shadow light moving with camera
+
+  // Update Soaps (Projectiles)
+  for(let i = entities.soaps.length - 1; i >= 0; i--) {
+    let s = entities.soaps[i];
+    s.mesh.position.x += 12 * s.dir * dt;
+    s.life -= dt;
+    
+    // Check collision with Dishes
+    let hit = false;
+    for(let dish of entities.dishes) {
+      if(!dish.isClean && s.mesh.position.distanceTo(dish.position) < 0.8) {
+        dish.material = cleanMat; // BECOMES CLEAN!
+        dish.isClean = true;
+        state.score += 100;
+        updateHUD();
+        hit = true; break;
+      }
+    }
+
+    if(s.life <= 0 || hit) {
+      scene.remove(s.mesh);
+      entities.soaps.splice(i, 1);
+    }
+  }
+
+  // Player Collisions (Drops & Obstacles)
+  // Hitbox dynamically lowers if sliding
+  const playerHitRadius = state.isSliding ? 0.4 : 0.8; 
+  const playerCenterY = playerGroup.position.y + playerHitRadius;
+
+  // Drops
+  for(let i = entities.drops.length - 1; i >= 0; i--) {
+    let d = entities.drops[i];
+    d.rotation.y += dt; // spin animation
+    d.position.y += Math.sin(clock.elapsedTime * 4 + d.position.x) * 0.005; // hover
+    
+    let dist = Math.hypot(playerGroup.position.x - d.position.x, playerCenterY - d.position.y);
+    if(dist < playerHitRadius + 0.3) {
+      scene.remove(d);
+      entities.drops.splice(i, 1);
+      state.ammo += 5;
+      updateHUD();
+    }
+  }
+
+  // Obstacles (Grime)
+  for(let i = entities.obstacles.length - 1; i >= 0; i--) {
+    let o = entities.obstacles[i];
+    let dist = Math.hypot(playerGroup.position.x - o.position.x, playerCenterY - o.position.y);
+    if(dist < playerHitRadius + 0.4) {
+      // Hit obstacle penalty
+      scene.remove(o);
+      entities.obstacles.splice(i, 1);
+      
+      // Visual feedback: Flash player red briefly
+      if(playerGroup.children[0]) {
+        playerGroup.children[0].traverse(child => {
+          if(child.isMesh && child.material) {
+            let orig = child.material.attenuationColor.getHex();
+            child.material.attenuationColor.setHex(0xff0000);
+            setTimeout(() => child.material.attenuationColor.setHex(orig), 300);
+          }
+        });
+      }
+    }
+  }
+
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
