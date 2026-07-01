@@ -64,7 +64,6 @@
 </div>
 
 <div id="hud">
-  <!-- Increased testing lives to 200 -->
   <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">200</span></div>
   <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
   <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
@@ -86,8 +85,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const state = {
   score: 0,
   ammo: 10,
-  lives: 200, // Testing lives
-  baseSpeed: 5.5,
+  lives: 200, 
+  baseSpeed: 6.5,
   speedMultiplier: 1.0,
   gravity: 15,
   jumpPower: 6.5,
@@ -100,7 +99,7 @@ const state = {
 const keys = { right: false, left: false, up: false, down: false, fire: false };
 const entities = []; 
 const soaps = [];
-const angleCheat = 0.49; // Nimble turned towards camera
+const angleCheat = 0.49; // Nimble turned slightly towards camera
 
 // --- Initialization & Loaders ---
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -117,8 +116,9 @@ const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
+// CAMERA: Raised Y position so we look down onto the edge of the table
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
-camera.position.set(0, 3.5, 16); 
+camera.position.set(0, 5.0, 17); 
 
 const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.8);
 dirLight.position.set(8, 8, 4); 
@@ -146,7 +146,6 @@ scene.add(playerGroup);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
 
-// Glass material logic for Nimble
 const P = { transmission: 0.92, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
 const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
 function getGlassMat(src) {
@@ -168,16 +167,17 @@ async function initGame() {
   const gltfLoader = new GLTFLoader();
   const texLoader = new THREE.TextureLoader();
 
-  // 1. Load Countertop Texture
+  // 1. Load Countertop Texture (Given a 3D Box geometry for the edge lip)
   const counterTex = await texLoader.loadAsync('./couter_top_texture.png');
   counterTex.wrapS = THREE.RepeatWrapping;
   counterTex.wrapT = THREE.RepeatWrapping;
-  counterTex.repeat.set(150, 6); // Stretch over long geometry
+  counterTex.repeat.set(150, 6); 
   
   const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1500, 40), floorMat);
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.set(250, 0, -5); // Shifted back slightly
+  // Make it a thick counter box (thickness 10)
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 30), floorMat);
+  // Center is Y=-5 so the top is at Y=0. Center Z is -12 so front edge is at Z=3.
+  floor.position.set(250, -5, -12); 
   floor.receiveShadow = true;
   scene.add(floor);
 
@@ -195,13 +195,13 @@ async function initGame() {
     for (let x = -20; x < 500; x += 15 + Math.random() * 15) {
       const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
       const aspect = tex.image.width / tex.image.height;
-      const h = 4 + Math.random() * 4; // random height
+      const h = 4 + Math.random() * 4; 
       const w = h * aspect;
       
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
       
-      // Position randomly in the foreground (Z between 5 and 9)
+      // Position slightly off the front edge of the counter
       plane.position.set(x, h/2 - 1.5, 5 + Math.random() * 4);
       scene.add(plane);
     }
@@ -233,15 +233,34 @@ async function initGame() {
   const nimbleGltf = await gltfLoader.loadAsync('./nimble_character.glb');
   const root = nimbleGltf.scene;
   
-  // SCALE INCREASED BY ANOTHER 20% (from 1.32 to ~1.58)
   root.scale.set(1.58, 1.58, 1.58);
   
   root.traverse(o => { if(o.isMesh) { o.material = getGlassMat(o.material); o.castShadow = true; }});
   playerGroup.add(root);
 
   mixer = new THREE.AnimationMixer(root);
-  const animCfgs = { idle: { loop: true }, running: { loop: true }, jump: { loop: false }, running_slide: { loop: false } };
+  const animCfgs = { idle: { loop: true }, skateboard: { loop: true }, jump: { loop: false }, running_slide: { loop: false } };
+  
+  // STRIP ROOT MOTION SCRIPT
+  // This intercepts animations to prevent the mesh from flying away from the capsule during slides
   for(const clip of nimbleGltf.animations) {
+    clip.tracks.forEach(track => {
+      if (track.name.endsWith('.position')) {
+        let maxDiff = 0;
+        for(let i = 0; i < track.values.length; i += 3) {
+           maxDiff = Math.max(maxDiff, Math.abs(track.values[i] - track.values[0]), Math.abs(track.values[i+2] - track.values[2]));
+        }
+        if (maxDiff > 0.1) { 
+           const startX = track.values[0];
+           const startZ = track.values[2];
+           for(let i = 0; i < track.values.length; i += 3) {
+              track.values[i] = startX; // Lock X
+              track.values[i+2] = startZ; // Lock Z
+           }
+        }
+      }
+    });
+
     if(animCfgs[clip.name]) {
       const a = mixer.clipAction(clip);
       if(!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
@@ -250,20 +269,16 @@ async function initGame() {
   }
 
   mixer.addEventListener('finished', (e) => {
-    if(e.action === actions['jump']) { state.onGround = true; playAnim(keys.left || keys.right ? 'running' : 'idle'); }
-    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(keys.left || keys.right ? 'running' : 'idle'); }
+    if(e.action === actions['jump']) { state.onGround = true; playAnim(keys.left || keys.right ? 'skateboard' : 'idle'); }
+    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(keys.left || keys.right ? 'skateboard' : 'idle'); }
   });
 
   playAnim('idle');
-
-  // Generate Level using loaded models
   generateLevel(models);
 
-  // Hide loading screen
   document.getElementById('loading').style.opacity = '0';
   setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
 
-  // Start Loop
   renderer.setAnimationLoop(gameLoop);
 }
 
@@ -286,7 +301,6 @@ function generateLevel(models) {
     let rand = Math.random();
     let cumulative = 0;
     let chosen = null;
-    
     for (let el of elements) {
       cumulative += el.chance;
       if (rand < cumulative) { chosen = el; break; }
@@ -295,15 +309,9 @@ function generateLevel(models) {
     if (chosen && models[chosen.key]) {
       let mesh = models[chosen.key].clone();
       mesh.position.set(x, chosen.isY, 0);
-      
-      // Random rotation for variation (except for enemies)
       if(chosen.type !== 'enemy') mesh.rotation.y = Math.random() * Math.PI * 2;
-
       scene.add(mesh);
-      entities.push({
-        mesh: mesh, type: chosen.type, subType: chosen.subType,
-        radius: chosen.radius, active: true, isClean: false
-      });
+      entities.push({ mesh: mesh, type: chosen.type, subType: chosen.subType, radius: chosen.radius, active: true, isClean: false });
     }
   }
 }
@@ -331,7 +339,6 @@ function fireSoap() {
   
   const direction = state.facingRight ? 1 : -1;
   soap.position.copy(playerGroup.position);
-  // Adjusted up again because character is now 1.58x bigger overall
   soap.position.y += 1.25; 
   soap.position.x += direction * 0.5;
   soap.position.z += 0.2; 
@@ -346,7 +353,6 @@ function takeDamage() {
   state.lives--;
   updateHUD();
   
-  // Flash red
   playerGroup.traverse(child => {
     if(child.isMesh && child.material && child.material.attenuationColor) {
       let orig = child.material.attenuationColor.getHex();
@@ -380,21 +386,25 @@ function gameLoop() {
   if (!state.isGameOver) {
     const moveSpeed = state.baseSpeed * state.speedMultiplier;
 
-    // Movement
-    if(keys.right && !state.isSliding) {
+    // Movement: Slide uses built-in momentum, replacing standard walk checks
+    if (state.isSliding) {
+      // Slide pushes him forward natively, camera tracks dynamically!
+      playerGroup.position.x += moveSpeed * 1.3 * (state.facingRight ? 1 : -1) * dt;
+    } 
+    else if(keys.right) {
       playerGroup.position.x += moveSpeed * dt;
       playerGroup.rotation.y = (Math.PI / 2) - angleCheat; 
       state.facingRight = true;
-      if(state.onGround) playAnim('running');
+      if(state.onGround) playAnim('skateboard'); // Uses Skateboard!
     } 
-    else if(keys.left && !state.isSliding) {
+    else if(keys.left) {
       playerGroup.position.x -= moveSpeed * dt;
       playerGroup.rotation.y = -(Math.PI / 2) + angleCheat; 
       state.facingRight = false;
-      if(state.onGround) playAnim('running');
+      if(state.onGround) playAnim('skateboard'); // Uses Skateboard!
     } 
     else {
-      if(state.onGround && !state.isSliding) playAnim('idle');
+      if(state.onGround) playAnim('idle');
     }
 
     // Gravity & Jump
@@ -409,19 +419,16 @@ function gameLoop() {
       }
     }
 
-    // Adjust Hitbox size based on character 1.58x scaling
     const playerHitRadius = state.isSliding ? 0.66 : 1.32; 
     const playerCenterY = playerGroup.position.y + playerHitRadius;
     const playerPos2D = new THREE.Vector2(playerGroup.position.x, playerCenterY);
 
-    // Update Entities & Collisions
     for (let ent of entities) {
       if (!ent.active) continue;
 
-      // Enemy specific movement (Slime moves left)
       if (ent.type === 'enemy') {
         ent.mesh.position.x -= 2.0 * dt;
-        ent.mesh.position.y = 0.4 + Math.sin(clock.elapsedTime * 5 + ent.mesh.position.x) * 0.1; // bouncing
+        ent.mesh.position.y = 0.4 + Math.sin(clock.elapsedTime * 5 + ent.mesh.position.x) * 0.1;
       }
       if (ent.type === 'ammo') {
         ent.mesh.rotation.y += dt;
@@ -431,12 +438,10 @@ function gameLoop() {
         ent.mesh.rotation.y += dt * 2;
       }
 
-      // Collision detection (approximate 2D circle intersection)
       let entPos2D = new THREE.Vector2(ent.mesh.position.x, ent.mesh.position.y + ent.radius/2);
       let dist = playerPos2D.distanceTo(entPos2D);
 
-      if (dist < playerHitRadius + ent.radius - 0.2) { // 0.2 forgiveness
-        
+      if (dist < playerHitRadius + ent.radius - 0.2) { 
         if (ent.type === 'ammo') {
           state.ammo += 5; updateHUD();
           ent.active = false; scene.remove(ent.mesh);
@@ -447,8 +452,7 @@ function gameLoop() {
         }
         else if (ent.type === 'enemy' || (ent.type === 'cleanable' && !ent.isClean) || (ent.type === 'hazard' && ent.subType === 'damage')) {
           takeDamage();
-          ent.active = false; // Prevents taking damage every frame
-          // If it's a slime, it disappears. If it's a dirty plate, it stays but can't hurt you again.
+          ent.active = false; 
           if (ent.type === 'enemy') scene.remove(ent.mesh); 
         }
         else if (ent.type === 'hazard' && ent.subType === 'slide') {
@@ -456,7 +460,7 @@ function gameLoop() {
             state.isSliding = true;
             playAnim('running_slide');
             takeDamage();
-            ent.active = false; // Only trigger once
+            ent.active = false; 
             setTimeout(() => { state.isSliding = false; }, 1200);
           }
         }
@@ -468,7 +472,6 @@ function gameLoop() {
       }
     }
 
-    // Update Projectiles (Soap)
     for(let i = soaps.length - 1; i >= 0; i--) {
       let s = soaps[i];
       s.mesh.position.x += 12 * s.dir * dt;
@@ -479,11 +482,9 @@ function gameLoop() {
 
       for(let ent of entities) {
         if(!ent.active) continue;
-        
         let entPos2D = new THREE.Vector2(ent.mesh.position.x, ent.mesh.position.y + ent.radius/2);
         
         if(soapPos.distanceTo(entPos2D) < ent.radius + 0.3) {
-          
           if(ent.type === 'cleanable' && !ent.isClean) {
             ent.isClean = true;
             ent.mesh.traverse(child => { if(child.isMesh) child.material = cleanMat; });
@@ -506,14 +507,13 @@ function gameLoop() {
     }
   }
 
-  // Camera Follow (Tracking player with offset)
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
-  camera.lookAt(camera.position.x, 1.5, 0);
+  
+  // ADJUSTED CAMERA LOOK AT: Looks much lower (Y=0.5 instead of Y=1.5) to push horizon up and counter down!
+  camera.lookAt(camera.position.x, 0.5, 0);
 
-  // Background Parallax
   document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
   
-  // Track Light
   dirLight.position.x = camera.position.x + 8; 
   dirLight.target.position.set(camera.position.x, 0, 0);
 
