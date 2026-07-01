@@ -5,14 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Nimble's Dish Dash</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0e1118; overflow: hidden; font-family: system-ui, -apple-system, sans-serif; }
+  html, body { 
+    margin: 0; height: 100%; overflow: hidden; 
+    font-family: system-ui, -apple-system, sans-serif; 
+    /* Set the beautiful kitchen image as the background */
+    background: url('./BACKGROUND.png') center bottom / cover no-repeat;
+    background-color: #0e1118;
+  }
   
   /* UI HUD styling */
   #hud {
     position: absolute; top: 20px; left: 20px; z-index: 10;
-    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px;
+    background: rgba(16, 20, 30, 0.5); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
     padding: 15px 20px; color: #fff; font-weight: bold; width: 200px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   }
   .hud-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 16px; }
   .hud-row:last-child { margin-bottom: 0; }
@@ -20,7 +27,7 @@
   
   #controls-help {
     position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10;
-    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(10px);
+    background: rgba(16, 20, 30, 0.5); backdrop-filter: blur(8px);
     border-radius: 8px; padding: 10px 20px; color: #cfe; font-size: 13px; text-align: center;
     letter-spacing: 0.05em; border: 1px solid rgba(255, 255, 255, 0.1);
   }
@@ -72,28 +79,31 @@ const keys = { right: false, left: false, up: false, down: false, fire: false };
 const entities = { drops: [], dishes: [], obstacles: [], soaps: [] };
 
 // --- Scene Setup ---
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// Alpha: true makes the renderer transparent so we can see BACKGROUND.png via CSS
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.25;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Make background completely transparent
+renderer.setClearColor(0x000000, 0);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0e1118);
-// Photorealistic Environment Reflections
+
+// We still use RoomEnvironment for the glass reflections, but NOT for the visual background
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-// 2.5D Camera (Locked Y and Z, follows X)
-const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.1, 100);
-camera.position.set(0, 2, 8);
+// Lowered camera slightly so Nimble aligns with the wooden counter in the photo
+const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(0, 1.4, 8);
 
-// Lights for shadows
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-dirLight.position.set(5, 10, 7);
+// Lights - Adjusted to match the warm sunlight coming from the right in BACKGROUND.png
+const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.8);
+dirLight.position.set(8, 6, 3); // Light from top-right, casting shadow to the left
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 2048;
 dirLight.shadow.mapSize.height = 2048;
@@ -101,16 +111,19 @@ dirLight.shadow.camera.near = 0.5;
 dirLight.shadow.camera.far = 25;
 dirLight.shadow.camera.left = -15;
 dirLight.shadow.camera.right = 15;
+dirLight.shadow.bias = -0.001; // Reduce shadow acne
 scene.add(dirLight);
 
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+const ambientLight = new THREE.AmbientLight(0xffe0c0, 0.5); // Warm ambient fill
 scene.add(ambientLight);
 
-// --- Materials (Photorealistic look) ---
-// Floor (Glossy dark surface to reflect the glass)
-const floorMat = new THREE.MeshStandardMaterial({ color: 0x111620, roughness: 0.15, metalness: 0.1 });
-const floor = new THREE.Mesh(new THREE.BoxGeometry(200, 1, 6), floorMat);
-floor.position.set(40, -0.5, 0);
+// --- Materials ---
+// Invisible Shadow Catcher Floor
+// This material is completely invisible, but it catches and displays shadows!
+const floorMat = new THREE.ShadowMaterial({ opacity: 0.35 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(500, 20), floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.set(0, 0, 0); // Ground level
 floor.receiveShadow = true;
 scene.add(floor);
 
@@ -129,7 +142,7 @@ const soapMat = new THREE.MeshPhysicalMaterial({
 });
 
 // Grime Obstacles
-const grimeMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1.0 });
+const grimeMat = new THREE.MeshStandardMaterial({ color: 0x221a10, roughness: 1.0 });
 
 // --- Player (Nimble) Setup ---
 let playerGroup = new THREE.Group();
@@ -138,7 +151,7 @@ scene.add(playerGroup);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
 
-// Glass material from your settings
+// Glass material 
 const P = { transmission: 0.92, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
 const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
 
@@ -201,15 +214,15 @@ function playAnim(name, fade = 0.2) {
 function generateLevel() {
   const dishGeo = new THREE.CylinderGeometry(0.6, 0.6, 0.1, 32).rotateX(Math.PI/2);
   const dropGeo = new THREE.SphereGeometry(0.2, 16, 16);
-  const grimeGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+  const grimeGeo = new THREE.BoxGeometry(0.8, 0.6, 0.8);
 
-  for(let x = 10; x < 150; x += 5) {
+  for(let x = 10; x < 200; x += 5) {
     let rand = Math.random();
     
     if(rand < 0.3) {
       // Spawn Dirty Dish
       let d = new THREE.Mesh(dishGeo, dirtyMat);
-      d.position.set(x, 0.6, 0);
+      d.position.set(x, 0.6, 0); // bottom touches y=0
       d.castShadow = true;
       d.isClean = false;
       scene.add(d);
@@ -218,7 +231,8 @@ function generateLevel() {
     else if(rand < 0.6) {
       // Spawn Fairy Drop
       let d = new THREE.Mesh(dropGeo, dropMat);
-      d.position.set(x, 1.2, 0); // slightly elevated
+      d.position.set(x, 1.2, 0);
+      d.castShadow = true;
       scene.add(d);
       entities.drops.push(d);
     }
@@ -226,7 +240,7 @@ function generateLevel() {
       // Spawn Obstacle (Grime)
       let heightType = Math.random() > 0.5 ? 'low' : 'high';
       let o = new THREE.Mesh(grimeGeo, grimeMat);
-      o.position.set(x, heightType === 'low' ? 0.4 : 1.4, 0);
+      o.position.set(x, heightType === 'low' ? 0.3 : 1.4, 0);
       o.castShadow = true;
       scene.add(o);
       entities.obstacles.push(o);
@@ -243,11 +257,11 @@ function fireSoap() {
   const geo = new THREE.SphereGeometry(0.15, 16, 16);
   const soap = new THREE.Mesh(geo, soapMat);
   
-  // Fire from Nimble's height, towards facing direction
   const direction = playerGroup.rotation.y === 0 ? 1 : -1;
   soap.position.copy(playerGroup.position);
   soap.position.y += 0.8;
   soap.position.x += direction * 0.5;
+  soap.castShadow = true;
   
   scene.add(soap);
   entities.soaps.push({ mesh: soap, dir: direction, life: 1.5 });
@@ -330,7 +344,9 @@ renderer.setAnimationLoop(() => {
 
   // Camera Follow smoothly (2.5D constraint)
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (playerGroup.rotation.y > 0 ? 3 : -3), 4 * dt);
-  dirLight.position.x = camera.position.x + 5; // keep shadow light moving with camera
+  
+  // Keep the light following the player so shadows stay consistent
+  dirLight.position.x = camera.position.x + 8; 
 
   // Update Soaps (Projectiles)
   for(let i = entities.soaps.length - 1; i >= 0; i--) {
@@ -357,14 +373,13 @@ renderer.setAnimationLoop(() => {
   }
 
   // Player Collisions (Drops & Obstacles)
-  // Hitbox dynamically lowers if sliding
   const playerHitRadius = state.isSliding ? 0.4 : 0.8; 
   const playerCenterY = playerGroup.position.y + playerHitRadius;
 
   // Drops
   for(let i = entities.drops.length - 1; i >= 0; i--) {
     let d = entities.drops[i];
-    d.rotation.y += dt; // spin animation
+    d.rotation.y += dt; 
     d.position.y += Math.sin(clock.elapsedTime * 4 + d.position.x) * 0.005; // hover
     
     let dist = Math.hypot(playerGroup.position.x - d.position.x, playerCenterY - d.position.y);
@@ -381,7 +396,6 @@ renderer.setAnimationLoop(() => {
     let o = entities.obstacles[i];
     let dist = Math.hypot(playerGroup.position.x - o.position.x, playerCenterY - o.position.y);
     if(dist < playerHitRadius + 0.4) {
-      // Hit obstacle penalty
       scene.remove(o);
       entities.obstacles.splice(i, 1);
       
