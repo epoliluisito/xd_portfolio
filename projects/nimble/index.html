@@ -9,25 +9,23 @@
             font-family:system-ui,-apple-system,sans-serif;color:#cfe}
   #legend{position:fixed;top:14px;left:14px;background:rgba(16,20,30,.78);
           backdrop-filter:blur(6px);border:1px solid #2a3550;border-radius:12px;
-          padding:12px 14px;font-size:13px;line-height:1.1;min-width:180px}
+          padding:12px 14px;font-size:13px;line-height:1.1;min-width:180px;z-index:5}
   #legend h1{font-size:13px;margin:0 0 8px;letter-spacing:.08em;color:#7fe3a0;text-transform:uppercase}
   .row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:7px;cursor:pointer}
   .row:hover{background:rgba(127,227,160,.10)}
   .row.active{background:rgba(127,227,160,.22)}
   .key{display:inline-flex;justify-content:center;min-width:22px;padding:2px 6px;
-       background:#1c2740;border:1px solid #38507a;border-radius:6px;
-       font-weight:700;font-size:12px;color:#bfe}
+       background:#1c2740;border:1px solid #38507a;border-radius:6px;font-weight:700;font-size:12px;color:#bfe}
   .name{opacity:.9;text-transform:capitalize}
   .sep{height:1px;background:#2a3550;margin:8px 2px}
   #hint{position:fixed;bottom:12px;left:14px;font-size:11px;opacity:.45}
 </style>
 <script type="importmap">
-{
-  "imports": {
+{ "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-  }
-}
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.esm.js"
+} }
 </script>
 </head>
 <body>
@@ -38,127 +36,117 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import GUI from 'lil-gui';
 
-// clip -> {key, loop, next}.  loop:false = one-shot then go to `next` (default idle).
 const CLIPS = {
-  idle:          { key:'I', loop:true  },
-  jump:          { key:'J', loop:false },
-  dance:         { key:'D', loop:true  },
-  laugh:         { key:'L', loop:false },
-  running:       { key:'R', loop:true  },
-  running_slide: { key:'S', loop:false, next:'running' },
-  skateboard:    { key:'B', loop:true  },
-  skating_start: { key:'K', loop:false, next:'skateboard' },
-  dive:          { key:'V', loop:false, next:'swim' },
-  swim:          { key:'W', loop:true  },
-  tread:         { key:'T', loop:true  },
+  idle:{key:'I',loop:true}, jump:{key:'J',loop:false}, dance:{key:'D',loop:true},
+  laugh:{key:'L',loop:false}, running:{key:'R',loop:true},
+  running_slide:{key:'S',loop:false,next:'running'}, skateboard:{key:'B',loop:true},
+  skating_start:{key:'K',loop:false,next:'skateboard'}, dive:{key:'V',loop:false,next:'swim'},
+  swim:{key:'W',loop:true}, tread:{key:'T',loop:true},
 };
-const BYKEY = Object.fromEntries(Object.entries(CLIPS).map(([n,c])=>[c.key,n]));
-const SKATE = new Set(['skateboard','skating_start']);  // board auto-shows for these
+const BYKEY=Object.fromEntries(Object.entries(CLIPS).map(([n,c])=>[c.key,n]));
+const SKATE=new Set(['skateboard','skating_start']);
 
 // ---------- renderer / scene ----------
-const renderer = new THREE.WebGLRenderer({ antialias:true });
+const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.25;
 document.body.appendChild(renderer.domElement);
 
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0e1118);
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; // reflections
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0e1118);
+const pmrem=new THREE.PMREMGenerator(renderer);
+scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
 
-const camera = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.01, 100);
-camera.position.set(1.1, 1.0, 2.4);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.85, 0); controls.enableDamping = true;
+const camera=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,0.01,100);
+camera.position.set(1.0,0.95,2.3);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.target.set(0,0.85,0); controls.enableDamping=true;
 
 scene.add(new THREE.Mesh(new THREE.CircleGeometry(8,48).rotateX(-Math.PI/2),
-          new THREE.MeshStandardMaterial({ color:0x161b26, roughness:0.95 })));
-for (const [x,c] of [[-1.3,0xff5544],[1.3,0x4488ff]]){
+          new THREE.MeshStandardMaterial({color:0x161b26,roughness:0.95})));
+for(const [x,c] of [[-1.3,0xff5544],[1.3,0x4488ff]]){
   const b=new THREE.Mesh(new THREE.BoxGeometry(0.35,0.35,0.35),
         new THREE.MeshStandardMaterial({color:c,roughness:0.4}));
   b.position.set(x,0.18,-0.7); scene.add(b);
 }
-const dl=new THREE.DirectionalLight(0xffffff,1.2); dl.position.set(2,4,3); scene.add(dl);
+const dl=new THREE.DirectionalLight(0xffffff,1.3); dl.position.set(2,4,3); scene.add(dl);
+scene.add(new THREE.DirectionalLight(0x88ffcc,0.4).translateX(-3).translateY(2));
 
 // ---------- textures ----------
-const texLoader = new THREE.TextureLoader();
-const thicknessTex = texLoader.load('./nimble_thickness.png', t=>{ t.flipY=false; t.colorSpace=THREE.NoColorSpace; });
-function bubble(repeat){
-  const t = texLoader.load('./bubble_normal.png');
-  t.flipY=false; t.colorSpace=THREE.NoColorSpace;
-  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(repeat,repeat);
-  return t;
-}
+const texLoader=new THREE.TextureLoader();
+const thicknessTex=texLoader.load('./nimble_thickness.png',t=>{t.flipY=false;t.colorSpace=THREE.NoColorSpace;});
+function bubble(rep){ const t=texLoader.load('./bubble_normal.png');
+  t.flipY=false;t.colorSpace=THREE.NoColorSpace;t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(rep,rep);return t; }
+
+// ---------- body tuning (edit or use the panel) ----------
+const P={ transmission:0.92, ior:1.45, roughness:0.06, thickness:0.4,
+  attenuationDistance:1.4, attenuationColor:'#39d24e',
+  clearcoat:1.0, envMapIntensity:1.6, exposure:1.25 };
 
 // ---------- materials ----------
-function glassBody(src){                       // the green soap body
-  const m=new THREE.MeshPhysicalMaterial({
+let bodyMat=null;
+function glassBody(src){
+  bodyMat=new THREE.MeshPhysicalMaterial({
     map:src.map||null, normalMap:src.normalMap||null,
-    metalness:0, roughness:0.08, transmission:1.0, ior:1.45,
-    thickness:0.6, thicknessMap:thicknessTex,
-    attenuationColor:new THREE.Color('#27c24a'), attenuationDistance:0.6,
-    clearcoat:1.0, clearcoatRoughness:0.08, envMapIntensity:1.4, transparent:true });
-  if(m.map) m.map.colorSpace=THREE.SRGBColorSpace;
-  return m;
+    metalness:0, roughness:P.roughness, transmission:P.transmission, ior:P.ior,
+    thickness:P.thickness, thicknessMap:thicknessTex,
+    attenuationColor:new THREE.Color(P.attenuationColor), attenuationDistance:P.attenuationDistance,
+    clearcoat:P.clearcoat, clearcoatRoughness:0.08, envMapIntensity:P.envMapIntensity, transparent:true });
+  if(bodyMat.map) bodyMat.map.colorSpace=THREE.SRGBColorSpace;
+  return bodyMat;
 }
-function foam(){                               // white soap foam hat
-  return new THREE.MeshPhysicalMaterial({
-    color:new THREE.Color('#f4f8fb'),
-    roughness:0.55, metalness:0,
-    sheen:1.0, sheenRoughness:0.4, sheenColor:new THREE.Color('#ffffff'),
-    transmission:0.12, ior:1.33, thickness:0.15,
-    clearcoat:0.35, clearcoatRoughness:0.3,
-    normalMap:bubble(3), normalScale:new THREE.Vector2(0.8,0.8),
-    envMapIntensity:1.0, transparent:true });
-}
-function frosted(){                            // clear/frosted skateboard
-  return new THREE.MeshPhysicalMaterial({
-    color:new THREE.Color('#eaf3ff'),
-    roughness:0.3, metalness:0, transmission:1.0, ior:1.46,
-    thickness:0.25, attenuationColor:new THREE.Color('#dff0ff'), attenuationDistance:0.8,
-    clearcoat:0.6, clearcoatRoughness:0.2,
-    normalMap:bubble(4), normalScale:new THREE.Vector2(0.6,0.6),
-    envMapIntensity:1.3, transparent:true });
-}
+function foam(){ return new THREE.MeshPhysicalMaterial({
+  color:new THREE.Color('#f6faff'), roughness:0.6, metalness:0,
+  sheen:1.0, sheenRoughness:0.5, sheenColor:new THREE.Color('#ffffff'),
+  transmission:0.06, ior:1.33, thickness:0.1,
+  clearcoat:0.3, clearcoatRoughness:0.4,
+  normalMap:bubble(3), normalScale:new THREE.Vector2(1.0,1.0),
+  envMapIntensity:1.0, transparent:true }); }
+function frosted(){ return new THREE.MeshPhysicalMaterial({
+  color:new THREE.Color('#eaf3ff'), roughness:0.25, metalness:0, transmission:1.0, ior:1.46,
+  thickness:0.2, attenuationColor:new THREE.Color('#dff0ff'), attenuationDistance:0.8,
+  clearcoat:0.6, clearcoatRoughness:0.2,
+  normalMap:bubble(4), normalScale:new THREE.Vector2(0.6,0.6),
+  envMapIntensity:1.3, transparent:true }); }
 
-// ---------- load + wire ----------
-let mixer, actions={}, current=null, hatMesh=null, boardMesh=null;
-new GLTFLoader().load('./nimble_character.glb', (gltf)=>{
+// ---------- load ----------
+let mixer, actions={}, current=null, hatParts=[], boardParts=[];
+new GLTFLoader().load('./nimble_character.glb',(gltf)=>{
   const root=gltf.scene; scene.add(root);
   root.traverse(o=>{
     if(!o.isMesh) return;
     o.frustumCulled=false;
-    if(o.name==='FoamHat'){ o.material=foam(); hatMesh=o; }
-    else if(o.name==='Skateboard'){ o.material=frosted(); boardMesh=o; o.visible=false; }
-    else { o.material=glassBody(o.material); }   // body
+    const mn=o.material?o.material.name:'';
+    if(mn==='hat_foam'){ o.material=foam(); hatParts.push(o); }
+    else if(mn==='board_foam'){ o.material=foam(); boardParts.push(o); o.visible=false; }
+    else if(mn==='clear_mat'){ o.material=frosted(); boardParts.push(o); o.visible=false; }
+    else { o.material=glassBody(o.material); }   // Material.001 = body
   });
 
   mixer=new THREE.AnimationMixer(root);
   for(const clip of gltf.animations){
-    const a=mixer.clipAction(clip);
-    const cfg=CLIPS[clip.name]||{loop:false};
+    const a=mixer.clipAction(clip); const cfg=CLIPS[clip.name]||{loop:false};
     if(!cfg.loop){ a.setLoop(THREE.LoopOnce); a.clampWhenFinished=true; }
     actions[clip.name]=a;
   }
-  mixer.addEventListener('finished', ()=>{ const c=CLIPS[current]||{}; play(c.next||'idle'); });
+  mixer.addEventListener('finished',()=>{ const c=CLIPS[current]||{}; play(c.next||'idle'); });
 
-  // public API for your game code
-  window.nimble={ play, showHat:(v)=>{ if(hatMesh) hatMesh.visible=v; },
-                  showBoard:(v)=>{ if(boardMesh) boardMesh.visible=v; }, clips:Object.keys(CLIPS) };
+  window.nimble={ play, showHat:v=>hatParts.forEach(m=>m.visible=v),
+                  showBoard:v=>boardParts.forEach(m=>m.visible=v), clips:Object.keys(CLIPS) };
+  buildLegend(); buildGUI(); play('idle');
+},undefined,e=>console.error('GLB load failed',e));
 
-  buildLegend(); play('idle');
-}, undefined, e=>console.error('GLB load failed', e));
-
-function play(name, fade=0.3){
+function play(name,fade=0.3){
   const next=actions[name]; if(!next||name===current) return;
   const prev=actions[current];
   next.reset(); if(prev) next.crossFadeFrom(prev,fade,false); next.play();
   current=name;
-  if(boardMesh) boardMesh.visible = SKATE.has(name);   // board auto-appears on skate clips
-  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active', r.dataset.clip===name));
+  boardParts.forEach(m=>m.visible=SKATE.has(name));   // board auto-appears on skate clips
+  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active',r.dataset.clip===name));
 }
 
 // ---------- legend / input ----------
@@ -171,18 +159,33 @@ function buildLegend(){
   }
   const sep=document.createElement('div'); sep.className='sep'; rows.appendChild(sep);
   const h=document.createElement('div'); h.className='row';
-  h.innerHTML=`<span class="key">H</span><span class="name">toggle hat</span>`;
-  h.onclick=toggleHat; rows.appendChild(h);
-  const note=document.createElement('div'); note.className='row';
-  note.innerHTML=`<span class="key">B/K</span><span class="name">board auto-appears</span>`;
-  rows.appendChild(note);
+  h.innerHTML=`<span class="key">H</span><span class="name">toggle hat</span>`; h.onclick=toggleHat; rows.appendChild(h);
+  const n=document.createElement('div'); n.className='row';
+  n.innerHTML=`<span class="key">B/K</span><span class="name">board auto-appears</span>`; rows.appendChild(n);
 }
-function toggleHat(){ if(hatMesh) hatMesh.visible=!hatMesh.visible; }
-addEventListener('keydown', e=>{
-  const k=e.key.toUpperCase();
-  if(k==='H'){ toggleHat(); return; }
-  const name=BYKEY[k]; if(name) play(name);
-});
+function toggleHat(){ hatParts.forEach(m=>m.visible=!m.visible); }
+addEventListener('keydown',e=>{ const k=e.key.toUpperCase();
+  if(k==='H'){toggleHat();return;} const name=BYKEY[k]; if(name) play(name); });
+
+// ---------- live tuning panel (delete this block to ship without it) ----------
+function buildGUI(){
+  const gui=new GUI({title:'Nimble · glass'}); gui.close();
+  const apply=()=>{ if(!bodyMat) return;
+    bodyMat.transmission=P.transmission; bodyMat.ior=P.ior; bodyMat.roughness=P.roughness;
+    bodyMat.thickness=P.thickness; bodyMat.attenuationDistance=P.attenuationDistance;
+    bodyMat.attenuationColor.set(P.attenuationColor); bodyMat.clearcoat=P.clearcoat;
+    bodyMat.envMapIntensity=P.envMapIntensity; renderer.toneMappingExposure=P.exposure;
+    bodyMat.needsUpdate=true; };
+  gui.add(P,'transmission',0,1,0.01).onChange(apply);
+  gui.add(P,'ior',1,2,0.01).onChange(apply);
+  gui.add(P,'roughness',0,0.6,0.01).onChange(apply);
+  gui.add(P,'thickness',0,3,0.01).onChange(apply);
+  gui.add(P,'attenuationDistance',0.1,4,0.01).onChange(apply);
+  gui.addColor(P,'attenuationColor').onChange(apply);
+  gui.add(P,'clearcoat',0,1,0.01).onChange(apply);
+  gui.add(P,'envMapIntensity',0,3,0.01).onChange(apply);
+  gui.add(P,'exposure',0.4,2.5,0.01).onChange(apply);
+}
 
 // ---------- loop ----------
 const clock=new THREE.Clock();
