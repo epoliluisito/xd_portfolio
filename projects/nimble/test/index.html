@@ -11,7 +11,8 @@
     
     /* Make the background repeat infinitely along the X axis */
     background: url('./BACKGROUND.png') repeat-x left bottom;
-    background-size: auto 100%; /* Match screen height, auto-calculate width */
+    /* Scaled up to 150% height for more lateral runway */
+    background-size: auto 150%; 
     background-color: #0e1118;
   }
   
@@ -74,11 +75,15 @@ const state = {
   gravity: 15,
   jumpPower: 6.5,
   onGround: true,
-  isSliding: false
+  isSliding: false,
+  facingRight: true // Track which direction he is facing
 };
 
 const keys = { right: false, left: false, up: false, down: false, fire: false };
 const entities = { drops: [], dishes: [], obstacles: [], soaps: [] };
+
+// Angle cheat: roughly 20 degrees towards the camera
+const angleCheat = 0.35; 
 
 // --- Scene Setup ---
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -96,7 +101,7 @@ const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-// CAMERA: Pushed back (z=14) so Nimble is smaller. Moved up (y=2.5) to look down at the counter.
+// CAMERA: Pushed back and up
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
 camera.position.set(0, 2.5, 14); 
 
@@ -113,7 +118,7 @@ dirLight.shadow.camera.right = 15;
 dirLight.shadow.bias = -0.001; 
 scene.add(dirLight);
 
-// Important: Add the light's target to the scene so it can track Nimble
+// Add the light's target to the scene so it can track Nimble
 scene.add(dirLight.target);
 
 const ambientLight = new THREE.AmbientLight(0xffe0c0, 0.5); 
@@ -137,6 +142,8 @@ const grimeMat = new THREE.MeshStandardMaterial({ color: 0x221a10, roughness: 1.
 
 // --- Player Setup ---
 let playerGroup = new THREE.Group();
+// Set initial rotation to face right, cheated towards camera
+playerGroup.rotation.y = (Math.PI / 2) - angleCheat; 
 scene.add(playerGroup);
 
 const velocity = new THREE.Vector3(0, 0, 0);
@@ -243,10 +250,13 @@ function fireSoap() {
   const geo = new THREE.SphereGeometry(0.15, 16, 16);
   const soap = new THREE.Mesh(geo, soapMat);
   
-  const direction = playerGroup.rotation.y === 0 ? 1 : -1;
+  // Use state.facingRight to safely shoot in correct direction
+  const direction = state.facingRight ? 1 : -1;
   soap.position.copy(playerGroup.position);
   soap.position.y += 0.8;
   soap.position.x += direction * 0.5;
+  // Push the soap slightly forward in Z so it doesn't clip Nimble's tilted mesh
+  soap.position.z += 0.2; 
   soap.castShadow = true;
   
   scene.add(soap);
@@ -301,15 +311,17 @@ renderer.setAnimationLoop(() => {
   
   if (mixer) mixer.update(dt);
 
-  // Player Physics & Movement
+  // Player Physics & Movement with Angle Cheats
   if(keys.right && !state.isSliding) {
     playerGroup.position.x += state.speed * dt;
-    playerGroup.rotation.y = Math.PI / 2; // face right
+    playerGroup.rotation.y = (Math.PI / 2) - angleCheat; // Face right, tilt forward
+    state.facingRight = true;
     if(state.onGround) playAnim('running');
   } 
   else if(keys.left && !state.isSliding) {
     playerGroup.position.x -= state.speed * dt;
-    playerGroup.rotation.y = -Math.PI / 2; // face left
+    playerGroup.rotation.y = -(Math.PI / 2) + angleCheat; // Face left, tilt forward
+    state.facingRight = false;
     if(state.onGround) playAnim('running');
   } 
   else {
@@ -329,13 +341,14 @@ renderer.setAnimationLoop(() => {
   }
 
   // Camera Follow smoothly (2.5D constraint)
-  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (playerGroup.rotation.y > 0 ? 3 : -3), 4 * dt);
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
   
   // TILT CAMERA DOWN to place floor visually at the bottom portion of the screen
   camera.lookAt(camera.position.x, 1.0, 0);
 
   // Pan the 2D Kitchen Background based on camera position for Parallax Effect
-  document.body.style.backgroundPositionX = `${-camera.position.x * 35}px`;
+  // *Reduced the speed by 20% (was 35, now 28)*
+  document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
   
   // Keep the light following the player so shadows stay consistent endlessly
   dirLight.position.x = camera.position.x + 8; 
