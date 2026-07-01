@@ -14,9 +14,11 @@
   .row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:7px;cursor:pointer}
   .row:hover{background:rgba(127,227,160,.10)}
   .row.active{background:rgba(127,227,160,.22)}
+  .row.on .key{background:#1f5f3a;border-color:#3fa06a}
   .key{display:inline-flex;justify-content:center;min-width:22px;padding:2px 6px;
        background:#1c2740;border:1px solid #38507a;border-radius:6px;font-weight:700;font-size:12px;color:#bfe}
   .name{opacity:.9;text-transform:capitalize}
+  .sep{height:1px;background:#2a3550;margin:8px 2px}
   #hint{position:fixed;bottom:12px;left:14px;font-size:11px;opacity:.45}
 </style>
 <script type="importmap">
@@ -45,6 +47,7 @@ const CLIPS = {
   swim:{key:'W',loop:true}, tread:{key:'T',loop:true},
 };
 const BYKEY=Object.fromEntries(Object.entries(CLIPS).map(([n,c])=>[c.key,n]));
+const SKATE=new Set(['skateboard','skating_start']);
 
 // ---------- renderer / scene ----------
 const renderer=new THREE.WebGLRenderer({antialias:true});
@@ -66,14 +69,9 @@ controls.target.set(0,0.85,0); controls.enableDamping=true;
 
 scene.add(new THREE.Mesh(new THREE.CircleGeometry(8,48).rotateX(-Math.PI/2),
           new THREE.MeshStandardMaterial({color:0x161b26,roughness:0.95})));
-for(const [x,c] of [[-1.3,0xff5544],[1.3,0x4488ff]]){
-  const b=new THREE.Mesh(new THREE.BoxGeometry(0.35,0.35,0.35),
-        new THREE.MeshStandardMaterial({color:c,roughness:0.4}));
-  b.position.set(x,0.18,-0.7); scene.add(b);
-}
 const dl=new THREE.DirectionalLight(0xffffff,1.3); dl.position.set(2,4,3); scene.add(dl);
 
-// ---------- body glass (edit here or use the panel) ----------
+// ---------- body glass (tune via panel) ----------
 const P={ transmission:0.92, ior:1.45, roughness:0.06, thickness:0.4,
   attenuationDistance:1.4, attenuationColor:'#39d24e',
   clearcoat:1.0, envMapIntensity:1.6, exposure:1.25 };
@@ -89,13 +87,24 @@ function glassBody(src){
   if(bodyMat.map) bodyMat.map.colorSpace=THREE.SRGBColorSpace;
   return bodyMat;
 }
+// frothy soap foam (used for hat + skateboard)
+function foam(){ return new THREE.MeshPhysicalMaterial({
+  color:new THREE.Color('#f7fbff'), roughness:0.45, metalness:0,
+  transmission:0.15, ior:1.33, thickness:0.2,
+  sheen:1.0, sheenRoughness:0.4, sheenColor:new THREE.Color('#ffffff'),
+  clearcoat:0.5, clearcoatRoughness:0.25, envMapIntensity:1.0, transparent:true }); }
 
 // ---------- load ----------
-let mixer, actions={}, current=null;
+let mixer, actions={}, current=null, hatParts=[], boardParts=[];
 new GLTFLoader().load('./nimble_character.glb',(gltf)=>{
   const root=gltf.scene; scene.add(root);
-  root.traverse(o=>{ if(o.isMesh){ o.material=glassBody(o.material); o.frustumCulled=false; }});
-
+  root.traverse(o=>{
+    if(!o.isMesh) return; o.frustumCulled=false;
+    const mn=o.material?o.material.name:'';
+    if(mn==='hat_foam'){ o.material=foam(); hatParts.push(o); }
+    else if(mn==='board_foam'){ o.material=foam(); boardParts.push(o); o.visible=false; }
+    else { o.material=glassBody(o.material); }
+  });
   mixer=new THREE.AnimationMixer(root);
   for(const clip of gltf.animations){
     const a=mixer.clipAction(clip); const cfg=CLIPS[clip.name]||{loop:false};
@@ -103,8 +112,8 @@ new GLTFLoader().load('./nimble_character.glb',(gltf)=>{
     actions[clip.name]=a;
   }
   mixer.addEventListener('finished',()=>{ const c=CLIPS[current]||{}; play(c.next||'idle'); });
-  window.nimble={ play, clips:Object.keys(CLIPS) };
-  buildLegend(); buildGUI(); play('idle');
+  window.nimble={ play, showHat:setHat, showBoard:setBoard, clips:Object.keys(CLIPS) };
+  buildLegend(); buildGUI(); play('idle'); refreshToggleUI();
 },undefined,e=>console.error('GLB load failed',e));
 
 function play(name,fade=0.3){
@@ -112,7 +121,18 @@ function play(name,fade=0.3){
   const prev=actions[current];
   next.reset(); if(prev) next.crossFadeFrom(prev,fade,false); next.play();
   current=name;
+  if(SKATE.has(name)) setBoard(true);          // board auto-appears when skating
   document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active',r.dataset.clip===name));
+}
+
+// ---------- prop toggles ----------
+let hatOn=true, boardOn=false;
+function setHat(v){ hatOn=v; hatParts.forEach(m=>m.visible=v); refreshToggleUI(); }
+function setBoard(v){ boardOn=v; boardParts.forEach(m=>m.visible=v); refreshToggleUI(); }
+function refreshToggleUI(){
+  const h=document.getElementById('t_hat'), b=document.getElementById('t_board');
+  if(h) h.classList.toggle('on',hatOn);
+  if(b) b.classList.toggle('on',boardOn);
 }
 
 // ---------- legend / input ----------
@@ -123,8 +143,17 @@ function buildLegend(){
     r.innerHTML=`<span class="key">${cfg.key}</span><span class="name">${name.replace('_',' ')}</span>`;
     r.onclick=()=>play(name); rows.appendChild(r);
   }
+  const sep=document.createElement('div'); sep.className='sep'; rows.appendChild(sep);
+  const h=document.createElement('div'); h.className='row on'; h.id='t_hat';
+  h.innerHTML=`<span class="key">H</span><span class="name">hat on/off</span>`;
+  h.onclick=()=>setHat(!hatOn); rows.appendChild(h);
+  const b=document.createElement('div'); b.className='row'; b.id='t_board';
+  b.innerHTML=`<span class="key">G</span><span class="name">skateboard on/off</span>`;
+  b.onclick=()=>setBoard(!boardOn); rows.appendChild(b);
 }
-addEventListener('keydown',e=>{ const name=BYKEY[e.key.toUpperCase()]; if(name) play(name); });
+addEventListener('keydown',e=>{ const k=e.key.toUpperCase();
+  if(k==='H'){setHat(!hatOn);return;} if(k==='G'){setBoard(!boardOn);return;}
+  const name=BYKEY[k]; if(name) play(name); });
 
 // ---------- live tuning panel (delete this block to ship without it) ----------
 function buildGUI(){
