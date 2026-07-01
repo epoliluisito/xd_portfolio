@@ -415,11 +415,11 @@ scene.fog = new THREE.Fog(0x0a0f18, 25, 520);
 const pmremGen = new THREE.PMREMGenerator(renderer);
 scene.environment = pmremGen.fromScene(new RoomEnvironment(), 0.04).texture;
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, 2000);
 
-const ambient = new THREE.AmbientLight(0xffffff, 0.10); 
+const ambient = new THREE.AmbientLight(0xffffff, 0.06); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xffffff, 0x141a26, 0.16); 
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x141a26, 0.10); 
 scene.add(hemiLight);
 
 // Single shadow-casting directional light that follows the player
@@ -463,7 +463,8 @@ carpetBase.colorSpace = THREE.SRGBColorSpace;
 const floorMat = new THREE.MeshStandardMaterial({
   map: carpetBase, normalMap: carpetNorm, roughnessMap: carpetRough,
   color: 0xb7b49a, roughness: 0.96, metalness: 0.0, envMapIntensity: 0.12,
-  normalScale: new THREE.Vector2(0.8, 0.8)
+  normalScale: new THREE.Vector2(0.8, 0.8),
+  polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -3
 });
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(51, 61), floorMat);
@@ -565,7 +566,7 @@ const roomCenters = [
   {x: -15.5, z: 52.5}, {x: 0, z: 15}, {x: 0, z: 30}, {x: 0, z: 45}, {x: 0, z: 57}
 ];
 roomCenters.forEach(pos => {
-  const light = new THREE.PointLight(0xfff5e6, 0.3, 32);
+  const light = new THREE.PointLight(0xfff5e6, 0.16, 30);
   light.position.set(pos.x, 6.0, pos.z);
   scene.add(light);
 });
@@ -693,20 +694,21 @@ function loadTex(url, srgb, repeat){
 }
 
 // ---- cool static moonlight for the exterior ----
-const moonLight = new THREE.DirectionalLight(0xd9f1ff, 0.5);
+const moonLight = new THREE.DirectionalLight(0xd9f1ff, 0.72);
 moonLight.position.set(EXT_CENTER.x - 170, 130, EXT_CENTER.z - 190);
 moonLight.target.position.copy(EXT_CENTER);
+moonLight.layers.set(1); // layer 1 = exterior only -> keeps the gallery interior dark & intimate
 scene.add(moonLight); scene.add(moonLight.target);
 
 // ---- SNOW GROUND (large displaced plane, flat under the building) ----
 const groundMat = new THREE.MeshStandardMaterial({
   color: 0xe9eef5,
-  map:        loadTex('assets/textures/snow_basecolor.webp', true, 70),
-  normalMap:  loadTex('assets/textures/snow_normal_gl.webp', false, 70),
-  roughnessMap: loadTex('assets/textures/snow_roughness.jpg', false, 70),
-  aoMap:      loadTex('assets/textures/snow_ao.jpg', false, 70),
+  map:        loadTex('assets/textures/snow_basecolor.webp', true, 55),
+  normalMap:  loadTex('assets/textures/snow_normal_gl.webp', false, 55),
+  roughnessMap: loadTex('assets/textures/snow_roughness.jpg', false, 55),
+  aoMap:      loadTex('assets/textures/snow_ao.jpg', false, 55),
   roughness: 0.92, metalness: 0.0, envMapIntensity: 0.22,
-  normalScale: new THREE.Vector2(0.55, 0.55)
+  normalScale: new THREE.Vector2(0.4, 0.4)
 });
 const G_SIZE = 1000, G_SEG = 230;
 const groundGeo = new THREE.PlaneGeometry(G_SIZE, G_SIZE, G_SEG, G_SEG);
@@ -718,10 +720,12 @@ groundGeo.rotateX(-Math.PI/2);
     const r = Math.hypot(x, z);
     const mask = (function(t){ t=Math.max(0,Math.min(1,(t-60)/(120-60))); return t*t*(3-2*t); })(r); // flat <60m, rolls outward
     let h = 0;
-    h += SN(x*0.011, z*0.011) * 4.2;
-    h += SN(x*0.027 + 10, z*0.027 - 4) * 1.5;
-    h += ridged(x*0.06 - 5, z*0.06 + 7) * 1.0;
-    h += ridged(x*0.12 + 3, z*0.12 - 9) * 0.4;
+    // broad, smooth rolls only (low frequency relative to segment size -> no visible facets)
+    h += SN(x*0.010, z*0.010) * 4.6;
+    h += SN(x*0.021 + 10, z*0.021 - 4) * 1.7;
+    // occasional rounded snow mounds appearing "in points"
+    const mnd = SN(x*0.05 + 40, z*0.05 - 25);
+    h += Math.pow(Math.max(0, mnd), 2.0) * 1.6;
     gp.setY(i, h * mask);
   }
   gp.needsUpdate = true;
@@ -732,6 +736,7 @@ groundGeo.rotateX(-Math.PI/2);
 const groundMesh = new THREE.Mesh(groundGeo, groundMat);
 groundMesh.position.set(EXT_CENTER.x, -0.03, EXT_CENTER.z);
 groundMesh.receiveShadow = true;
+groundMesh.layers.enable(1);
 scene.add(groundMesh);
 
 // ---- MOUNTAIN RING (ridged-noise, 8 sectors, gap toward the approach) ----
@@ -797,6 +802,7 @@ const mtnMat = new THREE.MeshStandardMaterial({
     mtnGroup.add(new THREE.Mesh(geom, mtnMat));
   }
   mtnGroup.position.set(EXT_CENTER.x, 0, EXT_CENTER.z);
+  mtnGroup.traverse(o => o.layers.enable(1));
   scene.add(mtnGroup);
 }
 
@@ -847,12 +853,18 @@ const earth = new THREE.Mesh(
 earth.position.set(EXT_CENTER.x - 150, 96, EXT_CENTER.z - 300);
 earth.rotation.y = Math.PI;
 scene.add(earth);
-const earthGlow = new THREE.Mesh(
-  new THREE.SphereGeometry(22, 40, 40),
-  new THREE.MeshBasicMaterial({ color: 0x5a9fd6, transparent: true, opacity: 0.16, side: THREE.BackSide, fog: false, depthWrite: false, blending: THREE.AdditiveBlending })
-);
-earthGlow.position.copy(earth.position);
-scene.add(earthGlow);
+// soft atmospheric halo as a camera-facing sprite (no hard shell edge)
+const _hc = document.createElement('canvas'); _hc.width = _hc.height = 128;
+const _hx = _hc.getContext('2d');
+const _hg = _hx.createRadialGradient(64,64,40,64,64,64);
+_hg.addColorStop(0.0, 'rgba(130,185,240,0.0)');
+_hg.addColorStop(0.28,'rgba(120,175,232,0.42)');
+_hg.addColorStop(1.0, 'rgba(70,130,200,0.0)');
+_hx.fillStyle = _hg; _hx.fillRect(0,0,128,128);
+const earthHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(_hc), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+earthHalo.scale.set(56, 56, 1);
+earthHalo.position.copy(earth.position);
+scene.add(earthHalo);
 
 // ---- NEON ENTRANCE SIGN: "FULL AI PRODUCTION" ----
 function makeNeonTexture(text){
@@ -873,15 +885,27 @@ function makeNeonTexture(text){
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = maxAnisotropy;
   return t;
 }
+// raised concrete entrance parapet — the building rises above the doorway to carry the sign
+const parapet = new THREE.Mesh(new THREE.BoxGeometry(18, 3.6, 1.0), wallMat);
+parapet.position.set(0, 9.8, -0.5);
+parapet.castShadow = true; parapet.receiveShadow = true; parapet.layers.enable(1);
+scene.add(parapet);
+const _pilGeo = new THREE.BoxGeometry(0.7, 12, 1.0);
+[-6.4, 6.4].forEach(px => {
+  const pil = new THREE.Mesh(_pilGeo, wallMat);
+  pil.position.set(px, 6, -1.05);
+  pil.castShadow = true; pil.receiveShadow = true; pil.layers.enable(1);
+  scene.add(pil);
+});
 const neonSign = new THREE.Mesh(
   new THREE.PlaneGeometry(11, 2.06),
   new THREE.MeshBasicMaterial({ map: makeNeonTexture('FULL AI PRODUCTION'), transparent: true, toneMapped: false, depthWrite: false, side: THREE.DoubleSide })
 );
-neonSign.position.set(0, 6.6, -1.15);
+neonSign.position.set(0, 9.6, -1.08);
 neonSign.rotation.y = Math.PI;
 scene.add(neonSign);
-const neonLight = new THREE.PointLight(0x4fe6ff, 1.4, 16, 2);
-neonLight.position.set(0, 6.2, -2.4);
+const neonLight = new THREE.PointLight(0x4fe6ff, 1.6, 18, 2);
+neonLight.position.set(0, 9.2, -2.8);
 scene.add(neonLight);
 
 // ---- SNOW PARTICLES (only active outdoors) ----
@@ -934,7 +958,7 @@ let character, mixer, idleAction, walkAction;
 let currentWeight = 0; 
 gltfLoader.load('greg.glb', (gltf) => {
   character = gltf.scene;
-  character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+  character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); } });
   
   character.position.set(0, 0, -30);
   character.rotation.y = Math.PI; 
@@ -979,7 +1003,7 @@ const timWaypoints = [
 
 gltfLoader.load('tim.glb', (gltf) => {
   tim = gltf.scene;
-  tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+  tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); } });
   
   tim.position.set(-1.5, 0, -6);
   tim.rotation.y = Math.PI; 
