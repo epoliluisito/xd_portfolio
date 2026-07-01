@@ -77,7 +77,7 @@
     color: #e8c547; font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase;
     background: rgba(6,8,16,0.95); border: 2px solid #e8c547;
     padding: 12px 24px; backdrop-filter: blur(12px); border-radius: 4px;
-    opacity: 0; transition: opacity 0.3s ease;
+    opacity: 0; transition: opacity 0.3s ease; white-space: nowrap;
     z-index: 100;
   }
   #proximity-prompt.visible { opacity: 1; }
@@ -116,9 +116,7 @@
   }
   #overlay-close:hover { color: #fff; border-color: #fff; }
   
-  #overlay-info {
-    flex: 1; display: flex; flex-direction: column; justify-content: center;
-  }
+  #overlay-info { flex: 1; display: flex; flex-direction: column; justify-content: center; }
   #overlay-brand { color: #e8c547; font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase; margin-bottom: 12px; }
   #overlay-title { font-size: 28px; font-weight: 400; margin-bottom: 24px; letter-spacing: 0.05em; line-height: 1.2; }
   #overlay-desc { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
@@ -128,6 +126,30 @@
     border: 2px solid rgba(255,255,255,0.05);
   }
   #overlay-video { width: 100%; height: auto; max-height: 100%; object-fit: contain; }
+
+  /* Door / Exit Confirmation Overlay */
+  #door-overlay {
+    position: fixed; inset: 0; background: rgba(2,3,6,0.96); backdrop-filter: blur(14px);
+    z-index: 200; display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.4s ease;
+  }
+  #door-overlay.visible { opacity: 1; pointer-events: all; }
+  #door-panel {
+    background: #080a0e; border: 2px solid rgba(232,197,71,0.3); padding: 50px;
+    text-align: center; border-radius: 8px; max-width: 500px;
+    box-shadow: 0 20px 80px rgba(0,0,0,0.8);
+  }
+  #door-panel h2 { color: #e8c547; font-size: 22px; letter-spacing: 0.3em; margin-bottom: 24px; font-weight: 400; }
+  #door-panel p { color: rgba(255,255,255,0.7); font-size: 14px; letter-spacing: 0.05em; line-height: 1.6; margin-bottom: 40px; }
+  .door-actions { display: flex; gap: 20px; justify-content: center; }
+  .door-btn {
+    background: transparent; border: 1px solid; padding: 12px 24px; border-radius: 4px;
+    font-family: inherit; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; transition: all 0.3s;
+  }
+  .door-btn.confirm { border-color: #e8c547; color: #e8c547; }
+  .door-btn.confirm:hover { background: rgba(232,197,71,0.1); }
+  .door-btn.cancel { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.6); }
+  .door-btn.cancel:hover { border-color: #fff; color: #fff; background: rgba(255,255,255,0.05); }
 
   /* Mobile On-Screen Controls */
   #mobile-controls {
@@ -182,7 +204,7 @@
     <h3>Gallery Guide</h3>
     <div class="ctrl-row"><span class="ctrl-key">W A S D</span><span class="ctrl-desc">Walk Around</span></div>
     <div class="ctrl-row"><span class="ctrl-key">← ↑ → ↓</span><span class="ctrl-desc">Walk Alternative</span></div>
-    <div class="ctrl-row"><span class="ctrl-key">E</span><span class="ctrl-desc">Interact with Screen</span></div>
+    <div class="ctrl-row"><span class="ctrl-key">E</span><span class="ctrl-desc">Interact</span></div>
     <div class="ctrl-row"><span class="ctrl-key">ESC</span><span class="ctrl-desc">Exit Video Screen</span></div>
   </div>
 
@@ -190,7 +212,7 @@
   <div id="map-panel">
     <h3>Exhibition Wings</h3>
     <canvas id="minimap-canvas" width="180" height="24"></canvas>
-    <div id="minimap-info">ENTRANCE WING</div>
+    <div id="minimap-info">GRAND LOBBY</div>
   </div>
 
   <!-- Proximity Alert Prompt -->
@@ -208,6 +230,18 @@
     </div>
     <div id="overlay-video-container">
       <video id="overlay-video" controls controlsList="nodownload"></video>
+    </div>
+  </div>
+</div>
+
+<!-- Exit Door Modal Confirmation -->
+<div id="door-overlay">
+  <div id="door-panel">
+    <h2>LEAVE EXHIBITION?</h2>
+    <p>Confirm you want to exit the gallery and return to the Full AI Production Room.</p>
+    <div class="door-actions">
+      <button id="btn-door-confirm" class="door-btn confirm">YES, RETURN</button>
+      <button id="btn-door-cancel" class="door-btn cancel">NO, STAY</button>
     </div>
   </div>
 </div>
@@ -231,43 +265,52 @@
 </div>
 
 <script type="module">
-// Ensure custom retro Google Fonts are ready
 await document.fonts.ready;
 
-// ---- SPATIAL ENVIRONMENT & SCREEN POSITIONS ----
-const ROOM_WIDTH = 1800; 
-const WORLD_WIDTH = ROOM_WIDTH * 4; 
+// ---- SPATIAL ENVIRONMENT & DYNAMIC ROOM SIZES ----
+// Grand Lobby is smaller (1000px) and subsequent wings are 1800px. 
+const ROOMS = [
+  { id: 1, x: 0, w: 1000, theme: { wall: '#0a0a0f', panel: '#050508', banner: '#fff', name: 'Grand Lobby' } },
+  { id: 2, x: 1000, w: 1800, theme: { wall: '#151622', panel: '#0f1018', banner: '#e8c547', name: 'Entrance & Fashion Wing' } },
+  { id: 3, x: 2800, w: 1800, theme: { wall: '#102219', panel: '#0b1611', banner: '#50e3c2', name: 'Living & Lifestyle Pavilion' } },
+  { id: 4, x: 4600, w: 1800, theme: { wall: '#1e1c2a', panel: '#15131e', banner: '#b8e986', name: 'Personal Care & Design' } },
+  { id: 5, x: 6400, w: 1800, theme: { wall: '#251515', panel: '#1a0e0e', banner: '#ff5a5f', name: 'Cinematic Concept Wing' } }
+];
+
+const WORLD_WIDTH = 8200; // 1000 + (1800 * 4)
 const MIN_Y = 415; 
 const MAX_Y = 680;
 
+// Shift door right relative to the lobby width
+const DOOR = { x: 450, y: 400 };
+
 const VIDEOS = [
-  // Room 1 (0 to 1800)
-  { id: 'vicks', file: 'traditional/vicks_treno_per_milano.mov', displayTitle: 'VICKS', brand: 'Vicks', title: 'Treno per Milano', desc: 'Warm relief on a retro cold-day commute to Milan.\n\nKeeping your family travels moving smoothly.', x: 350, room: 1, ratio: 1.77 },
-  { id: 'garnier', file: 'traditional/garnier_just_like_us.mp4', displayTitle: 'GARNIER', brand: 'Garnier', title: 'Just Like Us', desc: 'Organic ingredients curated for universal skin health.\n\nA dynamic splash animation celebrating authentic personal beauty.', x: 850, room: 1, ratio: 1.77 },
-  { id: 'head_shoulders', file: 'traditional/head_and_shoulders_buffon.mp4', displayTitle: 'H & S', brand: 'Head & Shoulders', title: 'Buffon Campaign', desc: 'Stay calm under championship spotlight pressure.\n\nFeaturing football legend Gianluigi Buffon showing performance confidence.', x: 1350, room: 1, ratio: 1.77 },
+  // Room 2 (1000 to 2800)
+  { id: 'vicks', file: 'traditional/vicks_treno_per_milano.mov', displayTitle: 'VICKS', brand: 'Vicks', title: 'Treno per Milano', desc: 'Warm relief on a retro cold-day commute to Milan.\n\nKeeping your family travels moving smoothly.', x: 1350, room: 2, ratio: 1.77 },
+  { id: 'garnier', file: 'traditional/garnier_just_like_us.mp4', displayTitle: 'GARNIER', brand: 'Garnier', title: 'Just Like Us', desc: 'Organic ingredients curated for universal skin health.\n\nA dynamic splash animation celebrating authentic personal beauty.', x: 1850, room: 2, ratio: 1.77 },
+  { id: 'head_shoulders', file: 'traditional/head_and_shoulders_buffon.mp4', displayTitle: 'H & S', brand: 'Head & Shoulders', title: 'Buffon Campaign', desc: 'Stay calm under championship spotlight pressure.\n\nFeaturing football legend Gianluigi Buffon showing performance confidence.', x: 2350, room: 2, ratio: 1.77 },
 
-  // Room 2 (1800 to 3600)
-  { id: 'pilgrims', file: 'traditional/pigrims_choice_cheese_things_change.mp4', displayTitle: 'PILGRIMS CHOICE', brand: 'Pilgrim\'s Choice', title: 'Cheese - Things Change', desc: 'A witty visual interpretation showing that while things change, premium quality tastes remain timeless.', x: 2150, room: 2, ratio: 1.77 },
-  { id: 'natuzzi', file: 'traditional/natuzzi_italia_the_pursuit_of_harmony.mp4', displayTitle: 'NATUZZI ITALIA', brand: 'Natuzzi Italia', title: 'Pursuit of Harmony', desc: 'Mediterranean warmth and balance.\n\nA journey across modern furniture design and delicate design accents.', x: 2650, room: 2, ratio: 1.77 },
-  { id: 'braun', file: 'traditional/braun_humans_florian.mp4', displayTitle: 'BRAUN', brand: 'Braun', title: 'Humans - Florian', desc: 'Precision mechanical craftsmanship meets daily design routine.\n\nA cinematic look into product creation and artistic lifestyle.', x: 3150, room: 2, ratio: 1.77 },
+  // Room 3 (2800 to 4600)
+  { id: 'pilgrims', file: 'traditional/pigrims_choice_cheese_things_change.mp4', displayTitle: 'PILGRIMS CHOICE', brand: 'Pilgrim\'s Choice', title: 'Cheese - Things Change', desc: 'A witty visual interpretation showing that while things change, premium quality tastes remain timeless.', x: 3150, room: 3, ratio: 1.77 },
+  { id: 'natuzzi', file: 'traditional/natuzzi_italia_the_pursuit_of_harmony.mp4', displayTitle: 'NATUZZI ITALIA', brand: 'Natuzzi Italia', title: 'Pursuit of Harmony', desc: 'Mediterranean warmth and balance.\n\nA journey across modern furniture design and delicate design accents.', x: 3650, room: 3, ratio: 1.77 },
+  { id: 'braun', file: 'traditional/braun_humans_florian.mp4', displayTitle: 'BRAUN', brand: 'Braun', title: 'Humans - Florian', desc: 'Precision mechanical craftsmanship meets daily design routine.\n\nA cinematic look into product creation and artistic lifestyle.', x: 4150, room: 3, ratio: 1.77 },
 
-  // Room 3 (3600 to 5400)
-  { id: 'nike', file: 'traditional/nike_air_force_one.mp4', displayTitle: 'NIKE', brand: 'Nike', title: 'Air Force One', desc: 'Step into the legacy of a classic court icon.\n\nAn energetic pixel-art visual tribute to the timeless sneaker culture.', x: 3950, room: 3, ratio: 2.39 },
-  { id: 'arredissima', file: 'traditional/arredissima_issima.mp4', displayTitle: 'ARREDISSIMA', brand: 'Arredissima', title: 'Issima', desc: 'Italian artisan furniture custom-tailored for spaces.\n\nTransforming houses into personal, dynamic environments.', x: 4450, room: 3, ratio: 2.39 },
-  { id: 'aussie', file: 'traditional/aussie_launch_event.mp4', displayTitle: 'AUSSIE', brand: 'Aussie', title: 'Launch Event', desc: 'Unleashing retro-themed haircare energy.\n\nExperience the dynamic, high-octane launch sequence.', x: 4950, room: 3, ratio: 1.77 },
+  // Room 4 (4600 to 6400)
+  { id: 'nike', file: 'traditional/nike_air_force_one.mp4', displayTitle: 'NIKE', brand: 'Nike', title: 'Air Force One', desc: 'Step into the legacy of a classic court icon.\n\nAn energetic pixel-art visual tribute to the timeless sneaker culture.', x: 4950, room: 4, ratio: 2.39 },
+  { id: 'arredissima', file: 'traditional/arredissima_issima.mp4', displayTitle: 'ARREDISSIMA', brand: 'Arredissima', title: 'Issima', desc: 'Italian artisan furniture custom-tailored for spaces.\n\nTransforming houses into personal, dynamic environments.', x: 5450, room: 4, ratio: 2.39 },
+  { id: 'aussie', file: 'traditional/aussie_launch_event.mp4', displayTitle: 'AUSSIE', brand: 'Aussie', title: 'Launch Event', desc: 'Unleashing retro-themed haircare energy.\n\nExperience the dynamic, high-octane launch sequence.', x: 5950, room: 4, ratio: 1.77 },
 
-  // Room 4 (5400 to 7200)
-  { id: 'black_drag', file: 'traditional/black_drag_magic.mp4', displayTitle: 'BLACK DRAG MAGIC', brand: 'Black Drag Magic', title: 'Magic', desc: 'Surreal visual art celebrating expressive style and choreography.\n\nExplore a universe of creative costuming.', x: 5750, room: 4, ratio: 2.39 },
-  { id: 'dreamer', file: 'traditional/note_for_a_dreamer_fashion_film.mp4', displayTitle: 'FASHION FILM', brand: 'Note for a Dreamer', title: 'Fashion Film', desc: 'A dreamy exploration of light, high fashion, and raw texture.\n\nA beauty piece curated for contemporary visionaries.', x: 6450, room: 4, ratio: 2.39 }
+  // Room 5 (6400 to 8200)
+  { id: 'black_drag', file: 'traditional/black_drag_magic.mp4', displayTitle: 'BLACK DRAG MAGIC', brand: 'Black Drag Magic', title: 'Magic', desc: 'Surreal visual art celebrating expressive style and choreography.\n\nExplore a universe of creative costuming.', x: 6750, room: 5, ratio: 2.39 },
+  { id: 'dreamer', file: 'traditional/note_for_a_dreamer_fashion_film.mp4', displayTitle: 'FASHION FILM', brand: 'Note for a Dreamer', title: 'Fashion Film', desc: 'A dreamy exploration of light, high fashion, and raw texture.\n\nA beauty piece curated for contemporary visionaries.', x: 7450, room: 5, ratio: 2.39 }
 ];
 
-// Room Style Configs
-const ROOM_THEMES = {
-  1: { wall: '#151622', panel: '#0f1018', banner: '#e8c547', name: 'Entrance & Fashion Wing' },
-  2: { wall: '#102219', panel: '#0b1611', banner: '#50e3c2', name: 'Living & Lifestyle Pavilion' },
-  3: { wall: '#1e1c2a', panel: '#15131e', banner: '#b8e986', name: 'Personal Care & Design' },
-  4: { wall: '#251515', panel: '#1a0e0e', banner: '#ff5a5f', name: 'Cinematic Concept Wing' }
-};
+// ---- TELEPORT / SPAWN GLOBAL STATE ----
+let hasEntered = false;
+let canPlayAndInteract = false;
+let materializeTimer = 0;
+const TELEPORT_DELAY = 0.5; // Room loads, wait half a second before beaming in
+const MAT_DURATION = 1.8;   // Beam sequence duration
 
 // ---- PRELOAD ASSETS SYSTEM ----
 let loadedCount = 0;
@@ -275,7 +318,6 @@ const totalAssets = 4;
 let isReady = false;
 let audioUnlocked = false;
 
-// Decoupled Multi-spritesheet registry
 const characters = {
   greg_idle: { img: new Image(), src: 'characters/greg_idle.png', ready: false, cols: 1 },
   greg_walk: { img: new Image(), src: 'characters/greg_walk.png', ready: false, cols: 8 },
@@ -297,34 +339,34 @@ function onAssetLoaded() {
     btn.addEventListener('click', () => {
       audioUnlocked = true;
       VIDEOS.forEach(v => {
-        v.video.muted = false; // Must explicitly unmute for our dynamic volume slider to work
-        v.video.volume = 0;    // Start silent
+        v.video.muted = false; 
+        v.video.volume = 0;   
         v.video.play().catch(e => console.warn("Autoplay deferred", e));
       });
       document.getElementById('loading').style.opacity = '0';
+      
+      // Start Materialization Teleport Effect Sequence
+      hasEntered = true;
+      materializeTimer = 0;
+      
       setTimeout(() => document.getElementById('loading').style.display = 'none', 800);
     });
   }
 }
 
-// Load separate idle and walking PNG sheets
 Object.keys(characters).forEach(key => {
   characters[key].img.onload = () => {
     characters[key].ready = true;
     onAssetLoaded();
   };
-  characters[key].img.onerror = () => {
-    console.error(`Missing asset characters/${key}.png`);
-    onAssetLoaded(); 
-  };
+  characters[key].img.onerror = () => { onAssetLoaded(); };
   characters[key].img.src = characters[key].src;
 });
 
-// Setup video instances
 VIDEOS.forEach(v => {
   const vid = document.createElement('video');
   vid.src = v.file;
-  vid.muted = true; // Auto-play requires initial mute state
+  vid.muted = true; 
   vid.loop = true;
   vid.playsInline = true;
   vid.preload = 'metadata';
@@ -357,8 +399,7 @@ class Entity {
   }
 
   update(dt) {
-    const currentSheetKey = `${this.type}_${this.state}`;
-    const meta = characters[currentSheetKey];
+    const meta = characters[`${this.type}_${this.state}`];
     if (!meta || !meta.ready) return;
 
     this.frameTimer += dt;
@@ -372,9 +413,8 @@ class Entity {
     }
   }
 
-  draw(ctx, cameraX) {
-    const currentSheetKey = `${this.type}_${this.state}`;
-    const meta = characters[currentSheetKey];
+  draw(ctx, cameraX, isMaterializing, p) {
+    const meta = characters[`${this.type}_${this.state}`];
     if (!meta || !meta.ready) return;
 
     const img = meta.img;
@@ -382,55 +422,80 @@ class Entity {
     const fH = img.height;
 
     const cropMargin = 6;
-    const frameStartX = Math.round(this.currentFrame * fW);
-    
-    const sourceX = frameStartX + cropMargin;
-    const sourceY = 0;
+    const sourceX = Math.round(this.currentFrame * fW) + cropMargin;
     const sourceW = Math.round(fW) - (cropMargin * 2);
-    const sourceH = fH;
-
-    const aspect = sourceW / sourceH;
+    const aspect = sourceW / fH;
 
     const scaleFactor = 0.75 + ((this.y - MIN_Y) / (MAX_Y - MIN_Y)) * 0.45;
-    const baseHeight = 175; 
-    const drawH = baseHeight * scaleFactor;
+    const drawH = 175 * scaleFactor;
     const drawW = drawH * aspect;
 
-    ctx.save();
-    ctx.translate(this.x - cameraX, this.y);
-    ctx.scale(this.facing, 1);
+    let drawAlpha = 1;
+    let beamAlpha = 0;
+    let teleportOffsetY = 0;
 
-    ctx.drawImage(
-      img,
-      sourceX, sourceY, sourceW, sourceH,
-      -drawW / 2, -drawH + 8, drawW, drawH
-    );
+    // Handle Teleport sequence state specifically
+    if (isMaterializing) {
+      // Phase character alpha logic (if p=0, they are completely invisible)
+      drawAlpha = Math.max(0, Math.min(1, (p - 0.2) / 0.6));
+      teleportOffsetY = -40 * (1 - drawAlpha);
+      beamAlpha = p <= 0 ? 0 : (p < 0.2 ? (p / 0.2) : Math.max(0, 1 - ((p - 0.2) / 0.8)));
+    }
+
+    ctx.save();
+    ctx.globalAlpha = drawAlpha;
+    ctx.translate(this.x - cameraX, this.y + teleportOffsetY);
+    ctx.scale(this.facing, 1);
+    ctx.drawImage(img, sourceX, 0, sourceW, fH, -drawW / 2, -drawH + 8, drawW, drawH);
     ctx.restore();
+
+    // Beam Rendering
+    if (isMaterializing && beamAlpha > 0) {
+      ctx.save();
+      ctx.translate(this.x - cameraX, this.y);
+      let bHeight = drawH * 1.5;
+      
+      // Core cyan wide beam
+      ctx.fillStyle = `rgba(0, 255, 204, ${beamAlpha * 0.4})`;
+      ctx.fillRect(-14, -bHeight + teleportOffsetY, 28, bHeight);
+      
+      // Intense white core
+      ctx.fillStyle = `rgba(255, 255, 255, ${beamAlpha * 0.8})`;
+      ctx.fillRect(-2, -bHeight + teleportOffsetY, 4, bHeight);
+      
+      // Floating data particles
+      for (let i = 0; i < 5; i++) {
+        let partY = -Math.random() * bHeight + teleportOffsetY;
+        ctx.fillStyle = '#00ffcc';
+        ctx.fillRect((Math.random() - 0.5) * 36, partY, 2, 2);
+      }
+      ctx.restore();
+    }
     
     // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillStyle = `rgba(0,0,0,${0.3 * drawAlpha})`;
     ctx.beginPath();
     ctx.ellipse(this.x - cameraX, this.y + 6, 24 * scaleFactor, 7 * scaleFactor, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
-// Instantiate players
-const greg = new Entity('greg', 250, 520, true);
+// Instantiate players comfortably near the door
+const greg = new Entity('greg', 450, 520, true);
 const tim = new Entity('tim', 550, 540, false);
 
 // ---- COLLISION DETECTION ----
 const benches = [
-  { x: 1100, y: 560, w: 200, h: 50 },
-  { x: 2900, y: 560, w: 200, h: 50 },
-  { x: 4700, y: 560, w: 200, h: 50 },
-  { x: 6100, y: 560, w: 200, h: 50 }
+  { x: 800, y: 560, w: 200, h: 50 },  // Lobby bench
+  { x: 2100, y: 560, w: 200, h: 50 },
+  { x: 3900, y: 560, w: 200, h: 50 },
+  { x: 5700, y: 560, w: 200, h: 50 },
+  { x: 7500, y: 560, w: 200, h: 50 }
 ];
 
 function checkWallCollision(targetX, targetY) {
   if (targetX < 40 || targetX > WORLD_WIDTH - 40) return true;
   if (targetY < MIN_Y || targetY > MAX_Y) return true;
-  
   for (let b of benches) {
     if (targetX + 20 > b.x - b.w/2 && targetX - 20 < b.x + b.w/2 &&
         targetY + 14 > b.y - b.h/2 && targetY - 14 < b.y + b.h/2) {
@@ -442,19 +507,32 @@ function checkWallCollision(targetX, targetY) {
 
 // ---- TIM (AI GUIDE) PATHING WAYPOINTS ----
 const timWaypoints = [
-  { x: 350, wait: 6000 },
-  { x: 1350, wait: 5000 },
-  { x: 2650, wait: 7000 },
-  { x: 4450, wait: 6000 },
-  { x: 6450, wait: 8000 },
-  { x: 4950, wait: 7000 },
-  { x: 3150, wait: 6000 },
-  { x: 850, wait: 8000 }
+  { x: 1350, wait: 6000 },
+  { x: 2350, wait: 5000 },
+  { x: 3650, wait: 7000 },
+  { x: 5450, wait: 6000 },
+  { x: 7450, wait: 8000 },
+  { x: 5950, wait: 7000 },
+  { x: 4150, wait: 6000 },
+  { x: 1850, wait: 8000 },
+  { x: 650, wait: 9000 } // Visit Lobby rarely
 ];
+
 let currentWaypointIndex = 0;
 let timWaitTimer = 0;
+let timStartDelay = 1000; // Tim stands exactly 1 second in idle pose AFTER materializing
 
 function updateTimAI(dt) {
+  // Wait 1 second in idle when initially spawned
+  if (timStartDelay > 0) {
+    timStartDelay -= dt * 1000;
+    tim.state = 'idle';
+    tim.vx = 0;
+    tim.vy = 0;
+    return;
+  }
+
+  // Standard pathing wait logic
   if (timWaitTimer > 0) {
     timWaitTimer -= dt * 1000;
     tim.state = 'idle';
@@ -468,14 +546,12 @@ function updateTimAI(dt) {
 
   const wp = timWaypoints[currentWaypointIndex];
   const diffX = wp.x - tim.x;
-  
   if (Math.abs(diffX) < 10) {
     timWaitTimer = wp.wait;
   } else {
     tim.state = 'walk';
     tim.vx = Math.sign(diffX) * 140; 
     tim.x += tim.vx * dt;
-    
     const targetY = 480 + (wp.x % 120);
     tim.y += (targetY - tim.y) * 0.05;
   }
@@ -486,14 +562,11 @@ const keys = {};
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   keys[k] = true;
-  if (k === 'e') triggerInteraction();
+  if (k === 'e' && canPlayAndInteract) triggerInteraction();
   if (e.key === 'Escape') closeOverlay();
 });
-window.addEventListener('keyup', e => {
-  keys[e.key.toLowerCase()] = false;
-});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
-// Setup Mobile Control Elements
 const setupMobileControl = (id, keyName) => {
   const btn = document.getElementById(id);
   btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[keyName] = true; });
@@ -505,94 +578,92 @@ setupMobileControl('btn-right', 'd');
 setupMobileControl('btn-down', 's');
 document.getElementById('btn-e').addEventListener('touchstart', (e) => {
   e.preventDefault();
-  triggerInteraction();
+  if (canPlayAndInteract) triggerInteraction();
 });
 
 // ---- INTERACTIVE OVERLAYS ----
-let activeScreen = null;
+let activeInteractable = null;
 let isOverlayOpen = false;
 
 function triggerInteraction() {
-  if (isOverlayOpen) return;
-  if (activeScreen) {
-    isOverlayOpen = true;
-    // Mute all environment audio when viewing fullscreen
-    VIDEOS.forEach(v => v.video.volume = 0);
+  if (isOverlayOpen || !activeInteractable) return;
+  isOverlayOpen = true;
+  VIDEOS.forEach(v => v.video.volume = 0); // Mute environment
 
-    const overlay = document.getElementById('overlay');
+  if (activeInteractable.type === 'video') {
+    const v = activeInteractable.data;
     const overlayVid = document.getElementById('overlay-video');
-
-    document.getElementById('overlay-brand').textContent = activeScreen.brand;
-    document.getElementById('overlay-title').textContent = activeScreen.title;
-    document.getElementById('overlay-desc').textContent = activeScreen.desc;
+    document.getElementById('overlay-brand').textContent = v.brand;
+    document.getElementById('overlay-title').textContent = v.title;
+    document.getElementById('overlay-desc').textContent = v.desc;
     
-    overlayVid.src = activeScreen.file;
+    overlayVid.src = v.file;
     overlayVid.volume = 1;
     overlayVid.play();
-
-    overlay.classList.add('visible');
+    document.getElementById('overlay').classList.add('visible');
+    
+  } else if (activeInteractable.type === 'door') {
+    document.getElementById('door-overlay').classList.add('visible');
   }
 }
 
 function closeOverlay() {
   isOverlayOpen = false;
   document.getElementById('overlay').classList.remove('visible');
+  document.getElementById('door-overlay').classList.remove('visible');
   const overlayVid = document.getElementById('overlay-video');
   overlayVid.pause();
   overlayVid.src = '';
 }
 document.getElementById('overlay-close').addEventListener('click', closeOverlay);
+document.getElementById('btn-door-cancel').addEventListener('click', closeOverlay);
+document.getElementById('btn-door-confirm').addEventListener('click', () => {
+  window.location.href = 'https://xd.enricopoli.com/projects/ai_studio/';
+});
 
 // ---- PROCEDURAL PIXEL ART GRAPHICS RENDER ----
 function drawEnvironment(ctx, cameraX) {
-  const visibleRoomStart = Math.floor(cameraX / ROOM_WIDTH) + 1;
-  const visibleRoomEnd = Math.floor((cameraX + canvas.width) / ROOM_WIDTH) + 1;
+  ROOMS.forEach(r => {
+    if (r.x + r.w < cameraX || r.x > cameraX + canvas.width) return;
+    const startX = r.x - cameraX;
 
-  for (let r = visibleRoomStart; r <= visibleRoomEnd; r++) {
-    const roomTheme = ROOM_THEMES[r];
-    if (!roomTheme) continue;
-
-    const startX = (r - 1) * ROOM_WIDTH - cameraX;
-
-    // 1. Draw Walls
-    ctx.fillStyle = roomTheme.wall;
-    ctx.fillRect(startX, 0, ROOM_WIDTH, 400);
+    // Draw Walls
+    ctx.fillStyle = r.theme.wall;
+    ctx.fillRect(startX, 0, r.w, 400);
 
     // Decorative baseboards
-    ctx.fillStyle = roomTheme.panel;
-    ctx.fillRect(startX, 375, ROOM_WIDTH, 25);
-
-    // Dark split separator line
+    ctx.fillStyle = r.theme.panel;
+    ctx.fillRect(startX, 375, r.w, 25);
     ctx.fillStyle = '#050508';
-    ctx.fillRect(startX, 396, ROOM_WIDTH, 4);
+    ctx.fillRect(startX, 396, r.w, 4);
 
-    // 2. Draw Floorboards
+    // Floorboards
     ctx.fillStyle = '#1c171d';
-    ctx.fillRect(startX, 400, ROOM_WIDTH, 320);
+    ctx.fillRect(startX, 400, r.w, 320);
 
-    // Render floor planks
+    // Floor planks
     ctx.strokeStyle = '#141014';
     ctx.lineWidth = 2;
     for (let y = 420; y < 720; y += 24) {
       ctx.beginPath();
       ctx.moveTo(startX, y);
-      ctx.lineTo(startX + ROOM_WIDTH, y);
+      ctx.lineTo(startX + r.w, y);
       ctx.stroke();
     }
 
-    // 3. Columns separating the wings
-    ctx.fillStyle = '#08080d';
-    ctx.fillRect(startX, 0, 24, 720);
-    ctx.fillStyle = '#1a1a26';
-    ctx.fillRect(startX + 24, 0, 6, 720);
-  }
+    // Structural columns separating wings
+    if (r.id > 1) {
+      ctx.fillStyle = '#08080d';
+      ctx.fillRect(startX, 0, 24, 720);
+      ctx.fillStyle = '#1a1a26';
+      ctx.fillRect(startX + 24, 0, 6, 720);
+    }
+  });
 
-  // Draw benches 
   benches.forEach(b => {
     ctx.fillStyle = '#22140a'; 
     ctx.fillRect(b.x - b.w/2 + 14 - cameraX, b.y, 10, 20);
     ctx.fillRect(b.x + b.w/2 - 24 - cameraX, b.y, 10, 20);
-
     ctx.fillStyle = '#3c2513'; 
     ctx.fillRect(b.x - b.w/2 - cameraX, b.y - 18, b.w, 18);
     ctx.fillStyle = '#9e6234'; 
@@ -600,17 +671,56 @@ function drawEnvironment(ctx, cameraX) {
   });
 }
 
+function drawDoor(ctx, cameraX) {
+  const dw = 140;
+  const dh = 220;
+  const dx = DOOR.x - dw/2 - cameraX;
+  const dy = 400 - dh;
+
+  const coneW = 140;
+  ctx.fillStyle = 'rgba(232, 197, 71, 0.05)';
+  ctx.beginPath();
+  ctx.moveTo(DOOR.x - cameraX - 10, 0);
+  ctx.lineTo(DOOR.x - cameraX + 10, 0);
+  ctx.lineTo(DOOR.x - cameraX + coneW, 400);
+  ctx.lineTo(DOOR.x - cameraX - coneW, 400);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.textAlign = "center";
+  ctx.font = "bold 14px 'DM Mono', monospace";
+  ctx.fillStyle = '#000000';
+  ctx.fillText("AI STUDIO", DOOR.x - cameraX + 2, dy - 28);
+  ctx.fillStyle = '#e8c547';
+  ctx.fillText("AI STUDIO", DOOR.x - cameraX, dy - 30);
+  ctx.textAlign = "left";
+
+  ctx.fillStyle = '#0d0d12';
+  ctx.fillRect(dx - 10, dy - 10, dw + 20, dh + 10);
+  
+  ctx.fillStyle = '#161622';
+  ctx.fillRect(dx, dy, dw/2 - 2, dh);
+  ctx.fillRect(dx + dw/2 + 2, dy, dw/2 - 2, dh);
+  
+  ctx.fillStyle = '#e8c547';
+  ctx.fillRect(dx + dw/2 - 12, dy + dh/2, 4, 20);
+  ctx.fillRect(dx + dw/2 + 8, dy + dh/2, 4, 20);
+
+  const isDoorHovered = activeInteractable && activeInteractable.type === 'door';
+  ctx.fillStyle = isDoorHovered ? '#00ff66' : '#ff3333';
+  ctx.beginPath();
+  ctx.arc(DOOR.x - cameraX, dy - 15, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawScreens(ctx, cameraX) {
   VIDEOS.forEach(v => {
     const isWide = v.ratio === 2.39;
     const screenW = isWide ? 340 : 280; 
     const screenH = isWide ? 142 : 158;
-    
     const sx = v.x - screenW / 2 - cameraX;
-    // Vertically center all screens against the standard 16:9 centerline
     const sy = isWide ? 168 : 160;
 
-    // Hanging Spotlight Cone
     const coneW = isWide ? 200 : 180;
     ctx.fillStyle = 'rgba(232, 197, 71, 0.05)';
     ctx.beginPath();
@@ -621,37 +731,31 @@ function drawScreens(ctx, cameraX) {
     ctx.closePath();
     ctx.fill();
 
-    // Spotlight glow on backwall
     const spotlightGrad = ctx.createRadialGradient(v.x - cameraX, sy + 60, 2, v.x - cameraX, sy + 80, 240);
     spotlightGrad.addColorStop(0, 'rgba(232, 197, 71, 0.22)');
     spotlightGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = spotlightGrad;
     ctx.fillRect(v.x - 300 - cameraX, 0, 600, 400);
 
-    // Pixel Art Display Title (Above screen)
     ctx.textAlign = "center";
     ctx.font = "bold 16px 'DM Mono', monospace";
-    // Text fake drop shadow for pixel contrast
     ctx.fillStyle = '#000000';
     ctx.fillText(v.displayTitle, v.x - cameraX + 2, sy - 28);
-    // Main text
     ctx.fillStyle = '#e8c547';
     ctx.fillText(v.displayTitle, v.x - cameraX, sy - 30);
-    ctx.textAlign = "left"; // Reset
+    ctx.textAlign = "left"; 
 
-    // Screen frame borders
     ctx.fillStyle = '#110a05';
     ctx.fillRect(sx - 12, sy - 12, screenW + 24, screenH + 24);
     ctx.fillStyle = '#23180f';
     ctx.fillRect(sx - 8, sy - 8, screenW + 16, screenH + 16);
 
-    // Status light indicator
-    ctx.fillStyle = (activeScreen === v) ? '#00ff66' : '#ff3333';
+    const isVideoHovered = activeInteractable && activeInteractable.type === 'video' && activeInteractable.data === v;
+    ctx.fillStyle = isVideoHovered ? '#00ff66' : '#ff3333';
     ctx.beginPath();
     ctx.arc(v.x - cameraX, sy + screenH + 8, 3, 0, Math.PI * 2);
     ctx.fill();
 
-    // Draw video stream onto TV screen
     if (v.video && v.video.readyState >= 2) {
       ctx.drawImage(v.video, sx, sy, screenW, screenH);
     } else {
@@ -662,14 +766,12 @@ function drawScreens(ctx, cameraX) {
       ctx.fillText("LOADING DATA...", sx + (screenW/2) - 40, sy + (screenH/2));
     }
 
-    // Placard plate
     const placardX = v.x + screenW/2 + 25 - cameraX;
     const placardY = sy + 40;
     ctx.fillStyle = '#eaeaea';
     ctx.fillRect(placardX, placardY, 40, 55);
     ctx.fillStyle = '#9c9c9c';
     ctx.strokeRect(placardX, placardY, 40, 55);
-
     ctx.fillStyle = '#111';
     ctx.fillRect(placardX + 5, placardY + 5, 30, 4);
     ctx.fillStyle = '#777';
@@ -679,7 +781,6 @@ function drawScreens(ctx, cameraX) {
   });
 }
 
-// ---- DYNAMIC HUD MINIMAP ----
 const miniCanvas = document.getElementById('minimap-canvas');
 const miniCtx = miniCanvas.getContext('2d');
 miniCtx.imageSmoothingEnabled = false;
@@ -695,13 +796,17 @@ function drawMinimap() {
   miniCtx.strokeRect(0, 0, mw, mh);
 
   miniCtx.strokeStyle = 'rgba(255,255,255,0.2)';
-  for (let r = 1; r < 4; r++) {
-    const rx = (r * ROOM_WIDTH / WORLD_WIDTH) * mw;
+  ROOMS.forEach(r => {
+    const rx = (r.x / WORLD_WIDTH) * mw;
     miniCtx.beginPath();
     miniCtx.moveTo(rx, 0);
     miniCtx.lineTo(rx, mh);
     miniCtx.stroke();
-  }
+  });
+  
+  const doorMx = (DOOR.x / WORLD_WIDTH) * mw;
+  miniCtx.fillStyle = '#ff5a5f';
+  miniCtx.fillRect(doorMx - 2, 4, 4, 6);
 
   miniCtx.fillStyle = '#e8c547';
   VIDEOS.forEach(v => {
@@ -717,8 +822,13 @@ function drawMinimap() {
   miniCtx.fillStyle = '#ff6666'; 
   miniCtx.fillRect(timX - 2, mh / 2 - 3, 3, 5);
 
-  const currentRoom = Math.min(4, Math.max(1, Math.floor(greg.x / ROOM_WIDTH) + 1));
-  document.getElementById('minimap-info').textContent = ROOM_THEMES[currentRoom].name;
+  let currentRoom = ROOMS[0];
+  for (let r of ROOMS) {
+    if (greg.x >= r.x && greg.x < r.x + r.w) {
+      currentRoom = r;
+    }
+  }
+  document.getElementById('minimap-info').textContent = currentRoom.theme.name;
 }
 
 // ---- MAIN LOOP ----
@@ -732,100 +842,135 @@ function gameLoop(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (isReady && !isOverlayOpen) {
-    // 1. Process player input
+    
+    // Evaluate Materialization Process and Delays
+    let isMaterializing = false;
+    let spawnProgress = 1;
+
+    if (hasEntered) {
+      materializeTimer += dt;
+      if (materializeTimer < TELEPORT_DELAY) {
+        // Room is visible, wait half a second before beam starts
+        isMaterializing = true;
+        spawnProgress = 0;
+      } else if (materializeTimer < TELEPORT_DELAY + MAT_DURATION) {
+        // Beam is actively running
+        isMaterializing = true;
+        spawnProgress = (materializeTimer - TELEPORT_DELAY) / MAT_DURATION;
+      }
+    } else {
+      // Prior to user entry, keep them invisible
+      isMaterializing = true; 
+      spawnProgress = 0;
+    }
+
+    // Unlocks gameplay only after full sequence completes
+    canPlayAndInteract = (hasEntered && !isMaterializing);
+
     greg.vx = 0;
     greg.vy = 0;
     greg.state = 'idle';
 
-    if (keys['w'] || keys['arrowup']) { greg.vy = -greg.speed; greg.state = 'walk'; }
-    if (keys['s'] || keys['arrowdown']) { greg.vy = greg.speed; greg.state = 'walk'; }
-    if (keys['a'] || keys['arrowleft']) { greg.vx = -greg.speed; greg.state = 'walk'; }
-    if (keys['d'] || keys['arrowright']) { greg.vx = greg.speed; greg.state = 'walk'; }
+    if (canPlayAndInteract) {
+      // Allow manual control
+      if (keys['w'] || keys['arrowup']) { greg.vy = -greg.speed; greg.state = 'walk'; }
+      if (keys['s'] || keys['arrowdown']) { greg.vy = greg.speed; greg.state = 'walk'; }
+      if (keys['a'] || keys['arrowleft']) { greg.vx = -greg.speed; greg.state = 'walk'; }
+      if (keys['d'] || keys['arrowright']) { greg.vx = greg.speed; greg.state = 'walk'; }
 
-    const nextX = greg.x + greg.vx * dt;
-    const nextY = greg.y + greg.vy * dt;
+      const nextX = greg.x + greg.vx * dt;
+      const nextY = greg.y + greg.vy * dt;
 
-    if (!checkWallCollision(nextX, greg.y)) greg.x = nextX;
-    if (!checkWallCollision(greg.x, nextY)) greg.y = nextY;
+      if (!checkWallCollision(nextX, greg.y)) greg.x = nextX;
+      if (!checkWallCollision(greg.x, nextY)) greg.y = nextY;
 
-    // AI waypoint routine
-    updateTimAI(dt);
+      // Handle AI logic with its own initial 1-second delay
+      updateTimAI(dt);
+    }
 
     greg.update(dt);
     tim.update(dt);
 
-    // Smooth horizontal camera tracking
     const targetCamX = greg.x - canvas.width / 2;
     cameraX += (targetCamX - cameraX) * 0.08;
     cameraX = Math.max(0, Math.min(WORLD_WIDTH - canvas.width, cameraX));
 
-    // Dynamic proximities & EXCLUSIVE Audio Control
-    let closestScreen = null;
-    let minDistance = Infinity;
+    // Dynamic proximities & EXCLUSIVE Audio Control (Only run if playable)
+    if (canPlayAndInteract) {
+      let closestVideo = null;
+      let minVideoDistance = Infinity;
 
-    // Pass 1: Find the absolute closest screen
-    VIDEOS.forEach(v => {
-      const distance = Math.hypot(greg.x - v.x, greg.y - 400); // 400 represents approximate Y of the monitors
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestScreen = v;
-      }
-    });
-
-    // Pass 2: Apply strictly exclusive audio rules
-    const volumeFadeRadius = 450; 
-    const activeRange = 140;
-
-    VIDEOS.forEach(v => {
-      if (audioUnlocked) {
-        // ONLY the singular closest video can make sound, fully preventing overlapping audio.
-        if (v === closestScreen && minDistance < volumeFadeRadius && !isOverlayOpen) {
-          const attenuation = 1.0 - (minDistance / volumeFadeRadius);
-          // Math.pow ensures a smooth audio ramp instead of a harsh linear volume cut
-          v.video.volume = Math.pow(attenuation, 1.8);
-          if (v.video.paused) v.video.play().catch(() => {});
-        } else {
-          v.video.volume = 0;
+      VIDEOS.forEach(v => {
+        const distance = Math.hypot(greg.x - v.x, greg.y - 400); 
+        if (distance < minVideoDistance) {
+          minVideoDistance = distance;
+          closestVideo = v;
         }
-      }
-    });
+      });
+      
+      const doorDistance = Math.hypot(greg.x - DOOR.x, greg.y - 400);
+      const activeRange = 140;
+      activeInteractable = null;
 
-    // Prompt HUD display logic
-    if (minDistance < activeRange) {
-      activeScreen = closestScreen;
+      if (doorDistance < minVideoDistance && doorDistance < activeRange) {
+        activeInteractable = { type: 'door' };
+      } else if (minVideoDistance < activeRange) {
+        activeInteractable = { type: 'video', data: closestVideo };
+      }
+
+      const volumeFadeRadius = 450; 
+      VIDEOS.forEach(v => {
+        if (audioUnlocked) {
+          if (v === closestVideo && minVideoDistance < volumeFadeRadius && !isOverlayOpen) {
+            const attenuation = 1.0 - (minVideoDistance / volumeFadeRadius);
+            v.video.volume = Math.pow(attenuation, 1.8);
+            if (v.video.paused) v.video.play().catch(() => {});
+          } else {
+            v.video.volume = 0;
+          }
+        }
+      });
+
       const prompt = document.getElementById('proximity-prompt');
-      prompt.textContent = `Press [ E ] to view ${activeScreen.title}`;
-      prompt.classList.add('visible');
+      if (activeInteractable) {
+        if (activeInteractable.type === 'door') {
+          prompt.textContent = `Press [ E ] to Exit to AI Production Room`;
+        } else {
+          prompt.textContent = `Press [ E ] to view ${activeInteractable.data.title}`;
+        }
+        prompt.classList.add('visible');
+      } else {
+        prompt.classList.remove('visible');
+      }
     } else {
-      activeScreen = null;
+      // Hide interact prompts while materializing or delayed
       document.getElementById('proximity-prompt').classList.remove('visible');
     }
+
+    // Render Calls
+    drawEnvironment(ctx, cameraX);
+    drawDoor(ctx, cameraX);
+    drawScreens(ctx, cameraX);
+
+    // Depth rendering sorting check with Teleport data passed
+    if (greg.y <= tim.y) {
+      greg.draw(ctx, cameraX, isMaterializing, spawnProgress);
+      tim.draw(ctx, cameraX, isMaterializing, spawnProgress);
+    } else {
+      tim.draw(ctx, cameraX, isMaterializing, spawnProgress);
+      greg.draw(ctx, cameraX, isMaterializing, spawnProgress);
+    }
+
+    drawMinimap();
   }
-
-  // Draw background environment and screens
-  drawEnvironment(ctx, cameraX);
-  drawScreens(ctx, cameraX);
-
-  // Depth rendering sorting check
-  if (greg.y <= tim.y) {
-    greg.draw(ctx, cameraX);
-    tim.draw(ctx, cameraX);
-  } else {
-    tim.draw(ctx, cameraX);
-    greg.draw(ctx, cameraX);
-  }
-
-  drawMinimap();
 
   requestAnimationFrame(gameLoop);
 }
 
-// Layout scale ratio fitting helper
 function handleResize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   const aspect = 16 / 9;
-
   if (w / h > aspect) {
     canvas.style.width = `${h * aspect}px`;
     canvas.style.height = `${h}px`;
