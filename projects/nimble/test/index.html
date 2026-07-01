@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Nimble's Dish Dash</title>
 <style>
-  html, body { 
-    margin: 0; height: 100%; overflow: hidden; 
-    font-family: system-ui, -apple-system, sans-serif; 
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    font-family: system-ui, -apple-system, sans-serif;
     background: url('./BACKGROUND.png') repeat-x left bottom;
-    background-size: auto 100%; 
+    background-size: auto 100%;
     background-color: #0e1118;
   }
-  
+
   /* Loading Screen */
   #loading {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -35,7 +35,8 @@
   .hud-row:last-child { margin-bottom: 0; }
   .fairy-text { color: #39d24e; }
   .danger-text { color: #ff5544; }
-  
+  .level-text { color: #7fe3a0; }
+
   #controls-help {
     position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10;
     background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
@@ -43,8 +44,16 @@
     letter-spacing: 0.05em; border: 1px solid rgba(255, 255, 255, 0.1);
   }
   .key {
-    display: inline-block; background: #1c2740; border: 1px solid #38507a; 
+    display: inline-block; background: #1c2740; border: 1px solid #38507a;
     border-radius: 4px; padding: 2px 6px; margin: 0 4px; color: #bfe; font-weight: bold;
+  }
+
+  /* Level transition banner */
+  #banner {
+    position: absolute; top: 38%; left: 50%; transform: translateX(-50%); z-index: 20;
+    color: #fff; font-size: 46px; font-weight: 900; letter-spacing: 3px;
+    text-shadow: 0 3px 18px rgba(0,0,0,0.6), 0 0 20px rgba(127,227,160,0.6);
+    opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center;
   }
 </style>
 
@@ -64,15 +73,18 @@
 </div>
 
 <div id="hud">
+  <div class="hud-row"><span class="level-text">Level:</span> <span id="level" class="level-text">1</span></div>
   <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">200</span></div>
   <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
   <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
 </div>
 
+<div id="banner"></div>
+
 <div id="controls-help">
-  <span class="key">←</span> <span class="key">→</span> Move &nbsp;&nbsp;|&nbsp;&nbsp; 
-  <span class="key">↑</span> Jump &nbsp;&nbsp;|&nbsp;&nbsp; 
-  <span class="key">↓</span> Slide &nbsp;&nbsp;|&nbsp;&nbsp; 
+  <span class="key">&larr;</span> <span class="key">&rarr;</span> Move &nbsp;&nbsp;|&nbsp;&nbsp;
+  <span class="key">&uarr;</span> Jump &nbsp;&nbsp;|&nbsp;&nbsp;
+  <span class="key">&darr;</span> Slide &nbsp;&nbsp;|&nbsp;&nbsp;
   <span class="key">SPACE</span> Fire Soap
 </div>
 
@@ -83,9 +95,10 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // --- Game State ---
 const state = {
+  level: 1,               // 1 = running (no board), 2 = skateboard (board on)
   score: 0,
   ammo: 10,
-  lives: 200, 
+  lives: 200,
   baseSpeed: 6.5,
   speedMultiplier: 1.0,
   gravity: 15,
@@ -96,8 +109,12 @@ const state = {
   isGameOver: false
 };
 
+// Distance the player travels before Level 2 begins.
+// Tune this to line up with the start of the real BACKGROUND_02.png later.
+const LEVEL1_END = 200;
+
 const keys = { right: false, left: false, up: false, down: false, fire: false };
-const entities = []; 
+const entities = [];
 const soaps = [];
 const angleCheat = 0.49; // Nimble turned slightly towards camera
 
@@ -109,7 +126,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.25;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.setClearColor(0x000000, 0); 
+renderer.setClearColor(0x000000, 0);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -118,10 +135,10 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 // CAMERA: Raised Y position so we look down onto the edge of the table
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
-camera.position.set(0, 5.0, 17); 
+camera.position.set(0, 5.0, 17);
 
 const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.8);
-dirLight.position.set(8, 8, 4); 
+dirLight.position.set(8, 8, 4);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 2048;
 dirLight.shadow.mapSize.height = 2048;
@@ -129,7 +146,7 @@ dirLight.shadow.camera.near = 0.5;
 dirLight.shadow.camera.far = 30;
 dirLight.shadow.camera.left = -15;
 dirLight.shadow.camera.right = 15;
-dirLight.shadow.bias = -0.001; 
+dirLight.shadow.bias = -0.001;
 scene.add(dirLight);
 scene.add(dirLight.target);
 
@@ -141,12 +158,14 @@ const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 
 
 // Player setup
 let playerGroup = new THREE.Group();
-playerGroup.rotation.y = (Math.PI / 2) - angleCheat; 
+playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
 scene.add(playerGroup);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
+let hatParts = [], boardParts = [];   // for per-level toggling
 
-const P = { transmission: 0.92, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
+// Body glass material (transmission 0.985 per Enrico -> transparent but keeps some facial features)
+const P = { transmission: 0.985, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
 const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
 function getGlassMat(src) {
   let mat = new THREE.MeshPhysicalMaterial({
@@ -160,6 +179,22 @@ function getGlassMat(src) {
   return mat;
 }
 
+// Frothy soap-foam material for hat & skateboard (white + sheen + bubble surface + a touch of soap iridescence)
+const bubbleTex = new THREE.TextureLoader().load('./bubble_normal.png', t => {
+  t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(4,4);
+});
+function getFoamMat() {
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#f4f8ff'), roughness: 0.55, metalness: 0,
+    sheen: 1.0, sheenRoughness: 0.4, sheenColor: new THREE.Color('#ffffff'),
+    transmission: 0.08, ior: 1.33, thickness: 0.15,
+    clearcoat: 0.4, clearcoatRoughness: 0.3,
+    iridescence: 0.35, iridescenceIOR: 1.30,
+    normalMap: bubbleTex, normalScale: new THREE.Vector2(0.7, 0.7),
+    envMapIntensity: 1.1, transparent: true
+  });
+}
+
 // ----------------------------------------------------
 // ASYNC ASSET LOADING
 // ----------------------------------------------------
@@ -167,52 +202,42 @@ async function initGame() {
   const gltfLoader = new GLTFLoader();
   const texLoader = new THREE.TextureLoader();
 
-  // 1. Load Countertop Texture (Given a 3D Box geometry for the edge lip)
+  // 1. Countertop
   const counterTex = await texLoader.loadAsync('./couter_top_texture.png');
   counterTex.wrapS = THREE.RepeatWrapping;
   counterTex.wrapT = THREE.RepeatWrapping;
-  counterTex.repeat.set(150, 6); 
-  
+  counterTex.repeat.set(150, 6);
+
   const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
   const floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 30), floorMat);
-  floor.position.set(250, -5, -12); 
+  floor.position.set(250, -5, -12);
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // 2. Load 2D Foreground Elements
+  // 2. 2D Foreground Elements
   const fgNames = ['bottle.png', 'bowl.png', 'cloth.png', 'fork.png', 'plant_02.png', 'plant.png', 'salt.png', 'spoon.png', 'wood_surface.png'];
   const fgTextures = [];
   for (const name of fgNames) {
-    try {
-      fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`));
-    } catch(e) { console.warn("Missing foreground element: " + name); }
+    try { fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`)); }
+    catch(e) { console.warn("Missing foreground element: " + name); }
   }
-
-  // Generate Foreground Planes
   if(fgTextures.length > 0) {
-    // Spaced out a bit more so it's not a constant wall of blur
     for (let x = -20; x < 500; x += 18 + Math.random() * 20) {
       const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
       const aspect = tex.image.width / tex.image.height;
-      const h = 5 + Math.random() * 5; 
+      const h = 5 + Math.random() * 5;
       const w = h * aspect;
-      
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
-      
-      // FIXED FOREGROUND PLACEMENT
-      // We calculate the Y position based on the top edge of the image to ensure 
-      // the graphic never rises higher than the absolute bottom section of the screen.
-      const topEdgeY = Math.random() * 1.5; // The highest point the image will reach (Nimble runs at Y=0)
-      const yPos = topEdgeY - (h / 2); 
-      const zPos = 11 + Math.random() * 3; // Brought very close to the camera (Z=17)
-      
+      const topEdgeY = Math.random() * 1.5;
+      const yPos = topEdgeY - (h / 2);
+      const zPos = 11 + Math.random() * 3;
       plane.position.set(x, yPos, zPos);
       scene.add(plane);
     }
   }
 
-  // 3. Load 3D Element Models
+  // 3. 3D Element Models
   const models = {};
   const modelPaths = {
     emerald: './3d_elements/emerald_droplets.glb',
@@ -224,7 +249,6 @@ async function initGame() {
     fork: './3d_elements/fork.glb',
     plates: './3d_elements/dirty_plates.glb'
   };
-
   for (const [key, path] of Object.entries(modelPaths)) {
     try {
       const gltf = await gltfLoader.loadAsync(path);
@@ -234,19 +258,26 @@ async function initGame() {
     } catch(e) { console.warn("Missing model: " + path); }
   }
 
-  // 4. Load Nimble Character
+  // 4. Nimble Character
   const nimbleGltf = await gltfLoader.loadAsync('./nimble_character.glb');
   const root = nimbleGltf.scene;
-  
   root.scale.set(1.58, 1.58, 1.58);
-  
-  root.traverse(o => { if(o.isMesh) { o.material = getGlassMat(o.material); o.castShadow = true; }});
+
+  // Per-material assignment: glass body, foam hat/board (board hidden until Level 2)
+  root.traverse(o => {
+    if(!o.isMesh) return;
+    o.castShadow = true;
+    const mn = o.material ? o.material.name : '';
+    if(mn === 'hat_foam') { o.material = getFoamMat(); hatParts.push(o); }
+    else if(mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    else { o.material = getGlassMat(o.material); }
+  });
   playerGroup.add(root);
 
   mixer = new THREE.AnimationMixer(root);
-  const animCfgs = { idle: { loop: true }, skateboard: { loop: true }, jump: { loop: false }, running_slide: { loop: false } };
-  
-  // STRIP ROOT MOTION SCRIPT
+  const animCfgs = { idle: { loop: true }, running: { loop: true }, skateboard: { loop: true }, jump: { loop: false }, running_slide: { loop: false } };
+
+  // STRIP ROOT MOTION
   for(const clip of nimbleGltf.animations) {
     clip.tracks.forEach(track => {
       if (track.name.endsWith('.position')) {
@@ -254,17 +285,16 @@ async function initGame() {
         for(let i = 0; i < track.values.length; i += 3) {
            maxDiff = Math.max(maxDiff, Math.abs(track.values[i] - track.values[0]), Math.abs(track.values[i+2] - track.values[2]));
         }
-        if (maxDiff > 0.1) { 
+        if (maxDiff > 0.1) {
            const startX = track.values[0];
            const startZ = track.values[2];
            for(let i = 0; i < track.values.length; i += 3) {
-              track.values[i] = startX; 
-              track.values[i+2] = startZ; 
+              track.values[i] = startX;
+              track.values[i+2] = startZ;
            }
         }
       }
     });
-
     if(animCfgs[clip.name]) {
       const a = mixer.clipAction(clip);
       if(!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
@@ -273,17 +303,40 @@ async function initGame() {
   }
 
   mixer.addEventListener('finished', (e) => {
-    if(e.action === actions['jump']) { state.onGround = true; playAnim(keys.left || keys.right ? 'skateboard' : 'idle'); }
-    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(keys.left || keys.right ? 'skateboard' : 'idle'); }
+    const moveAnim = state.level === 2 ? 'skateboard' : 'running';
+    if(e.action === actions['jump']) { state.onGround = true; playAnim((keys.left || keys.right) ? moveAnim : 'idle'); }
+    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim((keys.left || keys.right) ? moveAnim : 'idle'); }
   });
 
   playAnim('idle');
   generateLevel(models);
+  updateHUD();
 
   document.getElementById('loading').style.opacity = '0';
   setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
 
   renderer.setAnimationLoop(gameLoop);
+}
+
+// ----------------------------------------------------
+// LEVEL PROGRESSION
+// ----------------------------------------------------
+function goToLevel2() {
+  if(state.level === 2) return;
+  state.level = 2;
+  boardParts.forEach(m => m.visible = true);                             // Nimble hops on the board
+  document.body.style.backgroundImage = "url('./BACKGROUND_02.png')";    // swap scenery (fallback color until uploaded)
+  updateHUD();
+  showBanner('LEVEL 2 &middot; SKATE!');
+  if(currentAnim === 'running') playAnim('skateboard');
+}
+
+let bannerTimer = null;
+function showBanner(text) {
+  const b = document.getElementById('banner');
+  b.innerHTML = text; b.style.opacity = '1';
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { b.style.opacity = '0'; }, 1800);
 }
 
 // ----------------------------------------------------
@@ -309,7 +362,6 @@ function generateLevel(models) {
       cumulative += el.chance;
       if (rand < cumulative) { chosen = el; break; }
     }
-
     if (chosen && models[chosen.key]) {
       let mesh = models[chosen.key].clone();
       mesh.position.set(x, chosen.isY, 0);
@@ -337,17 +389,14 @@ function fireSoap() {
   if(state.ammo <= 0 || state.isGameOver) return;
   state.ammo--;
   updateHUD();
-  
   const geo = new THREE.SphereGeometry(0.15, 16, 16);
   const soap = new THREE.Mesh(geo, soapMat);
-  
   const direction = state.facingRight ? 1 : -1;
   soap.position.copy(playerGroup.position);
-  soap.position.y += 1.25; 
+  soap.position.y += 1.25;
   soap.position.x += direction * 0.5;
-  soap.position.z += 0.2; 
+  soap.position.z += 0.2;
   soap.castShadow = true;
-  
   scene.add(soap);
   soaps.push({ mesh: soap, dir: direction, life: 1.5 });
 }
@@ -356,7 +405,6 @@ function takeDamage() {
   if(state.isGameOver) return;
   state.lives--;
   updateHUD();
-  
   playerGroup.traverse(child => {
     if(child.isMesh && child.material && child.material.attenuationColor) {
       let orig = child.material.attenuationColor.getHex();
@@ -364,10 +412,9 @@ function takeDamage() {
       setTimeout(() => { if(child.material) child.material.attenuationColor.setHex(orig); }, 300);
     }
   });
-
   if (state.lives <= 0) {
     state.isGameOver = true;
-    playAnim('idle'); 
+    playAnim('idle');
     alert("Game Over! Final Score: " + state.score);
   }
 }
@@ -376,6 +423,7 @@ function updateHUD() {
   document.getElementById('score').innerText = state.score;
   document.getElementById('ammo').innerText = state.ammo;
   document.getElementById('lives').innerText = state.lives;
+  document.getElementById('level').innerText = state.level;
 }
 
 // ----------------------------------------------------
@@ -389,26 +437,29 @@ function gameLoop() {
 
   if (!state.isGameOver) {
     const moveSpeed = state.baseSpeed * state.speedMultiplier;
+    const moveAnim = state.level === 2 ? 'skateboard' : 'running';   // level 1 = run, level 2 = skate
 
-    // Movement: Slide uses built-in momentum, replacing standard walk checks
     if (state.isSliding) {
       playerGroup.position.x += moveSpeed * 1.3 * (state.facingRight ? 1 : -1) * dt;
-    } 
+    }
     else if(keys.right) {
       playerGroup.position.x += moveSpeed * dt;
-      playerGroup.rotation.y = (Math.PI / 2) - angleCheat; 
+      playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
       state.facingRight = true;
-      if(state.onGround) playAnim('skateboard'); 
-    } 
+      if(state.onGround) playAnim(moveAnim);
+    }
     else if(keys.left) {
       playerGroup.position.x -= moveSpeed * dt;
-      playerGroup.rotation.y = -(Math.PI / 2) + angleCheat; 
+      playerGroup.rotation.y = -(Math.PI / 2) + angleCheat;
       state.facingRight = false;
-      if(state.onGround) playAnim('skateboard'); 
-    } 
+      if(state.onGround) playAnim(moveAnim);
+    }
     else {
       if(state.onGround) playAnim('idle');
     }
+
+    // Level transition: reach the end of level 1 -> hop on the board for level 2
+    if(state.level === 1 && playerGroup.position.x > LEVEL1_END) goToLevel2();
 
     // Gravity & Jump
     if(!state.onGround) {
@@ -422,13 +473,12 @@ function gameLoop() {
       }
     }
 
-    const playerHitRadius = state.isSliding ? 0.66 : 1.32; 
+    const playerHitRadius = state.isSliding ? 0.66 : 1.32;
     const playerCenterY = playerGroup.position.y + playerHitRadius;
     const playerPos2D = new THREE.Vector2(playerGroup.position.x, playerCenterY);
 
     for (let ent of entities) {
       if (!ent.active) continue;
-
       if (ent.type === 'enemy') {
         ent.mesh.position.x -= 2.0 * dt;
         ent.mesh.position.y = 0.4 + Math.sin(clock.elapsedTime * 5 + ent.mesh.position.x) * 0.1;
@@ -437,33 +487,31 @@ function gameLoop() {
         ent.mesh.rotation.y += dt;
         ent.mesh.position.y += Math.sin(clock.elapsedTime * 3 + ent.mesh.position.x) * 0.003;
       }
-      if (ent.type === 'score') {
-        ent.mesh.rotation.y += dt * 2;
-      }
+      if (ent.type === 'score') { ent.mesh.rotation.y += dt * 2; }
 
       let entPos2D = new THREE.Vector2(ent.mesh.position.x, ent.mesh.position.y + ent.radius/2);
       let dist = playerPos2D.distanceTo(entPos2D);
 
-      if (dist < playerHitRadius + ent.radius - 0.2) { 
+      if (dist < playerHitRadius + ent.radius - 0.2) {
         if (ent.type === 'ammo') {
           state.ammo += 5; updateHUD();
           ent.active = false; scene.remove(ent.mesh);
-        } 
+        }
         else if (ent.type === 'score') {
           state.score += 500; updateHUD();
           ent.active = false; scene.remove(ent.mesh);
         }
         else if (ent.type === 'enemy' || (ent.type === 'cleanable' && !ent.isClean) || (ent.type === 'hazard' && ent.subType === 'damage')) {
           takeDamage();
-          ent.active = false; 
-          if (ent.type === 'enemy') scene.remove(ent.mesh); 
+          ent.active = false;
+          if (ent.type === 'enemy') scene.remove(ent.mesh);
         }
         else if (ent.type === 'hazard' && ent.subType === 'slide') {
           if (!state.isSliding && state.onGround) {
             state.isSliding = true;
             playAnim('running_slide');
             takeDamage();
-            ent.active = false; 
+            ent.active = false;
             setTimeout(() => { state.isSliding = false; }, 1200);
           }
         }
@@ -479,14 +527,11 @@ function gameLoop() {
       let s = soaps[i];
       s.mesh.position.x += 12 * s.dir * dt;
       s.life -= dt;
-      
       let hit = false;
       let soapPos = new THREE.Vector2(s.mesh.position.x, s.mesh.position.y);
-
       for(let ent of entities) {
         if(!ent.active) continue;
         let entPos2D = new THREE.Vector2(ent.mesh.position.x, ent.mesh.position.y + ent.radius/2);
-        
         if(soapPos.distanceTo(entPos2D) < ent.radius + 0.3) {
           if(ent.type === 'cleanable' && !ent.isClean) {
             ent.isClean = true;
@@ -502,7 +547,6 @@ function gameLoop() {
           }
         }
       }
-
       if(s.life <= 0 || hit) {
         scene.remove(s.mesh);
         soaps.splice(i, 1);
@@ -511,13 +555,11 @@ function gameLoop() {
   }
 
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
-  
-  // Looking low to properly show the counter taking up the bottom third
   camera.lookAt(camera.position.x, 0.5, 0);
 
   document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
-  
-  dirLight.position.x = camera.position.x + 8; 
+
+  dirLight.position.x = camera.position.x + 8;
   dirLight.target.position.set(camera.position.x, 0, 0);
 
   renderer.render(scene, camera);
