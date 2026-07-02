@@ -48,6 +48,26 @@
     text-shadow: 0 3px 18px rgba(0,0,0,0.6), 0 0 20px rgba(127,227,160,0.6);
     opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center;
   }
+  .popup {
+    position: absolute; z-index: 15; pointer-events: none;
+    font-weight: 900; font-size: 22px; letter-spacing: 1px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.55);
+    animation: floatup 0.9s ease-out forwards;
+  }
+  @keyframes floatup {
+    0%   { transform: translate(-50%, 0) scale(0.6); opacity: 0; }
+    15%  { transform: translate(-50%, -14px) scale(1.15); opacity: 1; }
+    100% { transform: translate(-50%, -70px) scale(1.0); opacity: 0; }
+  }
+  #gameover {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 50;
+    background: rgba(10, 13, 20, 0.75); backdrop-filter: blur(6px);
+    display: none; flex-direction: column; justify-content: center; align-items: center;
+    color: #fff; text-align: center;
+  }
+  #gameover h1 { font-size: 52px; margin: 0 0 10px; letter-spacing: 4px; text-shadow: 0 0 24px rgba(255,85,68,0.7); }
+  #gameover p  { font-size: 22px; margin: 6px 0; color: #cfe; }
+  #gameover .hint { margin-top: 24px; font-size: 16px; color: #7fe3a0; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -62,18 +82,27 @@
 
 <div id="hud">
   <div class="hud-row"><span class="level-text">Level:</span> <span id="level" class="level-text">1</span></div>
-  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">200</span></div>
+  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">5</span></div>
   <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
+  <div class="hud-row"><span>Distance:</span> <span id="dist">0 m</span></div>
   <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
 </div>
 
 <div id="banner"></div>
 
+<div id="gameover">
+  <h1>GAME OVER</h1>
+  <p>Score: <span id="go-score">0</span></p>
+  <p>Distance: <span id="go-dist">0 m</span></p>
+  <div class="hint">Press <span class="key">R</span> to run again</div>
+</div>
+
 <div id="controls-help">
-  <span class="key">&larr;</span><span class="key">&rarr;</span><span class="key">&uarr;</span><span class="key">&darr;</span> Move &nbsp;|&nbsp;
   <span class="key">SPACE</span> Jump &nbsp;|&nbsp;
   <span class="key">SHIFT</span> Slide &nbsp;|&nbsp;
-  <span class="key">F</span> Fire Soap
+  <span class="key">F</span> Fire Soap &nbsp;|&nbsp;
+  <span class="key">&rarr;</span> Boost &nbsp;|&nbsp;
+  <span class="key">&larr;</span> Brake
 </div>
 
 <script type="module">
@@ -81,43 +110,46 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-// --- Playfield bounds (the countertop the player roams on) ---
-const ZMIN = -0.5, ZMAX = 5.0;          // depth range: back edge (far) -> front (near camera)
-const START_Z = (ZMIN + ZMAX) / 2;      // Nimble starts mid-depth
-const XMIN = 0;                          // can't retreat off the left of the screen
-const LEVEL1_END = 200;                  // travel this far right to reach Level 2
-
-// --- Game State ---
-const state = {
-  level: 1, score: 0, ammo: 20, lives: 200,
-  baseSpeed: 6.5, speedMultiplier: 1.0,
-  gravity: 15, jumpPower: 6.5,
-  onGround: true, isSliding: false, facingRight: true, isGameOver: false
-};
-const keys = { right: false, left: false, up: false, down: false };
-const entities = [];
-const soaps = [];
+// ----------------------------------------------------
+// CONFIG — single lane runner: Nimble never stops, the
+// kitchen comes to him. One Z lane, all action in X/Y.
+// ----------------------------------------------------
+const LANE_Z = 2.2;                 // the one depth lane everything lives on
+const BASE_SPEED = 6.0;
+const LEVEL_LEN = 300;              // metres per level
 const angleCheat = 0.49;
 
-// Per-model tuning: target size (so nothing is giant), gameplay type, and placement.
-// floatY = collectible hovers at this height (needs a jump/depth move); else it rests ON the counter.
+const state = {
+  level: 1, score: 0, ammo: 10, lives: 5,
+  speed: BASE_SPEED, boost: false, brake: false,
+  gravity: 15, jumpPower: 6.6,
+  onGround: true, isSliding: false, isGameOver: false,
+  invuln: 0, excite: 0, started: false
+};
+const entities = [];
+const soaps = [];
+const fgPlanes = [];
+
+// Per-model tuning. floatY = collectible hover band (jump to grab the high ones).
 const typeCfg = {
-  emerald: { type:'ammo',      chance:0.26, size:0.55, floatY:[1.3, 2.4] },
-  star:    { type:'score',     chance:0.06, size:0.8,  floatY:[2.4, 3.3] },
-  slime:   { type:'enemy',     chance:0.11, size:1.0,  ground:true },
-  oil:     { type:'hazard', subType:'slide',  chance:0.07, size:1.6, ground:true },
-  plant:   { type:'hazard', subType:'damage', chance:0.08, size:1.3, ground:true, sway:true },
-  salt:    { type:'hazard', subType:'slow',   chance:0.07, size:0.8, ground:true, roll:true },
-  fork:    { type:'cleanable', chance:0.10, size:1.1, ground:true, bounce:true },
-  plates:  { type:'cleanable', chance:0.14, size:1.3, ground:true, bounce:true }
+  emerald: { type:'ammo',      size:0.55, floatY:[1.5, 2.6] },
+  star:    { type:'score',     size:0.8,  floatY:[2.4, 3.1] },
+  slime:   { type:'enemy',     size:1.0,  ground:true },
+  oil:     { type:'hazard', subType:'slide',  size:1.6, ground:true },
+  plant:   { type:'hazard', subType:'damage', size:1.3, ground:true, sway:true },
+  salt:    { type:'hazard', subType:'slow',   size:0.8, ground:true, roll:true },
+  fork:    { type:'cleanable', size:1.1, ground:true, bounce:true },
+  plates:  { type:'cleanable', size:1.3, ground:true, bounce:true }
 };
 
-// --- Renderer / Scene / Camera ---
+// ----------------------------------------------------
+// Renderer / Scene / Camera / Lights
+// ----------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+renderer.toneMappingExposure = 1.3;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setClearColor(0x000000, 0);
@@ -128,9 +160,9 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
-camera.position.set(0, 3.0, 17);        // low, flat framing
+camera.position.set(0, 3.0, 17);
 
-const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.8);
+const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.9);
 dirLight.position.set(8, 8, 4);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
@@ -138,108 +170,217 @@ dirLight.shadow.camera.near = 0.5; dirLight.shadow.camera.far = 30;
 dirLight.shadow.camera.left = -15; dirLight.shadow.camera.right = 15;
 dirLight.shadow.bias = -0.001;
 scene.add(dirLight); scene.add(dirLight.target);
-scene.add(new THREE.AmbientLight(0xffe0c0, 0.6));
+scene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a6b4a, 0.55));
+const rimLight = new THREE.DirectionalLight(0xbfe8ff, 0.8);   // cool rim from behind
+rimLight.position.set(-6, 5, -6);
+scene.add(rimLight);
 
-const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
-const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
-
-// --- Contact shadow blobs: the depth cue. Each object drops a soft footprint on the
-// counter so you can read its X-Z position; a collectible's blob turns green when you're
-// lined up in its depth lane (then jump/grab). ---
-function makeBlobTexture(){
-  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 64;
-  const g = cnv.getContext('2d');
-  const grd = g.createRadialGradient(32,32,2,32,32,30);
-  grd.addColorStop(0,'rgba(255,255,255,0.55)'); grd.addColorStop(1,'rgba(255,255,255,0)');
-  g.fillStyle = grd; g.fillRect(0,0,64,64);
-  return new THREE.CanvasTexture(cnv);
-}
-const blobTex = makeBlobTexture();
-function makeBlob(radius, colorHex){
-  const mat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, color: colorHex });
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(radius*3.0, radius*3.0), mat);
-  m.rotation.x = -Math.PI/2; m.position.y = 0.02; m.renderOrder = 1;
-  return m;
+// ----------------------------------------------------
+// Materials — Nimble glass, frothy foam, emerald drops
+// ----------------------------------------------------
+function addRim(mat, color, strength) {          // fresnel rim glow, sells the froth
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uRimColor = { value: new THREE.Color(color) };
+    sh.uniforms.uRimStrength = { value: strength };
+    sh.fragmentShader = 'uniform vec3 uRimColor;\nuniform float uRimStrength;\n' + sh.fragmentShader
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        float rimF = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0), 3.0);
+        totalEmissiveRadiance += uRimColor * rimF * uRimStrength;`);
+  };
 }
 
-// --- Player ---
-let playerGroup = new THREE.Group();
-playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
-playerGroup.position.set(0, 0, START_Z);
-scene.add(playerGroup);
-const playerBlob = makeBlob(0.75, 0x7fe3a0);   // Nimble's green footprint
-scene.add(playerBlob);
-const velocity = new THREE.Vector3(0, 0, 0);
-let mixer, actions = {}, currentAnim = null;
-let hatParts = [], boardParts = [];
-
-// Body glass (transmission 0.985) + foam material for hat/board
-const P = { transmission: 0.985, ior: 1.45, roughness: 0.06, thickness: 0.4, attenuationDistance: 1.4, attenuationColor: '#39d24e', clearcoat: 1.0 };
+const P = { transmission: 0.985, ior: 1.45, roughness: 0.05, thickness: 0.4, attenuationDistance: 1.3, attenuationColor: '#39d24e', clearcoat: 1.0 };
 const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
-function getGlassMat(src) {
-  let mat = new THREE.MeshPhysicalMaterial({
-    map: src.map || null, normalMap: src.normalMap || null,
+function getGlassMat(src, useThickMap = true) {
+  const mat = new THREE.MeshPhysicalMaterial({
+    map: (src && src.map) || null, normalMap: (src && src.normalMap) || null,
     metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
-    thickness: P.thickness, thicknessMap: thicknessTex,
+    thickness: P.thickness, thicknessMap: useThickMap ? thicknessTex : null,
     attenuationColor: new THREE.Color(P.attenuationColor), attenuationDistance: P.attenuationDistance,
-    clearcoat: P.clearcoat, clearcoatRoughness: 0.08, transparent: true
+    clearcoat: P.clearcoat, clearcoatRoughness: 0.06,
+    iridescence: 0.18, iridescenceIOR: 1.3,
+    envMapIntensity: 1.6, specularIntensity: 1.0, transparent: true
   });
-  if(mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+  if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+  addRim(mat, '#8affc1', 0.18);
   return mat;
 }
 const bubbleTex = new THREE.TextureLoader().load('./bubble_normal.png', t => {
-  t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(4,4);
+  t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 6);
 });
 function getFoamMat() {
-  return new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#f4f8ff'), roughness: 0.55, metalness: 0,
-    sheen: 1.0, sheenRoughness: 0.4, sheenColor: new THREE.Color('#ffffff'),
-    transmission: 0.08, ior: 1.33, thickness: 0.15,
-    clearcoat: 0.4, clearcoatRoughness: 0.3, iridescence: 0.35, iridescenceIOR: 1.30,
-    normalMap: bubbleTex, normalScale: new THREE.Vector2(0.7, 0.7),
-    envMapIntensity: 1.1, transparent: true
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#f6f9ff'), roughness: 0.42, metalness: 0,
+    sheen: 1.0, sheenRoughness: 0.35, sheenColor: new THREE.Color('#ffffff'),
+    transmission: 0.12, ior: 1.33, thickness: 0.2,
+    clearcoat: 0.5, clearcoatRoughness: 0.22, iridescence: 0.4, iridescenceIOR: 1.30,
+    normalMap: bubbleTex, normalScale: new THREE.Vector2(1.0, 1.0),
+    envMapIntensity: 1.35, transparent: true
   });
+  addRim(mat, '#ffffff', 0.35);
+  return mat;
+}
+const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
+const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
+
+// ----------------------------------------------------
+// Tiny WebAudio synth for feedback blips
+// ----------------------------------------------------
+let audioCtx = null;
+function initAudio() { if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} } }
+function beep(freq, dur, type = 'sine', vol = 0.08, slideTo = null) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, audioCtx.currentTime + dur);
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+const sfx = {
+  collect: () => beep(880, 0.12, 'square', 0.06, 1350),
+  star:    () => { beep(660, 0.1, 'square', 0.06); setTimeout(() => beep(880, 0.1, 'square', 0.06), 90); setTimeout(() => beep(1320, 0.16, 'square', 0.06), 180); },
+  hit:     () => beep(130, 0.25, 'sawtooth', 0.1, 60),
+  fire:    () => beep(420, 0.1, 'triangle', 0.07, 90),
+  clean:   () => beep(520, 0.14, 'sine', 0.07, 1040),
+  jump:    () => beep(300, 0.12, 'sine', 0.05, 520),
+  land:    () => beep(190, 0.07, 'sine', 0.04),
+  level:   () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.06), i * 110)); }
+};
+
+// ----------------------------------------------------
+// Contact shadow blob + particles + score popups
+// ----------------------------------------------------
+function makeBlobTexture() {
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 64;
+  const g = cnv.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+  grd.addColorStop(0, 'rgba(255,255,255,0.55)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(cnv);
+}
+const blobTex = makeBlobTexture();
+function makeBlob(radius, colorHex) {
+  const mat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, color: colorHex });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(radius * 3.0, radius * 3.0), mat);
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.02; m.renderOrder = 1;
+  return m;
+}
+
+// sprite particle pool (foam puffs & sparkles)
+const particles = [];
+const PARTICLE_MAX = 70;
+for (let i = 0; i < PARTICLE_MAX; i++) {
+  const mat = new THREE.SpriteMaterial({ map: blobTex, transparent: true, depthWrite: false, color: 0xffffff });
+  const s = new THREE.Sprite(mat);
+  s.visible = false; scene.add(s);
+  particles.push({ s, vel: new THREE.Vector3(), life: 0, maxLife: 1, size: 0.2, grav: 0 });
+}
+function burst(pos, colorHex, n, speed, up = 2.0, size = 0.22, grav = 4.5) {
+  let spawned = 0;
+  for (const p of particles) {
+    if (p.life > 0) continue;
+    p.life = p.maxLife = 0.5 + Math.random() * 0.35;
+    p.size = size * (0.6 + Math.random() * 0.8);
+    p.grav = grav;
+    p.s.material.color.setHex(colorHex);
+    p.s.position.copy(pos);
+    p.vel.set((Math.random() - 0.5) * speed, Math.random() * up, (Math.random() - 0.5) * speed * 0.4);
+    p.s.visible = true;
+    if (++spawned >= n) break;
+  }
+}
+function updateParticles(dt) {
+  for (const p of particles) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.s.visible = false; continue; }
+    p.vel.y -= p.grav * dt;
+    p.s.position.addScaledVector(p.vel, dt);
+    const f = p.life / p.maxLife;
+    p.s.scale.setScalar(p.size * (0.5 + f));
+    p.s.material.opacity = f;
+  }
+}
+const _v = new THREE.Vector3();
+function popup(worldPos, text, color) {
+  _v.copy(worldPos).project(camera);
+  const el = document.createElement('div');
+  el.className = 'popup';
+  el.style.left = ((_v.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+  el.style.top = ((-_v.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+  el.style.color = color;
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 950);
 }
 
 // ----------------------------------------------------
-// ASYNC ASSET LOADING
+// Player
 // ----------------------------------------------------
+const playerGroup = new THREE.Group();
+playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
+playerGroup.position.set(0, 0, LANE_Z);
+scene.add(playerGroup);
+const playerBlob = makeBlob(0.75, 0x7fe3a0);
+scene.add(playerBlob);
+const velocity = new THREE.Vector3(0, 0, 0);
+let mixer, actions = {}, currentAnim = null;
+let hatParts = [], boardParts = [], headBone = null;
+let squash = 1.0, squashTarget = 1.0;
+let floor = null, counterTex = null;
+
+function playAnim(name, fade = 0.18) {
+  if (!actions[name] || name === currentAnim) return;
+  const next = actions[name], prev = actions[currentAnim];
+  next.reset();
+  if (prev) next.crossFadeFrom(prev, fade, false);
+  next.play();
+  currentAnim = name;
+}
+function moveAnim() { return state.level >= 2 ? 'skateboard' : 'running'; }
+
+// ----------------------------------------------------
+// ASSET LOADING
+// ----------------------------------------------------
+const models = {};
 async function initGame() {
   const gltfLoader = new GLTFLoader();
   const texLoader = new THREE.TextureLoader();
 
-  // Countertop (shallow slab; back edge just behind the run area)
-  const counterTex = await texLoader.loadAsync('./couter_top_texture.png');
+  // Countertop: box travels with the player, texture offset scrolls back,
+  // so the counter is endless but the wood visually stays put.
+  counterTex = await texLoader.loadAsync('./couter_top_texture.png');
   counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping;
   counterTex.repeat.set(150, 3);
   const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
-  floor.position.set(250, -5, 6);        // top surface at y=0; back edge z=-1, front z=13
+  floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
+  floor.position.set(0, -5, 6);
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // 2D foreground decor
+  // 2D foreground decor (recycled as the run scrolls)
   const fgNames = ['bottle.png','bowl.png','cloth.png','fork.png','plant_02.png','plant.png','salt.png','spoon.png','wood_surface.png'];
   const fgTextures = [];
   for (const name of fgNames) {
     try { fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`)); }
-    catch(e) { console.warn("Missing foreground element: " + name); }
+    catch(e) { console.warn('Missing foreground element: ' + name); }
   }
-  if(fgTextures.length > 0) {
-    for (let x = -20; x < 500; x += 18 + Math.random() * 20) {
+  if (fgTextures.length > 0) {
+    for (let x = -20; x < 200; x += 18 + Math.random() * 20) {
       const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
       const aspect = tex.image.width / tex.image.height;
       const h = 5 + Math.random() * 5;
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(h*aspect, h), mat);
-      plane.position.set(x, (Math.random()*1.5) - h/2, 11 + Math.random()*3);
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), mat);
+      plane.position.set(x, (Math.random() * 1.5) - h / 2, 11 + Math.random() * 3);
       scene.add(plane);
+      fgPlanes.push(plane);
     }
   }
 
-  // 3D element models: measure each, compute a scale (so nothing is giant) and a
-  // ground offset (so it rests ON the counter instead of clipping through it).
-  const models = {};
+  // 3D element models
   const modelPaths = {
     emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
     slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
@@ -256,11 +397,15 @@ async function initGame() {
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
       const cfg = typeCfg[key];
       cfg.scaleFactor = cfg.size / maxDim;
-      cfg.groundOffset = -box.min.y * cfg.scaleFactor;     // lifts bottom to y=0
+      cfg.groundOffset = -box.min.y * cfg.scaleFactor;
       cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
-      obj.traverse(c => { if(c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
+      obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+      // the emerald drops are little Nimbles: same glass shader
+      if (key === 'emerald') {
+        obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });
+      }
       models[key] = obj;
-    } catch(e) { console.warn("Missing model: " + path); }
+    } catch(e) { console.warn('Missing model: ' + path); }
   }
 
   // Nimble
@@ -268,44 +413,50 @@ async function initGame() {
   const root = nimbleGltf.scene;
   root.scale.set(1.58, 1.58, 1.58);
   root.traverse(o => {
-    if(!o.isMesh) return;
+    if (o.isBone && /Head$/.test(o.name) && !/HeadTop/.test(o.name)) headBone = o;
+    if (!o.isMesh) return;
     o.castShadow = true;
+    o.frustumCulled = false;
     const mn = o.material ? o.material.name : '';
-    if(mn === 'hat_foam')   { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
-    else if(mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
+    else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
     else { o.material = getGlassMat(o.material); }
   });
   playerGroup.add(root);
 
   mixer = new THREE.AnimationMixer(root);
-  const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true}, jump:{loop:false}, running_slide:{loop:false} };
-  for(const clip of nimbleGltf.animations) {
+  const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
+                     jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
+  for (const clip of nimbleGltf.animations) {
     clip.tracks.forEach(track => {                 // strip root motion so he stays put
       if (track.name.endsWith('.position')) {
         let maxDiff = 0;
-        for(let i=0;i<track.values.length;i+=3)
-          maxDiff = Math.max(maxDiff, Math.abs(track.values[i]-track.values[0]), Math.abs(track.values[i+2]-track.values[2]));
+        for (let i = 0; i < track.values.length; i += 3)
+          maxDiff = Math.max(maxDiff, Math.abs(track.values[i] - track.values[0]), Math.abs(track.values[i + 2] - track.values[2]));
         if (maxDiff > 0.1) {
-          const sx=track.values[0], sz=track.values[2];
-          for(let i=0;i<track.values.length;i+=3){ track.values[i]=sx; track.values[i+2]=sz; }
+          const sx = track.values[0], sz = track.values[2];
+          for (let i = 0; i < track.values.length; i += 3) { track.values[i] = sx; track.values[i + 2] = sz; }
         }
       }
     });
-    if(animCfgs[clip.name]) {
+    if (animCfgs[clip.name]) {
       const a = mixer.clipAction(clip);
-      if(!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+      if (!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
       actions[clip.name] = a;
     }
   }
   mixer.addEventListener('finished', (e) => {
-    const moveAnim = state.level === 2 ? 'skateboard' : 'running';
-    if(e.action === actions['jump']) { state.onGround = true; playAnim(isMoving() ? moveAnim : 'idle'); }
-    if(e.action === actions['running_slide']) { state.isSliding = false; playAnim(isMoving() ? moveAnim : 'idle'); }
+    if (e.action === actions['jump'])          { state.onGround = true; playAnim(moveAnim()); }
+    if (e.action === actions['running_slide']) { state.isSliding = false; playAnim(moveAnim()); }
+    if (e.action === actions['skating_start']) { playAnim('skateboard'); }
+    if (e.action === actions['laugh'])         { playAnim(moveAnim()); }
   });
 
-  playAnim('idle');
-  generateLevel(models);
+  playAnim('running');           // never idle: the dash starts immediately
+  state.started = true;
   updateHUD();
+  showBanner('GO GO GO!');
+  sfx.level();
 
   document.getElementById('loading').style.opacity = '0';
   setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
@@ -313,17 +464,91 @@ async function initGame() {
 }
 
 // ----------------------------------------------------
-// LEVEL PROGRESSION
+// ENDLESS SPAWNER — everything spawns ahead on the lane
 // ----------------------------------------------------
-function goToLevel2() {
-  if(state.level === 2) return;
-  state.level = 2;
-  boardParts.forEach(m => m.visible = true);
-  hatParts.forEach(m => m.visible = true);
-  document.body.style.backgroundImage = "url('./BACKGROUND_02.png')";
+let spawnX = 14;
+function spawnEntity(key, x, y, extra = {}) {
+  if (!models[key]) return null;
+  const cfg = typeCfg[key];
+  const mesh = models[key].clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  mesh.position.set(x, y, LANE_Z);
+  mesh.rotation.y = Math.random() * Math.PI * 2;
+  scene.add(mesh);
+  const shadow = makeBlob(cfg.size * 0.5, extra.shadowColor || 0x000000);
+  shadow.position.set(x, 0.02, LANE_Z);
+  scene.add(shadow);
+  const ent = {
+    mesh, shadow, key, type: cfg.type, subType: cfg.subType, cfg,
+    radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
+    baseY: y, phase: Math.random() * 6.28, active: true, isClean: false,
+    jumped: false, crossed: false
+  };
+  entities.push(ent);
+  return ent;
+}
+function spawnChunk() {
+  const roll = Math.random();
+  const g = k => typeCfg[k].groundOffset || 0;
+  if (roll < 0.26 && models.emerald) {
+    // arc of emeralds traced along a jump
+    const n = 4 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      spawnEntity('emerald', spawnX + i * 0.62, 1.45 + Math.sin(Math.PI * t) * 1.35, { shadowColor: 0x39d24e });
+    }
+    spawnX += n * 0.62 + 2.0;
+  } else if (roll < 0.36 && models.star) {
+    const fy = typeCfg.star.floatY;
+    spawnEntity('star', spawnX, fy[0] + Math.random() * (fy[1] - fy[0]), { shadowColor: 0xffd24e });
+    spawnX += 2.0;
+  } else if (roll < 0.56) {
+    const key = ['slime', 'oil', 'plant', 'salt'][Math.floor(Math.random() * 4)];
+    if (models[key]) spawnEntity(key, spawnX, g(key));
+    spawnX += 2.4;
+  } else if (roll < 0.78) {
+    const key = Math.random() < 0.5 ? 'fork' : 'plates';
+    if (models[key]) spawnEntity(key, spawnX, g(key));
+    spawnX += 2.4;
+  } else if (models.emerald) {
+    const fy = typeCfg.emerald.floatY;
+    spawnEntity('emerald', spawnX, fy[0] + Math.random() * (fy[1] - fy[0]), { shadowColor: 0x39d24e });
+    spawnX += 1.6;
+  }
+  spawnX += state.speed * (0.55 + Math.random() * 0.75);   // reaction-time gap scales with speed
+}
+function despawnBehind(px) {
+  for (let i = entities.length - 1; i >= 0; i--) {
+    const ent = entities[i];
+    if (!ent.active || ent.mesh.position.x < px - 18) {
+      scene.remove(ent.mesh);
+      if (ent.shadow) scene.remove(ent.shadow);
+      entities.splice(i, 1);
+    }
+  }
+}
+
+// ----------------------------------------------------
+// LEVELS / HUD / BANNERS
+// ----------------------------------------------------
+function checkLevel() {
+  const lvl = 1 + Math.floor(playerGroup.position.x / LEVEL_LEN);
+  if (lvl <= state.level) return;
+  state.level = lvl;
+  sfx.level();
+  state.excite = 1.0;
+  if (lvl === 2) {
+    boardParts.forEach(m => m.visible = true);
+    hatParts.forEach(m => m.visible = true);
+    document.body.style.backgroundImage = "url('./BACKGROUND_02.png')";
+    showBanner('LEVEL 2 &middot; SKATE!');
+    playAnim('skating_start');
+    burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 0xffffff, 14, 3.5, 3.0, 0.3);
+  } else {
+    showBanner('LEVEL ' + lvl + ' &middot; FASTER!');
+    playAnim('laugh');
+  }
   updateHUD();
-  showBanner('LEVEL 2 &middot; SKATE!');
-  if(currentAnim === 'running') playAnim('skateboard');
 }
 let bannerTimer = null;
 function showBanner(text) {
@@ -332,116 +557,91 @@ function showBanner(text) {
   clearTimeout(bannerTimer);
   bannerTimer = setTimeout(() => { b.style.opacity = '0'; }, 1800);
 }
-
-// ----------------------------------------------------
-// LEVEL GENERATION (spread across X and across depth lanes Z)
-// ----------------------------------------------------
-function generateLevel(models) {
-  const list = Object.entries(typeCfg);
-  for (let x = 15; x < 450; x += 5 + Math.random() * 4) {
-    let r = Math.random(), cum = 0, key = null;
-    for (const [k, c] of list) { cum += c.chance; if (r < cum) { key = k; break; } }
-    if (!key || !models[key]) continue;
-    const cfg = typeCfg[key];
-    const mesh = models[key].clone();
-    mesh.scale.setScalar(cfg.scaleFactor);
-    const z = ZMIN + 0.4 + Math.random() * (ZMAX - ZMIN - 0.8);   // random depth lane
-    const y = cfg.floatY ? (cfg.floatY[0] + Math.random()*(cfg.floatY[1]-cfg.floatY[0])) : cfg.groundOffset;
-    mesh.position.set(x, y, z);
-    mesh.rotation.y = Math.random() * Math.PI * 2;
-    scene.add(mesh);
-    const shadow = makeBlob(cfg.size * 0.5, 0x000000);   // footprint on the counter
-    shadow.position.set(x, 0.02, z);
-    scene.add(shadow);
-    entities.push({
-      mesh, shadow, type: cfg.type, subType: cfg.subType, cfg,
-      radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
-      baseY: y, phase: Math.random() * 6.28, active: true, isClean: false
-    });
-  }
-}
-
-// ----------------------------------------------------
-// HELPERS
-// ----------------------------------------------------
-function isMoving() { return keys.left || keys.right || keys.up || keys.down; }
-
-function playAnim(name, fade = 0.2) {
-  if(!actions[name] || name === currentAnim) return;
-  const next = actions[name], prev = actions[currentAnim];
-  next.reset();
-  if(prev) next.crossFadeFrom(prev, fade, false);
-  next.play();
-  currentAnim = name;
-}
-
-function fireSoap() {
-  if(state.ammo <= 0 || state.isGameOver) return;
-  state.ammo--; updateHUD();
-  const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
-  const dir = state.facingRight ? 1 : -1;
-  soap.position.set(playerGroup.position.x + dir*0.5, playerGroup.position.y + 1.25, playerGroup.position.z);
-  soap.castShadow = true;
-  scene.add(soap);
-  soaps.push({ mesh: soap, dir, life: 1.5 });
-}
-
-function takeDamage() {
-  if(state.isGameOver) return;
-  state.lives--; updateHUD();
-  playerGroup.traverse(child => {
-    if(child.isMesh && child.material && child.material.attenuationColor) {
-      let orig = child.material.attenuationColor.getHex();
-      child.material.attenuationColor.setHex(0xff0000);
-      setTimeout(() => { if(child.material) child.material.attenuationColor.setHex(orig); }, 300);
-    }
-  });
-  if (state.lives <= 0) { state.isGameOver = true; playAnim('idle'); alert("Game Over! Final Score: " + state.score); }
-}
-
 function updateHUD() {
   document.getElementById('score').innerText = state.score;
   document.getElementById('ammo').innerText = state.ammo;
   document.getElementById('lives').innerText = state.lives;
   document.getElementById('level').innerText = state.level;
+  document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m';
+}
+
+// ----------------------------------------------------
+// ACTIONS
+// ----------------------------------------------------
+function fireSoap() {
+  if (state.ammo <= 0 || state.isGameOver) return;
+  state.ammo--; updateHUD();
+  sfx.fire();
+  const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
+  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.25, LANE_Z);
+  soap.castShadow = true;
+  scene.add(soap);
+  soaps.push({ mesh: soap, life: 1.6 });
+}
+function takeDamage() {
+  if (state.isGameOver || state.invuln > 0) return;
+  state.lives--; updateHUD();
+  state.invuln = 1.2;
+  sfx.hit();
+  squash = 0.75;
+  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 1.0, 0)), 0xff5544, 10, 3.0, 2.0, 0.25);
+  popup(playerGroup.position.clone().add(new THREE.Vector3(0, 2.2, 0)), '-1 ♥', '#ff5544');
+  playerGroup.traverse(child => {
+    if (child.isMesh && child.material && child.material.attenuationColor) {
+      const orig = child.material.attenuationColor.getHex();
+      child.material.attenuationColor.setHex(0xff0000);
+      setTimeout(() => { if (child.material) child.material.attenuationColor.setHex(orig); }, 300);
+    }
+  });
+  if (state.lives <= 0) gameOver();
+}
+function gameOver() {
+  state.isGameOver = true;
+  playAnim('idle');
+  document.getElementById('go-score').innerText = state.score;
+  document.getElementById('go-dist').innerText = Math.floor(playerGroup.position.x) + ' m';
+  document.getElementById('gameover').style.display = 'flex';
+}
+function collect(ent) {
+  ent.active = false;
+  scene.remove(ent.mesh);
+  if (ent.shadow) scene.remove(ent.shadow);
+  state.excite = 1.0;
+  squash = 1.18;
+  if (ent.type === 'ammo') {
+    state.ammo += 4; state.score += 25;
+    sfx.collect();
+    burst(ent.mesh.position, 0x7fe3a0, 8, 2.4, 2.4, 0.2);
+    popup(ent.mesh.position, '+4 SOAP', '#39d24e');
+  } else {
+    state.score += 500;
+    sfx.star();
+    burst(ent.mesh.position, 0xffd24e, 14, 3.2, 2.8, 0.26);
+    popup(ent.mesh.position, '+500', '#ffd24e');
+  }
+  updateHUD();
 }
 
 // ----------------------------------------------------
 // MAIN LOOP
 // ----------------------------------------------------
 const clock = new THREE.Clock();
+let hudT = 0;
 function gameLoop() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
   if (mixer) mixer.update(dt);
+  hudT += dt;
+  if (hudT > 0.2) { hudT = 0; document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m'; }
 
-  if (!state.isGameOver) {
-    const moveSpeed = state.baseSpeed * state.speedMultiplier;
-    const moveAnim = state.level === 2 ? 'skateboard' : 'running';
+  if (!state.isGameOver && state.started) {
+    const px0 = playerGroup.position.x;
 
-    // --- 2-axis free movement on the counter ---
-    if (state.isSliding) {
-      playerGroup.position.x += moveSpeed * 1.3 * (state.facingRight ? 1 : -1) * dt;
-    } else {
-      let vx = (keys.right?1:0) - (keys.left?1:0);
-      let vz = (keys.down?1:0) - (keys.up?1:0);   // down = toward camera (+z), up = away (-z)
-      if (vx || vz) {
-        const len = Math.hypot(vx, vz); vx/=len; vz/=len;
-        playerGroup.position.x += vx * moveSpeed * dt;
-        playerGroup.position.z += vz * moveSpeed * dt;
-        if (vx > 0.01) { state.facingRight = true;  playerGroup.rotation.y = (Math.PI/2) - angleCheat; }
-        else if (vx < -0.01) { state.facingRight = false; playerGroup.rotation.y = -(Math.PI/2) + angleCheat; }
-        if (state.onGround) playAnim(moveAnim);
-      } else if (state.onGround) {
-        playAnim('idle');
-      }
-    }
-
-    // clamp to the countertop
-    if (playerGroup.position.x < XMIN) playerGroup.position.x = XMIN;
-    playerGroup.position.z = THREE.MathUtils.clamp(playerGroup.position.z, ZMIN, ZMAX);
-
-    if (state.level === 1 && playerGroup.position.x > LEVEL1_END) goToLevel2();
+    // --- always running; boost & brake only bend the pace ---
+    const diff = 1 + Math.min(1.2, px0 / 500);
+    state.speed = BASE_SPEED * diff * (state.boost ? 1.45 : state.brake ? 0.62 : 1.0) * (state.isSliding ? 1.25 : 1.0);
+    playerGroup.position.x += state.speed * dt;
+    playerGroup.position.z = LANE_Z;
 
     // gravity / jump
     if (!state.onGround) {
@@ -449,85 +649,151 @@ function gameLoop() {
       playerGroup.position.y += velocity.y * dt;
       if (playerGroup.position.y <= 0) {
         playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
-        if (!isMoving()) playAnim('idle');
+        sfx.land();
+        squash = 0.82;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.1, 0)), 0xffffff, 5, 1.6, 1.2, 0.16, 2.5);
+        playAnim(moveAnim());
       }
     }
 
-    // player collision volume
-    const px = playerGroup.position.x, py = playerGroup.position.y, pz = playerGroup.position.z;
-    const playerR = state.isSliding ? 0.5 : 0.7;
-    const playerReachTop = py + (state.isSliding ? 1.0 : 2.4);   // how high he can grab
+    // invulnerability blink
+    if (state.invuln > 0) {
+      state.invuln -= dt;
+      playerGroup.visible = (Math.floor(t * 12) % 2 === 0);
+      if (state.invuln <= 0) playerGroup.visible = true;
+    }
 
-    for (let ent of entities) {
+    // squash & stretch (cartoon body language)
+    squash += (squashTarget - squash) * Math.min(1, 10 * dt);
+    playerGroup.scale.set(2 - squash > 1.15 ? 1.15 : 2 - squash, squash, 2 - squash > 1.15 ? 1.15 : 2 - squash);
+
+    // head-bone excitement wiggle (applied after mixer pose)
+    if (headBone && state.excite > 0.02) {
+      headBone.rotation.z += Math.sin(t * 26) * 0.14 * state.excite;
+      headBone.rotation.x += Math.sin(t * 19) * 0.06 * state.excite;
+    }
+    state.excite = Math.max(0, state.excite - 2.2 * dt);
+
+    // spawn ahead / clean up behind
+    while (spawnX < playerGroup.position.x + 70) spawnChunk();
+    despawnBehind(playerGroup.position.x);
+    checkLevel();
+
+    const px = playerGroup.position.x, py = playerGroup.position.y;
+    const playerR = state.isSliding ? 0.5 : 0.7;
+    const playerReachTop = py + (state.isSliding ? 1.0 : 2.4);
+
+    for (const ent of entities) {
       if (!ent.active) continue;
       const m = ent.mesh, c = ent.cfg;
 
       // --- give the props life ---
       if (ent.type === 'enemy') {
-        m.position.x -= 2.0 * dt;
-        m.position.y = ent.baseY + 0.15 + Math.sin(t*5 + ent.phase) * 0.12;
-        m.position.z = THREE.MathUtils.clamp(ent.mesh.position.z + Math.sin(t*1.2 + ent.phase)*0.5*dt, ZMIN, ZMAX);
-        m.rotation.y += dt;
+        m.position.x -= (2.0 + state.level * 0.4) * dt;                      // slimes charge at him
+        m.position.y = ent.baseY + 0.15 + Math.sin(t * 5 + ent.phase) * 0.12;
+        m.rotation.y += dt * 1.5;
       } else if (ent.type === 'ammo') {
-        m.rotation.y += dt * 1.6; m.position.y = ent.baseY + Math.sin(t*3 + ent.phase) * 0.12;
+        m.rotation.y += dt * 1.8; m.position.y = ent.baseY + Math.sin(t * 3 + ent.phase) * 0.10;
       } else if (ent.type === 'score') {
-        m.rotation.y += dt * 2.5; m.position.y = ent.baseY + Math.sin(t*2 + ent.phase) * 0.1;
+        m.rotation.y += dt * 2.5; m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.1;
       }
-      if (c.bounce) m.position.y = ent.baseY + Math.abs(Math.sin(t*3 + ent.phase)) * 0.18;   // plates/fork bouncing
-      if (c.roll)   { m.rotation.x += dt * 4.0; }                                            // salt rolling
-      if (c.sway)   m.rotation.z = Math.sin(t*1.5 + ent.phase) * 0.12;                       // plant swaying
+      if (c.bounce && !ent.isClean) m.position.y = ent.baseY + Math.abs(Math.sin(t * 3 + ent.phase)) * 0.18;
+      if (c.roll)  { m.rotation.z -= dt * 5.0; m.position.x -= 1.4 * dt; }   // salt rolls toward him
+      if (c.sway)  m.rotation.z = Math.sin(t * 1.5 + ent.phase) * 0.12;
 
-      // keep the footprint under the object; reset collectible tint each frame
       if (ent.shadow) {
-        ent.shadow.position.x = m.position.x; ent.shadow.position.z = m.position.z;
-        if (ent.type === 'ammo' || ent.type === 'score') ent.shadow.material.color.setHex(0x000000);
+        ent.shadow.position.x = m.position.x;
+        const pulse = (ent.type === 'ammo' || ent.type === 'score') ? 1 + Math.sin(t * 6 + ent.phase) * 0.18 : 1;
+        ent.shadow.scale.setScalar(pulse);
       }
 
-      // --- collision (X-Z proximity, then vertical) ---
-      const dx = px - m.position.x, dz = pz - m.position.z;
-      const hdist = Math.hypot(dx, dz);
-      if (hdist < playerR + ent.radius) {
+      const dx = px - m.position.x;
+
+      // --- collectible magnet: near and reachable -> drift to him ---
+      if ((ent.type === 'ammo' || ent.type === 'score') && Math.abs(dx) < 1.5) {
+        if (m.position.y <= playerReachTop + 0.4) {
+          m.position.x += (px - m.position.x) * 6 * dt;
+          m.position.y += ((py + 1.3) - m.position.y) * 6 * dt;
+        }
+      }
+
+      // --- collisions (single lane: pure X + height) ---
+      if (Math.abs(dx) < playerR + ent.radius) {
         if (ent.type === 'ammo' || ent.type === 'score') {
-          if (ent.shadow) ent.shadow.material.color.setHex(0x39d24e);   // lined up in this depth lane -> grab / jump
-          const ey = m.position.y;                       // must be within reach (jump/height)
-          if (ey >= py + 0.1 && ey <= playerReachTop) {
-            if (ent.type === 'ammo') { state.ammo += 8; } else { state.score += 500; }
-            updateHUD(); ent.active = false; scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
-          }
+          const ey = m.position.y;
+          if (ey >= py - 0.2 && ey <= playerReachTop + 0.3) collect(ent);
         } else {
           const top = m.position.y + ent.height;
-          if (py < top - 0.15) {                          // not cleared by a jump
-            if (ent.type === 'enemy' || (ent.type === 'cleanable' && !ent.isClean) || (ent.type === 'hazard' && ent.subType === 'damage')) {
-              takeDamage(); ent.active = false; if (ent.type === 'enemy') { scene.remove(m); if (ent.shadow) scene.remove(ent.shadow); }
-            } else if (ent.type === 'hazard' && ent.subType === 'slide') {
-              if (!state.isSliding && state.onGround) {
-                state.isSliding = true; playAnim('running_slide'); takeDamage();
-                ent.active = false; setTimeout(() => { state.isSliding = false; }, 1200);
+          if (py >= top - 0.15) {
+            if (!ent.jumped) {                                   // cleared it -> style points
+              ent.jumped = true;
+              state.score += 10; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, ent.height + 0.4, 0)), '+10', '#bfe8ff');
+            }
+          } else if (ent.type === 'enemy') {
+            takeDamage(); ent.active = false;
+            scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
+          } else if (ent.type === 'cleanable') {
+            if (ent.isClean) {
+              if (!ent.crossed) {                                // sparkly clean dishes reward a touch
+                ent.crossed = true;
+                state.score += 50; updateHUD();
+                sfx.collect();
+                burst(m.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 6, 2.0, 2.0, 0.2);
+                popup(m.position.clone().add(new THREE.Vector3(0, 1.4, 0)), '+50', '#ffffff');
               }
-            } else if (ent.type === 'hazard' && ent.subType === 'slow') {
-              state.speedMultiplier = 0.5; ent.active = false;
-              setTimeout(() => { state.speedMultiplier = 1.0; }, 2000);
+            } else takeDamage();
+          } else if (ent.type === 'hazard' && ent.subType === 'damage') {
+            takeDamage();
+          } else if (ent.type === 'hazard' && ent.subType === 'slide') {
+            if (state.isSliding) {
+              if (!ent.crossed) {                                // slid through the oil like a pro
+                ent.crossed = true;
+                state.score += 25; updateHUD();
+                popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLICK! +25', '#7fe3a0');
+              }
+            } else if (state.onGround && !ent.crossed) {
+              ent.crossed = true;
+              takeDamage();
+              state.isSliding = true; playAnim('running_slide');
+              setTimeout(() => { state.isSliding = false; }, 900);
+            }
+          } else if (ent.type === 'hazard' && ent.subType === 'slow') {
+            if (!ent.crossed) {
+              ent.crossed = true;
+              state.brake = true;                                // salt grit slows him briefly
+              popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLOWED', '#ffb84e');
+              setTimeout(() => { state.brake = false; }, 1500);
             }
           }
         }
       }
     }
 
-    // soap projectiles (travel along the player's current depth lane)
+    // soap projectiles
     for (let i = soaps.length - 1; i >= 0; i--) {
       const s = soaps[i];
-      s.mesh.position.x += 12 * s.dir * dt; s.life -= dt;
+      s.mesh.position.x += 13 * dt; s.life -= dt;
+      s.mesh.position.y += Math.sin(t * 20) * 0.004;
       let hit = false;
-      for (let ent of entities) {
+      for (const ent of entities) {
         if (!ent.active) continue;
-        const dx = s.mesh.position.x - ent.mesh.position.x, dz = s.mesh.position.z - ent.mesh.position.z;
-        if (Math.hypot(dx, dz) < ent.radius + 0.3) {
+        if (Math.abs(s.mesh.position.x - ent.mesh.position.x) < ent.radius + 0.3) {
           if (ent.type === 'cleanable' && !ent.isClean) {
-            ent.isClean = true; ent.mesh.traverse(ch => { if(ch.isMesh) ch.material = cleanMat; });
-            state.score += 100; updateHUD(); hit = true; break;
+            ent.isClean = true;
+            ent.mesh.traverse(ch => { if (ch.isMesh) ch.material = cleanMat; });
+            state.score += 100; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0xffffff, 12, 2.6, 2.6, 0.24);
+            popup(ent.mesh.position.clone().add(new THREE.Vector3(0, 1.5, 0)), 'CLEAN! +100', '#ffffff');
+            hit = true; break;
           } else if (ent.type === 'enemy') {
             ent.active = false; scene.remove(ent.mesh); if (ent.shadow) scene.remove(ent.shadow);
-            state.score += 50; updateHUD(); hit = true; break;
+            state.score += 50; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0x7fe3a0, 10, 2.6, 2.6, 0.22);
+            popup(s.mesh.position, '+50', '#39d24e');
+            hit = true; break;
           }
         }
       }
@@ -535,38 +801,52 @@ function gameLoop() {
     }
   }
 
-  playerBlob.position.set(playerGroup.position.x, 0.02, playerGroup.position.z);   // Nimble's footprint
-  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + (state.facingRight ? 3 : -3), 4 * dt);
+  updateParticles(dt);
+
+  // camera / world dressing follow the run
+  playerBlob.position.set(playerGroup.position.x, 0.02, LANE_Z);
+  playerBlob.visible = state.onGround;
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + 4.0, 4 * dt);
   camera.lookAt(camera.position.x, 1.8, 0);
   document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
   dirLight.position.x = camera.position.x + 8;
   dirLight.target.position.set(camera.position.x, 0, 0);
+  rimLight.position.x = camera.position.x - 6;
+  if (floor) {
+    floor.position.x = playerGroup.position.x;
+    counterTex.offset.x = playerGroup.position.x * (150 / 1500);   // wood stays put while the box travels
+  }
+  for (const p of fgPlanes) {
+    if (p.position.x < camera.position.x - 35) p.position.x += 230 + Math.random() * 30;
+  }
+
   renderer.render(scene, camera);
 }
 
 // ----------------------------------------------------
-// INPUT  (arrows = move; SPACE = jump; SHIFT = slide; F = fire)
+// INPUT — SPACE jump, SHIFT slide, F fire, arrows pace
 // ----------------------------------------------------
 window.addEventListener('keydown', e => {
-  if(state.isGameOver) return;
-  if(e.code === 'ArrowRight') keys.right = true;
-  if(e.code === 'ArrowLeft')  keys.left = true;
-  if(e.code === 'ArrowUp')    keys.up = true;
-  if(e.code === 'ArrowDown')  keys.down = true;
-  if(e.code === 'Space' && state.onGround && !state.isSliding) {
-    velocity.y = state.jumpPower; state.onGround = false; playAnim('jump');
+  initAudio();
+  if (e.code === 'KeyR' && state.isGameOver) { location.reload(); return; }
+  if (state.isGameOver) return;
+  if (e.code === 'ArrowRight') state.boost = true;
+  if (e.code === 'ArrowLeft')  state.brake = true;
+  if ((e.code === 'Space' || e.code === 'ArrowUp') && state.onGround && !state.isSliding) {
+    velocity.y = state.jumpPower; state.onGround = false;
+    sfx.jump();
+    squash = 1.3;
+    playAnim('jump');
   }
-  if((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && state.onGround && !state.isSliding) {
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') && state.onGround && !state.isSliding) {
     state.isSliding = true; playAnim('running_slide');
     setTimeout(() => { state.isSliding = false; }, 900);
   }
-  if(e.code === 'KeyF' && !e.repeat) fireSoap();
+  if (e.code === 'KeyF' && !e.repeat) fireSoap();
 });
 window.addEventListener('keyup', e => {
-  if(e.code === 'ArrowRight') keys.right = false;
-  if(e.code === 'ArrowLeft')  keys.left = false;
-  if(e.code === 'ArrowUp')    keys.up = false;
-  if(e.code === 'ArrowDown')  keys.down = false;
+  if (e.code === 'ArrowRight') state.boost = false;
+  if (e.code === 'ArrowLeft')  state.brake = false;
 });
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
