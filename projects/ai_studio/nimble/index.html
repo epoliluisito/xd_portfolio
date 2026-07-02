@@ -14,12 +14,32 @@
   }
   #loading {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: #0e1118; color: #7fe3a0; z-index: 100;
+    background: rgba(14, 17, 24, 1); color: #eaf6ee; z-index: 100;
     display: flex; flex-direction: column; justify-content: center; align-items: center;
-    font-size: 24px; font-weight: bold; letter-spacing: 2px; transition: opacity 0.5s;
+    transition: background 0.6s, opacity 0.5s;
   }
-  .spinner { margin-top: 20px; width: 40px; height: 40px; border: 4px solid rgba(127,227,160,0.3); border-top-color: #7fe3a0; border-radius: 50%; animation: spin 1s linear infinite; }
-  @keyframes spin { 100% { transform: rotate(360deg); } }
+  #loading.ready { background: rgba(10, 14, 20, 0.5); }
+  #guide-card {
+    text-align: center; max-width: 580px; padding: 28px 44px;
+    background: rgba(16, 22, 32, 0.78); border: 1px solid rgba(127, 227, 160, 0.28);
+    border-radius: 18px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+  }
+  #guide-title { font-size: 34px; font-weight: 900; letter-spacing: 3px; color: #7fe3a0; margin-bottom: 6px; text-shadow: 0 0 18px rgba(127,227,160,0.4); }
+  #guide-sub { font-size: 14px; color: #9fb8c8; margin-bottom: 18px; letter-spacing: 1px; }
+  .guide-rows { text-align: left; display: inline-block; margin-bottom: 16px; }
+  .guide-row { display: flex; align-items: center; margin: 9px 0; font-size: 16px; color: #dfeaf2; }
+  .guide-row .key { min-width: 60px; text-align: center; margin-right: 14px; padding: 5px 8px; font-size: 14px; }
+  .guide-row .desc b { color: #7fe3a0; }
+  #bar-wrap { width: 420px; max-width: 80vw; height: 10px; background: rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden; margin: 8px auto 8px; }
+  #bar { width: 0%; height: 100%; background: linear-gradient(90deg, #39d24e, #7fe3a0); border-radius: 6px; transition: width 0.25s; }
+  #load-status { font-size: 13px; letter-spacing: 2px; color: #7fe3a0; min-height: 20px; font-weight: bold; }
+  #press-key { display: none; font-size: 18px; font-weight: 800; letter-spacing: 3px; color: #fff; margin-top: 4px; animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+  #vignette {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(5,8,14,0.38) 100%);
+  }
   #hud {
     position: absolute; top: 20px; left: 20px; z-index: 10;
     background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
@@ -91,11 +111,27 @@
 </head>
 <body>
 
-<div id="loading"><div>PREPARING THE KITCHEN...</div><div class="spinner"></div></div>
+<div id="loading">
+  <div id="guide-card">
+    <div id="guide-title">NIMBLE'S DISH DASH</div>
+    <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
+    <div class="guide-rows">
+      <div class="guide-row"><span class="key">SPACE</span><span class="desc"><b>Jump</b> — leap over hazards, grab the high drops</span></div>
+      <div class="guide-row"><span class="key">SHIFT</span><span class="desc"><b>Slide</b> — duck under rolling pins, glide over oil</span></div>
+      <div class="guide-row"><span class="key">F</span><span class="desc"><b>Fire soap</b> — clean dirty dishes, pop slimes</span></div>
+      <div class="guide-row"><span class="key">&rarr;</span><span class="desc"><b>Boost</b> &nbsp;/&nbsp; <span class="key">&larr;</span> <b>Brake</b></span></div>
+      <div class="guide-row"><span class="key">&#11088;</span><span class="desc"><b>Stars</b> restore a life — don't let them float by!</span></div>
+    </div>
+    <div id="bar-wrap"><div id="bar"></div></div>
+    <div id="load-status">PREPARING THE KITCHEN&hellip;</div>
+    <div id="press-key">PRESS ANY KEY TO START</div>
+  </div>
+</div>
+<div id="vignette"></div>
 
 <div id="hud">
   <div class="hud-row"><span class="level-text">Level:</span> <span id="level" class="level-text">1</span></div>
-  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">7</span></div>
+  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">9</span></div>
   <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
   <div class="hud-row"><span>Distance:</span> <span id="dist">0 m</span></div>
   <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
@@ -140,12 +176,13 @@ const STAND_H = 2.05;               // standing head height
 const SLIDE_H = 0.95;               // sliding head height
 
 const state = {
-  level: 1, score: 0, ammo: 10, lives: 7,
+  level: 1, score: 0, ammo: 10, lives: 9,
   speed: BASE_SPEED, boost: false, brake: false,
-  gravity: 14.5, jumpPower: 7.5,    // higher jump: apex ~1.9 m — he clears things now
+  gravity: 13.5, jumpPower: 8.3,    // big forgiving jump: apex ~2.5 m
   onGround: true, isSliding: false, isGameOver: false,
   invuln: 0, excite: 0, started: false
 };
+const MAX_LIVES = 12;
 const entities = [];
 const soaps = [];
 const fgPlanes = [];
@@ -170,7 +207,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.3;
+renderer.toneMappingExposure = 1.45;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setClearColor(0x000000, 0);
@@ -183,18 +220,21 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
 camera.position.set(4, 3.0, 17);
 
-const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.9);
-dirLight.position.set(8, 8, 4);
+const dirLight = new THREE.DirectionalLight(0xffeeb1, 2.2);
+dirLight.position.set(8, 9, 6);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
-dirLight.shadow.camera.near = 0.5; dirLight.shadow.camera.far = 30;
+dirLight.shadow.camera.near = 0.5; dirLight.shadow.camera.far = 34;
 dirLight.shadow.camera.left = -15; dirLight.shadow.camera.right = 15;
 dirLight.shadow.bias = -0.001;
 scene.add(dirLight); scene.add(dirLight.target);
-scene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a6b4a, 0.55));
-const rimLight = new THREE.DirectionalLight(0xbfe8ff, 0.8);   // cool rim from behind
-rimLight.position.set(-6, 5, -6);
+scene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a6b4a, 0.8));
+const rimLight = new THREE.DirectionalLight(0xbfe8ff, 1.25);  // cool rim from behind — cinematic edge
+rimLight.position.set(-6, 6, -7);
 scene.add(rimLight);
+const fillLight = new THREE.DirectionalLight(0xd8ecff, 0.55); // soft camera-side fill: no more dark backside mid-air
+fillLight.position.set(2, 4, 14);
+scene.add(fillLight);
 
 // ----------------------------------------------------
 // Materials — Nimble glass, frothy foam, emerald drops
@@ -210,7 +250,7 @@ function addRim(mat, color, strength) {          // fresnel rim glow, sells the 
   };
 }
 
-const P = { transmission: 0.985, ior: 1.45, roughness: 0.05, thickness: 0.4, attenuationDistance: 1.3, attenuationColor: '#39d24e', clearcoat: 1.0 };
+const P = { transmission: 0.985, ior: 1.45, roughness: 0.05, thickness: 0.4, attenuationDistance: 2.2, attenuationColor: '#39d24e', clearcoat: 1.0 };
 const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
 function getGlassMat(src, useThickMap = true) {
   const mat = new THREE.MeshPhysicalMaterial({
@@ -220,10 +260,10 @@ function getGlassMat(src, useThickMap = true) {
     attenuationColor: new THREE.Color(P.attenuationColor), attenuationDistance: P.attenuationDistance,
     clearcoat: P.clearcoat, clearcoatRoughness: 0.06,
     iridescence: 0.18, iridescenceIOR: 1.3,
-    envMapIntensity: 1.6, specularIntensity: 1.0, transparent: true
+    envMapIntensity: 1.85, specularIntensity: 1.0, transparent: true
   });
   if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
-  addRim(mat, '#8affc1', 0.18);
+  addRim(mat, '#8affc1', 0.3);
   return mat;
 }
 const bubbleTex = new THREE.TextureLoader().load('./bubble_normal.png', t => {
@@ -418,13 +458,38 @@ function cancelSlide() {
 // ASSET LOADING
 // ----------------------------------------------------
 const models = {};
+// --- loading progress (drives the guide-screen bar) ---
+const loadUI = { total: 0, done: 0 };
+function tracked(promise, weight = 1) {
+  loadUI.total += weight;
+  const bump = () => {
+    loadUI.done += weight;
+    const bar = document.getElementById('bar');
+    if (bar) bar.style.width = Math.min(100, Math.round(100 * loadUI.done / loadUI.total)) + '%';
+  };
+  return promise.then(r => { bump(); return r; }, e => { bump(); throw e; });
+}
 async function initGame() {
   const gltfLoader = new GLTFLoader();
   const texLoader = new THREE.TextureLoader();
 
+  // kick EVERYTHING off in parallel — the bar tracks real progress
+  const fgNames = ['bottle.png','bowl.png','cloth.png','plant_02.png','wood_surface.png'];
+  const modelPaths = {
+    emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
+    slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
+    plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
+    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
+  };
+  const counterP = tracked(texLoader.loadAsync('./couter_top_texture.png'));
+  const fgPs     = fgNames.map(n => tracked(texLoader.loadAsync(`./foreground_elements/${n}`)).catch(() => null));
+  const modelPs  = Object.entries(modelPaths).map(([k, p]) =>
+    tracked(gltfLoader.loadAsync(p)).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));
+  const nimbleP  = tracked(gltfLoader.loadAsync('./nimble_character.glb'), 5);   // the big one
+
   // Countertop: box travels with the player, texture offset scrolls back,
   // so the counter is endless but the wood visually stays put.
-  counterTex = await texLoader.loadAsync('./couter_top_texture.png');
+  counterTex = await counterP;
   counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping;
   counterTex.repeat.set(150, 3);
   const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
@@ -434,12 +499,7 @@ async function initGame() {
   scene.add(floor);
 
   // 2D foreground decor — two parallax layers sweeping between camera and the lane
-  const fgNames = ['bottle.png','bowl.png','cloth.png','plant_02.png','wood_surface.png'];
-  const fgTextures = [];
-  for (const name of fgNames) {
-    try { fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`)); }
-    catch(e) { console.warn('Missing foreground element: ' + name); }
-  }
+  const fgTextures = (await Promise.all(fgPs)).filter(Boolean);
   function addFgPlane(x, layer) {
     const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
     const aspect = tex.image.width / tex.image.height;
@@ -463,37 +523,29 @@ async function initGame() {
   }
 
   // 3D element models
-  const modelPaths = {
-    emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
-    slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
-    plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
-    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
-  };
-  for (const [key, path] of Object.entries(modelPaths)) {
-    try {
-      const gltf = await gltfLoader.loadAsync(path);
-      const obj = gltf.scene;
-      obj.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(obj);
-      const size = new THREE.Vector3(); box.getSize(size);
-      const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      const cfg = typeCfg[key];
-      cfg.scaleFactor = cfg.size / maxDim;
-      cfg.groundOffset = -box.min.y * cfg.scaleFactor;
-      cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
-      obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-      // the emerald drops are little Nimbles: same glass shader
-      if (key === 'emerald') {
-        obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });
-      }
-      models[key] = obj;
-    } catch(e) { console.warn('Missing model: ' + path); }
+  for (const [key, gltf] of await Promise.all(modelPs)) {
+    if (!gltf) continue;
+    const obj = gltf.scene;
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const size = new THREE.Vector3(); box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const cfg = typeCfg[key];
+    cfg.scaleFactor = cfg.size / maxDim;
+    cfg.groundOffset = -box.min.y * cfg.scaleFactor;
+    cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
+    obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    // the emerald drops are little Nimbles: same glass shader
+    if (key === 'emerald') {
+      obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });
+    }
+    models[key] = obj;
   }
   // rolling pin is procedural
   typeCfg.pin.heightScaled = PIN_R * 2;
 
   // Nimble
-  const nimbleGltf = await gltfLoader.loadAsync('./nimble_character.glb');
+  const nimbleGltf = await nimbleP;
   const root = nimbleGltf.scene;
   root.scale.set(CHAR_SCALE, CHAR_SCALE, CHAR_SCALE);
   root.traverse(o => {
@@ -512,15 +564,26 @@ async function initGame() {
   mixer = new THREE.AnimationMixer(root);
   const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
                      jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
+  // Canonical root anchor: every clip shares the SAME ground position (taken from
+  // the running cycle). Clips with big baked root travel (slide!) get pinned flat
+  // to that anchor, others get shifted onto it — so no clip can teleport him and
+  // wherever a slide ends is exactly where the run continues from.
+  const canonical = {};
+  const runClip = nimbleGltf.animations.find(c => c.name === 'running');
+  if (runClip) for (const tr of runClip.tracks)
+    if (tr.name.endsWith('.position')) canonical[tr.name] = [tr.values[0], tr.values[2]];
   for (const clip of nimbleGltf.animations) {
-    clip.tracks.forEach(track => {                 // strip root motion so he stays put
+    clip.tracks.forEach(track => {
       if (track.name.endsWith('.position')) {
+        const anchor = canonical[track.name] || [track.values[0], track.values[2]];
         let maxDiff = 0;
         for (let i = 0; i < track.values.length; i += 3)
           maxDiff = Math.max(maxDiff, Math.abs(track.values[i] - track.values[0]), Math.abs(track.values[i + 2] - track.values[2]));
         if (maxDiff > 0.1) {
-          const sx = track.values[0], sz = track.values[2];
-          for (let i = 0; i < track.values.length; i += 3) { track.values[i] = sx; track.values[i + 2] = sz; }
+          for (let i = 0; i < track.values.length; i += 3) { track.values[i] = anchor[0]; track.values[i + 2] = anchor[1]; }
+        } else {
+          const dx = anchor[0] - track.values[0], dz = anchor[1] - track.values[2];
+          for (let i = 0; i < track.values.length; i += 3) { track.values[i] += dx; track.values[i + 2] += dz; }
         }
       }
     });
@@ -531,7 +594,7 @@ async function initGame() {
     }
   }
   // fit one-shot clips to gameplay timing
-  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 1.05;
+  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 1.2;
   if (actions['running_slide']) actions['running_slide'].timeScale = actions['running_slide'].getClip().duration / SLIDE_DUR;
 
   mixer.addEventListener('finished', (e) => {
@@ -541,13 +604,22 @@ async function initGame() {
   });
 
   updateHUD();
-  document.getElementById('loading').style.opacity = '0';
-  setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
-  renderer.setAnimationLoop(gameLoop);
-
-  // 3 — 2 — 1 — GO!
+  // world is live behind the guide: Nimble idles while the player reads
   playAnim('idle');
-  runCountdown();
+  renderer.setAnimationLoop(gameLoop);
+  const loadingEl = document.getElementById('loading');
+  loadingEl.classList.add('ready');
+  document.getElementById('bar').style.width = '100%';
+  document.getElementById('load-status').style.display = 'none';
+  document.getElementById('press-key').style.display = 'block';
+  const startOnce = (e) => {
+    window.removeEventListener('keydown', startOnce);
+    initAudio();                                   // user gesture: countdown beeps work
+    loadingEl.style.opacity = '0';
+    setTimeout(() => loadingEl.style.display = 'none', 500);
+    runCountdown();                                // 3 — 2 — 1 — GO!
+  };
+  window.addEventListener('keydown', startOnce);
 }
 
 function runCountdown() {
@@ -613,7 +685,7 @@ function patEmeraldArc() {           // jump arc of drops over a ground hazard
   if (models[key]) spawnEntity(key, spawnX + span / 2, g0(key));
   for (let i = 0; i < n; i++) {
     const t = i / (n - 1);
-    spawnEntity('emerald', spawnX + i * 0.62, 1.5 + Math.sin(Math.PI * t) * 1.35, { shadowColor: 0x39d24e });
+    spawnEntity('emerald', spawnX + i * 0.62, 1.6 + Math.sin(Math.PI * t) * 1.6, { shadowColor: 0x39d24e });
   }
   spawnX += span + 2.0;
 }
@@ -775,6 +847,10 @@ function collect(ent) {
     popup(ent.mesh.position, '+4 SOAP', '#39d24e');
   } else {
     state.score += 500;
+    if (state.lives < MAX_LIVES) {                 // stars give a life back
+      state.lives++;
+      popup(ent.mesh.position.clone().add(new THREE.Vector3(0, 0.7, 0)), '+1 ♥', '#ff8899');
+    }
     sfx.star();
     burst(ent.mesh.position, 0xffd24e, 14, 3.2, 2.8, 0.26);
     popup(ent.mesh.position, '+500', '#ffd24e');
@@ -799,7 +875,7 @@ function gameLoop() {
 
     // --- always running; boost & brake only bend the pace ---
     const diff = 1 + Math.min(1.35, px0 / 450);
-    state.speed = BASE_SPEED * diff * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0) * (state.isSliding ? 1.2 : 1.0);
+    state.speed = BASE_SPEED * diff * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0) * (state.isSliding ? 1.35 : 1.0);
     playerGroup.position.x += state.speed * dt;
     playerGroup.position.z = LANE_Z;
 
@@ -1003,11 +1079,13 @@ function gameLoop() {
   playerBlob.position.set(playerGroup.position.x, 0.02, LANE_Z);
   playerBlob.visible = state.onGround;
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + 4.0, 4 * dt);
-  camera.lookAt(camera.position.x, 1.8, 0);
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, 3.0 + playerGroup.position.y * 0.22, 3 * dt);   // gentle crane on jumps
+  camera.lookAt(camera.position.x, 1.8 + playerGroup.position.y * 0.12, 0);
   document.body.style.backgroundPositionX = `${-camera.position.x * 28}px`;
-  dirLight.position.x = camera.position.x + 8;
-  dirLight.target.position.set(camera.position.x, 0, 0);
-  rimLight.position.x = camera.position.x - 6;
+  dirLight.position.x = playerGroup.position.x + 7;
+  dirLight.target.position.set(playerGroup.position.x, 0, 0);
+  rimLight.position.x = playerGroup.position.x - 7;
+  fillLight.position.x = camera.position.x + 2;
   if (floor) {
     floor.position.x = playerGroup.position.x;
     counterTex.offset.x = playerGroup.position.x * (150 / 1500);   // wood stays put while the box travels
