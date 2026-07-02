@@ -48,6 +48,19 @@
     text-shadow: 0 3px 18px rgba(0,0,0,0.6), 0 0 20px rgba(127,227,160,0.6);
     opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center;
   }
+  #countdown {
+    position: absolute; top: 30%; left: 50%; transform: translateX(-50%); z-index: 25;
+    color: #fff; font-size: 140px; font-weight: 900; letter-spacing: 6px;
+    text-shadow: 0 4px 30px rgba(0,0,0,0.7), 0 0 40px rgba(127,227,160,0.8);
+    pointer-events: none; display: none;
+  }
+  #countdown.pop { animation: cdpop 0.75s ease-out; }
+  @keyframes cdpop {
+    0%   { transform: translateX(-50%) scale(1.7); opacity: 0; }
+    25%  { transform: translateX(-50%) scale(1.0); opacity: 1; }
+    80%  { transform: translateX(-50%) scale(0.95); opacity: 1; }
+    100% { transform: translateX(-50%) scale(0.9); opacity: 0.6; }
+  }
   .popup {
     position: absolute; z-index: 15; pointer-events: none;
     font-weight: 900; font-size: 22px; letter-spacing: 1px;
@@ -82,13 +95,14 @@
 
 <div id="hud">
   <div class="hud-row"><span class="level-text">Level:</span> <span id="level" class="level-text">1</span></div>
-  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">5</span></div>
+  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">7</span></div>
   <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
   <div class="hud-row"><span>Distance:</span> <span id="dist">0 m</span></div>
   <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
 </div>
 
 <div id="banner"></div>
+<div id="countdown"></div>
 
 <div id="gameover">
   <h1>GAME OVER</h1>
@@ -116,13 +130,19 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 // ----------------------------------------------------
 const LANE_Z = 2.2;                 // the one depth lane everything lives on
 const BASE_SPEED = 6.0;
-const LEVEL_LEN = 300;              // metres per level
+const LEVEL_LEN = 250;              // metres per level (shorter: reach level 2 sooner)
 const angleCheat = 0.49;
+const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
+const SLIDE_DUR = 1.05;             // seconds: hitbox + animation end together
+
+// player capsule (world units, after CHAR_SCALE)
+const STAND_H = 2.05;               // standing head height
+const SLIDE_H = 0.95;               // sliding head height
 
 const state = {
-  level: 1, score: 0, ammo: 10, lives: 5,
+  level: 1, score: 0, ammo: 10, lives: 7,
   speed: BASE_SPEED, boost: false, brake: false,
-  gravity: 15, jumpPower: 6.6,
+  gravity: 14.5, jumpPower: 7.5,    // higher jump: apex ~1.9 m — he clears things now
   onGround: true, isSliding: false, isGameOver: false,
   invuln: 0, excite: 0, started: false
 };
@@ -132,14 +152,15 @@ const fgPlanes = [];
 
 // Per-model tuning. floatY = collectible hover band (jump to grab the high ones).
 const typeCfg = {
-  emerald: { type:'ammo',      size:0.55, floatY:[1.5, 2.6] },
-  star:    { type:'score',     size:0.8,  floatY:[2.4, 3.1] },
+  emerald: { type:'ammo',      size:0.55, floatY:[1.6, 2.7] },
+  star:    { type:'score',     size:0.8,  floatY:[2.5, 3.2] },
   slime:   { type:'enemy',     size:1.0,  ground:true },
   oil:     { type:'hazard', subType:'slide',  size:1.6, ground:true },
   plant:   { type:'hazard', subType:'damage', size:1.3, ground:true, sway:true },
   salt:    { type:'hazard', subType:'slow',   size:0.8, ground:true, roll:true },
   fork:    { type:'cleanable', size:1.1, ground:true, bounce:true },
-  plates:  { type:'cleanable', size:1.3, ground:true, bounce:true }
+  plates:  { type:'cleanable', size:1.3, ground:true, bounce:true },
+  pin:     { type:'hazard', subType:'duck', size:2.4 }   // rolling pin — slide under it!
 };
 
 // ----------------------------------------------------
@@ -160,7 +181,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
-camera.position.set(0, 3.0, 17);
+camera.position.set(4, 3.0, 17);
 
 const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.9);
 dirLight.position.set(8, 8, 4);
@@ -222,12 +243,42 @@ function getFoamMat() {
 }
 const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
 const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
+const woodMat = new THREE.MeshStandardMaterial({ color: 0xd8a76a, roughness: 0.55, metalness: 0.05 });
+const woodDarkMat = new THREE.MeshStandardMaterial({ color: 0xa87d4c, roughness: 0.6, metalness: 0.05 });
+
+// ----------------------------------------------------
+// Rolling pin — the slide-under obstacle (procedural)
+// ----------------------------------------------------
+const PIN_Y = 1.55;         // centre height
+const PIN_R = 0.17;         // barrel radius -> bottom ~1.38: slide clears it, running head does not
+const PIN_CLEAR_Y = PIN_Y + PIN_R + 0.02;   // jump-over needs feet above this
+function makeRollingPin() {
+  const g = new THREE.Group();
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(PIN_R, PIN_R, 2.0, 20), woodMat);
+  barrel.rotation.z = Math.PI / 2;
+  barrel.castShadow = true;
+  g.add(barrel);
+  for (const s of [-1, 1]) {
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.34, 12), woodDarkMat);
+    handle.rotation.z = Math.PI / 2;
+    handle.position.x = s * 1.17;
+    handle.castShadow = true;
+    g.add(handle);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 10), woodDarkMat);
+    cap.position.x = s * 1.34;
+    g.add(cap);
+  }
+  return g;
+}
 
 // ----------------------------------------------------
 // Tiny WebAudio synth for feedback blips
 // ----------------------------------------------------
 let audioCtx = null;
-function initAudio() { if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} } }
+function initAudio() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
 function beep(freq, dur, type = 'sine', vol = 0.08, slideTo = null) {
   if (!audioCtx) return;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
@@ -246,6 +297,9 @@ const sfx = {
   clean:   () => beep(520, 0.14, 'sine', 0.07, 1040),
   jump:    () => beep(300, 0.12, 'sine', 0.05, 520),
   land:    () => beep(190, 0.07, 'sine', 0.04),
+  slide:   () => beep(240, 0.2, 'triangle', 0.05, 120),
+  count:   () => beep(440, 0.14, 'square', 0.08),
+  go:      () => beep(880, 0.3, 'square', 0.09, 1320),
   level:   () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.06), i * 110)); }
 };
 
@@ -330,6 +384,7 @@ let mixer, actions = {}, currentAnim = null;
 let hatParts = [], boardParts = [], headBone = null;
 let squash = 1.0, squashTarget = 1.0;
 let floor = null, counterTex = null;
+let slideTimer = null, slideHintShown = false;
 
 function playAnim(name, fade = 0.18) {
   if (!actions[name] || name === currentAnim) return;
@@ -340,6 +395,24 @@ function playAnim(name, fade = 0.18) {
   currentAnim = name;
 }
 function moveAnim() { return state.level >= 2 ? 'skateboard' : 'running'; }
+
+function startSlide() {
+  if (!state.onGround || state.isSliding || state.isGameOver || !state.started) return;
+  state.isSliding = true;
+  sfx.slide();
+  squash = 0.8;
+  playAnim('running_slide', 0.10);
+  clearTimeout(slideTimer);
+  // hitbox and animation end together — no snap-back
+  slideTimer = setTimeout(() => {
+    state.isSliding = false;
+    if (!state.isGameOver && state.onGround) playAnim(moveAnim(), 0.28);
+  }, SLIDE_DUR * 1000 - 150);
+}
+function cancelSlide() {
+  clearTimeout(slideTimer);
+  state.isSliding = false;
+}
 
 // ----------------------------------------------------
 // ASSET LOADING
@@ -360,24 +433,33 @@ async function initGame() {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // 2D foreground decor (recycled as the run scrolls)
-  const fgNames = ['bottle.png','bowl.png','cloth.png','fork.png','plant_02.png','plant.png','salt.png','spoon.png','wood_surface.png'];
+  // 2D foreground decor — two parallax layers sweeping between camera and the lane
+  const fgNames = ['bottle.png','bowl.png','cloth.png','plant_02.png','wood_surface.png'];
   const fgTextures = [];
   for (const name of fgNames) {
     try { fgTextures.push(await texLoader.loadAsync(`./foreground_elements/${name}`)); }
     catch(e) { console.warn('Missing foreground element: ' + name); }
   }
+  function addFgPlane(x, layer) {
+    const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+    const aspect = tex.image.width / tex.image.height;
+    const near = layer === 'near';
+    const h = near ? 2.6 + Math.random() * 1.6 : 3.0 + Math.random() * 1.6;
+    const topY = near ? 2.0 + Math.random() * 1.6 : 1.4 + Math.random() * 1.8;
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthWrite: false,
+      color: near ? 0x707a8f : 0xa8b1c4          // darker = closer: reads as depth
+    });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), mat);
+    plane.position.set(x, topY - h / 2, near ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8);
+    plane.renderOrder = near ? 6 : 5;
+    plane.userData.layer = layer;
+    scene.add(plane);
+    fgPlanes.push(plane);
+  }
   if (fgTextures.length > 0) {
-    for (let x = -20; x < 200; x += 18 + Math.random() * 20) {
-      const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
-      const aspect = tex.image.width / tex.image.height;
-      const h = 5 + Math.random() * 5;
-      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), mat);
-      plane.position.set(x, (Math.random() * 1.5) - h / 2, 11 + Math.random() * 3);
-      scene.add(plane);
-      fgPlanes.push(plane);
-    }
+    for (let x = -10; x < 260; x += 26 + Math.random() * 18) addFgPlane(x, 'near');
+    for (let x = -20; x < 260; x += 18 + Math.random() * 14) addFgPlane(x, 'mid');
   }
 
   // 3D element models
@@ -407,11 +489,13 @@ async function initGame() {
       models[key] = obj;
     } catch(e) { console.warn('Missing model: ' + path); }
   }
+  // rolling pin is procedural
+  typeCfg.pin.heightScaled = PIN_R * 2;
 
   // Nimble
   const nimbleGltf = await gltfLoader.loadAsync('./nimble_character.glb');
   const root = nimbleGltf.scene;
-  root.scale.set(1.58, 1.58, 1.58);
+  root.scale.set(CHAR_SCALE, CHAR_SCALE, CHAR_SCALE);
   root.traverse(o => {
     if (o.isBone && /Head$/.test(o.name) && !/HeadTop/.test(o.name)) headBone = o;
     if (!o.isMesh) return;
@@ -420,6 +504,7 @@ async function initGame() {
     const mn = o.material ? o.material.name : '';
     if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
     else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
     else { o.material = getGlassMat(o.material); }
   });
   playerGroup.add(root);
@@ -445,77 +530,151 @@ async function initGame() {
       actions[clip.name] = a;
     }
   }
+  // fit one-shot clips to gameplay timing
+  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 1.05;
+  if (actions['running_slide']) actions['running_slide'].timeScale = actions['running_slide'].getClip().duration / SLIDE_DUR;
+
   mixer.addEventListener('finished', (e) => {
-    if (e.action === actions['jump'])          { state.onGround = true; playAnim(moveAnim()); }
-    if (e.action === actions['running_slide']) { state.isSliding = false; playAnim(moveAnim()); }
-    if (e.action === actions['skating_start']) { playAnim('skateboard'); }
-    if (e.action === actions['laugh'])         { playAnim(moveAnim()); }
+    if (e.action === actions['jump'] && state.onGround)  playAnim(moveAnim());
+    if (e.action === actions['skating_start']) playAnim('skateboard');
+    if (e.action === actions['laugh'])         playAnim(moveAnim());
   });
 
-  playAnim('running');           // never idle: the dash starts immediately
-  state.started = true;
   updateHUD();
-  showBanner('GO GO GO!');
-  sfx.level();
-
   document.getElementById('loading').style.opacity = '0';
   setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
   renderer.setAnimationLoop(gameLoop);
+
+  // 3 — 2 — 1 — GO!
+  playAnim('idle');
+  runCountdown();
+}
+
+function runCountdown() {
+  const el = document.getElementById('countdown');
+  el.style.display = 'block';
+  const steps = ['3', '2', '1', 'GO!'];
+  let i = 0;
+  const tick = () => {
+    if (i >= steps.length) {
+      el.style.display = 'none';
+      playAnim('running');
+      state.started = true;
+      showBanner('GO GO GO!');
+      sfx.level();
+      return;
+    }
+    const s = steps[i++];
+    el.textContent = s;
+    el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    if (s === 'GO!') sfx.go(); else sfx.count();
+    setTimeout(tick, s === 'GO!' ? 650 : 850);
+  };
+  tick();
 }
 
 // ----------------------------------------------------
-// ENDLESS SPAWNER — everything spawns ahead on the lane
+// ENDLESS SPAWNER — designed pattern chunks, not dice rolls
 // ----------------------------------------------------
-let spawnX = 14;
+let spawnX = 16;
 function spawnEntity(key, x, y, extra = {}) {
-  if (!models[key]) return null;
   const cfg = typeCfg[key];
-  const mesh = models[key].clone();
-  mesh.scale.setScalar(cfg.scaleFactor);
+  let mesh;
+  if (key === 'pin') {
+    mesh = makeRollingPin();
+  } else {
+    if (!models[key]) return null;
+    mesh = models[key].clone();
+    mesh.scale.setScalar(cfg.scaleFactor);
+    mesh.rotation.y = Math.random() * Math.PI * 2;
+  }
   mesh.position.set(x, y, LANE_Z);
-  mesh.rotation.y = Math.random() * Math.PI * 2;
   scene.add(mesh);
-  const shadow = makeBlob(cfg.size * 0.5, extra.shadowColor || 0x000000);
+  const shadow = makeBlob(key === 'pin' ? 1.0 : cfg.size * 0.5, extra.shadowColor || 0x000000);
   shadow.position.set(x, 0.02, LANE_Z);
   scene.add(shadow);
   const ent = {
     mesh, shadow, key, type: cfg.type, subType: cfg.subType, cfg,
-    radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
+    radius: key === 'pin' ? 1.05 : cfg.size * 0.5,
+    height: cfg.heightScaled || cfg.size,
     baseY: y, phase: Math.random() * 6.28, active: true, isClean: false,
-    jumped: false, crossed: false
+    jumped: false, crossed: false, hint: !!extra.hint
   };
   entities.push(ent);
   return ent;
 }
-function spawnChunk() {
-  const roll = Math.random();
-  const g = k => typeCfg[k].groundOffset || 0;
-  if (roll < 0.26 && models.emerald) {
-    // arc of emeralds traced along a jump
-    const n = 4 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < n; i++) {
-      const t = i / (n - 1);
-      spawnEntity('emerald', spawnX + i * 0.62, 1.45 + Math.sin(Math.PI * t) * 1.35, { shadowColor: 0x39d24e });
-    }
-    spawnX += n * 0.62 + 2.0;
-  } else if (roll < 0.36 && models.star) {
-    const fy = typeCfg.star.floatY;
-    spawnEntity('star', spawnX, fy[0] + Math.random() * (fy[1] - fy[0]), { shadowColor: 0xffd24e });
-    spawnX += 2.0;
-  } else if (roll < 0.56) {
-    const key = ['slime', 'oil', 'plant', 'salt'][Math.floor(Math.random() * 4)];
-    if (models[key]) spawnEntity(key, spawnX, g(key));
-    spawnX += 2.4;
-  } else if (roll < 0.78) {
-    const key = Math.random() < 0.5 ? 'fork' : 'plates';
-    if (models[key]) spawnEntity(key, spawnX, g(key));
-    spawnX += 2.4;
-  } else if (models.emerald) {
-    const fy = typeCfg.emerald.floatY;
-    spawnEntity('emerald', spawnX, fy[0] + Math.random() * (fy[1] - fy[0]), { shadowColor: 0x39d24e });
-    spawnX += 1.6;
+const g0 = k => typeCfg[k].groundOffset || 0;
+
+// --- pattern chunks ---
+function patEmeraldArc() {           // jump arc of drops over a ground hazard
+  const key = ['plant', 'salt', 'slime'][Math.floor(Math.random() * 3)];
+  const n = 5 + Math.floor(Math.random() * 2);
+  const span = n * 0.62;
+  if (models[key]) spawnEntity(key, spawnX + span / 2, g0(key));
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    spawnEntity('emerald', spawnX + i * 0.62, 1.5 + Math.sin(Math.PI * t) * 1.35, { shadowColor: 0x39d24e });
   }
-  spawnX += state.speed * (0.55 + Math.random() * 0.75);   // reaction-time gap scales with speed
+  spawnX += span + 2.0;
+}
+function patDuckPin() {              // rolling pin: slide under, low drops as the reward
+  const first = !slideHintShown;
+  spawnEntity('pin', spawnX + 1.2, PIN_Y, { hint: first });
+  for (let i = 0; i < 3; i++)
+    spawnEntity('emerald', spawnX + 0.4 + i * 0.8, 0.85, { shadowColor: 0x39d24e });
+  spawnX += 4.0;
+}
+function patCleanRow() {             // dirty dishes: soap practice, clean-touch bonus
+  const n = 2 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < n; i++) {
+    const key = Math.random() < 0.5 ? 'fork' : 'plates';
+    if (models[key]) spawnEntity(key, spawnX + i * 3.0, g0(key));
+  }
+  spawnX += n * 3.0 + 1.0;
+}
+function patStarHigh() {             // star way up — jump over the hazard to grab it
+  const key = ['plant', 'salt'][Math.floor(Math.random() * 2)];
+  if (models[key]) spawnEntity(key, spawnX + 0.6, g0(key));
+  const fy = typeCfg.star.floatY;
+  spawnEntity('star', spawnX + 0.6, fy[0] + Math.random() * (fy[1] - fy[0]), { shadowColor: 0xffd24e });
+  spawnX += 3.0;
+}
+function patHazard() {               // a single obstacle to hop
+  const key = ['slime', 'oil', 'plant', 'salt'][Math.floor(Math.random() * 4)];
+  if (models[key]) spawnEntity(key, spawnX, g0(key));
+  spawnX += 2.4;
+}
+function patCombo() {                // level 2+: slide then jump, quick hands
+  spawnEntity('pin', spawnX + 1.0, PIN_Y);
+  const key = ['plant', 'slime'][Math.floor(Math.random() * 2)];
+  if (models[key]) spawnEntity(key, spawnX + 5.2, g0(key));
+  spawnX += 7.5;
+}
+function patBreather() {             // gentle drops, catch your breath
+  const n = 3;
+  for (let i = 0; i < n; i++)
+    spawnEntity('emerald', spawnX + i * 1.4, 1.2 + Math.random() * 0.7, { shadowColor: 0x39d24e });
+  spawnX += n * 1.4 + 1.2;
+}
+
+function spawnChunk() {
+  const lvl = state.level;
+  const table = [
+    [0.20, patEmeraldArc],
+    [0.17, patDuckPin],
+    [0.14, patCleanRow],
+    [0.11, patStarHigh],
+    [0.14, patHazard],
+    [lvl >= 2 ? 0.12 : 0.0, patCombo],
+    [0.12, patBreather]
+  ];
+  const total = table.reduce((s, r) => s + r[0], 0);
+  let roll = Math.random() * total;
+  for (const [w, fn] of table) {
+    roll -= w;
+    if (roll <= 0) { fn(); break; }
+  }
+  spawnX += state.speed * (0.5 + Math.random() * 0.65);   // reaction-time gap scales with speed
 }
 function despawnBehind(px) {
   for (let i = entities.length - 1; i >= 0; i--) {
@@ -569,11 +728,11 @@ function updateHUD() {
 // ACTIONS
 // ----------------------------------------------------
 function fireSoap() {
-  if (state.ammo <= 0 || state.isGameOver) return;
+  if (state.ammo <= 0 || state.isGameOver || !state.started) return;
   state.ammo--; updateHUD();
   sfx.fire();
   const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
-  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.25, LANE_Z);
+  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.15, LANE_Z);
   soap.castShadow = true;
   scene.add(soap);
   soaps.push({ mesh: soap, life: 1.6 });
@@ -581,7 +740,7 @@ function fireSoap() {
 function takeDamage() {
   if (state.isGameOver || state.invuln > 0) return;
   state.lives--; updateHUD();
-  state.invuln = 1.2;
+  state.invuln = 1.6;
   sfx.hit();
   squash = 0.75;
   burst(playerGroup.position.clone().add(new THREE.Vector3(0, 1.0, 0)), 0xff5544, 10, 3.0, 2.0, 0.25);
@@ -597,6 +756,7 @@ function takeDamage() {
 }
 function gameOver() {
   state.isGameOver = true;
+  cancelSlide();
   playAnim('idle');
   document.getElementById('go-score').innerText = state.score;
   document.getElementById('go-dist').innerText = Math.floor(playerGroup.position.x) + ' m';
@@ -626,7 +786,7 @@ function collect(ent) {
 // MAIN LOOP
 // ----------------------------------------------------
 const clock = new THREE.Clock();
-let hudT = 0;
+let hudT = 0, slideDustT = 0;
 function gameLoop() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
@@ -638,8 +798,8 @@ function gameLoop() {
     const px0 = playerGroup.position.x;
 
     // --- always running; boost & brake only bend the pace ---
-    const diff = 1 + Math.min(1.2, px0 / 500);
-    state.speed = BASE_SPEED * diff * (state.boost ? 1.45 : state.brake ? 0.62 : 1.0) * (state.isSliding ? 1.25 : 1.0);
+    const diff = 1 + Math.min(1.35, px0 / 450);
+    state.speed = BASE_SPEED * diff * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0) * (state.isSliding ? 1.2 : 1.0);
     playerGroup.position.x += state.speed * dt;
     playerGroup.position.z = LANE_Z;
 
@@ -653,6 +813,15 @@ function gameLoop() {
         squash = 0.82;
         burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.1, 0)), 0xffffff, 5, 1.6, 1.2, 0.16, 2.5);
         playAnim(moveAnim());
+      }
+    }
+
+    // sliding kicks up a little foam trail
+    if (state.isSliding && state.onGround) {
+      slideDustT -= dt;
+      if (slideDustT <= 0) {
+        slideDustT = 0.08;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(-0.5, 0.15, 0)), 0xffffff, 2, 1.2, 0.9, 0.13, 3.0);
       }
     }
 
@@ -680,8 +849,8 @@ function gameLoop() {
     checkLevel();
 
     const px = playerGroup.position.x, py = playerGroup.position.y;
-    const playerR = state.isSliding ? 0.5 : 0.7;
-    const playerReachTop = py + (state.isSliding ? 1.0 : 2.4);
+    const playerR = state.isSliding ? 0.5 : 0.6;
+    const playerReachTop = py + (state.isSliding ? SLIDE_H : STAND_H);
 
     for (const ent of entities) {
       if (!ent.active) continue;
@@ -696,6 +865,14 @@ function gameLoop() {
         m.rotation.y += dt * 1.8; m.position.y = ent.baseY + Math.sin(t * 3 + ent.phase) * 0.10;
       } else if (ent.type === 'score') {
         m.rotation.y += dt * 2.5; m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.1;
+      }
+      if (ent.subType === 'duck') {
+        m.rotation.x += dt * 3.2;                                            // pin spins on its axis
+        m.position.y = ent.baseY + Math.sin(t * 2.2 + ent.phase) * 0.05;
+        if (ent.hint && !slideHintShown && (m.position.x - px) < 9) {
+          slideHintShown = true;
+          popup(m.position.clone().add(new THREE.Vector3(0, 1.3, 0)), 'SLIDE UNDER! [SHIFT]', '#7fe3a0');
+        }
       }
       if (c.bounce && !ent.isClean) m.position.y = ent.baseY + Math.abs(Math.sin(t * 3 + ent.phase)) * 0.18;
       if (c.roll)  { m.rotation.z -= dt * 5.0; m.position.x -= 1.4 * dt; }   // salt rolls toward him
@@ -713,7 +890,7 @@ function gameLoop() {
       if ((ent.type === 'ammo' || ent.type === 'score') && Math.abs(dx) < 1.5) {
         if (m.position.y <= playerReachTop + 0.4) {
           m.position.x += (px - m.position.x) * 6 * dt;
-          m.position.y += ((py + 1.3) - m.position.y) * 6 * dt;
+          m.position.y += ((py + 1.1) - m.position.y) * 6 * dt;
         }
       }
 
@@ -722,6 +899,24 @@ function gameLoop() {
         if (ent.type === 'ammo' || ent.type === 'score') {
           const ey = m.position.y;
           if (ey >= py - 0.2 && ey <= playerReachTop + 0.3) collect(ent);
+        } else if (ent.subType === 'duck') {
+          // overhead bar: slide under it (or thread a perfect jump over it)
+          if (state.isSliding || playerReachTop < PIN_Y - PIN_R - 0.02) {
+            if (!ent.crossed) {
+              ent.crossed = true;
+              state.score += 25; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, 1.0, 0)), 'UNDER! +25', '#7fe3a0');
+            }
+          } else if (py > PIN_CLEAR_Y) {
+            if (!ent.jumped) {
+              ent.jumped = true;
+              state.score += 10; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, 0.8, 0)), '+10', '#bfe8ff');
+            }
+          } else if (!ent.crossed) {
+            ent.crossed = true;
+            takeDamage();
+          }
         } else {
           const top = m.position.y + ent.height;
           if (py >= top - 0.15) {
@@ -753,10 +948,11 @@ function gameLoop() {
                 popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLICK! +25', '#7fe3a0');
               }
             } else if (state.onGround && !ent.crossed) {
-              ent.crossed = true;
+              ent.crossed = true;                                // slipped on the oil
               takeDamage();
-              state.isSliding = true; playAnim('running_slide');
-              setTimeout(() => { state.isSliding = false; }, 900);
+              state.brake = true;
+              popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLIPPED!', '#ffb84e');
+              setTimeout(() => { state.brake = false; }, 800);
             }
           } else if (ent.type === 'hazard' && ent.subType === 'slow') {
             if (!ent.crossed) {
@@ -817,7 +1013,10 @@ function gameLoop() {
     counterTex.offset.x = playerGroup.position.x * (150 / 1500);   // wood stays put while the box travels
   }
   for (const p of fgPlanes) {
-    if (p.position.x < camera.position.x - 35) p.position.x += 230 + Math.random() * 30;
+    if (p.position.x < camera.position.x - 30) {
+      p.position.x += 260 + Math.random() * 40;
+      p.position.z = p.userData.layer === 'near' ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8;
+    }
   }
 
   renderer.render(scene, camera);
@@ -832,15 +1031,15 @@ window.addEventListener('keydown', e => {
   if (state.isGameOver) return;
   if (e.code === 'ArrowRight') state.boost = true;
   if (e.code === 'ArrowLeft')  state.brake = true;
-  if ((e.code === 'Space' || e.code === 'ArrowUp') && state.onGround && !state.isSliding) {
+  if ((e.code === 'Space' || e.code === 'ArrowUp') && state.onGround && state.started) {
+    if (state.isSliding) cancelSlide();               // jump cancels slide — stay in control
     velocity.y = state.jumpPower; state.onGround = false;
     sfx.jump();
     squash = 1.3;
-    playAnim('jump');
+    playAnim('jump', 0.10);
   }
-  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') && state.onGround && !state.isSliding) {
-    state.isSliding = true; playAnim('running_slide');
-    setTimeout(() => { state.isSliding = false; }, 900);
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown')) {
+    startSlide();
   }
   if (e.code === 'KeyF' && !e.repeat) fireSoap();
 });
