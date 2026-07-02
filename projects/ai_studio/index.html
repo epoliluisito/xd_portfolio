@@ -403,6 +403,7 @@ function registerAssetLoaded() {
       audioUnlocked = true;
       craneT = 0;                    // start the cinematic crane intro
       moonLight.intensity = 0.72;    // exterior fully moonlit for the aerial reveal
+      prewarmNimble();               // compile Nimble's shaders now, not when he appears
       screens.forEach(s => {
         const p = s.video.play();
         if(p !== undefined) {
@@ -1737,14 +1738,42 @@ function flowDirAt(x, z, t){
 // .computeBoundingBox is pose-aware) and correct the lift once.
 let nimbleMeasureT = -1, nimbleMeasureLast = 0, nimbleFootMin = Infinity;
 const _nmB = new THREE.Box3();
+
+// ---- Nimble pre-warm ----
+// His materials never render until he activates, so his first frame used to pay for
+// WebGL shader compilation + GPU texture uploads + the skinned shadow-depth program
+// all at once -> the "performance crash" when he appears. We pay all of it up front,
+// behind the opaque loading screen, right when the player clicks Enter.
+let nimblePrewarmed = false;
+function prewarmNimble(){
+  if (!nimble || nimblePrewarmed || !audioUnlocked) return;
+  nimblePrewarmed = true;
+  try {
+    renderer.compile(nimble, camera, scene);   // color + skinning programs
+    nimble.traverse(o => {
+      if (!o.isMesh) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+        if (!m) return;
+        ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','aoMap'].forEach(k => {
+          if (m[k]) renderer.initTexture(m[k]);
+        });
+      });
+    });
+    // one hidden warm-up render also compiles his shadow-depth program
+    const wasVis = nimble.visible;
+    nimble.visible = true;
+    nimble.position.set(0, 1, -25);
+    renderer.render(scene, camera);
+    nimble.visible = wasVis;
+  } catch(e){ console.warn('nimble prewarm skipped', e); }
+}
 function measureNimbleMinY(){
   let minY = Infinity;
   try {
     nimble.updateMatrixWorld(true);
     nimble.traverse(o => {
-      if (!o.visible || !o.isMesh) return;
-      if (o.isSkinnedMesh) { o.computeBoundingBox(); _nmB.copy(o.boundingBox); }
-      else { if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); _nmB.copy(o.geometry.boundingBox); }
+      if (!o.visible || !o.isSkinnedMesh) return;   // pose-aware pass: skinned meshes only (static parts covered by the initial estimate)
+      o.computeBoundingBox(); _nmB.copy(o.boundingBox);
       _nmB.applyMatrix4(o.matrixWorld);
       if (_nmB.min.y < minY) minY = _nmB.min.y;
     });
@@ -1778,6 +1807,7 @@ gltfLoader.load('nimble_character.glb', (gltf) => {
       const clip = find(n); if (clip) nimbleActions[n] = nimbleMixer.clipAction(clip);
     });
     nimbleReady = !!nimbleActions['idle'] || !!nimbleActions['running'];
+    if (audioUnlocked) prewarmNimble();   // player already entered -> warm up now
   } catch(e){ console.warn('nimble init failed', e); }
 }, undefined, (err) => { console.warn('Error loading nimble:', err); });
 
@@ -1852,12 +1882,12 @@ function updateNimble(dt){
   // pose-aware foot calibration window (few skinned-bbox samples, then done)
   if (nimbleMeasureT >= 0){
     nimbleMeasureT += dt;
-    if (nimbleMeasureT - nimbleMeasureLast > 0.18){
+    if (nimbleMeasureT - nimbleMeasureLast > 0.4){   // 2 samples total — no per-frame CPU skinning stutter
       nimbleMeasureLast = nimbleMeasureT;
       const m = measureNimbleMinY();
       if (isFinite(m) && m < nimbleFootMin) nimbleFootMin = m;
     }
-    if (nimbleMeasureT > 1.1){
+    if (nimbleMeasureT > 0.95){
       if (isFinite(nimbleFootMin)){
         const floorY = worldFloorY(nimble.position.x, nimble.position.z);
         let corr = (floorY + 0.01) - nimbleFootMin;
@@ -1871,15 +1901,15 @@ function updateNimble(dt){
   const gp = character ? character.position : null;
   const near = gp ? Math.hypot(gp.x - nimble.position.x, gp.z - nimble.position.z) : 99;
 
-  if (gp && near < 3.5 && checkLineOfSight(nimble.position, gp)){
+  if (gp && near < 4.8 && checkLineOfSight(nimble.position, gp)){
     // player is close and actually visible (not through a wall): stop and face them
     if (nimbleState !== 'engaged'){ nimbleSetAnim('idle'); nimbleState = 'engaged'; }
     const a = Math.atan2(gp.x - nimble.position.x, gp.z - nimble.position.z);
     nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.12);
-    // the PLAY prompt only appears within 2m AND with the camera actually pointed at him
+    // the PLAY prompt appears within 3.2m with the camera pointed at him (wide cone)
     _nimDir.set(nimble.position.x - camera.position.x, (nimble.position.y + 1.0) - camera.position.y, nimble.position.z - camera.position.z).normalize();
     _nimFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    nimbleShowPrompt = (near < 2.0) && (_nimFwd.dot(_nimDir) > 0.55);
+    nimbleShowPrompt = (near < 3.2) && (_nimFwd.dot(_nimDir) > 0.45);
     return;
   }
   nimbleShowPrompt = false;
