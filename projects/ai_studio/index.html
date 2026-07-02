@@ -114,6 +114,19 @@
     #overlay-panel { flex-direction: column; padding: 24px; gap: 24px; }
     #overlay-info, #overlay-video-container { width: 100%; flex: auto; }
   }
+  /* Nimble game fullscreen overlay */
+  #nimble-overlay { position: fixed; inset: 0; z-index: 500; background: #000; display: none; }
+  #nimble-overlay.visible { display: block; }
+  #nimble-frame { width: 100%; height: 100%; border: 0; display: block; }
+  #nimble-close {
+    position: fixed; top: 16px; right: 18px; z-index: 510;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: rgba(6,8,16,0.72); border: 1px solid rgba(255,255,255,0.35);
+    color: #fff; font-family: inherit; font-size: 15px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(8px); transition: all 0.2s;
+  }
+  #nimble-close:hover { background: rgba(232,197,71,0.18); border-color: #e8c547; color: #e8c547; }
 </style>
 
 <script type="importmap">
@@ -174,6 +187,11 @@
       <video id="overlay-video" controls controlsList="nodownload"></video>
     </div>
   </div>
+</div>
+
+<div id="nimble-overlay">
+  <button id="nimble-close" title="Back to gallery">✕</button>
+  <iframe id="nimble-frame" src="" allow="pointer-lock; fullscreen; autoplay; gamepad; accelerometer; gyroscope; xr-spatial-tracking" allowfullscreen></iframe>
 </div>
 
 <script type="module">
@@ -1049,6 +1067,7 @@ window.addEventListener('keydown', e => {
     if(e.key === 'Escape') {
       closeOverlay();
       document.getElementById('confirm-overlay').style.display = 'none';
+      if (nimbleGameOpen) closeNimbleGame();
     }
     return;
   }
@@ -1120,9 +1139,28 @@ document.getElementById('btn-cancel-travel').addEventListener('click', () => {
 
 document.getElementById('btn-confirm-travel').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.remove('visible');
-  if (confirmMode === 'nimble') { window.location.href = 'https://xd.enricopoli.com/projects/nimble/test/'; }
+  if (confirmMode === 'nimble') { openNimbleGame(); }
   else { startLevelTransition(); }
 });
+
+// ---- Nimble game overlay (embedded iframe, closable) ----
+let nimbleGameOpen = false;
+function openNimbleGame(){
+  nimbleGameOpen = true;
+  isOverlayOpen = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+  try { screens.forEach(s => { s.video.volume = 0; if (!s.video.paused) s.video.pause(); }); } catch(e){}
+  const fr = document.getElementById('nimble-frame');
+  fr.src = 'nimble/';
+  document.getElementById('nimble-overlay').classList.add('visible');
+}
+function closeNimbleGame(){
+  nimbleGameOpen = false;
+  isOverlayOpen = false;
+  document.getElementById('nimble-overlay').classList.remove('visible');
+  document.getElementById('nimble-frame').src = '';   // stop game, free resources
+}
+document.getElementById('nimble-close').addEventListener('click', closeNimbleGame);
 
 
 // ---- Interaction Logic ----
@@ -1488,6 +1526,7 @@ function updateNimble(dt){
 
 function animate() {
   requestAnimationFrame(animate);
+  if (nimbleGameOpen) return;
   const dt = Math.min(clock.getDelta(), 0.05);
   try {
 
