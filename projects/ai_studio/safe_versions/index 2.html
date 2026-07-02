@@ -130,13 +130,6 @@
   #trad-overlay { position: fixed; inset: 0; z-index: 500; background: #000; display: none; }
   #trad-overlay.visible { display: block; }
   #trad-frame { width: 100%; height: 100%; border: 0; display: block; }
-  #trad-loading {
-    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    color: rgba(232,197,71,0.85); font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase;
-    z-index: 505; pointer-events: none; display: none;
-    animation: tradpulse 1.6s ease-in-out infinite;
-  }
-  @keyframes tradpulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.95; } }
 </style>
 
 <script type="importmap">
@@ -206,7 +199,6 @@
 
 <div id="trad-overlay">
   <iframe id="trad-frame" src="" allow="pointer-lock; fullscreen; autoplay; gamepad; accelerometer; gyroscope; xr-spatial-tracking" allowfullscreen></iframe>
-  <div id="trad-loading">Entering Traditional Production&hellip;</div>
 </div>
 
 <script type="module">
@@ -214,7 +206,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { SubsurfaceScatteringShader } from 'three/addons/shaders/SubsurfaceScatteringShader.js';
 
 await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 3000))]).catch(()=>{});
 
@@ -441,7 +432,6 @@ const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
 
 document.body.appendChild(renderer.domElement);
 renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); console.warn('WebGL context lost — pausing.'); }, false);
-renderer.domElement.addEventListener('webglcontextrestored', () => { console.warn('WebGL context restored — resuming.'); }, false);
 window.addEventListener('error', (e) => console.warn('runtime error (continuing):', e.message));
 
 const scene = new THREE.Scene();
@@ -454,11 +444,9 @@ scene.environment = pmremGen.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.3, 1300);
 
-// Soft, view-independent base light. The heavy lifting that used to come from the
-// env-map (glowy + shifts as you turn) now comes from these stable diffuse sources.
-const ambient = new THREE.AmbientLight(0xfff2e2, 0.085);
+const ambient = new THREE.AmbientLight(0xffffff, 0.05); 
 scene.add(ambient);
-const hemiLight = new THREE.HemisphereLight(0xf2ede4, 0x1b1712, 0.17);
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x141a26, 0.11); 
 scene.add(hemiLight);
 
 // Single shadow-casting directional light that follows the player
@@ -467,33 +455,13 @@ const sunLight = new THREE.DirectionalLight(0xfff2e0, 0.28);
 sunLight.position.set(6, 16, 4);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
-sunLight.shadow.bias = -0.0001;
-sunLight.shadow.normalBias = 0.04; // kills shadow-acne stripes on the flat carpet
+sunLight.shadow.bias = -0.0005;
 sunLight.shadow.camera.near = 1;
 sunLight.shadow.camera.far = 45;
 sunLight.shadow.camera.left = -16; sunLight.shadow.camera.right = 16;
 sunLight.shadow.camera.top = 16; sunLight.shadow.camera.bottom = -16;
 scene.add(sunLight);
 scene.add(sunLight.target);
-
-// Texel-snapping for the follow light: quantizes the shadow camera to shadow-map
-// texels so the floor shadows stop shimmering/crawling ("z-fight"-like moire)
-// whenever the player moves or turns.
-const _sunOffset = new THREE.Vector3(6, 16, 4);
-const _sunDirN = _sunOffset.clone().normalize();
-const _sunRight = new THREE.Vector3().crossVectors(_sunDirN, new THREE.Vector3(0,1,0)).normalize();
-const _sunUp = new THREE.Vector3().crossVectors(_sunRight, _sunDirN).normalize();
-const _sunTmp = new THREE.Vector3();
-const SUN_TEXEL = 32 / 2048;
-function updateSunLight(px, py, pz) {
-  _sunTmp.set(px, py, pz);
-  const r = _sunTmp.dot(_sunRight), u = _sunTmp.dot(_sunUp), d = _sunTmp.dot(_sunDirN);
-  const rs = Math.round(r / SUN_TEXEL) * SUN_TEXEL;
-  const us = Math.round(u / SUN_TEXEL) * SUN_TEXEL;
-  _sunTmp.set(0,0,0).addScaledVector(_sunRight, rs).addScaledVector(_sunUp, us).addScaledVector(_sunDirN, d);
-  sunLight.target.position.copy(_sunTmp);
-  sunLight.position.copy(_sunTmp).add(_sunOffset);
-}
 
 const texLoader = new THREE.TextureLoader();
 const concreteBase = texLoader.load('concrete_texture/concrete_basecolor.webp', undefined, undefined, () => console.warn('Base texture missing'));
@@ -510,7 +478,7 @@ concreteBase.colorSpace = THREE.SRGBColorSpace;
 
 const wallMat = new THREE.MeshStandardMaterial({
   map: concreteBase, normalMap: concreteNorm, roughnessMap: concreteRough,
-  color: 0x6e6e6e, roughness: 0.64, metalness: 0.0, envMapIntensity: 0.07
+  color: 0x6e6e6e, roughness: 0.64, metalness: 0.0, envMapIntensity: 0.16
 });
 
 // ---- Interior carpet floor ----
@@ -622,7 +590,7 @@ scene.add(retroLight);
 const _fixtureMat = new THREE.MeshBasicMaterial({ color: 0xffe0b6, toneMapped: false, fog: false });
 const _fixtureGeo = new THREE.CircleGeometry(0.32, 20); _fixtureGeo.rotateX(Math.PI/2);
 [6, 16, 26, 36, 46, 56].forEach(z => {
-  const spot = new THREE.SpotLight(0xffe6c2, 3.1, 24, Math.PI/4.1, 0.99, 1.4);
+  const spot = new THREE.SpotLight(0xffe6c2, 3.8, 22, Math.PI/4.4, 0.92, 1.4);
   spot.position.set(0, 7.7, z);
   spot.target.position.set(0, 0, z);
   scene.add(spot); scene.add(spot.target);
@@ -632,7 +600,7 @@ const _fixtureGeo = new THREE.CircleGeometry(0.32, 20); _fixtureGeo.rotateX(Math
 });
 // soft, low, warm diffused fill in the side screen-rooms
 [{x:-15.5,z:12},{x:15.5,z:12},{x:15.5,z:30},{x:-15.5,z:37.5},{x:15.5,z:50},{x:-15.5,z:52.5}].forEach(p => {
-  const l = new THREE.PointLight(0xffeeda, 0.14, 21);
+  const l = new THREE.PointLight(0xffeeda, 0.085, 19);
   l.position.set(p.x, 5.8, p.z);
   scene.add(l);
 });
@@ -760,13 +728,10 @@ function loadTex(url, srgb, repeat){
 }
 
 // ---- cool static moonlight for the exterior ----
-// NOTE: light.layers only gates a light against the CAMERA's layers (not per object),
-// so the old `layers.set(1)` silently disabled this light for everything. Instead we
-// fade its intensity in only while the player is outside: the interior stays dark,
-// intimate and CONSISTENT, and the exterior gets its proper cool moonlight.
-const moonLight = new THREE.DirectionalLight(0xd9f1ff, 0.0);
+const moonLight = new THREE.DirectionalLight(0xd9f1ff, 0.72);
 moonLight.position.set(EXT_CENTER.x - 170, 130, EXT_CENTER.z - 190);
 moonLight.target.position.copy(EXT_CENTER);
+moonLight.layers.set(1); // layer 1 = exterior only -> keeps the gallery interior dark & intimate
 scene.add(moonLight); scene.add(moonLight.target);
 
 // ---- SNOW GROUND (large displaced plane, flat under the building) ----
@@ -968,36 +933,6 @@ const _pilGeo = new THREE.BoxGeometry(0.7, 12, 1.0);
   pil.castShadow = true; pil.receiveShadow = true; pil.layers.enable(1);
   scene.add(pil);
 });
-
-// ---- ENTRANCE RAMP ----
-// The snow ground sits at y=-0.35 while the carpet sits at y=0: that 35cm step at the
-// doorway is what made characters sink leg-deep while the height-lerp caught up, and it
-// left an ugly open seam where snow meets carpet. A gently sloped concrete approach
-// (buried in the snow at its far end) makes the walkable height CONTINUOUS, and a metal
-// threshold plate covers the carpet/ramp junction under the doors.
-const RAMP_HALF_W = 6.0, RAMP_Z0 = -10.25, RAMP_Z1 = -0.45, RAMP_Y0 = -0.55, RAMP_Y1 = 0.0;
-{
-  const rampLen = RAMP_Z1 - RAMP_Z0;
-  const rampAng = Math.atan2(RAMP_Y1 - RAMP_Y0, rampLen);
-  const ramp = new THREE.Mesh(new THREE.BoxGeometry(RAMP_HALF_W * 2, 0.6, rampLen), wallMat);
-  ramp.rotation.x = -rampAng;
-  ramp.position.set(0, (RAMP_Y0 + RAMP_Y1) / 2 - 0.3 * Math.cos(rampAng), (RAMP_Z0 + RAMP_Z1) / 2);
-  ramp.castShadow = true; ramp.receiveShadow = true; ramp.layers.enable(1);
-  scene.add(ramp);
-
-  const sill = new THREE.Mesh(
-    new THREE.BoxGeometry(10.4, 0.07, 1.15),
-    new THREE.MeshStandardMaterial({ color: 0x1c1c1c, metalness: 0.75, roughness: 0.35 })
-  );
-  sill.position.set(0, 0.02, -0.5);
-  sill.receiveShadow = true; sill.layers.enable(1);
-  scene.add(sill);
-}
-function rampTopY(x, z) {
-  if (Math.abs(x) > RAMP_HALF_W || z < RAMP_Z0 || z > RAMP_Z1 + 0.2) return -Infinity;
-  const t = Math.max(0, Math.min(1, (z - RAMP_Z0) / (RAMP_Z1 - RAMP_Z0)));
-  return RAMP_Y0 + (RAMP_Y1 - RAMP_Y0) * t;
-}
 const neonSign = new THREE.Mesh(
   new THREE.PlaneGeometry(11, 2.06),
   new THREE.MeshBasicMaterial({ map: makeNeonTexture('FULL AI PRODUCTION'), transparent: true, toneMapped: false, depthWrite: false, side: THREE.DoubleSide })
@@ -1059,7 +994,7 @@ let character, mixer, idleAction, walkAction;
 let currentWeight = 0; 
 gltfLoader.load('greg.glb', (gltf) => {
   character = gltf.scene;
-  character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); const _ms=Array.isArray(c.material)?c.material:[c.material]; _ms.forEach(m=>{ if(m && 'envMapIntensity' in m) m.envMapIntensity=0.09; }); } });
+  character.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); const _ms=Array.isArray(c.material)?c.material:[c.material]; _ms.forEach(m=>{ if(m && 'envMapIntensity' in m) m.envMapIntensity=0.2; }); } });
   
   character.position.set(0, -0.35, -30);
   character.rotation.y = Math.PI; 
@@ -1106,7 +1041,7 @@ const timWaypoints = [
 
 gltfLoader.load('tim.glb', (gltf) => {
   tim = gltf.scene;
-  tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); const _ms=Array.isArray(c.material)?c.material:[c.material]; _ms.forEach(m=>{ if(m && 'envMapIntensity' in m) m.envMapIntensity=0.09; }); } });
+  tim.traverse(c => { if(c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.layers.enable(1); const _ms=Array.isArray(c.material)?c.material:[c.material]; _ms.forEach(m=>{ if(m && 'envMapIntensity' in m) m.envMapIntensity=0.2; }); } });
   
   tim.position.set(-1.5, 0, -6);
   tim.rotation.y = Math.PI; 
@@ -1172,26 +1107,36 @@ document.addEventListener('mousemove', e => {
   walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
 });
 
-// (Legacy full-page level transition removed — the 2d room is now preloaded into its
-// overlay iframe when the player approaches the exit door, so travel is instant.)
+// ---- Level Transition Logic (Prefetch instead of iframe) ----
+function startLevelTransition() {
+  const loadingScreen = document.getElementById('loading');
+  const loadText = document.getElementById('load-text');
+  const loadFill = document.getElementById('load-fill');
+  
+  document.getElementById('enter-btn').style.display = 'none';
+  loadText.textContent = "TRAVELLING TO TRADITIONAL PRODUCTION...";
+  
+  loadFill.style.transition = 'none';
+  loadFill.style.width = '0%';
+  
+  const prefetch = document.createElement('link');
+  prefetch.rel = 'prefetch';
+  prefetch.href = './2d/';
+  document.head.appendChild(prefetch);
+  
+  loadingScreen.style.display = 'flex';
+  loadingScreen.style.opacity = '1';
+  loadingScreen.style.pointerEvents = 'all';
 
-// ---- Gallery resource management while a heavy overlay (game / 2d room) runs ----
-// Releasing the 11 video decoder pipelines and hiding the WebGL canvas frees a large
-// amount of GPU/decoder memory for the iframe app — this is what prevents the
-// context-loss crashes inside the Nimble game.
-let videosFreed = false;
-function freeGalleryVideos() {
-  if (videosFreed) return;
-  videosFreed = true;
-  screens.forEach(s => {
-    try { s.video.volume = 0; s.targetVolume = 0; s.video.pause(); s.video.removeAttribute('src'); s.video.load(); } catch(e){}
-  });
-}
-function restoreGalleryVideos() {
-  if (!videosFreed) return;
-  videosFreed = false;
-  screens.forEach(s => {
-    try { s.video.src = s.data.file; s.video.load(); } catch(e){}
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      loadFill.style.transition = 'width 2.5s cubic-bezier(0.4, 0, 0.2, 1)';
+      loadFill.style.width = '100%';
+      
+      setTimeout(() => {
+        window.location.href = './2d/';
+      }, 2600);
+    });
   });
 }
 
@@ -1213,12 +1158,8 @@ function openNimbleGame(){
   nimbleGameOpen = true;
   isOverlayOpen = true;
   if (document.pointerLockElement) document.exitPointerLock();
-  freeGalleryVideos();                                  // hand GPU/decoder memory to the game
-  renderer.domElement.style.visibility = 'hidden';      // no gallery compositing behind it
+  try { screens.forEach(s => { s.video.volume = 0; if (!s.video.paused) s.video.pause(); }); } catch(e){}
   const fr = document.getElementById('nimble-frame');
-  fr.addEventListener('load', () => {
-    try { fr.focus(); if (fr.contentWindow) fr.contentWindow.focus(); } catch(e){}
-  }, { once: true });
   fr.src = 'nimble/';
   document.getElementById('nimble-overlay').classList.add('visible');
 }
@@ -1227,49 +1168,25 @@ function closeNimbleGame(){
   isOverlayOpen = false;
   document.getElementById('nimble-overlay').classList.remove('visible');
   document.getElementById('nimble-frame').src = '';   // stop game, free resources
-  renderer.domElement.style.visibility = 'visible';
-  restoreGalleryVideos();
-  if (nimbleActive) { nimbleState = 'performing'; nimbleTimer = 2.2; nimbleSetAnim('dance'); }
 }
 document.getElementById('nimble-close').addEventListener('click', closeNimbleGame);
 
 // ---- Traditional-production room overlay (closes when the user reaches the door there) ----
-// The room is PRELOADED into the hidden iframe as soon as the player gets near the exit
-// door, so confirming travel reveals it instantly instead of a long black screen. A small
-// hysteresis (re-arm only after walking >18m away) prevents a reload loop right after
-// returning to the gallery.
-let overlayRoomOpen = false, tradPreloaded = false, tradLoaded = false, tradArmed = true;
-const tradFrame = document.getElementById('trad-frame');
-const tradLoadingEl = document.getElementById('trad-loading');
-tradFrame.addEventListener('load', () => {
-  tradLoaded = !!tradFrame.getAttribute('src');
-  if (tradLoaded) tradLoadingEl.style.display = 'none';
-});
-function preloadTradRoom(){
-  if (tradPreloaded) return;
-  tradPreloaded = true; tradLoaded = false;
-  tradFrame.src = '2d/';
-}
+let overlayRoomOpen = false;
 function openTradRoom(){
   overlayRoomOpen = true;
   isOverlayOpen = true;
   if (document.pointerLockElement) document.exitPointerLock();
-  freeGalleryVideos();
-  renderer.domElement.style.visibility = 'hidden';
-  tradLoadingEl.style.display = tradLoaded ? 'none' : 'block';
-  if (!tradPreloaded) preloadTradRoom();
+  try { screens.forEach(s => { s.video.volume = 0; if (!s.video.paused) s.video.pause(); }); } catch(e){}
+  document.getElementById('trad-frame').src = '2d/';
   document.getElementById('trad-overlay').classList.add('visible');
-  try { tradFrame.focus(); if (tradFrame.contentWindow) tradFrame.contentWindow.focus(); } catch(e){}
 }
 function closeTradRoom(){
   if (!overlayRoomOpen) return;
   overlayRoomOpen = false;
   isOverlayOpen = false;
   document.getElementById('trad-overlay').classList.remove('visible');
-  tradFrame.src = '';
-  tradPreloaded = false; tradLoaded = false; tradArmed = false; // re-arms once the player walks away
-  renderer.domElement.style.visibility = 'visible';
-  restoreGalleryVideos();
+  document.getElementById('trad-frame').src = '';
 }
 // primary: the 2D room posts a message when its exit door is reached
 window.addEventListener('message', (e) => {
@@ -1441,14 +1358,6 @@ function checkLineOfSight(p1, p2) {
 const clock = new THREE.Clock();
 const _frustum = new THREE.Frustum();
 const _projScreen = new THREE.Matrix4();
-// pre-allocated per-frame temporaries (no GC churn inside the render loop)
-const _v1 = new THREE.Vector3();
-const _camF = new THREE.Vector3();
-const _tPosV = new THREE.Vector3();
-const _dirV = new THREE.Vector3();
-const _rightV = new THREE.Vector3();
-const _moveV = new THREE.Vector3();
-const _upV = new THREE.Vector3(0, 1, 0);
 
 
 // =====================================================================
@@ -1469,16 +1378,6 @@ function groundHeightAt(wx, wz){
   return h * mask + GROUND_Y;
 }
 function isInsideBuilding(x, z){ return Math.abs(x) < 25.4 && z > -0.4 && z < 60.4; }
-
-// Single source of truth for "what height is the walkable surface here".
-// Inside -> carpet (0). Outside -> the HIGHER of snow and the entrance ramp.
-// Because the ramp tops out at exactly 0 at the doorway, this function is now
-// CONTINUOUS across the threshold — no more legs sinking through the floor
-// while the height-lerp catches up with a 35cm step.
-function worldFloorY(x, z){
-  if (isInsideBuilding(x, z)) return 0;
-  return Math.max(groundHeightAt(x, z), rampTopY(x, z));
-}
 
 // ---- FOOTPRINTS (pooled fading decals; snow depressions + wet carpet traces) ----
 const _footCanvas = document.createElement('canvas'); _footCanvas.width = _footCanvas.height = 64;
@@ -1505,17 +1404,17 @@ for (let i=0;i<FOOT_N;i++){
 }
 let _footIdx = 0, _footToggle = 1;
 const _lastFoot = new THREE.Vector3(9999,0,9999);
-function placeFootprint(x, z, yaw, wet){
+function placeFootprint(x, z, yaw, inside){
   const fp = footPool[_footIdx]; _footIdx = (_footIdx+1)%FOOT_N;
   const rx = Math.cos(yaw), rz = -Math.sin(yaw);        // right vector
   const off = 0.17 * _footToggle; _footToggle *= -1;
-  const gy = isInsideBuilding(x, z) ? 0.015 : worldFloorY(x, z) + 0.02; // decal hugs the real surface (carpet/ramp/snow)
+  const gy = inside ? 0.015 : groundHeightAt(x, z) + 0.02;
   fp.mesh.position.set(x + rx*off, gy, z + rz*off);
   fp.mesh.rotation.y = yaw + (Math.random()-0.5)*0.25;
   fp.mesh.visible = true;
   fp.life = 0;
-  if (wet){ fp.mesh.material.color.setHex(0x171410); fp.max = 3.5; fp.startOp = 0.42; }  // short-lived wet trace
-  else    { fp.mesh.material.color.setHex(0x9fb0c4); fp.max = 26;  fp.startOp = 0.28; }  // snow depression
+  if (inside){ fp.mesh.material.color.setHex(0x171410); fp.max = 3.5; fp.startOp = 0.42; }  // short-lived wet trace
+  else       { fp.mesh.material.color.setHex(0x9fb0c4); fp.max = 26;  fp.startOp = 0.28; }  // snow depression
 }
 function updateFootprints(dt){
   for (let i=0;i<FOOT_N;i++){
@@ -1532,9 +1431,8 @@ let _snowResidue = 0;   // how many more indoor steps still carry wet snow
 function trackFootsteps(pos, yaw){
   if (Math.hypot(pos.x - _lastFoot.x, pos.z - _lastFoot.z) > 0.82){
     const inside = isInsideBuilding(pos.x, pos.z);
-    const onRamp = !inside && rampTopY(pos.x, pos.z) > groundHeightAt(pos.x, pos.z);
-    if (!inside && !onRamp){ placeFootprint(pos.x, pos.z, yaw, false); _snowResidue = 6; }         // snow depressions
-    else if (_snowResidue > 0){ placeFootprint(pos.x, pos.z, yaw, true); _snowResidue--; }         // wet traces on ramp/carpet
+    if (!inside){ placeFootprint(pos.x, pos.z, yaw, false); _snowResidue = 6; }
+    else if (_snowResidue > 0){ placeFootprint(pos.x, pos.z, yaw, true); _snowResidue--; }
     _lastFoot.set(pos.x, 0, pos.z);
   }
 }
@@ -1565,112 +1463,6 @@ let nimbleTimer = 0, nimbleStuck = 0;
 let nimbleShowPrompt = false;
 let GREG_HEIGHT = 1.8;             // refined once greg is measured
 
-// ---- Nimble spatial awareness: BFS flow-field over a 1m grid of the gallery ----
-// Instead of blind straight-line steering (which wedged him against walls for long
-// stretches), Nimble now routes through doorways like someone who knows the floor plan.
-// The grid is static (walls only) and a flow field costs ~3k cells per retarget: free.
-const NAV_CELL = 1.0, NAV_X0 = -25, NAV_Z0 = 0.5, NAV_W = 51, NAV_D = 60;
-let navWalk = null, navFlow = null;
-const _navQ = new Int32Array(NAV_W * NAV_D);
-function buildNavGrid(){
-  navWalk = new Uint8Array(NAV_W * NAV_D);
-  const r = 0.55;
-  for (let gz = 0; gz < NAV_D; gz++) for (let gx = 0; gx < NAV_W; gx++) {
-    const x = NAV_X0 + gx * NAV_CELL, z = NAV_Z0 + gz * NAV_CELL;
-    let ok = x > -24.7 && x < 24.7 && z > 1.6 && z < 59.2;
-    if (ok) {
-      for (let i = 0; i < WALLS.length; i++) {
-        const w = WALLS[i];
-        if (w.y && w.y > 4) continue;
-        if (x + r > w.x - w.w/2 && x - r < w.x + w.w/2 && z + r > w.z - w.d/2 && z - r < w.z + w.d/2) { ok = false; break; }
-      }
-    }
-    navWalk[gz * NAV_W + gx] = ok ? 1 : 0;
-  }
-}
-function navIndex(x, z){
-  const gx = Math.round((x - NAV_X0) / NAV_CELL), gz = Math.round((z - NAV_Z0) / NAV_CELL);
-  if (gx < 0 || gz < 0 || gx >= NAV_W || gz >= NAV_D) return -1;
-  return gz * NAV_W + gx;
-}
-function nearestWalkable(x, z){
-  const gx0 = Math.round((x - NAV_X0) / NAV_CELL), gz0 = Math.round((z - NAV_Z0) / NAV_CELL);
-  for (let rad = 0; rad < 9; rad++) {
-    for (let oz = -rad; oz <= rad; oz++) for (let ox = -rad; ox <= rad; ox++) {
-      if (Math.max(Math.abs(ox), Math.abs(oz)) !== rad) continue;
-      const gx = gx0 + ox, gz = gz0 + oz;
-      if (gx < 0 || gz < 0 || gx >= NAV_W || gz >= NAV_D) continue;
-      if (navWalk[gz * NAV_W + gx]) return gz * NAV_W + gx;
-    }
-  }
-  return -1;
-}
-function computeFlowTo(tx, tz){
-  if (!navWalk) buildNavGrid();
-  if (!navFlow) navFlow = new Uint16Array(NAV_W * NAV_D);
-  navFlow.fill(65535);
-  let ti = navIndex(tx, tz);
-  if (ti < 0 || !navWalk[ti]) ti = nearestWalkable(tx, tz);
-  if (ti < 0) return false;
-  let qh = 0, qt = 0;
-  _navQ[qt++] = ti; navFlow[ti] = 0;
-  while (qh < qt) {
-    const c = _navQ[qh++];
-    const nd = navFlow[c] + 1;
-    const cx = c % NAV_W, cz = (c / NAV_W) | 0;
-    if (cx > 0         && navWalk[c-1]       && navFlow[c-1]       === 65535) { navFlow[c-1]       = nd; _navQ[qt++] = c-1; }
-    if (cx < NAV_W - 1 && navWalk[c+1]       && navFlow[c+1]       === 65535) { navFlow[c+1]       = nd; _navQ[qt++] = c+1; }
-    if (cz > 0         && navWalk[c-NAV_W]   && navFlow[c-NAV_W]   === 65535) { navFlow[c-NAV_W]   = nd; _navQ[qt++] = c-NAV_W; }
-    if (cz < NAV_D - 1 && navWalk[c+NAV_W]   && navFlow[c+NAV_W]   === 65535) { navFlow[c+NAV_W]   = nd; _navQ[qt++] = c+NAV_W; }
-  }
-  return true;
-}
-function flowDirAt(x, z, t){
-  if (!navFlow) return null;
-  const i = navIndex(x, z);
-  if (i < 0 || navFlow[i] === 65535) {
-    const n = nearestWalkable(x, z);
-    if (n < 0) return null;
-    const nx = NAV_X0 + (n % NAV_W) * NAV_CELL, nz = NAV_Z0 + ((n / NAV_W) | 0) * NAV_CELL;
-    return Math.atan2(nx - x, nz - z);
-  }
-  if (navFlow[i] <= 2) return Math.atan2(t.x - x, t.z - z); // close: head straight in
-  const gx = i % NAV_W, gz = (i / NAV_W) | 0;
-  let best = -1, bd = navFlow[i];
-  for (let oz = -1; oz <= 1; oz++) for (let ox = -1; ox <= 1; ox++) {
-    if (!ox && !oz) continue;
-    const nx = gx + ox, nz = gz + oz;
-    if (nx < 0 || nz < 0 || nx >= NAV_W || nz >= NAV_D) continue;
-    if (ox && oz && (!navWalk[gz * NAV_W + nx] || !navWalk[nz * NAV_W + gx])) continue; // no corner cutting
-    const ni = nz * NAV_W + nx;
-    if (navWalk[ni] && navFlow[ni] < bd) { bd = navFlow[ni]; best = ni; }
-  }
-  if (best < 0) return null;
-  const bx = NAV_X0 + (best % NAV_W) * NAV_CELL, bz = NAV_Z0 + ((best / NAV_W) | 0) * NAV_CELL;
-  return Math.atan2(bx - x, bz - z);
-}
-
-// ---- Nimble ground contact: pose-aware foot measurement ----
-// The old bbox came from the BIND pose, so the animated feet hovered above the floor.
-// For a short window after he appears we sample the actual skinned pose (SkinnedMesh
-// .computeBoundingBox is pose-aware) and correct the lift once.
-let nimbleMeasureT = -1, nimbleMeasureLast = 0, nimbleFootMin = Infinity;
-const _nmB = new THREE.Box3();
-function measureNimbleMinY(){
-  let minY = Infinity;
-  try {
-    nimble.updateMatrixWorld(true);
-    nimble.traverse(o => {
-      if (!o.visible || !o.isMesh) return;
-      if (o.isSkinnedMesh) { o.computeBoundingBox(); _nmB.copy(o.boundingBox); }
-      else { if (!o.geometry.boundingBox) o.geometry.computeBoundingBox(); _nmB.copy(o.geometry.boundingBox); }
-      _nmB.applyMatrix4(o.matrixWorld);
-      if (_nmB.min.y < minY) minY = _nmB.min.y;
-    });
-  } catch(e){ return Infinity; }
-  return minY;
-}
-
 gltfLoader.load('nimble_character.glb', (gltf) => {
   try {
     nimble = gltf.scene;
@@ -1683,33 +1475,18 @@ gltfLoader.load('nimble_character.glb', (gltf) => {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         const nm = (mats[0] && mats[0].name) ? mats[0].name.toLowerCase() : '';
         if (nm.includes('hat') || nm.includes('board')){ o.visible = false; return; }
-        // body -> the WebGL translucency shader (three.js SubsurfaceScatteringShader)
-        // driven by nimble_thickness.png, as in the game. Light passing "through" him
-        // glows warm where he is thin. This also REPLACES the old MeshPhysicalMaterial
-        // transmission, which forced an extra full-scene render pass every frame.
+        // body -> translucent subsurface look driven by nimble_thickness.png
         const old = mats[0] || new THREE.MeshStandardMaterial();
-        const su = THREE.UniformsUtils.clone(SubsurfaceScatteringShader.uniforms);
-        su['diffuse'].value = new THREE.Color(0xffffff);
-        su['shininess'].value = 40;
-        su['thicknessMap'].value = _thick;
-        su['thicknessColor'].value = new THREE.Color(0xffb489);
-        su['thicknessDistortion'].value = 0.32;
-        su['thicknessAmbient'].value = 0.5;
-        su['thicknessAttenuation'].value = 0.9;
-        su['thicknessPower'].value = 1.8;
-        su['thicknessScale'].value = 9.0;
-        const sss = new THREE.ShaderMaterial({
-          uniforms: su,
-          vertexShader: SubsurfaceScatteringShader.vertexShader,
-          fragmentShader: SubsurfaceScatteringShader.fragmentShader,
-          lights: true,
-          fog: true
+        o.material = new THREE.MeshPhysicalMaterial({
+          map: old.map || null, normalMap: old.normalMap || null,
+          emissive: (old.emissive ? old.emissive.clone() : new THREE.Color(0x000000)),
+          emissiveMap: old.emissiveMap || null,
+          emissiveIntensity: (old.emissiveIntensity !== undefined ? old.emissiveIntensity : 1),
+          roughness: 0.72, metalness: 0.0, envMapIntensity: 0.22,
+          transmission: 0.45, ior: 1.35, thickness: 1.1, thicknessMap: _thick,
+          attenuationColor: new THREE.Color(0xffcbb0), attenuationDistance: 1.6,
+          side: THREE.FrontSide
         });
-        if (old.map) {
-          su['map'].value = old.map;
-          sss.defines = { 'USE_MAP': '', 'MAP_UV': 'uv' };
-        }
-        o.material = sss;
       }
     });
     const nb = new THREE.Box3().setFromObject(nimble);
@@ -1736,31 +1513,14 @@ function nimbleSetAnim(name){
   nimbleCurrentName = name;
 }
 function pickNimbleTarget(avoid){
-  // Mix of destinations so he's often where the player can actually see him:
-  // ~45% a screen near the player, ~35% any screen, ~20% a corridor stroll point.
-  for (let attempt = 0; attempt < 8; attempt++) {
-    let cand = null;
-    const roll = Math.random();
-    if (roll < 0.20) {
-      cand = { x: -1.5 + Math.random()*3, z: 4 + Math.random()*52, face: Math.random()*Math.PI*2 };
-    } else {
-      let s = null;
-      if (roll < 0.65 && character) {
-        let bestD = Infinity;
-        for (const sc of screens) {
-          const d = Math.hypot(sc.data.x - character.position.x, sc.data.z - character.position.z);
-          if (d > 7 && d < bestD) { bestD = d; s = sc; }
-        }
-      }
-      if (!s) s = screens[Math.floor(Math.random()*screens.length)];
-      const nx = s.data.x + s.normal.x*3.4, nz = s.data.z + s.normal.z*3.4;
-      cand = { x: nx, z: nz, face: Math.atan2(s.data.x - nx, s.data.z - nz) };
-    }
-    if (avoid && Math.hypot(cand.x - avoid.x, cand.z - avoid.z) < 4) continue;
-    if (computeFlowTo(cand.x, cand.z)) { nimbleTarget = cand; return; }
+  let best=null, bestD=-1;
+  for (let k=0;k<6;k++){
+    const s = screens[Math.floor(Math.random()*screens.length)];
+    const nx = s.data.x + s.normal.x*3.4, nz = s.data.z + s.normal.z*3.4;
+    const d = avoid ? Math.hypot(nx-avoid.x, nz-avoid.z) : Math.random();
+    if (d > bestD){ bestD=d; best={ x:nx, z:nz, face: Math.atan2(s.data.x-nx, s.data.z-nz) }; }
   }
-  // nothing reachable found (shouldn't happen): idle briefly and retry later
-  nimbleState = 'performing'; nimbleTimer = 1.0;
+  nimbleTarget = best;
 }
 function activateNimble(){
   if (!nimble || !nimbleReady) return;
@@ -1773,54 +1533,28 @@ function activateNimble(){
   nimbleFootY = isFinite(_bb.min.y) ? -_bb.min.y : 0;     // lift only the body's feet to the floor
   if (!(nimbleFootY > 0.05 && nimbleFootY < 3.0)) nimbleFootY = 0.96 * scale;   // fallback if bounds are unreliable
   // spawn far from the player, in front of a screen
-  let spawn = null;
-  for (let i = 0; i < 12 && !spawn; i++) {
-    const s = screens[Math.floor(Math.random()*screens.length)];
-    const sx = s.data.x + s.normal.x*3.4, sz = s.data.z + s.normal.z*3.4;
-    const dp = character ? Math.hypot(sx - character.position.x, sz - character.position.z) : 99;
-    if (dp > 14) spawn = { x: sx, z: sz };
-  }
-  if (!spawn) spawn = { x: 0, z: 45 };
-  nimble.position.set(spawn.x, nimbleFootY, spawn.z);
+  pickNimbleTarget(character ? character.position : {x:0,z:30});
+  nimble.position.set(nimbleTarget.x, nimbleFootY, nimbleTarget.z);
   pickNimbleTarget(nimble.position);
   nimble.visible = true;
   nimbleState = 'running'; nimbleStuck = 0;
   nimbleSetAnim('running');
-  nimbleMeasureT = 0; nimbleMeasureLast = 0; nimbleFootMin = Infinity; // start pose-aware foot calibration
 }
 function updateNimble(dt){
   if (!nimbleActive || !nimble) return;
   nimbleMixer.update(dt);
-  // feet follow the actual walkable surface (carpet / ramp / displaced snow)
-  nimble.position.y = worldFloorY(nimble.position.x, nimble.position.z) + nimbleFootY;
-
-  // pose-aware foot calibration window (few skinned-bbox samples, then done)
-  if (nimbleMeasureT >= 0){
-    nimbleMeasureT += dt;
-    if (nimbleMeasureT - nimbleMeasureLast > 0.18){
-      nimbleMeasureLast = nimbleMeasureT;
-      const m = measureNimbleMinY();
-      if (isFinite(m) && m < nimbleFootMin) nimbleFootMin = m;
-    }
-    if (nimbleMeasureT > 1.1){
-      if (isFinite(nimbleFootMin)){
-        const floorY = worldFloorY(nimble.position.x, nimble.position.z);
-        let corr = (floorY + 0.01) - nimbleFootMin;
-        corr = Math.max(-0.7, Math.min(0.7, corr));
-        nimbleFootY = Math.max(0, nimbleFootY + corr);
-      }
-      nimbleMeasureT = -1;
-    }
-  }
+  nimble.position.y = isInsideBuilding(nimble.position.x, nimble.position.z) ? nimbleFootY : nimbleFootY + GROUND_Y;
 
   const gp = character ? character.position : null;
   const near = gp ? Math.hypot(gp.x - nimble.position.x, gp.z - nimble.position.z) : 99;
 
-  if (near < 4.6 && gp && checkLineOfSight(nimble.position, gp)){
-    // player is close AND actually visible (not through a wall): stop, face them, offer to play
+  if (near < 4.6){
+    // player is close: Nimble stops and faces them, offer to play
     if (nimbleState !== 'engaged'){ nimbleSetAnim('idle'); nimbleState = 'engaged'; }
-    const a = Math.atan2(gp.x - nimble.position.x, gp.z - nimble.position.z);
-    nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.12);
+    if (gp){
+      const a = Math.atan2(gp.x - nimble.position.x, gp.z - nimble.position.z);
+      nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.12);
+    }
     nimbleShowPrompt = true;
     return;
   }
@@ -1831,33 +1565,27 @@ function updateNimble(dt){
     const t = nimbleTarget;
     const dx = t.x - nimble.position.x, dz = t.z - nimble.position.z;
     const d = Math.hypot(dx, dz);
-    if (d < 0.8){
+    if (d < 0.7){
       nimble.rotation.y = t.face;
-      nimbleState = 'performing'; nimbleTimer = 1.6 + Math.random()*2.2;
-      nimbleSetAnim(['idle','laugh','dance','dance'][Math.floor(Math.random()*4)]);
+      nimbleState = 'performing'; nimbleTimer = 2.4 + Math.random()*3.4;
+      nimbleSetAnim(['idle','laugh','dance','idle'][Math.floor(Math.random()*4)]);
     } else {
-      // follow the flow field through doorways; straight steering only as fallback
-      const step = 3.2 * dt;
-      let a = flowDirAt(nimble.position.x, nimble.position.z, t);
-      if (a === null) a = Math.atan2(dx, dz);
-      nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.16);
-      const h = nimble.rotation.y;
-      let px = nimble.position.x + Math.sin(h)*step, pz = nimble.position.z + Math.cos(h)*step;
-      if (!checkCollision({x:px, z:pz}, 0.42)){
-        nimble.position.x = px; nimble.position.z = pz;
-        nimbleStuck = 0;
-      } else {
-        // heading is mid-turn: try the raw flow direction before calling it stuck
-        px = nimble.position.x + Math.sin(a)*step; pz = nimble.position.z + Math.cos(a)*step;
-        if (!checkCollision({x:px, z:pz}, 0.42)){
-          nimble.position.x = px; nimble.position.z = pz;
-          nimble.rotation.y = a;
-          nimbleStuck = 0;
-        } else {
-          nimbleStuck += dt;
-          if (nimbleStuck > 0.6){ pickNimbleTarget(nimble.position); nimbleStuck = 0; }
+      // steer around obstacles: probe several headings, take the first clear one biased to target
+      const desired = Math.atan2(dx, dz);
+      const step = 3.0 * dt, look = 0.9;
+      let moved = false;
+      for (const off of [0, 0.45, -0.45, 0.9, -0.9, 1.4, -1.4, 2.0, -2.0]){
+        const a = desired + off;
+        const px = nimble.position.x + Math.sin(a)*look, pz = nimble.position.z + Math.cos(a)*look;
+        if (!checkCollision({x:px, z:pz}, 0.5) && inRoam(px, pz)){
+          nimble.position.x += Math.sin(a)*step;
+          nimble.position.z += Math.cos(a)*step;
+          nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.2);
+          moved = true; break;
         }
       }
+      if (moved) nimbleStuck = 0;
+      else { nimbleStuck += dt; if (nimbleStuck > 0.7){ pickNimbleTarget(nimble.position); nimbleStuck = 0; } }
     }
   } else if (nimbleState === 'performing'){
     nimbleTimer -= dt;
@@ -1872,18 +1600,17 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   try {
 
-  // falling snow (outdoors only) + moonlight fades in only while outside
+  // falling snow (outdoors only)
   if (character) {
     const out = isOutside(character.position);
     snowPoints.visible = out;
     if (out) updateSnow(dt, camera.position.x, camera.position.z);
-    moonLight.intensity += ((out ? 0.72 : 0.0) - moonLight.intensity) * Math.min(1, dt * 2.5);
   }
 
   if (mixer) mixer.update(dt);
 
   updateFootprints(dt);
-  if (audioUnlocked) { nimbleClock += dt; if (nimbleReady && !nimbleActive && nimbleClock > 30) activateNimble(); }
+  if (audioUnlocked) { nimbleClock += dt; if (nimbleReady && !nimbleActive && nimbleClock > 60) activateNimble(); }
   updateNimble(dt);
   
   if (timMixer) {
@@ -1950,9 +1677,9 @@ function animate() {
     let targetRot = Math.atan2(-Math.sin(walkYaw), -Math.cos(walkYaw));
 
     if (moving) {
-      const dir = _dirV.set(-Math.sin(walkYaw), 0, -Math.cos(walkYaw)).normalize();
-      const right = _rightV.crossVectors(dir, _upV).normalize();
-      const move = _moveV.set(0, 0, 0);
+      const dir = new THREE.Vector3(-Math.sin(walkYaw), 0, -Math.cos(walkYaw)).normalize();
+      const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0,1,0)).normalize();
+      const move = new THREE.Vector3();
       
       if (keys.w || keys.arrowup) move.add(dir);
       if (keys.s || keys.arrowdown) move.sub(dir);
@@ -1980,17 +1707,17 @@ function animate() {
     }
     
     character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
-    // follow the walkable surface — worldFloorY is continuous across the entrance
-    // (carpet -> ramp -> snow), so no more sinking through the floor at the seam
+    // follow ground/carpet height (removes any coincident-plane z-fighting need)
     {
-      const _ty = worldFloorY(character.position.x, character.position.z);
-      character.position.y = THREE.MathUtils.lerp(character.position.y, _ty, 0.35);
+      const _inb = isInsideBuilding(character.position.x, character.position.z);
+      const _ty = _inb ? 0 : groundHeightAt(character.position.x, character.position.z);
+      character.position.y = THREE.MathUtils.lerp(character.position.y, _ty, 0.18);
     }
 
     const camDist = 5.0;
     const camHeight = 2.0;
     const cp = character.position;
-    const tPos = _tPosV.set(
+    const tPos = new THREE.Vector3(
       cp.x + Math.sin(walkYaw) * Math.cos(walkPitch) * camDist,
       cp.y - Math.sin(walkPitch) * camDist + camHeight,
       cp.z + Math.cos(walkYaw) * Math.cos(walkPitch) * camDist
@@ -2003,8 +1730,9 @@ function animate() {
     camera.position.lerp(tPos, 0.25); 
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
 
-    // update follow-shadow light (texel-snapped -> no shimmering floor shadows) + view frustum
-    updateSunLight(character.position.x, character.position.y, character.position.z);
+    // update follow-shadow light + view frustum (for culling)
+    sunLight.target.position.copy(character.position);
+    sunLight.position.set(character.position.x + 6, character.position.y + 16, character.position.z + 4);
     camera.updateMatrixWorld();
     _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     _frustum.setFromProjectionMatrix(_projScreen);
@@ -2017,22 +1745,20 @@ function animate() {
     let distToExit = character.position.distanceTo(exitDoor.position);
     let showExitPrompt = (distToExit < 3.0);
 
-    // warm up the 2d room shortly before the player can reach the door -> instant travel
-    if (!tradArmed) { if (distToExit > 18) tradArmed = true; }
-    else if (!tradPreloaded && distToExit < 15) preloadTradRoom();
-
     let bestScore = -Infinity;
     let closestScreen = null;
     
     const MAX_AUDIO_DIST = 14.0; 
     const MIN_AUDIO_DIST = 4.0; 
-    const camForward = _camF.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
 
     screens.forEach(s => {
       const dist = character.position.distanceTo(s.mesh.position);
-      _v1.subVectors(s.mesh.position, camera.position).normalize();
-      const camGazeDot = camForward.dot(_v1);
-      const isFacingFront = s.normal.dot(_v1) < -0.15; // camera is on the screen's front side
+      const dirToScreen = s.mesh.position.clone().sub(camera.position).normalize();
+      const camGazeDot = camForward.dot(dirToScreen); 
+      
+      const dirToCam = camera.position.clone().sub(s.mesh.position).normalize();
+      const isFacingFront = s.normal.dot(dirToCam) > 0.15; 
       const hasLOS = checkLineOfSight(camera.position, s.mesh.position);
       
       // PRE-WARM + HYSTERESIS CULLING (smoother; avoids thumbnail stalls, keeps perf)
