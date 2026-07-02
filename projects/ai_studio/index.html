@@ -401,6 +401,8 @@ function registerAssetLoaded() {
     
     btn.addEventListener('click', () => {
       audioUnlocked = true;
+      craneT = 0;                    // start the cinematic crane intro
+      moonLight.intensity = 0.72;    // exterior fully moonlit for the aerial reveal
       screens.forEach(s => {
         const p = s.video.play();
         if(p !== undefined) {
@@ -1182,6 +1184,7 @@ window.addEventListener('keydown', e => {
     }
     return;
   }
+  if (craneT >= 0 && craneT < 1 && (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter')) { craneT = 0.999; return; } // skip intro
   const k = e.key.toLowerCase();
   if(keys.hasOwnProperty(k)) keys[k] = true;
   if(e.key === 'e') triggerInteraction();
@@ -1203,7 +1206,7 @@ document.addEventListener('pointerlockchange', () => {
 });
 
 document.addEventListener('mousemove', e => {
-  if(!pointerLocked || isOverlayOpen) return;
+  if(!pointerLocked || isOverlayOpen || (craneT >= 0 && craneT < 1)) return; // look is locked during the crane intro
   walkYaw -= e.movementX * 0.003;
   walkPitch -= e.movementY * 0.003;
   walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
@@ -1472,6 +1475,46 @@ function checkLineOfSight(p1, p2) {
     }
   }
   return true;
+}
+
+// ---- Cinematic crane intro ----
+// On Enter: the camera starts high above the snowfield, sweeps across the moonlit
+// exterior (facade, neon sign, mountain ring) and eases down to land EXACTLY on the
+// third-person follow pose behind the character — the handoff is seamless because the
+// Bezier's end point is computed from the same walkYaw/walkPitch formula the follow
+// camera uses. Input is ignored during the flight; Space/Enter/Esc skips.
+const CRANE_DUR = 8.0;
+let craneT = -1;                                   // -1 idle, [0..1) flying, 1 done
+const _cP0 = new THREE.Vector3(-60, 85, -140);     // high aerial start
+const _cP1 = new THREE.Vector3(-45, 58, -88);      // drift across the plain
+const _cP2 = new THREE.Vector3(18, 22, -55);       // swoop toward the approach
+const _cP3 = new THREE.Vector3();                  // = follow-cam pose (computed live)
+const _cL0 = new THREE.Vector3(0, 7, 12);          // first framing: the building
+const _cL1 = new THREE.Vector3();                  // final framing: the character
+const _cPos = new THREE.Vector3();
+const _cLook = new THREE.Vector3();
+function updateCraneShot(dt) {
+  craneT = Math.min(1, craneT + dt / CRANE_DUR);
+  const t = craneT;
+  const e = t * t * t * (t * (t * 6 - 15) + 10);   // smootherstep: gentle start & landing
+  const cp = character.position;
+  _cP3.set(
+    cp.x + Math.sin(walkYaw) * Math.cos(walkPitch) * 5.0,
+    cp.y - Math.sin(walkPitch) * 5.0 + 2.0,
+    cp.z + Math.cos(walkYaw) * Math.cos(walkPitch) * 5.0
+  );
+  _cL1.set(cp.x, cp.y + 1.4, cp.z);
+  const u = 1 - e;
+  _cPos.set(0, 0, 0)
+    .addScaledVector(_cP0, u * u * u)
+    .addScaledVector(_cP1, 3 * u * u * e)
+    .addScaledVector(_cP2, 3 * u * e * e)
+    .addScaledVector(_cP3, e * e * e);
+  camera.position.copy(_cPos);
+  _cLook.lerpVectors(_cL0, _cL1, e);
+  camera.lookAt(_cLook);
+  // he turns to face the gallery while we're still high up (hides the spawn rotation)
+  character.rotation.y = lerpAngle(character.rotation.y, 0, 0.08);
 }
 
 // ---- Render Loop ----
@@ -1956,6 +1999,9 @@ function animate() {
   }
 
   if (character && audioUnlocked && !isOverlayOpen) {
+    if (craneT >= 0 && craneT < 1) {
+      updateCraneShot(dt);           // cinematic intro owns the camera; player input waits
+    } else {
     const moving = keys.w || keys.a || keys.s || keys.d || keys.arrowup || keys.arrowdown || keys.arrowleft || keys.arrowright;
     
     currentWeight = THREE.MathUtils.lerp(currentWeight, moving ? 1 : 0, 0.15);
@@ -2015,8 +2061,9 @@ function animate() {
       tPos.lerp(cp, 0.6); 
     }
     
-    camera.position.lerp(tPos, 0.25); 
+    camera.position.lerp(tPos, 0.25);
     camera.lookAt(cp.x, cp.y + 1.4, cp.z);
+    } // end non-crane movement & camera
 
     // update follow-shadow light (texel-snapped -> no shimmering floor shadows) + view frustum
     updateSunLight(character.position.x, character.position.y, character.position.z);
