@@ -214,7 +214,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { SubsurfaceScatteringShader } from 'three/addons/shaders/SubsurfaceScatteringShader.js';
 
 await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 3000))]).catch(()=>{});
 
@@ -969,34 +968,72 @@ const _pilGeo = new THREE.BoxGeometry(0.7, 12, 1.0);
   scene.add(pil);
 });
 
-// ---- ENTRANCE RAMP ----
-// The snow ground sits at y=-0.35 while the carpet sits at y=0: that 35cm step at the
-// doorway is what made characters sink leg-deep while the height-lerp caught up, and it
-// left an ugly open seam where snow meets carpet. A gently sloped concrete approach
-// (buried in the snow at its far end) makes the walkable height CONTINUOUS, and a metal
-// threshold plate covers the carpet/ramp junction under the doors.
-const RAMP_HALF_W = 6.0, RAMP_Z0 = -10.25, RAMP_Z1 = -0.45, RAMP_Y0 = -0.55, RAMP_Y1 = 0.0;
+// ---- ENTRANCE SNOWDRIFT ----
+// The interior floor ends exactly at the door; outside there is ONLY snow. But the snow
+// ground sits at y=-0.35 while the carpet sits at y=0, and that hidden 35cm step is what
+// made characters sink through the floor at the threshold. Solution: a smooth snowdrift
+// (same snow material/texel density as the ground, perimeter tucked slightly UNDER it)
+// banks up against the entrance, so the walkable height is continuous and the transition
+// is invisible - just snow rising to meet the door.
+const APRON_X0 = -8, APRON_X1 = 8, APRON_Z0 = -10.35, APRON_Z1 = -0.45;
+function smoothStep01(t){ t = Math.max(0, Math.min(1, t)); return t*t*(3-2*t); }
+function apronY(x, z){
+  if (x < APRON_X0 || x > APRON_X1 || z < APRON_Z0 || z > APRON_Z1 + 0.2) return -Infinity;
+  const sz = smoothStep01((z + 8.5) / 7.1);                // rises from z=-8.5, full height at z=-1.4
+  const sx = 1 - smoothStep01((Math.abs(x) - 5.2) / 2.8);  // full across the doorway, at ground by |x|=8
+  return -0.365 + 0.365 * (sz * sx);                       // -0.365 edge tucks just under the snow plane
+}
 {
-  const rampLen = RAMP_Z1 - RAMP_Z0;
-  const rampAng = Math.atan2(RAMP_Y1 - RAMP_Y0, rampLen);
-  const ramp = new THREE.Mesh(new THREE.BoxGeometry(RAMP_HALF_W * 2, 0.6, rampLen), wallMat);
-  ramp.rotation.x = -rampAng;
-  ramp.position.set(0, (RAMP_Y0 + RAMP_Y1) / 2 - 0.3 * Math.cos(rampAng), (RAMP_Z0 + RAMP_Z1) / 2);
-  ramp.castShadow = true; ramp.receiveShadow = true; ramp.layers.enable(1);
-  scene.add(ramp);
+  const apronGeo = new THREE.PlaneGeometry(APRON_X1 - APRON_X0, APRON_Z1 - APRON_Z0, 32, 20);
+  apronGeo.rotateX(-Math.PI/2);
+  const czA = (APRON_Z0 + APRON_Z1) / 2;
+  const ap = apronGeo.getAttribute('position');
+  for (let i = 0; i < ap.count; i++) {
+    const y = apronY(ap.getX(i), ap.getZ(i) + czA);
+    ap.setY(i, y === -Infinity ? -0.365 : y);
+  }
+  apronGeo.computeVertexNormals();
+  const apronMat = new THREE.MeshStandardMaterial({
+    color: 0xe9eef5,
+    map:        loadTex('assets/textures/snow_basecolor.webp', true, 0),
+    normalMap:  loadTex('assets/textures/snow_normal_gl.webp', false, 0),
+    roughnessMap: loadTex('assets/textures/snow_roughness.jpg', false, 0),
+    roughness: 0.92, metalness: 0.0, envMapIntensity: 0.22,
+    normalScale: new THREE.Vector2(0.4, 0.4)
+  });
+  // match the big ground's texel density (55 repeats / 1000m) so the surfaces read as one
+  apronMat.map.repeat.set(0.88, 0.55);
+  apronMat.normalMap.repeat.set(0.88, 0.55);
+  apronMat.roughnessMap.repeat.set(0.88, 0.55);
+  const apron = new THREE.Mesh(apronGeo, apronMat);
+  apron.position.set(0, 0, czA);
+  apron.receiveShadow = true; apron.layers.enable(1);
+  scene.add(apron);
 
+  // slim dark threshold under the doors - covers the carpet/snow junction line
   const sill = new THREE.Mesh(
     new THREE.BoxGeometry(10.4, 0.07, 1.15),
-    new THREE.MeshStandardMaterial({ color: 0x1c1c1c, metalness: 0.75, roughness: 0.35 })
+    new THREE.MeshStandardMaterial({ color: 0x161616, metalness: 0.55, roughness: 0.6 })
   );
   sill.position.set(0, 0.02, -0.5);
   sill.receiveShadow = true; sill.layers.enable(1);
   scene.add(sill);
-}
-function rampTopY(x, z) {
-  if (Math.abs(x) > RAMP_HALF_W || z < RAMP_Z0 || z > RAMP_Z1 + 0.2) return -Infinity;
-  const t = Math.max(0, Math.min(1, (z - RAMP_Z0) / (RAMP_Z1 - RAMP_Z0)));
-  return RAMP_Y0 + (RAMP_Y1 - RAMP_Y0) * t;
+
+  // grounding plinths: the outer walls start at y=0 but the snow lies at -0.35, which
+  // left a bright open slit along every facade base. A slightly proud concrete base
+  // closes it and visually "plants" the building in the snow.
+  [
+    {x: -15.5, z: -0.5, w: 21,   d: 1.12},
+    {x:  15.5, z: -0.5, w: 21,   d: 1.12},
+    {x: -25.5, z: 30,   w: 1.12, d: 61},
+    {x:  25.5, z: 30,   w: 1.12, d: 61},
+    {x: 0,     z: 60.5, w: 52,   d: 1.12}
+  ].forEach(p => {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(p.w, 0.8, p.d), wallMat);
+    b.position.set(p.x, -0.38, p.z);
+    b.castShadow = true; b.receiveShadow = true; b.layers.enable(1);
+    scene.add(b);
+  });
 }
 const neonSign = new THREE.Mesh(
   new THREE.PlaneGeometry(11, 2.06),
@@ -1172,12 +1209,12 @@ document.addEventListener('mousemove', e => {
   walkPitch = Math.max(-0.4, Math.min(0.5, walkPitch));
 });
 
-// (Legacy full-page level transition removed — the 2d room is now preloaded into its
+// (Legacy full-page level transition removed - the 2d room is now preloaded into its
 // overlay iframe when the player approaches the exit door, so travel is instant.)
 
 // ---- Gallery resource management while a heavy overlay (game / 2d room) runs ----
 // Releasing the 11 video decoder pipelines and hiding the WebGL canvas frees a large
-// amount of GPU/decoder memory for the iframe app — this is what prevents the
+// amount of GPU/decoder memory for the iframe app - this is what prevents the
 // context-loss crashes inside the Nimble game.
 let videosFreed = false;
 function freeGalleryVideos() {
@@ -1471,13 +1508,13 @@ function groundHeightAt(wx, wz){
 function isInsideBuilding(x, z){ return Math.abs(x) < 25.4 && z > -0.4 && z < 60.4; }
 
 // Single source of truth for "what height is the walkable surface here".
-// Inside -> carpet (0). Outside -> the HIGHER of snow and the entrance ramp.
-// Because the ramp tops out at exactly 0 at the doorway, this function is now
-// CONTINUOUS across the threshold — no more legs sinking through the floor
-// while the height-lerp catches up with a 35cm step.
+// Inside -> carpet (0). Outside -> the HIGHER of snow and the entrance snowdrift.
+// Because the drift tops out at exactly 0 at the doorway, this is CONTINUOUS across
+// the threshold - no more legs sinking through the floor while the height-lerp
+// caught up with a hidden 35cm step.
 function worldFloorY(x, z){
   if (isInsideBuilding(x, z)) return 0;
-  return Math.max(groundHeightAt(x, z), rampTopY(x, z));
+  return Math.max(groundHeightAt(x, z), apronY(x, z));
 }
 
 // ---- FOOTPRINTS (pooled fading decals; snow depressions + wet carpet traces) ----
@@ -1505,17 +1542,17 @@ for (let i=0;i<FOOT_N;i++){
 }
 let _footIdx = 0, _footToggle = 1;
 const _lastFoot = new THREE.Vector3(9999,0,9999);
-function placeFootprint(x, z, yaw, wet){
+function placeFootprint(x, z, yaw, inside){
   const fp = footPool[_footIdx]; _footIdx = (_footIdx+1)%FOOT_N;
   const rx = Math.cos(yaw), rz = -Math.sin(yaw);        // right vector
   const off = 0.17 * _footToggle; _footToggle *= -1;
-  const gy = isInsideBuilding(x, z) ? 0.015 : worldFloorY(x, z) + 0.02; // decal hugs the real surface (carpet/ramp/snow)
+  const gy = inside ? 0.015 : worldFloorY(x, z) + 0.02; // decal hugs the real surface (snowdrift included)
   fp.mesh.position.set(x + rx*off, gy, z + rz*off);
   fp.mesh.rotation.y = yaw + (Math.random()-0.5)*0.25;
   fp.mesh.visible = true;
   fp.life = 0;
-  if (wet){ fp.mesh.material.color.setHex(0x171410); fp.max = 3.5; fp.startOp = 0.42; }  // short-lived wet trace
-  else    { fp.mesh.material.color.setHex(0x9fb0c4); fp.max = 26;  fp.startOp = 0.28; }  // snow depression
+  if (inside){ fp.mesh.material.color.setHex(0x171410); fp.max = 3.5; fp.startOp = 0.42; }  // short-lived wet trace
+  else       { fp.mesh.material.color.setHex(0x9fb0c4); fp.max = 26;  fp.startOp = 0.28; }  // snow depression
 }
 function updateFootprints(dt){
   for (let i=0;i<FOOT_N;i++){
@@ -1532,9 +1569,8 @@ let _snowResidue = 0;   // how many more indoor steps still carry wet snow
 function trackFootsteps(pos, yaw){
   if (Math.hypot(pos.x - _lastFoot.x, pos.z - _lastFoot.z) > 0.82){
     const inside = isInsideBuilding(pos.x, pos.z);
-    const onRamp = !inside && rampTopY(pos.x, pos.z) > groundHeightAt(pos.x, pos.z);
-    if (!inside && !onRamp){ placeFootprint(pos.x, pos.z, yaw, false); _snowResidue = 6; }         // snow depressions
-    else if (_snowResidue > 0){ placeFootprint(pos.x, pos.z, yaw, true); _snowResidue--; }         // wet traces on ramp/carpet
+    if (!inside){ placeFootprint(pos.x, pos.z, yaw, false); _snowResidue = 6; }
+    else if (_snowResidue > 0){ placeFootprint(pos.x, pos.z, yaw, true); _snowResidue--; }
     _lastFoot.set(pos.x, 0, pos.z);
   }
 }
@@ -1564,6 +1600,8 @@ let nimbleTarget = { x:0, z:20, face:0 };
 let nimbleTimer = 0, nimbleStuck = 0;
 let nimbleShowPrompt = false;
 let GREG_HEIGHT = 1.8;             // refined once greg is measured
+const _nimDir = new THREE.Vector3(); // temps for the look-at-Nimble prompt gate
+const _nimFwd = new THREE.Vector3();
 
 // ---- Nimble spatial awareness: BFS flow-field over a 1m grid of the gallery ----
 // Instead of blind straight-line steering (which wedged him against walls for long
@@ -1618,10 +1656,10 @@ function computeFlowTo(tx, tz){
     const c = _navQ[qh++];
     const nd = navFlow[c] + 1;
     const cx = c % NAV_W, cz = (c / NAV_W) | 0;
-    if (cx > 0         && navWalk[c-1]       && navFlow[c-1]       === 65535) { navFlow[c-1]       = nd; _navQ[qt++] = c-1; }
-    if (cx < NAV_W - 1 && navWalk[c+1]       && navFlow[c+1]       === 65535) { navFlow[c+1]       = nd; _navQ[qt++] = c+1; }
-    if (cz > 0         && navWalk[c-NAV_W]   && navFlow[c-NAV_W]   === 65535) { navFlow[c-NAV_W]   = nd; _navQ[qt++] = c-NAV_W; }
-    if (cz < NAV_D - 1 && navWalk[c+NAV_W]   && navFlow[c+NAV_W]   === 65535) { navFlow[c+NAV_W]   = nd; _navQ[qt++] = c+NAV_W; }
+    if (cx > 0         && navWalk[c-1]     && navFlow[c-1]     === 65535) { navFlow[c-1]     = nd; _navQ[qt++] = c-1; }
+    if (cx < NAV_W - 1 && navWalk[c+1]     && navFlow[c+1]     === 65535) { navFlow[c+1]     = nd; _navQ[qt++] = c+1; }
+    if (cz > 0         && navWalk[c-NAV_W] && navFlow[c-NAV_W] === 65535) { navFlow[c-NAV_W] = nd; _navQ[qt++] = c-NAV_W; }
+    if (cz < NAV_D - 1 && navWalk[c+NAV_W] && navFlow[c+NAV_W] === 65535) { navFlow[c+NAV_W] = nd; _navQ[qt++] = c+NAV_W; }
   }
   return true;
 }
@@ -1675,41 +1713,15 @@ gltfLoader.load('nimble_character.glb', (gltf) => {
   try {
     nimble = gltf.scene;
     // hide the hat and the skateboard
-    const _thick = texLoader.load('nimble_thickness.png');
-    _thick.flipY = false;   // match glTF UV convention
     nimble.traverse(o => {
       if (o.isMesh){
         o.castShadow = true; o.receiveShadow = true; o.layers.enable(1);
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         const nm = (mats[0] && mats[0].name) ? mats[0].name.toLowerCase() : '';
         if (nm.includes('hat') || nm.includes('board')){ o.visible = false; return; }
-        // body -> the WebGL translucency shader (three.js SubsurfaceScatteringShader)
-        // driven by nimble_thickness.png, as in the game. Light passing "through" him
-        // glows warm where he is thin. This also REPLACES the old MeshPhysicalMaterial
-        // transmission, which forced an extra full-scene render pass every frame.
-        const old = mats[0] || new THREE.MeshStandardMaterial();
-        const su = THREE.UniformsUtils.clone(SubsurfaceScatteringShader.uniforms);
-        su['diffuse'].value = new THREE.Color(0xffffff);
-        su['shininess'].value = 40;
-        su['thicknessMap'].value = _thick;
-        su['thicknessColor'].value = new THREE.Color(0xffb489);
-        su['thicknessDistortion'].value = 0.32;
-        su['thicknessAmbient'].value = 0.5;
-        su['thicknessAttenuation'].value = 0.9;
-        su['thicknessPower'].value = 1.8;
-        su['thicknessScale'].value = 9.0;
-        const sss = new THREE.ShaderMaterial({
-          uniforms: su,
-          vertexShader: SubsurfaceScatteringShader.vertexShader,
-          fragmentShader: SubsurfaceScatteringShader.fragmentShader,
-          lights: true,
-          fog: true
-        });
-        if (old.map) {
-          su['map'].value = old.map;
-          sss.defines = { 'USE_MAP': '', 'MAP_UV': 'uv' };
-        }
-        o.material = sss;
+        // keep the original GLB material (no transmission pass, no custom shader) -
+        // Nimble renders consistently with the scene lighting, like Greg and Tim
+        mats.forEach(m => { if (m && 'envMapIntensity' in m) m.envMapIntensity = 0.09; });
       }
     });
     const nb = new THREE.Box3().setFromObject(nimble);
@@ -1791,7 +1803,7 @@ function activateNimble(){
 function updateNimble(dt){
   if (!nimbleActive || !nimble) return;
   nimbleMixer.update(dt);
-  // feet follow the actual walkable surface (carpet / ramp / displaced snow)
+  // feet follow the actual walkable surface (carpet / snowdrift / displaced snow)
   nimble.position.y = worldFloorY(nimble.position.x, nimble.position.z) + nimbleFootY;
 
   // pose-aware foot calibration window (few skinned-bbox samples, then done)
@@ -1816,12 +1828,15 @@ function updateNimble(dt){
   const gp = character ? character.position : null;
   const near = gp ? Math.hypot(gp.x - nimble.position.x, gp.z - nimble.position.z) : 99;
 
-  if (near < 4.6 && gp && checkLineOfSight(nimble.position, gp)){
-    // player is close AND actually visible (not through a wall): stop, face them, offer to play
+  if (gp && near < 3.5 && checkLineOfSight(nimble.position, gp)){
+    // player is close and actually visible (not through a wall): stop and face them
     if (nimbleState !== 'engaged'){ nimbleSetAnim('idle'); nimbleState = 'engaged'; }
     const a = Math.atan2(gp.x - nimble.position.x, gp.z - nimble.position.z);
     nimble.rotation.y = lerpAngle(nimble.rotation.y, a, 0.12);
-    nimbleShowPrompt = true;
+    // the PLAY prompt only appears within 2m AND with the camera actually pointed at him
+    _nimDir.set(nimble.position.x - camera.position.x, (nimble.position.y + 1.0) - camera.position.y, nimble.position.z - camera.position.z).normalize();
+    _nimFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    nimbleShowPrompt = (near < 2.0) && (_nimFwd.dot(_nimDir) > 0.55);
     return;
   }
   nimbleShowPrompt = false;
@@ -1980,8 +1995,8 @@ function animate() {
     }
     
     character.rotation.y = lerpAngle(character.rotation.y, targetRot, 0.2);
-    // follow the walkable surface — worldFloorY is continuous across the entrance
-    // (carpet -> ramp -> snow), so no more sinking through the floor at the seam
+    // follow the walkable surface - worldFloorY is continuous across the entrance
+    // (carpet -> snowdrift -> snow), so no more sinking through the floor at the seam
     {
       const _ty = worldFloorY(character.position.x, character.position.z);
       character.position.y = THREE.MathUtils.lerp(character.position.y, _ty, 0.35);
