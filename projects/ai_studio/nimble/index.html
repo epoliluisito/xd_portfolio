@@ -59,6 +59,7 @@
       linear-gradient(180deg, rgba(20,90,130,0.28) 0%, rgba(4,28,52,0.5) 100%),
       repeating-linear-gradient(105deg, rgba(180,230,255,0.05) 0 2px, rgba(0,0,0,0) 2px 26px);
   }
+  #flash { position: fixed; inset: 0; background: #eaffff; opacity: 0; pointer-events: none; z-index: 42; }
   #hud {
     position: absolute; top: 16px; left: 16px; z-index: 10;
     background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
@@ -151,13 +152,14 @@
   .tbtn.jump { border-color: rgba(191, 232, 255, 0.55); }
   .tbtn.fire { border-color: rgba(255, 210, 78, 0.55); }
 
-  /* per-level buttons: L1 = slide/soap/jump, L2 (surf) = up/down/jump, L3 (swim) = up/down */
+  /* per-level buttons: L1 = slide/soap/jump, L2 (surf) = up/down/jump, L3 (swim) = up/down/soap */
   #touch-controls .l2only { display: none; }
   body.surf #touch-controls .l1only,
   body.swim #touch-controls .l1only { display: none; }
   body.surf #touch-controls .l2only,
   body.swim #touch-controls .l2only { display: flex; }
-  body.swim #touch-controls .jump { display: none; }   /* no jumping underwater */
+  body.swim #touch-controls .jump { display: none; }    /* no jumping underwater */
+  body.surf #touch-controls .no-surf { display: none; } /* soap hidden while surfing */
 
   .touchkey { display: none; }
   body.touch .kbd { display: none; }
@@ -236,6 +238,7 @@
   </div>
 </div>
 <div id="water-tint"></div>
+<div id="flash"></div>
 <div id="vignette"></div>
 
 <div id="hud">
@@ -272,7 +275,7 @@
     <div class="tbtn big l2only" data-act="down"><span class="ico">▼</span><span class="lbl">Down</span></div>
   </div>
   <div class="pad pad-right">
-    <div class="tbtn fire l1only" data-act="fire"><span class="ico">🫧</span><span class="lbl">Soap</span></div>
+    <div class="tbtn fire no-surf" data-act="fire"><span class="ico">🫧</span><span class="lbl">Soap</span></div>
     <div class="tbtn big jump" data-act="jump"><span class="ico">⬆</span><span class="lbl">Jump</span></div>
   </div>
 </div>
@@ -294,7 +297,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 // ----------------------------------------------------
 const LANE_Z = 2.2;                 // the one depth lane everything lives on
 const BASE_SPEED = 9.0;             // noticeably quicker run
-const LEVEL_LEN = 250;              // metres per level (shorter: reach level 2 sooner)
+const LEVEL_LEN = 500;              // metres of Level 1 before the skate hand-off
 const angleCheat = 0.49;
 const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
 const SLIDE_DUR = 0.72;             // shorter, snappier slide (hitbox + anim end together)
@@ -307,7 +310,7 @@ const SLIDE_H = 0.95;               // sliding head height
 const SURF_Z_MIN = 0.2;             // steer band across the counter's depth (up = away)
 const SURF_Z_MAX = 4.6;
 const STEER_SPEED = 5.2;            // z units per second while a steer key/button is held
-const SURF_GOAL_BASE = 24;          // dirt patches to scrub to finish level 2
+const SURF_GOAL_BASE = 48;          // dirt patches to scrub to finish level 2 (twice as long)
 
 // --- Level 3 "dive & swim" mode (the water surface is y = 0; he swims below it) ---
 const SWIM_Y_MIN = -5.4;            // deepest
@@ -550,6 +553,26 @@ function buildBubbles() {
     scene.add(s);
     bubbles.push(s);
   }
+}
+
+// the water surface (a translucent plane at y=0 he punches through when he dives)
+let waterSurface = null;
+function buildWaterSurface() {
+  if (waterSurface) return;
+  const mat = new THREE.MeshBasicMaterial({ color: 0x2f88b0, transparent: true, opacity: 0.4,
+    side: THREE.DoubleSide, depthWrite: false, fog: false });
+  waterSurface = new THREE.Mesh(new THREE.PlaneGeometry(500, 90), mat);
+  waterSurface.rotation.x = -Math.PI / 2;
+  waterSurface.position.set(0, 0, LANE_Z);
+  waterSurface.renderOrder = -6;
+  scene.add(waterSurface);
+}
+// quick white screen flash (the splash of breaking the surface)
+function flash(op) {
+  const f = document.getElementById('flash');
+  if (!f) return;
+  f.style.transition = 'none'; f.style.opacity = String(op == null ? 0.85 : op);
+  requestAnimationFrame(() => { f.style.transition = 'opacity 0.45s ease-out'; f.style.opacity = '0'; });
 }
 
 // The Level 1 → Level 2 divider: a soapy curtain / steel threshold Nimble bursts through.
@@ -1177,7 +1200,7 @@ function enterSurfMode() {
   state.mode = 'surf';
   state.level = 2;
   state.targetZ = LANE_Z;
-  velocity.y = 8.0; state.onGround = false;      // a little hop as he jumps onto the board
+  playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
   state.isSliding = false;
   state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
   state.excite = 1.0;
@@ -1201,7 +1224,7 @@ function enterSurfMode() {
   // calm intro stretch: ~50 units with nothing to clean/dodge so the player learns to steer
   state.surfStartX = playerGroup.position.x;
   spawnX = playerGroup.position.x + 50;
-  playAnim('skating_start');
+  playAnim('skateboard', 0.25);                   // straight onto the board (skating_start misaligned)
   document.body.classList.add('surf');            // swaps the console to up/down + jump
   const help = document.getElementById('controls-help');
   if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
@@ -1271,8 +1294,12 @@ function scriptDiveSeq(dt) {
   if (!state.diveSplashed && playerGroup.position.y <= 0 && (V0 - G * jt) < 0) {   // pierce the surface
     state.diveSplashed = true;
     applyUnderwater();
-    burst(playerGroup.position.clone(), 0xcdeeff, 30, 6, 5, 0.34, -0.4);   // big splash
-    sfx.level();
+    flash(0.9);                                                             // white flash of the impact
+    const at = playerGroup.position.clone(); at.y = 0;
+    burst(at, 0xffffff, 26, 7, 8, 0.3, 6.0);                               // spray flung UP from the surface
+    burst(at, 0xcdeeff, 24, 5, 2, 0.34, -0.6);                             // foam pushed down as he sinks
+    sfx.hit(); sfx.level();
+    showBanner('SPLASH!');
   }
   if (state.diveSplashed && playerGroup.position.y <= SWIM_MID) finishDiveIntoSwim();
 }
@@ -1284,12 +1311,13 @@ function applyUnderwater() {
   if (bgMesh) bgMesh.material.color.setRGB(0.18, 0.42, 0.58);
   const tint = document.getElementById('water-tint');
   if (tint) tint.style.display = 'block';
+  buildWaterSurface();
   buildBubbles();
   frothDecals.forEach(s => s.visible = false);
   document.body.classList.remove('surf');
   document.body.classList.add('swim');
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; dodge the debris, grab the drops!';
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; dodge or blast the debris, grab the drops!';
 }
 
 // settle into Level 3 swim gameplay
@@ -1297,6 +1325,7 @@ function finishDiveIntoSwim() {
   state.mode = 'swim';
   state.level = 3;
   state.onGround = true; velocity.y = 0;
+  state.ammo = Math.max(state.ammo, 12);         // some soap to start Level 3 with
   state.targetY = SWIM_MID;
   playerGroup.position.y = SWIM_MID;
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
@@ -1326,8 +1355,7 @@ function updateHUD() {
   document.getElementById('level').innerText = state.level;
   document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m';
   const surf = state.mode === 'surf';
-  const hideAmmo = surf || state.mode === 'swim';    // no soap in surf/swim
-  document.getElementById('ammo-row').style.display = hideAmmo ? 'none' : '';
+  document.getElementById('ammo-row').style.display = surf ? 'none' : '';   // soap used in L1 & L3, not surf
   document.getElementById('clean-row').style.display = surf ? '' : 'none';
   document.getElementById('clean-meter').style.display = surf ? '' : 'none';
   if (surf) {
@@ -1705,6 +1733,13 @@ function gameLoop() {
             burst(s.mesh.position, 0x7fe3a0, 10, 2.6, 2.6, 0.22);
             popup(s.mesh.position, '+50', '#39d24e');
             hit = true; break;
+          } else if (ent.type === 'swimobs' && Math.abs(s.mesh.position.y - ent.mesh.position.y) < ent.radius + 0.5) {
+            ent.active = false; scene.remove(ent.mesh);       // soap blasts underwater debris
+            state.score += 50; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0xcdeeff, 12, 2.8, 2.6, 0.24);
+            popup(s.mesh.position, '+50', '#bfe8ff');
+            hit = true; break;
           }
         }
       }
@@ -1739,6 +1774,7 @@ function gameLoop() {
     const ftex = floor.material.map;                    // scroll whichever counter texture is active
     if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
   }
+  if (waterSurface) waterSurface.position.x = camera.position.x;   // the surface follows overhead
   if (surf && frothDecalsBuilt) {                       // recycle soapy froth ahead of the camera
     for (const s of frothDecals) {
       if (s.position.x < camera.position.x - 16) {
@@ -1786,10 +1822,11 @@ window.addEventListener('keydown', e => {
   if (state.isGameOver || state.mode === 'dive_seq') return;   // no control during the dive cinematic
   if (e.code === 'ArrowRight') state.boost = true;
   if (e.code === 'ArrowLeft')  state.brake = true;
-  if (state.mode === 'surf' || state.mode === 'swim') {   // L2/L3: up/down steer (L2 also jumps)
+  if (state.mode === 'surf' || state.mode === 'swim') {   // L2/L3: up/down steer
     if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = true;
     if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = true;
-    if (e.code === 'Space' && state.mode === 'surf') doJump();
+    if (e.code === 'Space' && state.mode === 'surf') doJump();              // L2 jump
+    if (e.code === 'KeyF' && !e.repeat && state.mode === 'swim') fireSoap();  // L3 soap
   } else {                                         // L1: jump / slide / soap
     if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
