@@ -252,11 +252,11 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 // kitchen comes to him. One Z lane, all action in X/Y.
 // ----------------------------------------------------
 const LANE_Z = 2.2;                 // the one depth lane everything lives on
-const BASE_SPEED = 6.0;
+const BASE_SPEED = 7.0;             // a touch faster — the run felt sluggish
 const LEVEL_LEN = 250;              // metres per level (shorter: reach level 2 sooner)
 const angleCheat = 0.49;
 const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
-const SLIDE_DUR = 1.05;             // seconds: hitbox + animation end together
+const SLIDE_DUR = 0.72;             // shorter, snappier slide (hitbox + anim end together)
 
 // player capsule (world units, after CHAR_SCALE)
 const STAND_H = 2.05;               // standing head height
@@ -271,12 +271,12 @@ const SURF_GOAL_BASE = 24;          // dirt patches to scrub to finish level 2
 const state = {
   level: 1, score: 0, ammo: 10, lives: 9,
   speed: BASE_SPEED, boost: false, brake: false,
-  gravity: 13.5, jumpPower: 8.3,    // big forgiving jump: apex ~2.5 m
+  gravity: 21.0, jumpPower: 9.5,    // snappier jump: quick pop, apex ~2.15 m, airtime ~0.9 s
   onGround: true, isSliding: false, isGameOver: false,
   invuln: 0, excite: 0, started: false,
   mode: 'run',                      // 'run' (L1) → 'surf' (L2+)
   steerUp: false, steerDown: false, targetZ: LANE_Z,
-  surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0
+  surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0, surfStartX: 0, warnedL2: false
 };
 const MAX_LIVES = 12;
 const entities = [];
@@ -637,14 +637,14 @@ function startSlide() {
   if (!state.onGround || state.isSliding || state.isGameOver || !state.started) return;
   state.isSliding = true;
   sfx.slide();
-  squash = 0.8;
-  playAnim('running_slide', 0.10);
+  squash = 0.72;
+  playAnim('running_slide', 0.05);                 // near-instant response
   clearTimeout(slideTimer);
   // hitbox and animation end together — no snap-back
   slideTimer = setTimeout(() => {
     state.isSliding = false;
-    if (!state.isGameOver && state.onGround) playAnim(moveAnim(), 0.28);
-  }, SLIDE_DUR * 1000 - 150);
+    if (!state.isGameOver && state.onGround) playAnim(moveAnim(), 0.16);
+  }, SLIDE_DUR * 1000 - 90);
 }
 function cancelSlide() {
   clearTimeout(slideTimer);
@@ -686,6 +686,9 @@ async function initGame() {
   const modelPs  = Object.entries(modelPaths).map(([k, p]) =>
     tracked(gltfLoader.loadAsync(p)).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));
   const nimbleP  = tracked(gltfLoader.loadAsync('./nimble_character.glb'), 5);   // the big one
+  // Process & show Nimble the moment HE is ready — don't wait on the 34 MB of
+  // backdrops/props. He starts dancing on the loading card almost immediately.
+  nimbleP.then(g => setupNimble(g)).catch(() => {});
 
   // Countertop: box travels with the player, texture offset scrolls back,
   // so the counter is endless but the wood visually stays put.
@@ -772,63 +775,9 @@ async function initGame() {
   // rolling pin is procedural
   typeCfg.pin.heightScaled = PIN_R * 2;
 
-  // Nimble
-  const nimbleGltf = await nimbleP;
-  const root = nimbleGltf.scene;
-  root.scale.set(CHAR_SCALE, CHAR_SCALE, CHAR_SCALE);
-  root.traverse(o => {
-    if (o.isBone && /Head$/.test(o.name) && !/HeadTop/.test(o.name)) headBone = o;
-    if (!o.isMesh) return;
-    o.castShadow = true;
-    o.frustumCulled = false;
-    const mn = o.material ? o.material.name : '';
-    if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
-    else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
-    else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
-    else { o.material = getGlassMat(o.material); }
-  });
-  playerGroup.add(root);
-
-  mixer = new THREE.AnimationMixer(root);
-  const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
-                     jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
-  // Root-motion neutraliser: the world moves the player group at a code-driven speed,
-  // so every clip must stay put horizontally. Pin the X/Z of each position track to a
-  // shared anchor (the running cycle's start) and keep Y so jump/crouch still read.
-  // This kills the old slide "lunge + snap-back" completely.
-  const canonical = {};
-  const runClip = nimbleGltf.animations.find(c => c.name === 'running');
-  if (runClip) for (const tr of runClip.tracks)
-    if (tr.name.endsWith('.position')) canonical[tr.name] = [tr.values[0], tr.values[2]];
-  for (const clip of nimbleGltf.animations) {
-    clip.tracks.forEach(track => {
-      if (track.name.endsWith('.position')) {
-        const v = track.values;
-        const anchor = canonical[track.name] || [v[0], v[2]];
-        for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
-      }
-    });
-    if (animCfgs[clip.name]) {
-      const a = mixer.clipAction(clip);
-      if (!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
-      actions[clip.name] = a;
-    }
-  }
-  // fit one-shot clips to gameplay timing
-  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 1.2;
-  if (actions['running_slide']) actions['running_slide'].timeScale = actions['running_slide'].getClip().duration / SLIDE_DUR;
-
-  mixer.addEventListener('finished', (e) => {
-    if (e.action === actions['jump'] && state.onGround)  playAnim(moveAnim());
-    if (e.action === actions['skating_start']) playAnim('skateboard');
-    if (e.action === actions['laugh'])         playAnim(moveAnim());
-  });
-
-  setupNimblePreview(nimbleGltf, root);   // spinning 3D Nimble on the loading card
-  updateHUD();
-  // world is live behind the guide: Nimble idles while the player reads
-  playAnim('idle');
-  renderer.setAnimationLoop(gameLoop);
+  // Nimble was already kicked off (and processed via setupNimble) at the top of the
+  // load; just make sure he's ready before we let the player press start.
+  await nimbleP;
   const loadingEl = document.getElementById('loading');
   loadingEl.classList.add('ready');
   document.getElementById('bar').style.width = '100%';
@@ -847,6 +796,71 @@ async function initGame() {
   };
   window.addEventListener('keydown', startOnce);
   loadingEl.addEventListener('pointerdown', startOnce);
+}
+
+// ----------------------------------------------------
+// Nimble setup — runs as soon as the character GLB loads
+// ----------------------------------------------------
+function setupNimble(nimbleGltf) {
+  const root = nimbleGltf.scene;
+  root.scale.set(CHAR_SCALE, CHAR_SCALE, CHAR_SCALE);
+  root.traverse(o => {
+    if (o.isBone && /Head$/.test(o.name) && !/HeadTop/.test(o.name)) headBone = o;
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.frustumCulled = false;
+    const mn = o.material ? o.material.name : '';
+    if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
+    else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
+    else { o.material = getGlassMat(o.material); }
+  });
+  playerGroup.add(root);
+
+  mixer = new THREE.AnimationMixer(root);
+  const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
+                     jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
+  // Root-motion neutraliser: flatten X/Z ONLY on the big locomotion (hips) track so the
+  // world can drive forward motion. Every other bone keeps its authored position — that's
+  // what keeps the foam hat & board seated on his head across clips (the previous version
+  // flattened all bones and knocked the hat out of place in the skate pose).
+  const canonical = {};
+  const runClip = nimbleGltf.animations.find(c => c.name === 'running');
+  if (runClip) for (const tr of runClip.tracks)
+    if (tr.name.endsWith('.position')) canonical[tr.name] = [tr.values[0], tr.values[2]];
+  for (const clip of nimbleGltf.animations) {
+    clip.tracks.forEach(track => {
+      if (track.name.endsWith('.position')) {
+        const v = track.values;
+        let maxDiff = 0;
+        for (let i = 0; i < v.length; i += 3)
+          maxDiff = Math.max(maxDiff, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
+        if (maxDiff > 0.25) {                       // locomotion only → pin to shared anchor
+          const anchor = canonical[track.name] || [v[0], v[2]];
+          for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
+        }
+      }
+    });
+    if (animCfgs[clip.name]) {
+      const a = mixer.clipAction(clip);
+      if (!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+      actions[clip.name] = a;
+    }
+  }
+  // fit one-shot clips to gameplay timing (snappier jump/slide)
+  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 0.82;
+  if (actions['running_slide']) actions['running_slide'].timeScale = actions['running_slide'].getClip().duration / SLIDE_DUR;
+
+  mixer.addEventListener('finished', (e) => {
+    if (e.action === actions['jump'] && state.onGround)  playAnim(moveAnim());
+    if (e.action === actions['skating_start']) playAnim('skateboard');
+    if (e.action === actions['laugh'] && !previewActive) playAnim(moveAnim());
+  });
+
+  setupNimblePreview(nimbleGltf, root);   // dancing 3D Nimble on the loading card
+  playAnim('idle');
+  updateHUD();
+  renderer.setAnimationLoop(gameLoop);    // start rendering now (loop guards for the not-yet-built world)
 }
 
 // ----------------------------------------------------
@@ -882,23 +896,37 @@ function setupNimblePreview(nimbleGltf, srcRoot) {
   // clone keeps shared glass materials AND the hidden hat/board (visible=false was copied)
   const model = SkeletonUtils.clone(srcRoot);
   model.traverse(o => { o.frustumCulled = false; });
-  const box = new THREE.Box3().setFromObject(model);
+  // Frame using ONLY the visible meshes — the hidden board/hat would otherwise skew the
+  // bounding box and push his body off-centre / out of frame (that's the "cut out" look).
+  model.updateWorldMatrix(true, true);
+  const box = new THREE.Box3(), tmp = new THREE.Box3();
+  model.traverse(o => {
+    if (o.isMesh && o.visible && o.geometry) {
+      o.geometry.computeBoundingBox();
+      tmp.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+      box.union(tmp);
+    }
+  });
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
   model.position.sub(center);                        // recenter on the origin
   previewPivot = new THREE.Group();
   previewPivot.add(model);
-  previewPivot.rotation.y = -0.5;                    // start on a friendly 3/4 view
+  previewPivot.rotation.y = -0.4;                    // start on a friendly 3/4 view
   previewScene.add(previewPivot);
 
-  const maxDim = Math.max(size.x, size.y, size.z) || 1;
-  previewCamera.position.set(0, size.y * 0.05, maxDim * 2.0);
+  // fit the full height (with generous margin) so nothing is clipped by the canvas
+  const vFov = THREE.MathUtils.degToRad(previewCamera.fov);
+  const dist = (size.y * 1.35 / 2) / Math.tan(vFov / 2);
+  previewCamera.position.set(0, 0, dist);
   previewCamera.lookAt(0, 0, 0);
 
   previewMixer = new THREE.AnimationMixer(model);
   const anims = nimbleGltf.animations;
-  const clip = anims.find(c => c.name === 'running') || anims.find(c => c.name === 'idle') || anims[0];
-  if (clip) previewMixer.clipAction(clip).play();
+  const clip = anims.find(c => c.name === 'laugh')   // he dances / giggles while you wait
+            || anims.find(c => c.name === 'idle')
+            || anims.find(c => c.name === 'running') || anims[0];
+  if (clip) previewMixer.clipAction(clip).play();    // fresh action → loops by default
 
   previewActive = true;
   previewClock.getDelta();                           // reset so the first frame isn't a huge step
@@ -1028,6 +1056,25 @@ function spawnDirt(x, z, size) {
   });
   state.surfSeen++;
 }
+// a jump-over obstacle for the surf stage (reuses a kitchen prop)
+function spawnSurfObstacle(x, z) {
+  const key = Math.random() < 0.5 ? 'plant' : 'salt';
+  if (!models[key]) return;
+  const cfg = typeCfg[key];
+  const mesh = models[key].clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  mesh.rotation.y = Math.random() * 6.28;
+  mesh.position.set(x, cfg.groundOffset || 0, z);
+  scene.add(mesh);
+  const shadow = makeBlob(cfg.size * 0.5, 0x000000);
+  shadow.position.set(x, 0.02, z);
+  scene.add(shadow);
+  entities.push({
+    mesh, shadow, key, type: 'surfobs', cfg,
+    radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
+    baseY: mesh.position.y, phase: Math.random() * 6.28, active: true, jumped: false, crossed: false
+  });
+}
 function spawnDirtChunk() {
   const rows = 2 + (Math.random() * 2 | 0);
   for (let i = 0; i < rows; i++) {
@@ -1035,11 +1082,17 @@ function spawnDirtChunk() {
     const size = 1.3 + Math.random() * 1.5;
     spawnDirt(spawnX + Math.random() * 3.0, z, size);
   }
+  // ease obstacles in only after the player has had room to learn the up/down steer
+  if ((spawnX - state.surfStartX) > 72 && Math.random() < 0.32) {
+    spawnSurfObstacle(spawnX + 1.5, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+  }
   spawnX += 3.4 + Math.random() * 3.0 + state.speed * 0.14;
 }
 
 function spawnChunk() {
   if (state.mode === 'surf') { spawnDirtChunk(); return; }
+  // calm stretch approaching the Level 2 divider so the hand-off reads clearly
+  if (spawnX > LEVEL_LEN - 40 && spawnX < LEVEL_LEN + 6) { spawnX += 6; return; }
   const lvl = state.level;
   const table = [
     [0.20, patEmeraldArc],
@@ -1074,6 +1127,10 @@ function despawnBehind(px) {
 // ----------------------------------------------------
 function checkLevel() {
   if (state.mode !== 'run') return;                 // once surfing, progress is goal-based
+  if (!state.warnedL2 && playerGroup.position.x > LEVEL_LEN - 40) {
+    state.warnedL2 = true;
+    showBanner('LEVEL 1 CLEAR &middot; GET READY!');   // calm stretch = the hand-off is coming
+  }
   const lvl = 1 + Math.floor(playerGroup.position.x / LEVEL_LEN);
   if (lvl < 2) return;
   enterSurfMode();
@@ -1105,13 +1162,16 @@ function enterSurfMode() {
     if (entities[i].shadow) scene.remove(entities[i].shadow);
     entities.splice(i, 1);
   }
-  spawnX = playerGroup.position.x + 20;
+  // calm intro stretch: ~50 units with nothing to clean/dodge so the player learns to steer
+  state.surfStartX = playerGroup.position.x;
+  spawnX = playerGroup.position.x + 50;
   playAnim('skating_start');
   document.body.classList.add('surf');
   updateTouchLabels();
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;</span> Up &nbsp;|&nbsp; <span class="key">&darr;</span> Down &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
   showBanner('LEVEL 2 &middot; SURF &amp; CLEAN!');
+  setTimeout(() => { if (state.mode === 'surf') showBanner('&uarr;&darr; MOVE UP &amp; DOWN THE COUNTER'); }, 2000);
   burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffffff, 22, 4.2, 3.4, 0.34);
   updateHUD();
 }
@@ -1159,7 +1219,7 @@ function doJump() {
   velocity.y = state.jumpPower; state.onGround = false;
   sfx.jump();
   squash = 1.3;
-  playAnim('jump', 0.10);
+  playAnim('jump', 0.05);                          // near-instant response
 }
 function fireSoap() {
   if (state.ammo <= 0 || state.isGameOver || !state.started) return;
@@ -1322,6 +1382,24 @@ function gameLoop() {
           updateHUD();
           if (state.surfCleaned >= state.surfGoal) advanceSurfLevel();
         }
+        continue;
+      }
+
+      // --- Level 2 obstacle: jump over it, or take a hit (x AND z proximity) ---
+      if (ent.type === 'surfobs') {
+        m.rotation.y += dt * 0.8;
+        const odx = px - m.position.x, odz = playerGroup.position.z - m.position.z;
+        if (Math.abs(odx) < 0.6 + ent.radius && Math.abs(odz) < 0.6 + ent.radius) {
+          if (py > ent.height - 0.1) {                          // cleared it by jumping
+            if (!ent.jumped) { ent.jumped = true; state.score += 20; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, ent.height + 0.4, 0)), '+20', '#bfe8ff'); }
+          } else if (!ent.crossed) {
+            ent.crossed = true; ent.active = false;
+            scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
+            takeDamage();
+          }
+        }
+        if (ent.shadow) ent.shadow.position.x = m.position.x;
         continue;
       }
 
@@ -1511,7 +1589,10 @@ function gameLoop() {
   if (previewActive && previewRenderer) {
     const pdt = Math.min(previewClock.getDelta(), 0.1);
     if (previewMixer) previewMixer.update(pdt);
-    if (previewPivot) previewPivot.rotation.y += pdt * 0.95;
+    if (previewPivot) {
+      previewPivot.rotation.y += pdt * 0.5;                              // slow turntable
+      previewPivot.rotation.z = Math.sin(performance.now() * 0.004) * 0.12;   // little dance rock
+    }
     previewRenderer.render(previewScene, previewCamera);
   }
 }
@@ -1525,9 +1606,10 @@ window.addEventListener('keydown', e => {
   if (state.isGameOver) return;
   if (e.code === 'ArrowRight') state.boost = true;
   if (e.code === 'ArrowLeft')  state.brake = true;
-  if (state.mode === 'surf') {                    // L2: up/down steer across the surface
-    if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space')   state.steerUp = true;
-    if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.steerDown = true;
+  if (state.mode === 'surf') {                    // L2: up/down steer + jump over obstacles
+    if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = true;
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = true;
+    if (e.code === 'Space') doJump();
   } else {                                         // L1: jump / slide / soap
     if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
@@ -1537,8 +1619,8 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
   if (e.code === 'ArrowRight') state.boost = false;
   if (e.code === 'ArrowLeft')  state.brake = false;
-  if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space')   state.steerUp = false;
-  if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.steerDown = false;
+  if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = false;
+  if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = false;
 });
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -1569,9 +1651,10 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
     if (state.isGameOver) return;
     if (act === 'boost') { state.boost = true; return; }
     if (act === 'brake') { state.brake = true; return; }
-    if (state.mode === 'surf') {                 // L2: jump/slide buttons become up/down steer
-      if (act === 'jump')  state.steerUp = true;
-      if (act === 'slide') state.steerDown = true;
+    if (state.mode === 'surf') {                 // L2: up/down steer + jump (soap button → jump)
+      if (act === 'jump')       state.steerUp = true;
+      else if (act === 'slide') state.steerDown = true;
+      else if (act === 'fire')  doJump();
     } else {
       if (act === 'jump')       doJump();
       else if (act === 'slide') startSlide();
@@ -1602,8 +1685,7 @@ function updateTouchLabels() {
   };
   setBtn('jump', '⬆', 'Up');
   setBtn('slide', '⬇', 'Down');
-  const fire = document.querySelector('#touch-controls .tbtn[data-act="fire"]');
-  if (fire) fire.style.display = 'none';
+  setBtn('fire', '⤒', 'Jump');       // soap button becomes the jump button in surf
 }
 
 // tap the game-over screen to run again (mobile has no R key)
