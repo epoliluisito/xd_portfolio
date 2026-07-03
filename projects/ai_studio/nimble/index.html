@@ -2,20 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Nimble's Dish Dash</title>
 <style>
   html, body {
     margin: 0; height: 100%; overflow: hidden;
     font-family: system-ui, -apple-system, sans-serif;
-    background-color: #0e1118;
+    /* dark fallback that reads as depth until the WebGL backdrop paints */
+    background: radial-gradient(ellipse at 50% 30%, #1a2333 0%, #0e1118 70%);
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none; overscroll-behavior: none;
   }
-  #bg { /* backdrop on its own layer: soft depth-of-field look (also hides upscaling) */
-    position: fixed; top: -2%; left: -2%; width: 104%; height: 104%; z-index: -1;
-    background: url('./BACKGROUND.png') repeat-x left bottom;
-    background-size: auto 100%;
-    filter: blur(2.5px) brightness(0.86) saturate(1.08);
-  }
+  canvas { display: block; touch-action: none; }
   #loading {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(14, 17, 24, 1); color: #eaf6ee; z-index: 100;
@@ -30,7 +29,29 @@
     backdrop-filter: blur(6px);
   }
   #guide-title { font-size: 34px; font-weight: 900; letter-spacing: 3px; color: #7fe3a0; margin-bottom: 6px; text-shadow: 0 0 18px rgba(127,227,160,0.4); }
-  #guide-sub { font-size: 14px; color: #9fb8c8; margin-bottom: 18px; letter-spacing: 1px; }
+  #guide-sub { font-size: 14px; color: #9fb8c8; margin-bottom: 14px; letter-spacing: 1px; }
+
+  /* ---- Animated Nimble mascot on the loading screen (pure SVG/CSS, no assets) ---- */
+  #nimble-loader { position: relative; width: 122px; height: 118px; margin: 0 auto 6px; perspective: 520px; }
+  #nimble-loader .nim-char { width: 100%; height: 100%; animation: nimBob 2.4s ease-in-out infinite; }
+  #nimble-loader svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 8px 10px rgba(0,0,0,0.35)); animation: nimSpin 4.6s ease-in-out infinite; transform-origin: 50% 62%; }
+  #nimble-loader .nim-eyes { transform-box: fill-box; transform-origin: center; animation: nimBlink 3.4s ease-in-out infinite; }
+  #nimble-loader .nim-body { transform-box: fill-box; transform-origin: center bottom; animation: nimSquash 2.4s ease-in-out infinite; }
+  #nimble-loader .bub {
+    position: absolute; bottom: 20px; border-radius: 50%; opacity: 0; pointer-events: none;
+    background: radial-gradient(circle at 34% 30%, #ffffff, rgba(180,240,205,0.5));
+  }
+  #nimble-loader .b1 { left: 24px; width: 10px; height: 10px; animation: nimRise 2.9s ease-in infinite; }
+  #nimble-loader .b2 { left: 60px; width: 7px;  height: 7px;  animation: nimRise 3.5s ease-in 0.7s infinite; }
+  #nimble-loader .b3 { left: 90px; width: 12px; height: 12px; animation: nimRise 3.2s ease-in 1.3s infinite; }
+  @keyframes nimBob   { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+  @keyframes nimSpin  { 0%,46% { transform: rotateY(0deg); } 50% { transform: rotateY(-20deg); } 78% { transform: rotateY(382deg); } 84%,100% { transform: rotateY(360deg); } }
+  @keyframes nimSquash{ 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.06,0.94); } }
+  @keyframes nimBlink { 0%,90%,100% { transform: scaleY(1); } 95% { transform: scaleY(0.12); } }
+  @keyframes nimRise  { 0% { transform: translateY(0) scale(0.6); opacity: 0; } 20% { opacity: 0.9; } 100% { transform: translateY(-72px) scale(1); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    #nimble-loader svg, #nimble-loader .nim-char, #nimble-loader .nim-body, #nimble-loader .nim-eyes, #nimble-loader .bub { animation: none; }
+  }
   .guide-rows { text-align: left; display: inline-block; margin-bottom: 16px; }
   .guide-row { display: flex; align-items: center; margin: 9px 0; font-size: 16px; color: #dfeaf2; }
   .guide-row .key { min-width: 60px; text-align: center; margin-right: 14px; padding: 5px 8px; font-size: 14px; }
@@ -45,26 +66,28 @@
     background: radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(5,8,14,0.30) 100%);
   }
   #hud {
-    position: absolute; top: 20px; left: 20px; z-index: 10;
-    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
+    position: absolute; top: 16px; left: 16px; z-index: 10;
+    background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
     border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
-    padding: 15px 20px; color: #fff; font-weight: bold; width: 220px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    padding: 12px 16px; color: #fff; font-weight: bold; min-width: 190px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
   }
-  .hud-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 16px; }
+  .hud-row { display: flex; justify-content: space-between; gap: 18px; margin-bottom: 7px; font-size: 15px; }
   .hud-row:last-child { margin-bottom: 0; }
+  .hud-row span:first-child { opacity: 0.85; font-weight: 600; }
   .fairy-text { color: #39d24e; }
   .danger-text { color: #ff5544; }
   .level-text { color: #7fe3a0; }
   #controls-help {
-    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10;
-    background: rgba(16, 20, 30, 0.6); backdrop-filter: blur(8px);
-    border-radius: 8px; padding: 10px 20px; color: #cfe; font-size: 13px; text-align: center;
-    letter-spacing: 0.05em; border: 1px solid rgba(255, 255, 255, 0.1);
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
+    border-radius: 10px; padding: 9px 18px; color: #cfe; font-size: 13px; text-align: center;
+    letter-spacing: 0.04em; border: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;
   }
   .key {
     display: inline-block; background: #1c2740; border: 1px solid #38507a;
-    border-radius: 4px; padding: 2px 6px; margin: 0 4px; color: #bfe; font-weight: bold;
+    border-radius: 5px; padding: 2px 7px; margin: 0 3px; color: #bfe;
+    font-weight: bold; font-size: 0.92em;
   }
   #banner {
     position: absolute; top: 38%; left: 50%; transform: translateX(-50%); z-index: 20;
@@ -105,6 +128,58 @@
   #gameover h1 { font-size: 52px; margin: 0 0 10px; letter-spacing: 4px; text-shadow: 0 0 24px rgba(255,85,68,0.7); }
   #gameover p  { font-size: 22px; margin: 6px 0; color: #cfe; }
   #gameover .hint { margin-top: 24px; font-size: 16px; color: #7fe3a0; }
+
+  /* ---- On-screen touch controls (mobile / tablet) ---- */
+  #touch-controls {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: none; justify-content: space-between; align-items: flex-end;
+    padding: 16px calc(16px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+    pointer-events: none;
+  }
+  #touch-controls .cluster { display: flex; gap: 12px; align-items: flex-end; }
+  .tbtn {
+    pointer-events: auto; -webkit-user-select: none; user-select: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 50%; color: #eaf6ee; font-weight: 800; letter-spacing: 0.5px;
+    background: rgba(16, 22, 32, 0.55); backdrop-filter: blur(6px);
+    border: 1.5px solid rgba(127, 227, 160, 0.35); box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    transition: transform 0.08s, background 0.08s;
+  }
+  .tbtn .ico { font-size: 26px; line-height: 1; }
+  .tbtn .lbl { font-size: 10px; opacity: 0.8; margin-top: 3px; text-transform: uppercase; }
+  .tbtn.big  { width: 84px; height: 84px; }
+  .tbtn.small { width: 62px; height: 62px; }
+  .tbtn.active { transform: scale(0.9); background: rgba(57, 210, 78, 0.5); }
+  .tbtn.jump { border-color: rgba(191, 232, 255, 0.5); }
+  .tbtn.fire { border-color: rgba(255, 210, 78, 0.5); }
+
+  .touchkey { display: none; }
+  body.touch .kbd { display: none; }
+  body.touch .touchkey { display: inline-block; }
+  body.touch #controls-help { display: none; }
+  body.touch #touch-controls { display: flex; }
+
+  /* ---- Responsive layout ---- */
+  @media (max-width: 760px) {
+    #guide-card { max-width: 92vw; padding: 20px 20px; border-radius: 16px; }
+    #nimble-loader { width: 96px; height: 92px; margin-bottom: 2px; }
+    #guide-title { font-size: 24px; letter-spacing: 2px; }
+    #guide-sub { font-size: 12px; margin-bottom: 14px; }
+    .guide-row { font-size: 13px; margin: 6px 0; }
+    .guide-row .key { min-width: 46px; margin-right: 10px; }
+    #hud { top: 10px; left: 10px; padding: 9px 12px; min-width: 0; border-radius: 10px; }
+    .hud-row { font-size: 12px; gap: 12px; margin-bottom: 5px; }
+    #banner { font-size: 30px; }
+    #countdown { font-size: 92px; top: 32%; }
+    #gameover h1 { font-size: 38px; }
+    #gameover p { font-size: 18px; }
+  }
+  @media (max-height: 480px) {
+    #guide-card { padding: 14px 20px; }
+    #nimble-loader { width: 74px; height: 70px; margin-bottom: 0; }
+    .guide-rows { margin-bottom: 10px; }
+    .guide-row { margin: 4px 0; }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -115,17 +190,53 @@
 </head>
 <body>
 
-<div id="bg"></div>
-
 <div id="loading">
   <div id="guide-card">
+    <div id="nimble-loader" aria-hidden="true">
+      <span class="bub b1"></span><span class="bub b2"></span><span class="bub b3"></span>
+      <div class="nim-char">
+        <svg viewBox="0 0 120 128" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="nimBody" cx="42%" cy="36%" r="70%">
+              <stop offset="0%" stop-color="#b6ffd2"/>
+              <stop offset="52%" stop-color="#57e084"/>
+              <stop offset="100%" stop-color="#1f9e46"/>
+            </radialGradient>
+            <radialGradient id="nimFoam" cx="40%" cy="35%" r="70%">
+              <stop offset="0%" stop-color="#ffffff"/>
+              <stop offset="100%" stop-color="#dff3e8"/>
+            </radialGradient>
+          </defs>
+          <!-- foam hat -->
+          <g class="nim-foam" fill="url(#nimFoam)">
+            <circle cx="44" cy="40" r="10"/><circle cx="60" cy="33" r="12"/>
+            <circle cx="76" cy="40" r="10"/><circle cx="52" cy="31" r="7"/><circle cx="69" cy="30" r="7"/>
+          </g>
+          <!-- body -->
+          <g class="nim-body">
+            <ellipse cx="60" cy="76" rx="37" ry="40" fill="url(#nimBody)" stroke="rgba(18,110,55,0.4)" stroke-width="1.5"/>
+            <ellipse cx="47" cy="56" rx="13" ry="19" fill="#ffffff" opacity="0.32" transform="rotate(-18 47 56)"/>
+            <circle cx="38" cy="86" r="5.5" fill="#ff9db0" opacity="0.55"/>
+            <circle cx="82" cy="86" r="5.5" fill="#ff9db0" opacity="0.55"/>
+            <g class="nim-eyes" fill="#12351f">
+              <ellipse cx="49" cy="72" rx="7.5" ry="9.5" fill="#ffffff" stroke="#12351f" stroke-width="1.2"/>
+              <ellipse cx="71" cy="72" rx="7.5" ry="9.5" fill="#ffffff" stroke="#12351f" stroke-width="1.2"/>
+              <circle cx="50" cy="74" r="3.8"/><circle cx="72" cy="74" r="3.8"/>
+              <circle cx="48.4" cy="71.6" r="1.4" fill="#fff"/><circle cx="70.4" cy="71.6" r="1.4" fill="#fff"/>
+            </g>
+            <path d="M46,90 Q60,106 74,90 Q60,98 46,90 Z" fill="#3a1f2a"/>
+            <ellipse cx="60" cy="96" rx="6" ry="3.5" fill="#ff7d92"/>
+          </g>
+        </svg>
+      </div>
+    </div>
     <div id="guide-title">NIMBLE'S DISH DASH</div>
     <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
     <div class="guide-rows">
-      <div class="guide-row"><span class="key">SPACE</span><span class="desc"><b>Jump</b> — leap over hazards, grab the high drops</span></div>
-      <div class="guide-row"><span class="key">SHIFT</span><span class="desc"><b>Slide</b> — duck under rolling pins, glide over oil</span></div>
-      <div class="guide-row"><span class="key">F</span><span class="desc"><b>Fire soap</b> — clean dirty dishes, pop slimes</span></div>
-      <div class="guide-row"><span class="key">&rarr;</span><span class="desc"><b>Boost</b> &nbsp;/&nbsp; <span class="key">&larr;</span> <b>Brake</b></span></div>
+      <div class="guide-row"><span class="key kbd">SPACE</span><span class="key touchkey">JUMP</span><span class="desc"><b>Jump</b> — leap over hazards &amp; grab high drops</span></div>
+      <div class="guide-row"><span class="key kbd">SHIFT</span><span class="key touchkey">SLIDE</span><span class="desc"><b>Slide</b> — duck under rolling pins, ride the oil</span></div>
+      <div class="guide-row"><span class="key kbd">F</span><span class="key touchkey">SOAP</span><span class="desc"><b>Fire soap</b> — clean dirty dishes, pop slimes</span></div>
+      <div class="guide-row"><span class="key kbd">&larr; &rarr;</span><span class="key touchkey">◀ ▶</span><span class="desc"><b>Brake</b> / <b>Boost</b> — bend your pace</span></div>
       <div class="guide-row"><span class="key">&#11088;</span><span class="desc"><b>Stars</b> restore a life — don't let them float by!</span></div>
     </div>
     <div id="bar-wrap"><div id="bar"></div></div>
@@ -150,15 +261,26 @@
   <h1>GAME OVER</h1>
   <p>Score: <span id="go-score">0</span></p>
   <p>Distance: <span id="go-dist">0 m</span></p>
-  <div class="hint">Press <span class="key">R</span> to run again</div>
+  <div class="hint"><span class="kbd">Press <span class="key">R</span> to run again</span><span class="touchkey">Tap to run again</span></div>
 </div>
 
 <div id="controls-help">
   <span class="key">SPACE</span> Jump &nbsp;|&nbsp;
   <span class="key">SHIFT</span> Slide &nbsp;|&nbsp;
   <span class="key">F</span> Fire Soap &nbsp;|&nbsp;
-  <span class="key">&rarr;</span> Boost &nbsp;|&nbsp;
-  <span class="key">&larr;</span> Brake
+  <span class="key">&larr; &rarr;</span> Brake / Boost
+</div>
+
+<div id="touch-controls">
+  <div class="cluster">
+    <div class="tbtn small" data-act="brake"><span class="ico">◀</span><span class="lbl">Brake</span></div>
+    <div class="tbtn small" data-act="boost"><span class="ico">▶</span><span class="lbl">Boost</span></div>
+  </div>
+  <div class="cluster">
+    <div class="tbtn small fire" data-act="fire"><span class="ico">🫧</span><span class="lbl">Soap</span></div>
+    <div class="tbtn big" data-act="slide"><span class="ico">⬇</span><span class="lbl">Slide</span></div>
+    <div class="tbtn big jump" data-act="jump"><span class="ico">⬆</span><span class="lbl">Jump</span></div>
+  </div>
 </div>
 
 <script type="module">
@@ -225,6 +347,21 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
 camera.position.set(4, 3.0, 17);
+scene.add(camera);   // so the backdrop (a child of the camera) is traversed & rendered
+
+// backdrop: a textured plane parented to the camera so it always fills the view.
+// Lives inside the WebGL scene (unlike the old CSS layer) so it can never fail to
+// paint behind the transparent canvas, and it scrolls / swaps levels reliably.
+let bgMesh = null, bgTexL1 = null, bgTexL2 = null;
+const BG_IMG_ASPECT = 14329 / 1184;   // native panorama proportions
+function fitBackdrop() {
+  if (!bgMesh) return;
+  const dist = 42;
+  const h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist * 1.08;
+  const w = h * camera.aspect;
+  bgMesh.scale.set(w, h, 1);
+  if (bgMesh.material.map) bgMesh.material.map.repeat.x = (w / h) / BG_IMG_ASPECT; // no vertical stretch
+}
 
 const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.85);
 dirLight.position.set(8, 9, 6);
@@ -431,7 +568,6 @@ let hatParts = [], boardParts = [], headBone = null;
 let squash = 1.0, squashTarget = 1.0;
 let floor = null, counterTex = null;
 let slideTimer = null, slideHintShown = false;
-let SLIDE_CURVE = null, slideTravelPrev = 0;   // real root-motion of the slide clip, fed into world position
 
 function playAnim(name, fade = 0.18) {
   if (!actions[name] || name === currentAnim) return;
@@ -446,7 +582,6 @@ function moveAnim() { return state.level >= 2 ? 'skateboard' : 'running'; }
 function startSlide() {
   if (!state.onGround || state.isSliding || state.isGameOver || !state.started) return;
   state.isSliding = true;
-  slideTravelPrev = 0;
   sfx.slide();
   squash = 0.8;
   playAnim('running_slide', 0.10);
@@ -490,6 +625,8 @@ async function initGame() {
     fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
   };
   const counterP = tracked(texLoader.loadAsync('./couter_top_texture.png'));
+  const bg1P = tracked(texLoader.loadAsync('./BACKGROUND.png'), 3);
+  const bg2P = tracked(texLoader.loadAsync('./BACKGROUND_02.png'), 3).catch(() => null);
   const fgPs     = fgNames.map(n => tracked(texLoader.loadAsync(`./foreground_elements/${n}`)).catch(() => null));
   const modelPs  = Object.entries(modelPaths).map(([k, p]) =>
     tracked(gltfLoader.loadAsync(p)).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));
@@ -505,6 +642,26 @@ async function initGame() {
   floor.position.set(0, -5, 6);
   floor.receiveShadow = true;
   scene.add(floor);
+
+  // --- Backdrop plane (parented to camera, always fills the frame) ---
+  bgTexL1 = await bg1P;
+  bgTexL2 = await bg2P;   // may be null if the file is missing
+  for (const tx of [bgTexL1, bgTexL2]) {
+    if (!tx) continue;
+    tx.colorSpace = THREE.SRGBColorSpace;
+    tx.wrapS = THREE.RepeatWrapping;
+    tx.wrapT = THREE.ClampToEdgeWrapping;
+  }
+  const bgMat = new THREE.MeshBasicMaterial({
+    map: bgTexL1, depthWrite: false, depthTest: false, toneMapped: false,
+    color: new THREE.Color(0.82, 0.86, 0.9)   // gentle darken/cool to sit behind the action
+  });
+  bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMat);
+  bgMesh.position.set(0, 0, -42);   // local to the camera
+  bgMesh.renderOrder = -10;
+  bgMesh.frustumCulled = false;
+  camera.add(bgMesh);
+  fitBackdrop();
 
   // 2D foreground decor — two parallax layers sweeping between camera and the lane
   const fgTextures = (await Promise.all(fgPs)).filter(Boolean);
@@ -572,10 +729,10 @@ async function initGame() {
   mixer = new THREE.AnimationMixer(root);
   const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
                      jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
-  // Canonical root anchor: every clip shares the SAME ground position (taken from
-  // the running cycle). Clips with big baked root travel (slide!) get pinned flat
-  // to that anchor, others get shifted onto it — so no clip can teleport him and
-  // wherever a slide ends is exactly where the run continues from.
+  // Root-motion neutraliser: the world moves the player group at a code-driven speed,
+  // so every clip must stay put horizontally. Pin the X/Z of each position track to a
+  // shared anchor (the running cycle's start) and keep Y so jump/crouch still read.
+  // This kills the old slide "lunge + snap-back" completely.
   const canonical = {};
   const runClip = nimbleGltf.animations.find(c => c.name === 'running');
   if (runClip) for (const tr of runClip.tracks)
@@ -583,30 +740,9 @@ async function initGame() {
   for (const clip of nimbleGltf.animations) {
     clip.tracks.forEach(track => {
       if (track.name.endsWith('.position')) {
-        const v = track.values, n = track.times.length;
-        let maxDiff = 0;
-        for (let i = 0; i < v.length; i += 3)
-          maxDiff = Math.max(maxDiff, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
-        if (maxDiff > 0.1) {
-          // before flattening the slide, capture its true root-travel curve:
-          // the player group replays it, so ground gained while sliding is REAL
-          if (clip.name === 'running_slide' && maxDiff > 0.3 && !SLIDE_CURVE) {
-            const drX = v[(n - 1) * 3] - v[0], drZ = v[(n - 1) * 3 + 2] - v[2];
-            const len = Math.hypot(drX, drZ) || 1;
-            const times = [], s = [];
-            for (let k = 0; k < n; k++) {
-              times.push(track.times[k] - track.times[0]);
-              s.push(((v[k * 3] - v[0]) * drX + (v[k * 3 + 2] - v[2]) * drZ) / len);
-            }
-            SLIDE_CURVE = { times, s, dur: times[times.length - 1] || 1 };
-          }
-          const anchor = canonical[track.name] || [v[0], v[2]];
-          for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
-        } else {
-          const anchor = canonical[track.name] || [v[0], v[2]];
-          const dx = anchor[0] - v[0], dz = anchor[1] - v[2];
-          for (let i = 0; i < v.length; i += 3) { v[i] += dx; v[i + 2] += dz; }
-        }
+        const v = track.values;
+        const anchor = canonical[track.name] || [v[0], v[2]];
+        for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
       }
     });
     if (animCfgs[clip.name]) {
@@ -633,15 +769,19 @@ async function initGame() {
   loadingEl.classList.add('ready');
   document.getElementById('bar').style.width = '100%';
   document.getElementById('load-status').style.display = 'none';
-  document.getElementById('press-key').style.display = 'block';
-  const startOnce = (e) => {
+  const pressKey = document.getElementById('press-key');
+  pressKey.style.display = 'block';
+  if (document.body.classList.contains('touch')) pressKey.textContent = 'TAP TO START';
+  const startOnce = () => {
     window.removeEventListener('keydown', startOnce);
+    loadingEl.removeEventListener('pointerdown', startOnce);
     initAudio();                                   // user gesture: countdown beeps work
     loadingEl.style.opacity = '0';
     setTimeout(() => loadingEl.style.display = 'none', 500);
     runCountdown();                                // 3 — 2 — 1 — GO!
   };
   window.addEventListener('keydown', startOnce);
+  loadingEl.addEventListener('pointerdown', startOnce);
 }
 
 function runCountdown() {
@@ -793,7 +933,7 @@ function checkLevel() {
   if (lvl === 2) {
     boardParts.forEach(m => m.visible = true);
     hatParts.forEach(m => m.visible = true);
-    document.getElementById('bg').style.backgroundImage = "url('./BACKGROUND_02.png')";
+    if (bgMesh && bgTexL2) { bgMesh.material.map = bgTexL2; fitBackdrop(); }   // swap to BACKGROUND_02.png
     showBanner('LEVEL 2 &middot; SKATE!');
     playAnim('skating_start');
     burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 0xffffff, 14, 3.5, 3.0, 0.3);
@@ -821,6 +961,14 @@ function updateHUD() {
 // ----------------------------------------------------
 // ACTIONS
 // ----------------------------------------------------
+function doJump() {
+  if (!state.onGround || !state.started || state.isGameOver) return;
+  if (state.isSliding) cancelSlide();          // jump cancels slide — stay in control
+  velocity.y = state.jumpPower; state.onGround = false;
+  sfx.jump();
+  squash = 1.3;
+  playAnim('jump', 0.10);
+}
 function fireSoap() {
   if (state.ammo <= 0 || state.isGameOver || !state.started) return;
   state.ammo--; updateHUD();
@@ -899,25 +1047,6 @@ function gameLoop() {
     const diff = 1 + Math.min(1.35, px0 / 450);
     state.speed = BASE_SPEED * diff * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
     playerGroup.position.x += state.speed * dt;
-    // slide travel comes from the animation's own root motion — coherent, no snap
-    if (state.isSliding && SLIDE_CURVE && actions['running_slide']) {
-      const a = actions['running_slide'];
-      const ct = Math.min(a.time, SLIDE_CURVE.dur);
-      const T = SLIDE_CURVE.times, S = SLIDE_CURVE.s;
-      let s = S[S.length - 1];
-      for (let k = 1; k < T.length; k++) {
-        if (ct <= T[k]) {
-          const f = (ct - T[k - 1]) / Math.max(1e-6, T[k] - T[k - 1]);
-          s = S[k - 1] + (S[k] - S[k - 1]) * f;
-          break;
-        }
-      }
-      const w = s * CHAR_SCALE;
-      if (w > slideTravelPrev) {
-        playerGroup.position.x += (w - slideTravelPrev);
-        slideTravelPrev = w;
-      }
-    }
     playerGroup.position.z = LANE_Z;
 
     // gravity / jump
@@ -1122,7 +1251,7 @@ function gameLoop() {
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + 4.0, 4 * dt);
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, 3.0 + playerGroup.position.y * 0.22, 3 * dt);   // gentle crane on jumps
   camera.lookAt(camera.position.x, 1.8 + playerGroup.position.y * 0.12, 0);
-  document.getElementById('bg').style.backgroundPositionX = `${-camera.position.x * 28}px`;
+  if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
   dirLight.position.x = playerGroup.position.x + 7;
   dirLight.target.position.set(playerGroup.position.x, 0, 0);
   rimLight.position.x = playerGroup.position.x - 7;
@@ -1150,26 +1279,58 @@ window.addEventListener('keydown', e => {
   if (state.isGameOver) return;
   if (e.code === 'ArrowRight') state.boost = true;
   if (e.code === 'ArrowLeft')  state.brake = true;
-  if ((e.code === 'Space' || e.code === 'ArrowUp') && state.onGround && state.started) {
-    if (state.isSliding) cancelSlide();               // jump cancels slide — stay in control
-    velocity.y = state.jumpPower; state.onGround = false;
-    sfx.jump();
-    squash = 1.3;
-    playAnim('jump', 0.10);
-  }
-  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown')) {
-    startSlide();
-  }
+  if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
   if (e.code === 'KeyF' && !e.repeat) fireSoap();
 });
 window.addEventListener('keyup', e => {
   if (e.code === 'ArrowRight') state.boost = false;
   if (e.code === 'ArrowLeft')  state.brake = false;
 });
-window.addEventListener('resize', () => {
+function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  fitBackdrop();
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
+
+// ----------------------------------------------------
+// TOUCH / MOBILE — on-screen buttons mirror the keys
+// ----------------------------------------------------
+const isTouch = matchMedia('(hover: none) and (pointer: coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
+window.addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true, passive: true });
+
+document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
+  const act = btn.dataset.act;
+  const press = (e) => {
+    e.preventDefault();
+    initAudio();
+    btn.classList.add('active');
+    if (state.isGameOver) return;
+    if (act === 'jump')       doJump();
+    else if (act === 'slide') startSlide();
+    else if (act === 'fire')  fireSoap();
+    else if (act === 'boost') state.boost = true;
+    else if (act === 'brake') state.brake = true;
+  };
+  const release = (e) => {
+    if (e) e.preventDefault();
+    btn.classList.remove('active');
+    if (act === 'boost') state.boost = false;
+    if (act === 'brake') state.brake = false;
+  };
+  btn.addEventListener('pointerdown', press);
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointercancel', release);
+  btn.addEventListener('pointerleave', release);
+});
+
+// tap the game-over screen to run again (mobile has no R key)
+document.getElementById('gameover').addEventListener('pointerdown', () => {
+  if (state.isGameOver) location.reload();
 });
 
 initGame();
