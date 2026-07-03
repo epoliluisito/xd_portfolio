@@ -66,6 +66,8 @@
   .fairy-text { color: #39d24e; }
   .danger-text { color: #ff5544; }
   .level-text { color: #7fe3a0; }
+  #clean-meter { height: 7px; margin-top: 4px; background: rgba(255,255,255,0.14); border-radius: 5px; overflow: hidden; }
+  #clean-bar { width: 0%; height: 100%; background: linear-gradient(90deg, #39d24e, #bff5d2); border-radius: 5px; transition: width 0.2s; }
   #controls-help {
     position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
     background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
@@ -205,7 +207,9 @@
   <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">9</span></div>
   <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
   <div class="hud-row"><span>Distance:</span> <span id="dist">0 m</span></div>
-  <div class="hud-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
+  <div class="hud-row" id="ammo-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
+  <div class="hud-row" id="clean-row" style="display:none"><span class="fairy-text">Surface:</span> <span id="clean-count" class="fairy-text">0 / 24</span></div>
+  <div id="clean-meter" style="display:none"><div id="clean-bar"></div></div>
 </div>
 
 <div id="banner"></div>
@@ -258,12 +262,21 @@ const SLIDE_DUR = 1.05;             // seconds: hitbox + animation end together
 const STAND_H = 2.05;               // standing head height
 const SLIDE_H = 0.95;               // sliding head height
 
+// --- Level 2 "surf & clean" mode ---
+const SURF_Z_MIN = 0.2;             // steer band across the counter's depth (up = away)
+const SURF_Z_MAX = 4.6;
+const STEER_SPEED = 5.2;            // z units per second while a steer key/button is held
+const SURF_GOAL_BASE = 24;          // dirt patches to scrub to finish level 2
+
 const state = {
   level: 1, score: 0, ammo: 10, lives: 9,
   speed: BASE_SPEED, boost: false, brake: false,
   gravity: 13.5, jumpPower: 8.3,    // big forgiving jump: apex ~2.5 m
   onGround: true, isSliding: false, isGameOver: false,
-  invuln: 0, excite: 0, started: false
+  invuln: 0, excite: 0, started: false,
+  mode: 'run',                      // 'run' (L1) → 'surf' (L2+)
+  steerUp: false, steerDown: false, targetZ: LANE_Z,
+  surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0
 };
 const MAX_LIVES = 12;
 const entities = [];
@@ -368,15 +381,18 @@ const bubbleTex = new THREE.TextureLoader().load('./bubble_normal.png', t => {
   t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 6);
 });
 function getFoamMat() {
+  // frothier + more see-through: higher transmission, real opacity, punchier bubble
+  // normals and iridescent rim so the hat & board read as suds, not plastic.
   const mat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#f6f9ff'), roughness: 0.42, metalness: 0,
-    sheen: 1.0, sheenRoughness: 0.35, sheenColor: new THREE.Color('#ffffff'),
-    transmission: 0.12, ior: 1.33, thickness: 0.2,
-    clearcoat: 0.5, clearcoatRoughness: 0.22, iridescence: 0.4, iridescenceIOR: 1.30,
-    normalMap: bubbleTex, normalScale: new THREE.Vector2(1.0, 1.0),
-    envMapIntensity: 1.35, transparent: true
+    color: new THREE.Color('#eef5ff'), roughness: 0.5, metalness: 0,
+    sheen: 1.0, sheenRoughness: 0.3, sheenColor: new THREE.Color('#ffffff'),
+    transmission: 0.55, ior: 1.33, thickness: 0.35,
+    clearcoat: 0.6, clearcoatRoughness: 0.25, iridescence: 0.7, iridescenceIOR: 1.30,
+    iridescenceThicknessRange: [120, 460],
+    normalMap: bubbleTex, normalScale: new THREE.Vector2(1.7, 1.7),
+    envMapIntensity: 1.5, transparent: true, opacity: 0.82, depthWrite: false
   });
-  addRim(mat, '#ffffff', 0.35);
+  addRim(mat, '#dff3ff', 0.6);
   return mat;
 }
 const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
@@ -406,6 +422,89 @@ function makeRollingPin() {
     cap.position.x = s * 1.34;
     g.add(cap);
   }
+  return g;
+}
+
+// ----------------------------------------------------
+// LEVEL 2 props — procedural greasy dirt & soapy froth
+// ----------------------------------------------------
+// A blotchy grease decal, drawn to a canvas so it needs no image asset.
+function makeDirtTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 128, 128);
+  const tones = ['rgba(74,54,34,0.95)', 'rgba(96,72,40,0.9)', 'rgba(58,40,26,0.95)', 'rgba(120,96,52,0.8)'];
+  for (let i = 0; i < 22; i++) {
+    const x = 64 + (Math.random() - 0.5) * 84, y = 64 + (Math.random() - 0.5) * 84;
+    const r = 10 + Math.random() * 26;
+    const grd = g.createRadialGradient(x, y, 1, x, y, r);
+    const col = tones[(Math.random() * tones.length) | 0];
+    grd.addColorStop(0, col); grd.addColorStop(1, 'rgba(60,44,28,0)');
+    g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 6.28); g.fill();
+  }
+  for (let i = 0; i < 60; i++) {          // crumbs / specks
+    g.fillStyle = `rgba(${30 + Math.random() * 40 | 0},${20 + Math.random() * 30 | 0},14,${0.4 + Math.random() * 0.5})`;
+    g.beginPath(); g.arc(Math.random() * 128, Math.random() * 128, 0.6 + Math.random() * 2.2, 0, 6.28); g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const dirtTextures = [makeDirtTexture(), makeDirtTexture(), makeDirtTexture()];
+function makeDirtPatch(size) {
+  const tex = dirtTextures[(Math.random() * dirtTextures.length) | 0];
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex, transparent: true, roughness: 0.95, metalness: 0.0,
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1
+  });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+  m.rotation.x = -Math.PI / 2;
+  m.rotation.z = Math.random() * Math.PI * 2;
+  m.position.y = 0.035;
+  m.receiveShadow = false;
+  return m;
+}
+
+// soapy froth decals scattered on the steel counter (sprite pool, recycled)
+const frothDecals = [];
+let frothDecalsBuilt = false;
+function buildCounterFroth() {
+  if (frothDecalsBuilt) return;
+  frothDecalsBuilt = true;
+  for (let i = 0; i < 26; i++) {
+    const mat = new THREE.SpriteMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.5, color: 0xffffff });
+    const s = new THREE.Sprite(mat);
+    s.scale.setScalar(0.7 + Math.random() * 1.5);
+    s.position.set(playerGroup.position.x + 10 + i * 3.4, 0.06, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+    s.visible = false;
+    scene.add(s);
+    frothDecals.push(s);
+  }
+}
+
+// The Level 1 → Level 2 divider: a soapy curtain / steel threshold Nimble bursts through.
+let dividerGroup = null;
+function buildDivider(x) {
+  const g = new THREE.Group();
+  const cz = (SURF_Z_MIN + SURF_Z_MAX) / 2, zW = (SURF_Z_MAX - SURF_Z_MIN) + 3.0;
+  // steel threshold strip on the counter
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, zW),
+    new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: 0.9, roughness: 0.28 }));
+  strip.position.set(0, 0.06, cz); g.add(strip);
+  // translucent foam curtain
+  const curtain = new THREE.Mesh(new THREE.PlaneGeometry(zW, 4.6), getFoamMat());
+  curtain.rotation.y = Math.PI / 2;
+  curtain.position.set(0, 2.1, cz); g.add(curtain);
+  // two foam posts
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 5.0, 16), getFoamMat());
+    post.position.set(0, 2.5, cz + s * (zW / 2)); g.add(post);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 18), getFoamMat());
+    ball.position.set(0, 5.0, cz + s * (zW / 2)); g.add(ball);
+  }
+  g.position.x = x;
+  g.userData.crossed = false;
+  scene.add(g);
   return g;
 }
 
@@ -521,7 +620,7 @@ const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
 let hatParts = [], boardParts = [], headBone = null;
 let squash = 1.0, squashTarget = 1.0;
-let floor = null, counterTex = null;
+let floor = null, counterTex = null, counterTex2 = null;
 let slideTimer = null, slideHintShown = false;
 
 function playAnim(name, fade = 0.18) {
@@ -580,6 +679,7 @@ async function initGame() {
     fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
   };
   const counterP = tracked(texLoader.loadAsync('./couter_top_texture.png'));
+  const counter2P = tracked(texLoader.loadAsync('./couter_top_texture_02.png')).catch(() => null);
   const bg1P = tracked(texLoader.loadAsync('./BACKGROUND.png'), 3);
   const bg2P = tracked(texLoader.loadAsync('./BACKGROUND_02.png'), 3).catch(() => null);
   const fgPs     = fgNames.map(n => tracked(texLoader.loadAsync(`./foreground_elements/${n}`)).catch(() => null));
@@ -592,11 +692,19 @@ async function initGame() {
   counterTex = await counterP;
   counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping;
   counterTex.repeat.set(150, 3);
+  counterTex2 = await counter2P;                 // steel top for Level 2 (may be null)
+  if (counterTex2) {
+    counterTex2.wrapS = counterTex2.wrapT = THREE.RepeatWrapping;
+    counterTex2.repeat.set(150, 3);
+  }
   const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
   floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
   floor.position.set(0, -5, 6);
   floor.receiveShadow = true;
   scene.add(floor);
+
+  // pre-build the Level 1 → 2 divider so it's waiting at the boundary
+  dividerGroup = buildDivider(LEVEL_LEN);
 
   // --- Backdrop plane (parented to camera, always fills the frame) ---
   bgTexL1 = await bg1P;
@@ -908,7 +1016,30 @@ function patBreather() {             // gentle drops, catch your breath
   spawnX += n * 1.4 + 1.2;
 }
 
+// --- Level 2 surf spawner: greasy dirt scattered across the surface ---
+function spawnDirt(x, z, size) {
+  const mesh = makeDirtPatch(size);
+  mesh.position.set(x, mesh.position.y, z);
+  scene.add(mesh);
+  entities.push({
+    mesh, shadow: null, key: 'dirt', type: 'dirt', cfg: null,
+    radius: size * 0.42, height: 0, baseY: mesh.position.y,
+    phase: Math.random() * 6.28, active: true, isClean: false, crossed: false
+  });
+  state.surfSeen++;
+}
+function spawnDirtChunk() {
+  const rows = 2 + (Math.random() * 2 | 0);
+  for (let i = 0; i < rows; i++) {
+    const z = SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN);
+    const size = 1.3 + Math.random() * 1.5;
+    spawnDirt(spawnX + Math.random() * 3.0, z, size);
+  }
+  spawnX += 3.4 + Math.random() * 3.0 + state.speed * 0.14;
+}
+
 function spawnChunk() {
+  if (state.mode === 'surf') { spawnDirtChunk(); return; }
   const lvl = state.level;
   const table = [
     [0.20, patEmeraldArc],
@@ -942,22 +1073,58 @@ function despawnBehind(px) {
 // LEVELS / HUD / BANNERS
 // ----------------------------------------------------
 function checkLevel() {
+  if (state.mode !== 'run') return;                 // once surfing, progress is goal-based
   const lvl = 1 + Math.floor(playerGroup.position.x / LEVEL_LEN);
-  if (lvl <= state.level) return;
-  state.level = lvl;
-  sfx.level();
+  if (lvl < 2) return;
+  enterSurfMode();
+}
+
+// Level 1 → Level 2: burst through the divider into the surf/clean stage.
+function enterSurfMode() {
+  state.mode = 'surf';
+  state.level = 2;
+  state.targetZ = LANE_Z;
+  playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
+  state.isSliding = false;
+  state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
   state.excite = 1.0;
-  if (lvl === 2) {
-    boardParts.forEach(m => m.visible = true);
-    hatParts.forEach(m => m.visible = true);
-    if (bgMesh && bgTexL2) { bgMesh.material.map = bgTexL2; fitBackdrop(); }   // swap to BACKGROUND_02.png
-    showBanner('LEVEL 2 &middot; SKATE!');
-    playAnim('skating_start');
-    burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 0xffffff, 14, 3.5, 3.0, 0.3);
-  } else {
-    showBanner('LEVEL ' + lvl + ' &middot; FASTER!');
-    playAnim('laugh');
+  sfx.level();
+  boardParts.forEach(m => m.visible = true);
+  hatParts.forEach(m => m.visible = true);
+  if (bgMesh && bgTexL2) { bgMesh.material.map = bgTexL2; fitBackdrop(); }         // BACKGROUND_02.png
+  if (counterTex2 && floor) {                                                       // steel countertop
+    floor.material.map = counterTex2;
+    floor.material.metalness = 0.85; floor.material.roughness = 0.32;
+    floor.material.needsUpdate = true;
   }
+  buildCounterFroth();
+  frothDecals.forEach(s => s.visible = true);
+  // wipe any leftover runner props so the surf stage starts clean
+  for (let i = entities.length - 1; i >= 0; i--) {
+    scene.remove(entities[i].mesh);
+    if (entities[i].shadow) scene.remove(entities[i].shadow);
+    entities.splice(i, 1);
+  }
+  spawnX = playerGroup.position.x + 20;
+  playAnim('skating_start');
+  document.body.classList.add('surf');
+  updateTouchLabels();
+  const help = document.getElementById('controls-help');
+  if (help) help.innerHTML = '<span class="key">&uarr;</span> Up &nbsp;|&nbsp; <span class="key">&darr;</span> Down &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
+  showBanner('LEVEL 2 &middot; SURF &amp; CLEAN!');
+  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffffff, 22, 4.2, 3.4, 0.34);
+  updateHUD();
+}
+
+// cleaned the whole surface — bump to the next (faster, bigger) surf level
+function advanceSurfLevel() {
+  state.level++;
+  state.surfCleaned = 0;
+  state.surfGoal += 10;
+  state.excite = 1.0;
+  sfx.level();
+  showBanner('SPOTLESS! &middot; LEVEL ' + state.level);
+  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 22, 4.4, 3.4, 0.34);
   updateHUD();
 }
 let bannerTimer = null;
@@ -973,6 +1140,14 @@ function updateHUD() {
   document.getElementById('lives').innerText = state.lives;
   document.getElementById('level').innerText = state.level;
   document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m';
+  const surf = state.mode === 'surf';
+  document.getElementById('ammo-row').style.display = surf ? 'none' : '';
+  document.getElementById('clean-row').style.display = surf ? '' : 'none';
+  document.getElementById('clean-meter').style.display = surf ? '' : 'none';
+  if (surf) {
+    document.getElementById('clean-count').innerText = state.surfCleaned + ' / ' + state.surfGoal;
+    document.getElementById('clean-bar').style.width = Math.min(100, 100 * state.surfCleaned / state.surfGoal) + '%';
+  }
 }
 
 // ----------------------------------------------------
@@ -1049,7 +1224,7 @@ function collect(ent) {
 // MAIN LOOP
 // ----------------------------------------------------
 const clock = new THREE.Clock();
-let hudT = 0, slideDustT = 0;
+let hudT = 0, slideDustT = 0, surfTrailT = 0;
 function gameLoop() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
@@ -1060,11 +1235,25 @@ function gameLoop() {
   if (!state.isGameOver && state.started) {
     const px0 = playerGroup.position.x;
 
-    // --- always running; boost & brake only bend the pace ---
+    // --- always moving forward; boost & brake only bend the pace ---
     const diff = 1 + Math.min(1.35, px0 / 450);
     state.speed = BASE_SPEED * diff * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
     playerGroup.position.x += state.speed * dt;
-    playerGroup.position.z = LANE_Z;
+
+    if (state.mode === 'surf') {
+      // steer up/down across the counter's depth (z is the surf axis)
+      const dir = (state.steerDown ? 1 : 0) - (state.steerUp ? 1 : 0);
+      state.targetZ = THREE.MathUtils.clamp(state.targetZ + dir * STEER_SPEED * dt, SURF_Z_MIN, SURF_Z_MAX);
+      playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 10 * dt);
+      // the board leaves a froth trail
+      surfTrailT -= dt;
+      if (surfTrailT <= 0) {
+        surfTrailT = 0.045;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(-0.6, 0.12, 0)), 0xffffff, 2, 1.0, 0.7, 0.17, 2.0);
+      }
+    } else {
+      playerGroup.position.z = LANE_Z;
+    }
 
     // gravity / jump
     if (!state.onGround) {
@@ -1118,6 +1307,23 @@ function gameLoop() {
     for (const ent of entities) {
       if (!ent.active) continue;
       const m = ent.mesh, c = ent.cfg;
+
+      // --- Level 2 dirt: scrub it by riding over it (x AND z proximity) ---
+      if (ent.type === 'dirt') {
+        const ddx = px - m.position.x, ddz = playerGroup.position.z - m.position.z;
+        if (!ent.isClean && Math.abs(ddx) < 0.85 + ent.radius && Math.abs(ddz) < 0.75 + ent.radius) {
+          ent.isClean = true; ent.active = false;
+          scene.remove(m);
+          if (m.material.map) m.material.dispose();
+          state.surfCleaned++; state.score += 75;
+          sfx.clean();
+          burst(m.position.clone().add(new THREE.Vector3(0, 0.2, 0)), 0xffffff, 12, 2.6, 2.4, 0.22);
+          popup(m.position.clone().add(new THREE.Vector3(0, 0.7, 0)), 'SCRUB! +75', '#ffffff');
+          updateHUD();
+          if (state.surfCleaned >= state.surfGoal) advanceSurfLevel();
+        }
+        continue;
+      }
 
       // --- give the props life ---
       if (ent.type === 'enemy') {
@@ -1263,11 +1469,16 @@ function gameLoop() {
   updateParticles(dt);
 
   // camera / world dressing follow the run
-  playerBlob.position.set(playerGroup.position.x, 0.02, LANE_Z);
+  const surf = state.mode === 'surf';
+  const pz = playerGroup.position.z;
+  playerBlob.position.set(playerGroup.position.x, 0.02, surf ? pz : LANE_Z);
   playerBlob.visible = state.onGround;
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + 4.0, 4 * dt);
-  camera.position.y = THREE.MathUtils.lerp(camera.position.y, 3.0 + playerGroup.position.y * 0.22, 3 * dt);   // gentle crane on jumps
-  camera.lookAt(camera.position.x, 1.8 + playerGroup.position.y * 0.12, 0);
+  const camYTarget = surf ? 4.4 : 3.0 + playerGroup.position.y * 0.22;      // higher, more top-down while surfing
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, 3 * dt);
+  const lookY = surf ? 1.0 : 1.8 + playerGroup.position.y * 0.12;
+  const lookZ = surf ? (pz - LANE_Z) * 0.4 : 0;
+  camera.lookAt(camera.position.x, lookY, lookZ);
   if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
   dirLight.position.x = playerGroup.position.x + 7;
   dirLight.target.position.set(playerGroup.position.x, 0, 0);
@@ -1275,7 +1486,17 @@ function gameLoop() {
   fillLight.position.x = camera.position.x + 2;
   if (floor) {
     floor.position.x = playerGroup.position.x;
-    counterTex.offset.x = playerGroup.position.x * (150 / 1500);   // wood stays put while the box travels
+    const ftex = floor.material.map;                    // scroll whichever counter texture is active
+    if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
+  }
+  if (surf && frothDecalsBuilt) {                       // recycle soapy froth ahead of the camera
+    for (const s of frothDecals) {
+      if (s.position.x < camera.position.x - 16) {
+        s.position.x += 80 + Math.random() * 40;
+        s.position.z = SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN);
+        s.scale.setScalar(0.7 + Math.random() * 1.5);
+      }
+    }
   }
   for (const p of fgPlanes) {
     if (p.position.x < camera.position.x - 30) {
@@ -1304,13 +1525,20 @@ window.addEventListener('keydown', e => {
   if (state.isGameOver) return;
   if (e.code === 'ArrowRight') state.boost = true;
   if (e.code === 'ArrowLeft')  state.brake = true;
-  if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
-  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
-  if (e.code === 'KeyF' && !e.repeat) fireSoap();
+  if (state.mode === 'surf') {                    // L2: up/down steer across the surface
+    if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space')   state.steerUp = true;
+    if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.steerDown = true;
+  } else {                                         // L1: jump / slide / soap
+    if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
+    if (e.code === 'KeyF' && !e.repeat) fireSoap();
+  }
 });
 window.addEventListener('keyup', e => {
   if (e.code === 'ArrowRight') state.boost = false;
   if (e.code === 'ArrowLeft')  state.brake = false;
+  if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space')   state.steerUp = false;
+  if (e.code === 'ArrowDown' || e.code === 'KeyS' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') state.steerDown = false;
 });
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -1339,23 +1567,44 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
     initAudio();
     btn.classList.add('active');
     if (state.isGameOver) return;
-    if (act === 'jump')       doJump();
-    else if (act === 'slide') startSlide();
-    else if (act === 'fire')  fireSoap();
-    else if (act === 'boost') state.boost = true;
-    else if (act === 'brake') state.brake = true;
+    if (act === 'boost') { state.boost = true; return; }
+    if (act === 'brake') { state.brake = true; return; }
+    if (state.mode === 'surf') {                 // L2: jump/slide buttons become up/down steer
+      if (act === 'jump')  state.steerUp = true;
+      if (act === 'slide') state.steerDown = true;
+    } else {
+      if (act === 'jump')       doJump();
+      else if (act === 'slide') startSlide();
+      else if (act === 'fire')  fireSoap();
+    }
   };
   const release = (e) => {
     if (e) e.preventDefault();
     btn.classList.remove('active');
     if (act === 'boost') state.boost = false;
     if (act === 'brake') state.brake = false;
+    if (act === 'jump')  state.steerUp = false;
+    if (act === 'slide') state.steerDown = false;
   };
   btn.addEventListener('pointerdown', press);
   btn.addEventListener('pointerup', release);
   btn.addEventListener('pointercancel', release);
   btn.addEventListener('pointerleave', release);
 });
+// relabel the touch buttons when the mode changes (jump→Up, slide→Down, hide soap)
+function updateTouchLabels() {
+  if (state.mode !== 'surf') return;
+  const setBtn = (act, ico, lbl) => {
+    const b = document.querySelector('#touch-controls .tbtn[data-act="' + act + '"]');
+    if (!b) return;
+    b.querySelector('.ico').textContent = ico;
+    b.querySelector('.lbl').textContent = lbl;
+  };
+  setBtn('jump', '⬆', 'Up');
+  setBtn('slide', '⬇', 'Down');
+  const fire = document.querySelector('#touch-controls .tbtn[data-act="fire"]');
+  if (fire) fire.style.display = 'none';
+}
 
 // tap the game-over screen to run again (mobile has no R key)
 document.getElementById('gameover').addEventListener('pointerdown', () => {
