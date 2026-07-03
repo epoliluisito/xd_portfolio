@@ -780,7 +780,10 @@ const playerBlob = makeBlob(0.75, 0x7fe3a0);
 scene.add(playerBlob);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
-let hatParts = [], boardParts = [], headBone = null;
+let hatParts = [], boardParts = [], spongeParts = [], headBone = null;
+// Nimble's Level-2 ride. The sponge is the current ride; the skateboard is kept
+// as a fallback option — flip USE_SPONGE to false to bring the skateboard back.
+let USE_SPONGE = true;
 let squash = 1.0, squashTarget = 1.0;
 let floor = null, counterTex = null, counterTex2 = null;
 let slideTimer = null, slideHintShown = false;
@@ -976,6 +979,8 @@ function setupNimble(nimbleGltf) {
     const mn = o.material ? o.material.name : '';
     if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
     else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; }  // soap suds around the sponge
+    else if (mn.startsWith('sponge_mat'))  { spongeParts.push(o); o.visible = false; }   // sponge keeps its own baked soap texture
     else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
     else { o.material = getGlassMat(o.material); }
   });
@@ -1279,7 +1284,8 @@ function enterSurfMode() {
   state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
   state.excite = 1.0;
   sfx.level();
-  boardParts.forEach(m => m.visible = true);
+  boardParts.forEach(m => m.visible = !USE_SPONGE);   // skateboard only when sponge is off
+  spongeParts.forEach(m => m.visible = USE_SPONGE);   // sponge is the current ride
   hatParts.forEach(m => m.visible = true);
   // wipe any leftover runner props
   for (let i = entities.length - 1; i >= 0; i--) {
@@ -1385,6 +1391,7 @@ function scriptDiveSeq(dt) {
       state.diveGearLost = true;
       hatParts.forEach(m => m.visible = false);
       boardParts.forEach(m => m.visible = false);
+      spongeParts.forEach(m => m.visible = false);
       burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 22, 5.5, 5, 0.32);
       playAnim('dive', 0.22);
       buildWaterSurface();                                    // water visible below → he dives INTO it, not onto stone
