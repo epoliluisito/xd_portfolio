@@ -617,7 +617,6 @@ scene.add(playerBlob);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
 let hatParts = [], boardParts = [], headBone = null;
-let rootBone = null, rootRestX = 0, rootRestZ = 0;   // in-place locomotion: zero the root's drift each frame
 let squash = 1.0, squashTarget = 1.0;
 let floor = null, counterTex = null, counterTex2 = null;
 let slideTimer = null, slideHintShown = false;
@@ -820,25 +819,25 @@ function setupNimble(nimbleGltf) {
   mixer = new THREE.AnimationMixer(root);
   const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
                      jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
-  // In-place locomotion the RIGHT way: instead of baking the animation data (which
-  // distorted attached props like the foam hat & skateboard), we leave every clip
-  // untouched and simply cancel the ROOT bone's horizontal drift each frame in the loop.
-  // Only the root moves; head/hat/board keep their exact authored poses.
-  let bestName = null, bestDiff = 0;
-  const scanClip = nimbleGltf.animations.find(c => c.name === 'running')
-                || nimbleGltf.animations.find(c => c.name === 'skateboard');
-  if (scanClip) for (const tr of scanClip.tracks) {
-    if (!tr.name.endsWith('.position')) continue;
-    const v = tr.values; let d = 0;
-    for (let i = 0; i < v.length; i += 3) d = Math.max(d, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
-    if (d > bestDiff) { bestDiff = d; bestName = tr.name; }
-  }
-  if (bestName && bestDiff > 0.12) {
-    const nodeName = bestName.slice(0, bestName.lastIndexOf('.'));
-    rootBone = root.getObjectByName(nodeName) || null;
-    if (rootBone) { rootRestX = rootBone.position.x; rootRestZ = rootBone.position.z; }
-  }
+  // In-place locomotion: flatten only the X/Z (horizontal) of the big locomotion tracks,
+  // keeping Y so he stays standing on the counter. The world scrolls; he runs in place.
+  const canonical = {};
+  const runClip = nimbleGltf.animations.find(c => c.name === 'running');
+  if (runClip) for (const tr of runClip.tracks)
+    if (tr.name.endsWith('.position')) canonical[tr.name] = [tr.values[0], tr.values[2]];
   for (const clip of nimbleGltf.animations) {
+    clip.tracks.forEach(track => {
+      if (track.name.endsWith('.position')) {
+        const v = track.values;
+        let maxDiff = 0;
+        for (let i = 0; i < v.length; i += 3)
+          maxDiff = Math.max(maxDiff, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
+        if (maxDiff > 0.25) {                       // locomotion track → pin X/Z to a shared anchor
+          const anchor = canonical[track.name] || [v[0], v[2]];
+          for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
+        }
+      }
+    });
     if (animCfgs[clip.name]) {
       const a = mixer.clipAction(clip);
       if (!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
@@ -1212,7 +1211,6 @@ function gameLoop() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
   if (mixer) mixer.update(dt);
-  if (rootBone) { rootBone.position.x = rootRestX; rootBone.position.z = rootRestZ; }   // keep him in place; world scrolls
   hudT += dt;
   if (hudT > 0.2) { hudT = 0; document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m'; }
 
