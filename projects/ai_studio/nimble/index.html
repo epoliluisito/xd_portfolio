@@ -321,7 +321,7 @@ const SWIM_Y_MAX = -1.0;            // just under the surface
 const SWIM_STEER = 4.6;             // y units per second while up/down held
 const SWIM_MID = (SWIM_Y_MIN + SWIM_Y_MAX) / 2;   // ~ -3.2
 const SWIM_PITCH = 0.42;            // nose-up while swimming so he doesn't look down
-const SWIM_LEN = 460;              // metres of Level 3 before the jump-out to Level 4
+const SWIM_LEN = 285;              // metres of Level 3 (swim is slower, so shorter distance = same play-time as L1)
 const DIVE_LAUNCH_T = 1.0;          // seconds rolling up to the ramp before he launches
 const RAMP_HALF = 1.7;             // ramp half-width
 const RAMP_LIP_Y = 2.4;            // ramp launch-lip height
@@ -1472,33 +1472,35 @@ function scriptJumpOut(dt) {
   if (state.jumpT > 2.3) enterPuzzle();
 }
 
-// --- Bubble Pop board ---
-const BUBBLE_COLORS = [0x2fd257, 0xffc932, 0x39a7ff, 0xff5da2];
-const PZ = { cols: 7, bd: 1.15, ceilY: 7.4, shootY: -0.3, boardX: 0, midY: 3.4,
-             grid: new Map(), aim: 0, fly: null, nextCi: 0, guide: null, holder: null };
+// --- Level 4 board: a spacious match-3 bubble shooter using the 3D elements ---
+const ALL_TYPES = ['emerald', 'star', 'slime', 'oil', 'plant', 'salt', 'fork', 'plates'];
+const TYPE_COLOR = { emerald: 0x39d24e, star: 0xffcc33, slime: 0x7fdd5a, oil: 0x556070,
+                     plant: 0x4f9e3a, salt: 0xeaf2ff, fork: 0xcfd6de, plates: 0xf0e6d0 };
+const PZ = { cols: 6, rows0: 4, bd: 1.55, ceilY: 7.4, shootY: -1.4, boardX: 0, midY: 3.0,
+             grid: new Map(), types: [], aim: 0, fly: null, nextTi: 0, guide: null, holder: null,
+             falling: [], ready: false, revealT: 0 };
 function pzKey(r, c) { return r + ',' + c; }
 function pzPos(r, c) { return new THREE.Vector3(PZ.boardX + (c - (PZ.cols - 1) / 2) * PZ.bd, PZ.ceilY - r * PZ.bd, LANE_Z); }
-function makeBubble(ci) {
+function makeBubble(ti) {
+  const key = PZ.types[ti], cfg = typeCfg[key];
   let m;
-  if (models.emerald) {
-    m = models.emerald.clone();
-    m.scale.setScalar((typeCfg.emerald.scaleFactor || 1) * 1.6);
-    m.traverse(o => { if (o.isMesh && o.material) { o.material = o.material.clone();
-      if (o.material.attenuationColor) o.material.attenuationColor.setHex(BUBBLE_COLORS[ci]);
-      if (o.material.color) o.material.color.setHex(BUBBLE_COLORS[ci]); } });
+  if (models[key]) {
+    m = models[key].clone();
+    m.scale.setScalar((cfg.scaleFactor || 1) * (PZ.bd * 0.8 / (cfg.size || 1)));   // uniform bubble size
+    m.rotation.y = Math.random() * 6.28;
   } else {
-    m = new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 16),
-      new THREE.MeshPhysicalMaterial({ color: BUBBLE_COLORS[ci], roughness: 0.2, transmission: 0.4, thickness: 0.4 }));
+    m = new THREE.Mesh(new THREE.SphereGeometry(0.55, 18, 14),
+      new THREE.MeshPhysicalMaterial({ color: TYPE_COLOR[key] || 0x88ccff, roughness: 0.25, transmission: 0.3 }));
   }
-  m.userData.ci = ci;
+  m.userData.ti = ti;
   return m;
 }
 function enterPuzzle() {
   state.mode = 'puzzle';
   state.level = 4;
-  flash(0.7); state.shake = 0;                    // mask the scene change
+  flash(0.75); state.shake = 0;
   PZ.boardX = playerGroup.position.x;
-  PZ.aim = 0; PZ.fly = null;
+  PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0;
   scene.fog = null;
   if (floor) floor.visible = false;
   const tint = document.getElementById('water-tint'); if (tint) tint.style.display = 'none';
@@ -1506,47 +1508,53 @@ function enterPuzzle() {
   bubbles.forEach(s => s.visible = false);
   seabed.forEach(m => m.visible = false);
   if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
-  playerGroup.position.set(PZ.boardX, PZ.shootY - 0.4, LANE_Z);
+  playerGroup.position.set(PZ.boardX, PZ.shootY - 0.5, LANE_Z);
   playerGroup.scale.set(1, 1, 1); squash = squashTarget = 1;
   state.divePitch = 0; setPlayerPitch(0);
   playAnim('idle');
   document.body.classList.remove('surf'); document.body.classList.add('puzzle');
   buildBubbleGrid();
-  pzNewBubble();
   if (!PZ.guide) {
-    PZ.guide = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 5.5, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, depthWrite: false }));
+    PZ.guide = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 6.5, 8),
+      new THREE.MeshBasicMaterial({ color: 0xbdefff, transparent: true, opacity: 0.35, depthWrite: false }));
     scene.add(PZ.guide);
   }
-  PZ.guide.visible = true;
+  PZ.guide.visible = false;
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&larr; &rarr;</span> Aim &nbsp;|&nbsp; <span class="key">Space</span> Shoot &nbsp;|&nbsp; match 3 of a colour to pop them all!';
-  showBanner('LEVEL 4 &middot; BUBBLE POP!');
+  if (help) help.innerHTML = '<span class="key">&larr; &rarr;</span> Aim &nbsp;|&nbsp; <span class="key">Space</span> Shoot &nbsp;|&nbsp; match 3 of the same to clear them all!';
+  showBanner('LEVEL 4 &middot; MATCH POP!');
   updateHUD();
 }
 function buildBubbleGrid() {
   for (const b of PZ.grid.values()) scene.remove(b.mesh);
   PZ.grid.clear();
-  for (let r = 0; r < 5; r++)
+  // pick 5 of the 8 element types for this board (variety across playthroughs)
+  PZ.types = [...ALL_TYPES].sort(() => Math.random() - 0.5).slice(0, 5);
+  for (let r = 0; r < PZ.rows0; r++)
     for (let c = 0; c < PZ.cols; c++) {
-      if (Math.random() < 0.12) continue;
-      const ci = Math.floor(Math.random() * BUBBLE_COLORS.length);
-      const m = makeBubble(ci); m.position.copy(pzPos(r, c)); scene.add(m);
-      PZ.grid.set(pzKey(r, c), { mesh: m, ci, r, c });
+      if (Math.random() < 0.15) continue;                 // gaps → less condensed
+      const ti = Math.floor(Math.random() * PZ.types.length);
+      const m = makeBubble(ti);
+      const full = m.scale.x;                              // intended size before the grow-in
+      m.position.copy(pzPos(r, c));
+      m.scale.multiplyScalar(0.001);                       // grow in on reveal
+      m.userData.revealDelay = 0.25 + (r + c) * 0.06;
+      scene.add(m);
+      PZ.grid.set(pzKey(r, c), { mesh: m, ti, r, c, targetScale: full });
     }
 }
 function pzNewBubble() {
-  const present = [...new Set([...PZ.grid.values()].map(b => b.ci))];
-  PZ.nextCi = present.length ? present[Math.floor(Math.random() * present.length)] : Math.floor(Math.random() * BUBBLE_COLORS.length);
+  const present = [...new Set([...PZ.grid.values()].map(b => b.ti))];
+  PZ.nextTi = present.length ? present[Math.floor(Math.random() * present.length)] : Math.floor(Math.random() * PZ.types.length);
   if (PZ.holder) scene.remove(PZ.holder);
-  PZ.holder = makeBubble(PZ.nextCi);
+  PZ.holder = makeBubble(PZ.nextTi);
   PZ.holder.position.set(PZ.boardX, PZ.shootY, LANE_Z);
   scene.add(PZ.holder);
 }
 function pzShoot() {
-  if (PZ.fly || !PZ.holder || state.mode !== 'puzzle') return;
-  const sp = 17;
-  PZ.fly = { mesh: PZ.holder, ci: PZ.nextCi, vx: Math.sin(PZ.aim) * sp, vy: Math.cos(PZ.aim) * sp };
+  if (PZ.fly || !PZ.holder || !PZ.ready || state.mode !== 'puzzle') return;
+  const sp = 15;
+  PZ.fly = { mesh: PZ.holder, ti: PZ.nextTi, vx: Math.sin(PZ.aim) * sp, vy: Math.cos(PZ.aim) * sp };
   PZ.holder = null;
   sfx.fire();
 }
@@ -1560,24 +1568,27 @@ function pzSnap(pos) {
   }
   return [r, c];
 }
-function pzRemove(r, c, floating) {
-  const k = pzKey(r, c), b = PZ.grid.get(k);
-  if (!b) return;
-  burst(b.mesh.position, BUBBLE_COLORS[b.ci], 9, 2.6, 2.6, 0.22);
-  scene.remove(b.mesh); PZ.grid.delete(k);
-  state.score += floating ? 40 : 25; updateHUD();
+function pzPop(b) {                                         // matched → burst and vanish
+  burst(b.mesh.position, TYPE_COLOR[PZ.types[b.ti]] || 0xffffff, 12, 2.8, 2.8, 0.22);
+  scene.remove(b.mesh); PZ.grid.delete(pzKey(b.r, b.c));
+  state.score += 30; updateHUD();
+}
+function pzDrop(b) {                                        // disconnected → fall away (candy-crush style)
+  PZ.grid.delete(pzKey(b.r, b.c));
+  PZ.falling.push({ mesh: b.mesh, vy: 0 });
+  state.score += 45; updateHUD();
 }
 function pzMatch(r, c) {
   const start = PZ.grid.get(pzKey(r, c)); if (!start) return 0;
-  const ci = start.ci, seen = new Set(), stack = [[r, c]], cluster = [];
+  const ti = start.ti, seen = new Set(), stack = [[r, c]], cluster = [];
   while (stack.length) {
     const [rr, cc] = stack.pop(), k = pzKey(rr, cc);
     if (seen.has(k)) continue;
-    const b = PZ.grid.get(k); if (!b || b.ci !== ci) continue;
-    seen.add(k); cluster.push([rr, cc]);
+    const b = PZ.grid.get(k); if (!b || b.ti !== ti) continue;
+    seen.add(k); cluster.push(b);
     stack.push([rr + 1, cc], [rr - 1, cc], [rr, cc + 1], [rr, cc - 1]);
   }
-  if (cluster.length >= 3) { for (const [rr, cc] of cluster) pzRemove(rr, cc); sfx.clean(); return cluster.length; }
+  if (cluster.length >= 3) { cluster.forEach(pzPop); sfx.clean(); return cluster.length; }
   return 0;
 }
 function pzDropFloating() {
@@ -1589,12 +1600,29 @@ function pzDropFloating() {
     connected.add(k);
     stack.push([rr + 1, cc], [rr - 1, cc], [rr, cc + 1], [rr, cc - 1]);
   }
-  for (const b of [...PZ.grid.values()]) if (!connected.has(pzKey(b.r, b.c))) pzRemove(b.r, b.c, true);
+  for (const b of [...PZ.grid.values()]) if (!connected.has(pzKey(b.r, b.c))) pzDrop(b);
 }
 function pzUpdate(dt) {
-  if (PZ.guide) { PZ.guide.position.set(PZ.boardX + Math.sin(PZ.aim) * 3, PZ.shootY + Math.cos(PZ.aim) * 3, LANE_Z); PZ.guide.rotation.z = -PZ.aim; }
-  PZ.aim = THREE.MathUtils.clamp(PZ.aim + ((state.aimR ? 1 : 0) - (state.aimL ? 1 : 0)) * 1.6 * dt, -1.2, 1.2);
-  for (const b of PZ.grid.values()) b.mesh.rotation.y += dt * 0.6;
+  // reveal the board first (staggered grow-in) — he arrives, then the game materialises
+  if (!PZ.ready) {
+    PZ.revealT += dt;
+    let allIn = true;
+    for (const b of PZ.grid.values()) {
+      b.mesh.userData.revealDelay -= dt;
+      const s = b.mesh.scale.x, tgt = b.targetScale;
+      if (b.mesh.userData.revealDelay <= 0) b.mesh.scale.setScalar(THREE.MathUtils.lerp(s, tgt, Math.min(1, 12 * dt)));
+      if (b.mesh.scale.x < tgt * 0.95) allIn = false;
+    }
+    if (allIn && PZ.revealT > 0.8) { PZ.ready = true; PZ.guide.visible = true; pzNewBubble(); }
+  }
+  // falling (dropped) pieces
+  for (let i = PZ.falling.length - 1; i >= 0; i--) {
+    const f = PZ.falling[i]; f.vy -= 14 * dt; f.mesh.position.y += f.vy * dt; f.mesh.rotation.z += dt * 4;
+    if (f.mesh.position.y < PZ.shootY - 6) { scene.remove(f.mesh); PZ.falling.splice(i, 1); }
+  }
+  if (PZ.guide) { PZ.guide.position.set(PZ.boardX + Math.sin(PZ.aim) * 3.4, PZ.shootY + Math.cos(PZ.aim) * 3.4, LANE_Z); PZ.guide.rotation.z = -PZ.aim; }
+  PZ.aim = THREE.MathUtils.clamp(PZ.aim + ((state.aimR ? 1 : 0) - (state.aimL ? 1 : 0)) * 1.5 * dt, -1.15, 1.15);
+  for (const b of PZ.grid.values()) b.mesh.rotation.y += dt * 0.5;
   if (PZ.holder) PZ.holder.rotation.y += dt * 1.2;
   if (PZ.fly) {
     const f = PZ.fly, p = f.mesh.position;
@@ -1603,11 +1631,11 @@ function pzUpdate(dt) {
     if (p.x < xMin) { p.x = xMin; f.vx = Math.abs(f.vx); }
     if (p.x > xMax) { p.x = xMax; f.vx = -Math.abs(f.vx); }
     let hit = p.y >= PZ.ceilY - 0.05;
-    if (!hit) for (const b of PZ.grid.values()) if (p.distanceTo(b.mesh.position) < PZ.bd * 0.9) { hit = true; break; }
+    if (!hit) for (const b of PZ.grid.values()) if (p.distanceTo(b.mesh.position) < PZ.bd * 0.88) { hit = true; break; }
     if (hit) {
       const [r, c] = pzSnap(p);
       f.mesh.position.copy(pzPos(r, c));
-      PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ci: f.ci, r, c });
+      PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ti: f.ti, r, c, targetScale: f.mesh.scale.x });
       PZ.fly = null;
       if (pzMatch(r, c)) pzDropFloating();
       if (PZ.grid.size === 0) { winGame(); return; }
@@ -1624,14 +1652,14 @@ function winGame() {
   document.body.classList.remove('puzzle');
   state.excite = 1.0;
   showBanner('YOU WIN! &#127881;');
-  for (let i = 0; i < 3; i++) setTimeout(() => burst(playerGroup.position.clone().add(new THREE.Vector3(Math.random() * 2 - 1, 1.5, 0)), BUBBLE_COLORS[i % BUBBLE_COLORS.length], 24, 4.5, 4.5, 0.3), i * 250);
+  for (let i = 0; i < 4; i++) setTimeout(() => burst(playerGroup.position.clone().add(new THREE.Vector3(Math.random() * 3 - 1.5, 1.5, 0)), [0x39d24e, 0xffcc33, 0x3aa0ff, 0xff5da2][i % 4], 26, 5, 5, 0.3), i * 220);
   setTimeout(() => {
     const go = document.getElementById('gameover');
     go.querySelector('h1').innerHTML = 'YOU WIN! &#127881;';
     document.getElementById('go-score').innerText = state.score;
     document.getElementById('go-dist').innerText = 'GAME COMPLETE';
     go.style.display = 'flex';
-  }, 3200);
+  }, 3400);
 }
 
 let bannerTimer = null;
@@ -2068,7 +2096,7 @@ function gameLoop() {
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, 4 * dt);
   const camYTarget = puzzle ? PZ.midY : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, followY ? 4.5 * dt : 3 * dt);
-  const camZTarget = puzzle ? (LANE_Z + 15) : diveSeq ? 23 : 17;
+  const camZTarget = puzzle ? (LANE_Z + 16.5) : diveSeq ? 23 : 17;
   camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, 2.5 * dt);
   if (state.shake > 0.001) {                                   // impact jolt
     camera.position.x += (Math.random() - 0.5) * state.shake;
