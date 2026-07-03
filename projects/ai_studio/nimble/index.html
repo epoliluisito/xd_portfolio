@@ -31,15 +31,15 @@
   #guide-title { font-size: 34px; font-weight: 900; letter-spacing: 3px; color: #7fe3a0; margin-bottom: 6px; text-shadow: 0 0 18px rgba(127,227,160,0.4); }
   #guide-sub { font-size: 14px; color: #9fb8c8; margin-bottom: 14px; letter-spacing: 1px; }
 
-  /* ---- Live 3D Nimble turntable on the loading screen ---- */
-  #nimble-loader { position: relative; width: 150px; height: 150px; margin: -6px auto 2px; }
-  #nimble-stage { width: 100%; height: 100%; display: block; }
-  #nimble-loader .spin-hint {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-size: 30px; color: #7fe3a0; opacity: 0.7; animation: nimPulse 1.1s ease-in-out infinite;
+  /* ---- Nimble loading video, in a rounded frame at the top of the guide ---- */
+  #nimble-loader {
+    width: 100%; max-width: 340px; margin: 0 auto 14px; border-radius: 18px;
+    overflow: hidden; background: rgba(8, 12, 18, 0.6);
+    border: 1px solid rgba(127, 227, 160, 0.3);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    aspect-ratio: 16 / 10;
   }
-  #nimble-loader.ready .spin-hint { display: none; }
-  @keyframes nimPulse { 0%,100% { opacity: 0.25; transform: scale(0.9); } 50% { opacity: 0.8; transform: scale(1.05); } }
+  #nimble-video { width: 100%; height: 100%; display: block; object-fit: cover; }
   .guide-rows { text-align: left; display: inline-block; margin-bottom: 16px; }
   .guide-row { display: flex; align-items: center; margin: 9px 0; font-size: 16px; color: #dfeaf2; }
   .guide-row .key { min-width: 60px; text-align: center; margin-right: 14px; padding: 5px 8px; font-size: 14px; }
@@ -152,7 +152,7 @@
   /* ---- Responsive layout ---- */
   @media (max-width: 760px) {
     #guide-card { max-width: 92vw; padding: 20px 20px; border-radius: 16px; }
-    #nimble-loader { width: 120px; height: 120px; margin-bottom: 0; }
+    #nimble-loader { max-width: 260px; margin-bottom: 10px; }
     #guide-title { font-size: 24px; letter-spacing: 2px; }
     #guide-sub { font-size: 12px; margin-bottom: 14px; }
     .guide-row { font-size: 13px; margin: 6px 0; }
@@ -166,7 +166,7 @@
   }
   @media (max-height: 480px) {
     #guide-card { padding: 14px 20px; }
-    #nimble-loader { width: 92px; height: 92px; margin-bottom: 0; }
+    #nimble-loader { max-width: 200px; margin-bottom: 6px; }
     .guide-rows { margin-bottom: 10px; }
     .guide-row { margin: 4px 0; }
   }
@@ -183,8 +183,7 @@
 <div id="loading">
   <div id="guide-card">
     <div id="nimble-loader" aria-hidden="true">
-      <canvas id="nimble-stage"></canvas>
-      <div class="spin-hint">&#9881;</div>
+      <video id="nimble-video" src="./nimble_loading.mp4" autoplay muted loop playsinline preload="auto"></video>
     </div>
     <div id="guide-title">NIMBLE'S DISH DASH</div>
     <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
@@ -245,14 +244,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ----------------------------------------------------
 // CONFIG — single lane runner: Nimble never stops, the
 // kitchen comes to him. One Z lane, all action in X/Y.
 // ----------------------------------------------------
 const LANE_Z = 2.2;                 // the one depth lane everything lives on
-const BASE_SPEED = 7.0;             // a touch faster — the run felt sluggish
+const BASE_SPEED = 9.0;             // noticeably quicker run
 const LEVEL_LEN = 250;              // metres per level (shorter: reach level 2 sooner)
 const angleCheat = 0.49;
 const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
@@ -271,7 +269,7 @@ const SURF_GOAL_BASE = 24;          // dirt patches to scrub to finish level 2
 const state = {
   level: 1, score: 0, ammo: 10, lives: 9,
   speed: BASE_SPEED, boost: false, brake: false,
-  gravity: 21.0, jumpPower: 9.5,    // snappier jump: quick pop, apex ~2.15 m, airtime ~0.9 s
+  gravity: 27.0, jumpPower: 10.6,   // fast, punchy pop: apex ~2.1 m, airtime ~0.78 s
   onGround: true, isSliding: false, isGameOver: false,
   invuln: 0, excite: 0, started: false,
   mode: 'run',                      // 'run' (L1) → 'surf' (L2+)
@@ -619,6 +617,7 @@ scene.add(playerBlob);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
 let hatParts = [], boardParts = [], headBone = null;
+let rootBone = null, rootRestX = 0, rootRestZ = 0;   // in-place locomotion: zero the root's drift each frame
 let squash = 1.0, squashTarget = 1.0;
 let floor = null, counterTex = null, counterTex2 = null;
 let slideTimer = null, slideHintShown = false;
@@ -789,7 +788,8 @@ async function initGame() {
     window.removeEventListener('keydown', startOnce);
     loadingEl.removeEventListener('pointerdown', startOnce);
     initAudio();                                   // user gesture: countdown beeps work
-    stopNimblePreview();                           // free the mascot's WebGL context
+    const vid = document.getElementById('nimble-video');
+    if (vid) vid.pause();
     loadingEl.style.opacity = '0';
     setTimeout(() => loadingEl.style.display = 'none', 500);
     runCountdown();                                // 3 — 2 — 1 — GO!
@@ -820,27 +820,25 @@ function setupNimble(nimbleGltf) {
   mixer = new THREE.AnimationMixer(root);
   const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
                      jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false} };
-  // Root-motion neutraliser: flatten X/Z ONLY on the big locomotion (hips) track so the
-  // world can drive forward motion. Every other bone keeps its authored position — that's
-  // what keeps the foam hat & board seated on his head across clips (the previous version
-  // flattened all bones and knocked the hat out of place in the skate pose).
-  const canonical = {};
-  const runClip = nimbleGltf.animations.find(c => c.name === 'running');
-  if (runClip) for (const tr of runClip.tracks)
-    if (tr.name.endsWith('.position')) canonical[tr.name] = [tr.values[0], tr.values[2]];
+  // In-place locomotion the RIGHT way: instead of baking the animation data (which
+  // distorted attached props like the foam hat & skateboard), we leave every clip
+  // untouched and simply cancel the ROOT bone's horizontal drift each frame in the loop.
+  // Only the root moves; head/hat/board keep their exact authored poses.
+  let bestName = null, bestDiff = 0;
+  const scanClip = nimbleGltf.animations.find(c => c.name === 'running')
+                || nimbleGltf.animations.find(c => c.name === 'skateboard');
+  if (scanClip) for (const tr of scanClip.tracks) {
+    if (!tr.name.endsWith('.position')) continue;
+    const v = tr.values; let d = 0;
+    for (let i = 0; i < v.length; i += 3) d = Math.max(d, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
+    if (d > bestDiff) { bestDiff = d; bestName = tr.name; }
+  }
+  if (bestName && bestDiff > 0.12) {
+    const nodeName = bestName.slice(0, bestName.lastIndexOf('.'));
+    rootBone = root.getObjectByName(nodeName) || null;
+    if (rootBone) { rootRestX = rootBone.position.x; rootRestZ = rootBone.position.z; }
+  }
   for (const clip of nimbleGltf.animations) {
-    clip.tracks.forEach(track => {
-      if (track.name.endsWith('.position')) {
-        const v = track.values;
-        let maxDiff = 0;
-        for (let i = 0; i < v.length; i += 3)
-          maxDiff = Math.max(maxDiff, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
-        if (maxDiff > 0.25) {                       // locomotion only → pin to shared anchor
-          const anchor = canonical[track.name] || [v[0], v[2]];
-          for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
-        }
-      }
-    });
     if (animCfgs[clip.name]) {
       const a = mixer.clipAction(clip);
       if (!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
@@ -848,93 +846,18 @@ function setupNimble(nimbleGltf) {
     }
   }
   // fit one-shot clips to gameplay timing (snappier jump/slide)
-  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 0.82;
+  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 0.66;
   if (actions['running_slide']) actions['running_slide'].timeScale = actions['running_slide'].getClip().duration / SLIDE_DUR;
 
   mixer.addEventListener('finished', (e) => {
     if (e.action === actions['jump'] && state.onGround)  playAnim(moveAnim());
     if (e.action === actions['skating_start']) playAnim('skateboard');
-    if (e.action === actions['laugh'] && !previewActive) playAnim(moveAnim());
+    if (e.action === actions['laugh'])         playAnim(moveAnim());
   });
 
-  setupNimblePreview(nimbleGltf, root);   // dancing 3D Nimble on the loading card
   playAnim('idle');
   updateHUD();
   renderer.setAnimationLoop(gameLoop);    // start rendering now (loop guards for the not-yet-built world)
-}
-
-// ----------------------------------------------------
-// Loading-screen turntable: the real 3D Nimble, spinning
-// (own tiny renderer + a skeleton clone; hat/board stay hidden)
-// ----------------------------------------------------
-let previewRenderer = null, previewScene = null, previewCamera = null,
-    previewMixer = null, previewPivot = null, previewActive = false;
-const previewClock = new THREE.Clock();
-function setupNimblePreview(nimbleGltf, srcRoot) {
-  const canvas = document.getElementById('nimble-stage');
-  if (!canvas) return;
-  try {
-    previewRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  } catch (e) { return; }                 // no 2nd WebGL context? just skip the mascot
-  previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  const sz = canvas.clientWidth || 150;
-  previewRenderer.setSize(sz, sz, false);
-  previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  previewRenderer.toneMappingExposure = 1.22;
-  previewRenderer.setClearColor(0x000000, 0);
-
-  previewScene = new THREE.Scene();
-  // env must be generated in THIS renderer's context (textures aren't shared across contexts)
-  const pPmrem = new THREE.PMREMGenerator(previewRenderer);
-  previewScene.environment = pPmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  previewCamera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
-
-  previewScene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a6b4a, 0.9));
-  const key = new THREE.DirectionalLight(0xffeecc, 2.4); key.position.set(3, 5, 4); previewScene.add(key);
-  const rim = new THREE.DirectionalLight(0xbfe8ff, 1.3); rim.position.set(-4, 2, -4); previewScene.add(rim);
-
-  // clone keeps shared glass materials AND the hidden hat/board (visible=false was copied)
-  const model = SkeletonUtils.clone(srcRoot);
-  model.traverse(o => { o.frustumCulled = false; });
-  // Frame using ONLY the visible meshes — the hidden board/hat would otherwise skew the
-  // bounding box and push his body off-centre / out of frame (that's the "cut out" look).
-  model.updateWorldMatrix(true, true);
-  const box = new THREE.Box3(), tmp = new THREE.Box3();
-  model.traverse(o => {
-    if (o.isMesh && o.visible && o.geometry) {
-      o.geometry.computeBoundingBox();
-      tmp.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
-      box.union(tmp);
-    }
-  });
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  model.position.sub(center);                        // recenter on the origin
-  previewPivot = new THREE.Group();
-  previewPivot.add(model);
-  previewPivot.rotation.y = -0.4;                    // start on a friendly 3/4 view
-  previewScene.add(previewPivot);
-
-  // fit the full height (with generous margin) so nothing is clipped by the canvas
-  const vFov = THREE.MathUtils.degToRad(previewCamera.fov);
-  const dist = (size.y * 1.35 / 2) / Math.tan(vFov / 2);
-  previewCamera.position.set(0, 0, dist);
-  previewCamera.lookAt(0, 0, 0);
-
-  previewMixer = new THREE.AnimationMixer(model);
-  const anims = nimbleGltf.animations;
-  const clip = anims.find(c => c.name === 'laugh')   // he dances / giggles while you wait
-            || anims.find(c => c.name === 'idle')
-            || anims.find(c => c.name === 'running') || anims[0];
-  if (clip) previewMixer.clipAction(clip).play();    // fresh action → loops by default
-
-  previewActive = true;
-  previewClock.getDelta();                           // reset so the first frame isn't a huge step
-  document.getElementById('nimble-loader').classList.add('ready');   // hide the gear spinner
-}
-function stopNimblePreview() {
-  previewActive = false;
-  if (previewRenderer) { previewRenderer.dispose(); previewRenderer = null; }
 }
 
 function runCountdown() {
@@ -1289,6 +1212,7 @@ function gameLoop() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
   if (mixer) mixer.update(dt);
+  if (rootBone) { rootBone.position.x = rootRestX; rootBone.position.z = rootRestZ; }   // keep him in place; world scrolls
   hudT += dt;
   if (hudT > 0.2) { hudT = 0; document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m'; }
 
@@ -1584,17 +1508,6 @@ function gameLoop() {
   }
 
   renderer.render(scene, camera);
-
-  // loading-screen turntable (only until the game starts)
-  if (previewActive && previewRenderer) {
-    const pdt = Math.min(previewClock.getDelta(), 0.1);
-    if (previewMixer) previewMixer.update(pdt);
-    if (previewPivot) {
-      previewPivot.rotation.y += pdt * 0.5;                              // slow turntable
-      previewPivot.rotation.z = Math.sin(performance.now() * 0.004) * 0.12;   // little dance rock
-    }
-    previewRenderer.render(previewScene, previewCamera);
-  }
 }
 
 // ----------------------------------------------------
@@ -1627,10 +1540,6 @@ function onResize() {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   fitBackdrop();
-  if (previewActive && previewRenderer) {
-    const c = previewRenderer.domElement, s = c.clientWidth || 150;
-    previewRenderer.setSize(s, s, false);
-  }
 }
 window.addEventListener('resize', onResize);
 window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
