@@ -39,7 +39,7 @@
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
     aspect-ratio: 16 / 10;
   }
-  #nimble-video { width: 100%; height: 100%; display: block; object-fit: cover; }
+  #nimble-gif { width: 100%; height: 100%; display: block; object-fit: cover; }
   .guide-rows { text-align: left; display: inline-block; margin-bottom: 16px; }
   .guide-row { display: flex; align-items: center; margin: 9px 0; font-size: 16px; color: #dfeaf2; }
   .guide-row .key { min-width: 60px; text-align: center; margin-right: 14px; padding: 5px 8px; font-size: 14px; }
@@ -53,11 +53,11 @@
     position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;
     background: radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(5,8,14,0.30) 100%);
   }
-  #water-tint {   /* Level 3 underwater colour wash + light shafts */
+  #water-tint {   /* Level 3 underwater colour wash + light shafts (subtle — lets BG_03 read) */
     position: fixed; inset: 0; pointer-events: none; z-index: 4; display: none;
     background:
-      linear-gradient(180deg, rgba(20,90,130,0.28) 0%, rgba(4,28,52,0.5) 100%),
-      repeating-linear-gradient(105deg, rgba(180,230,255,0.05) 0 2px, rgba(0,0,0,0) 2px 26px);
+      linear-gradient(180deg, rgba(20,90,130,0.10) 0%, rgba(4,28,52,0.34) 100%),
+      repeating-linear-gradient(105deg, rgba(180,230,255,0.045) 0 2px, rgba(0,0,0,0) 2px 30px);
   }
   #flash { position: fixed; inset: 0; background: #eaffff; opacity: 0; pointer-events: none; z-index: 42; }
   #hud {
@@ -221,7 +221,7 @@
 <div id="loading">
   <div id="guide-card">
     <div id="nimble-loader" aria-hidden="true">
-      <video id="nimble-video" src="./nimble_loading.mp4" autoplay muted loop playsinline preload="auto"></video>
+      <img id="nimble-gif" src="./nimble_loading.gif" alt="" decoding="async">
     </div>
     <div id="guide-title">NIMBLE'S DISH DASH</div>
     <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
@@ -379,7 +379,7 @@ scene.add(camera);   // so the backdrop (a child of the camera) is traversed & r
 // backdrop: a textured plane parented to the camera so it always fills the view.
 // Lives inside the WebGL scene (unlike the old CSS layer) so it can never fail to
 // paint behind the transparent canvas, and it scrolls / swaps levels reliably.
-let bgMesh = null, bgTexL1 = null, bgTexL2 = null;
+let bgMesh = null, bgTexL1 = null, bgTexL2 = null, bgTexL3 = null;
 const BG_IMG_ASPECT = 14329 / 1184;   // native panorama proportions
 function fitBackdrop() {
   if (!bgMesh) return;
@@ -387,7 +387,11 @@ function fitBackdrop() {
   const h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist * 1.08;
   const w = h * camera.aspect;
   bgMesh.scale.set(w, h, 1);
-  if (bgMesh.material.map) bgMesh.material.map.repeat.x = (w / h) / BG_IMG_ASPECT; // no vertical stretch
+  const map = bgMesh.material.map;
+  if (map) {                                        // use the ACTIVE image's real aspect (BG_02/03 differ from BG_1)
+    const imgAspect = (map.image && map.image.width) ? map.image.width / map.image.height : BG_IMG_ASPECT;
+    map.repeat.x = (w / h) / imgAspect;
+  }
 }
 
 const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.85);
@@ -561,6 +565,24 @@ function buildBubbles() {
   }
 }
 
+// Level 3 seabed — a scrolling row of dirty plates along the very bottom
+const seabed = [];
+let seabedBuilt = false;
+const SEABED_Y = -8.2;
+function buildSeabed() {
+  if (seabedBuilt || !models.plates) return;
+  seabedBuilt = true;
+  const cfg = typeCfg.plates;
+  for (let i = 0; i < 16; i++) {
+    const m = models.plates.clone();
+    m.scale.setScalar(cfg.scaleFactor * (1.4 + Math.random() * 1.2));   // bigger, like a heap
+    m.rotation.set(Math.random() * 0.3, Math.random() * 6.28, Math.random() * 0.3);
+    m.position.set(playerGroup.position.x + i * 6 - 10, SEABED_Y + Math.random() * 0.8, LANE_Z + (Math.random() * 6 - 3));
+    scene.add(m);
+    seabed.push(m);
+  }
+}
+
 // the water surface at y=0 — a glassy, rippling translucent plane he punches through
 let waterSurface = null, waterTex = null;
 function buildWaterSurface() {
@@ -604,7 +626,7 @@ function flash(op) {
 function splashThroughSurface() {
   state.diveSplashed = true;
   applyUnderwater();
-  flash(0.92);
+  flash(0.5);                                     // softer — a splash, not a hard cut
   const at = playerGroup.position.clone(); at.y = 0;
   burst(at, 0xffffff, 34, 8, 11, 0.28, 8.0);      // tall spray crown thrown up
   burst(at, 0xffffff, 20, 10, 1.5, 0.3, 2.5);     // outward sheet of droplets
@@ -814,6 +836,7 @@ async function initGame() {
   const counter2P = tracked(texLoader.loadAsync('./couter_top_texture_02.png')).catch(() => null);
   const bg1P = tracked(texLoader.loadAsync('./BACKGROUND.png'), 3);
   const bg2P = tracked(texLoader.loadAsync('./BACKGROUND_02.png'), 3).catch(() => null);
+  const bg3P = tracked(texLoader.loadAsync('./BACKGROUND_03.png'), 3).catch(() => null);   // underwater
   const fgPs     = fgNames.map(n => tracked(texLoader.loadAsync(`./foreground_elements/${n}`)).catch(() => null));
   const modelPs  = Object.entries(modelPaths).map(([k, p]) =>
     tracked(gltfLoader.loadAsync(p)).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));
@@ -832,7 +855,7 @@ async function initGame() {
     counterTex2.wrapS = counterTex2.wrapT = THREE.RepeatWrapping;
     counterTex2.repeat.set(150, 3);
   }
-  const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, roughness: 0.7, metalness: 0.1 });
+  const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, color: 0x8c8c8c, roughness: 0.75, metalness: 0.1 });   // darker wood → richer, less bright
   floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
   floor.position.set(0, -5, 6);
   floor.receiveShadow = true;
@@ -844,14 +867,15 @@ async function initGame() {
   // --- Backdrop plane (parented to camera, always fills the frame) ---
   bgTexL1 = await bg1P;
   bgTexL2 = await bg2P;   // may be null if the file is missing
-  for (const tx of [bgTexL1, bgTexL2]) {
+  bgTexL3 = await bg3P;   // underwater backdrop (may be null)
+  for (const tx of [bgTexL1, bgTexL2, bgTexL3]) {
     if (!tx) continue;
     tx.colorSpace = THREE.SRGBColorSpace;
     tx.wrapS = THREE.RepeatWrapping;
     tx.wrapT = THREE.ClampToEdgeWrapping;
   }
   const bgMat = new THREE.MeshBasicMaterial({
-    map: bgTexL1, depthWrite: false, depthTest: false, toneMapped: false,
+    map: bgTexL1, depthWrite: false, depthTest: false, toneMapped: false, fog: false,   // backdrop never fogged
     color: new THREE.Color(0.82, 0.86, 0.9)   // gentle darken/cool to sit behind the action
   });
   bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMat);
@@ -922,8 +946,6 @@ async function initGame() {
     window.removeEventListener('keydown', startOnce);
     loadingEl.removeEventListener('pointerdown', startOnce);
     initAudio();                                   // user gesture: countdown beeps work
-    const vid = document.getElementById('nimble-video');
-    if (vid) vid.pause();
     loadingEl.style.opacity = '0';
     setTimeout(() => loadingEl.style.display = 'none', 500);
     runCountdown();                                // 3 — 2 — 1 — GO!
@@ -1275,6 +1297,7 @@ function crossGate() {
   if (bgMesh && bgTexL2) { bgMesh.material.map = bgTexL2; fitBackdrop(); }         // BACKGROUND_02.png
   if (counterTex2 && floor) {                                                       // steel countertop
     floor.material.map = counterTex2;
+    floor.material.color.setHex(0xffffff);                                          // steel stays bright
     floor.material.metalness = 0.85; floor.material.roughness = 0.32;
     floor.material.needsUpdate = true;
   }
@@ -1356,6 +1379,7 @@ function scriptDiveSeq(dt) {
       boardParts.forEach(m => m.visible = false);
       burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 22, 5.5, 5, 0.32);
       playAnim('dive', 0.22);
+      buildWaterSurface();                                    // water visible below → he dives INTO it, not onto stone
       showBanner('DIIIVE!');
     }
     if (!state.diveSplashed && y <= 0 && vy < 0) { splashThroughSurface(); }
@@ -1368,13 +1392,17 @@ function scriptDiveSeq(dt) {
 
 // swap the scene to its underwater dressing (called when he pierces the surface)
 function applyUnderwater() {
-  scene.fog = new THREE.Fog(0x0b3550, 6, 42);
+  scene.fog = new THREE.Fog(0x0a2f4a, 10, 60);                    // gentle depth haze on the props/seabed
   if (floor) floor.visible = false;
-  if (bgMesh) bgMesh.material.color.setRGB(0.18, 0.42, 0.58);
+  if (bgMesh) {
+    if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
+    bgMesh.material.color.setRGB(0.72, 0.82, 0.92);                  // let the image read (not a flat tint)
+  }
   const tint = document.getElementById('water-tint');
   if (tint) tint.style.display = 'block';
   buildWaterSurface();
   buildBubbles();
+  buildSeabed();
   frothDecals.forEach(s => s.visible = false);
   document.body.classList.remove('surf');
   document.body.classList.add('swim');
@@ -1392,6 +1420,7 @@ function finishDiveIntoSwim() {
   state.targetY = SWIM_MID;
   playerGroup.position.y = SWIM_MID;
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
+  if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }   // drop the surface plane → no more line, he's fully under
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
@@ -1872,6 +1901,16 @@ function gameLoop() {
         s.position.z = LANE_Z + (Math.random() * 5 - 2.5);
         s.userData.spd = 0.6 + Math.random() * 1.3;
         s.scale.setScalar(0.1 + Math.random() * 0.4);
+      }
+    }
+  }
+  if (swim && seabedBuilt) {                            // dirty-plate seabed drifting past at the bottom
+    for (const m of seabed) {
+      m.rotation.y += dt * 0.15;
+      if (m.position.x < camera.position.x - 22) {
+        m.position.x += 90 + Math.random() * 40;
+        m.position.z = LANE_Z + (Math.random() * 6 - 3);
+        m.position.y = SEABED_Y + Math.random() * 0.8;
       }
     }
   }
