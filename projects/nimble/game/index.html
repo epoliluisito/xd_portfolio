@@ -309,11 +309,12 @@ const SURF_Z_MAX = 4.6;
 const STEER_SPEED = 5.2;            // z units per second while a steer key/button is held
 const SURF_GOAL_BASE = 24;          // dirt patches to scrub to finish level 2
 
-// --- Level 3 "dive & swim" mode ---
-const SWIM_Y_MIN = 0.6;             // vertical swim band (move up/down underwater)
-const SWIM_Y_MAX = 5.2;
-const SWIM_STEER = 5.6;             // y units per second while up/down held
-const SWIM_MID = (SWIM_Y_MIN + SWIM_Y_MAX) / 2;
+// --- Level 3 "dive & swim" mode (the water surface is y = 0; he swims below it) ---
+const SWIM_Y_MIN = -5.4;            // deepest
+const SWIM_Y_MAX = -1.0;            // just under the surface
+const SWIM_STEER = 4.6;             // y units per second while up/down held
+const SWIM_MID = (SWIM_Y_MIN + SWIM_Y_MAX) / 2;   // ~ -3.2
+const DIVE_LAUNCH_T = 1.0;          // seconds rolling up to the ramp before he launches
 
 const state = {
   level: 1, score: 0, ammo: 10, lives: 9,
@@ -324,7 +325,8 @@ const state = {
   mode: 'run',                      // 'run' (L1) → 'surf' (L2) → 'swim' (L3)
   steerUp: false, steerDown: false, targetZ: LANE_Z, targetY: 0,
   surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0, surfStartX: 0, warnedL2: false,
-  swimStartX: 0, paused: false
+  swimStartX: 0, paused: false,
+  diveT: 0, diveGearLost: false, diveSplashed: false   // 2→3 ramp/dive cinematic
 };
 const MAX_LIVES = 12;
 const entities = [];
@@ -541,7 +543,9 @@ function buildBubbles() {
     const s = new THREE.Sprite(mat);
     s.scale.setScalar(0.1 + Math.random() * 0.4);
     s.userData.spd = 0.6 + Math.random() * 1.3;
-    s.position.set(playerGroup.position.x + Math.random() * 40 - 8, Math.random() * 6, LANE_Z + (Math.random() * 5 - 2.5));
+    s.position.set(playerGroup.position.x + Math.random() * 40 - 8,
+                   SWIM_Y_MIN - 1 + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN + 3),   // deep → surface
+                   LANE_Z + (Math.random() * 5 - 2.5));
     s.visible = false;
     scene.add(s);
     bubbles.push(s);
@@ -801,7 +805,7 @@ async function initGame() {
     const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
     const aspect = tex.image.width / tex.image.height;
     const near = layer === 'near';
-    const h = near ? 2.6 + Math.random() * 1.6 : 3.0 + Math.random() * 1.6;
+    const h = near ? 1.4 + Math.random() * 1.0 : 1.7 + Math.random() * 1.2;   // shorter: only peek from the bottom
     const topY = near ? 2.0 + Math.random() * 1.6 : 1.4 + Math.random() * 1.8;
     const mat = new THREE.MeshBasicMaterial({
       map: tex, transparent: true, depthWrite: false,
@@ -815,9 +819,9 @@ async function initGame() {
     scene.add(plane);
     fgPlanes.push(plane);
   }
-  if (fgTextures.length > 0) {
-    for (let x = -10; x < 260; x += 26 + Math.random() * 18) addFgPlane(x, 'near');
-    for (let x = -20; x < 260; x += 18 + Math.random() * 14) addFgPlane(x, 'mid');
+  if (fgTextures.length > 0) {                       // sparser: far fewer props on screen
+    for (let x = -10; x < 260; x += 52 + Math.random() * 30) addFgPlane(x, 'near');
+    for (let x = -20; x < 260; x += 42 + Math.random() * 24) addFgPlane(x, 'mid');
   }
 
   // 3D element models
@@ -1121,10 +1125,11 @@ function spawnSwimChunk() {
 }
 
 function spawnChunk() {
+  if (state.mode === 'dive_seq') { spawnX = playerGroup.position.x + 200; return; }   // no spawns mid-cinematic
   if (state.mode === 'swim') { spawnSwimChunk(); return; }
   if (state.mode === 'surf') { spawnDirtChunk(); return; }
-  // calm stretch approaching the Level 2 divider so the hand-off reads clearly
-  if (spawnX > LEVEL_LEN - 40 && spawnX < LEVEL_LEN + 6) { spawnX += 6; return; }
+  // calm stretch approaching the Level 2 hand-off so the skate mount reads clearly
+  if (spawnX > LEVEL_LEN - 60 && spawnX < LEVEL_LEN + 6) { spawnX += 6; return; }
   const lvl = state.level;
   const table = [
     [0.20, patEmeraldArc],
@@ -1159,13 +1164,12 @@ function despawnBehind(px) {
 // ----------------------------------------------------
 function checkLevel() {
   if (state.mode !== 'run') return;                 // once surfing, progress is goal-based
-  if (!state.warnedL2 && playerGroup.position.x > LEVEL_LEN - 40) {
+  if (!state.warnedL2 && playerGroup.position.x > LEVEL_LEN - 58) {
     state.warnedL2 = true;
-    showBanner('LEVEL 1 CLEAR &middot; GET READY!');   // calm stretch = the hand-off is coming
+    showBanner('LEVEL 1 CLEAR &middot; GRAB THE SKATE!');
   }
-  const lvl = 1 + Math.floor(playerGroup.position.x / LEVEL_LEN);
-  if (lvl < 2) return;
-  enterSurfMode();
+  // mount the skateboard IN the calm gap, so he's already skating when L2 gameplay begins
+  if (playerGroup.position.x > LEVEL_LEN - 30) enterSurfMode();
 }
 
 // Level 1 → Level 2: burst through the divider into the surf/clean stage.
@@ -1173,7 +1177,7 @@ function enterSurfMode() {
   state.mode = 'surf';
   state.level = 2;
   state.targetZ = LANE_Z;
-  playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
+  velocity.y = 8.0; state.onGround = false;      // a little hop as he jumps onto the board
   state.isSliding = false;
   state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
   state.excite = 1.0;
@@ -1207,51 +1211,105 @@ function enterSurfMode() {
   updateHUD();
 }
 
-// cleaned the whole surface → dive into Level 3 (underwater)
+// cleaned the whole surface → start the ramp-and-dive cinematic into Level 3
 function advanceSurfLevel() {
-  enterDiveMode();
+  startDiveTransition();
 }
 
-// Level 2 → Level 3: throw off the hat & board, dive, and swim underwater.
-function enterDiveMode() {
-  state.mode = 'swim';
-  state.level = 3;
+// a steel launch ramp (right-triangle wedge rising toward +x)
+let rampMesh = null;
+function buildRamp(x) {
+  const w = (SURF_Z_MAX - SURF_Z_MIN) + 2.6;
+  const shape = new THREE.Shape();
+  shape.moveTo(-2.2, 0); shape.lineTo(2.2, 0); shape.lineTo(2.2, 2.3); shape.lineTo(-2.2, 0);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
+  geo.translate(0, 0, -w / 2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: 0.85, roughness: 0.3 });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, 0, (SURF_Z_MIN + SURF_Z_MAX) / 2);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  return m;
+}
+
+// Level 2 → 3: reach a ramp, launch high, lose hat+board mid-air, assume dive, sink into water.
+function startDiveTransition() {
+  state.mode = 'dive_seq';
+  state.diveT = 0; state.diveGearLost = false; state.diveSplashed = false;
   state.onGround = true; velocity.y = 0; state.isSliding = false;
-  state.targetY = SWIM_MID;
-  playerGroup.position.y = SWIM_MID;
   state.excite = 1.0;
   sfx.level();
+  // clear the surf props; drop a ramp ahead of him
+  for (let i = entities.length - 1; i >= 0; i--) {
+    scene.remove(entities[i].mesh);
+    if (entities[i].shadow) scene.remove(entities[i].shadow);
+    entities.splice(i, 1);
+  }
+  if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
+  // place the ramp base right where he'll be when he launches
+  const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
+  rampMesh = buildRamp(playerGroup.position.x + diveFwd * DIVE_LAUNCH_T + 2.2);
+  showBanner('RAMP AHEAD!');
+}
 
-  // hurl the foam hat & board away with a splash
-  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 1.6, 0)), 0xffffff, 16, 4.5, 4.5, 0.3);
-  hatParts.forEach(m => m.visible = false);
-  boardParts.forEach(m => m.visible = false);
-  document.body.classList.remove('surf');
+// the scripted vertical arc for the dive cinematic (called from the movement branch)
+function scriptDiveSeq(dt) {
+  playerGroup.position.z = LANE_Z;
+  state.diveT += dt;
+  const T = state.diveT;
+  if (T < DIVE_LAUNCH_T) { playerGroup.position.y = 0; return; }   // rolling up to the ramp
+  const jt = T - DIVE_LAUNCH_T, V0 = 12, G = 8;              // apex ~9 at jt=1.5, back to 0 at jt=3
+  playerGroup.position.y = V0 * jt - 0.5 * G * jt * jt;
+  if (!state.diveGearLost && jt >= V0 / G) {                  // at the top: lose the gear, assume dive
+    state.diveGearLost = true;
+    hatParts.forEach(m => m.visible = false);
+    boardParts.forEach(m => m.visible = false);
+    burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 20, 5.5, 5, 0.32);
+    playAnim('dive', 0.18);
+    showBanner('DIVE!');
+  }
+  if (!state.diveSplashed && playerGroup.position.y <= 0 && (V0 - G * jt) < 0) {   // pierce the surface
+    state.diveSplashed = true;
+    applyUnderwater();
+    burst(playerGroup.position.clone(), 0xcdeeff, 30, 6, 5, 0.34, -0.4);   // big splash
+    sfx.level();
+  }
+  if (state.diveSplashed && playerGroup.position.y <= SWIM_MID) finishDiveIntoSwim();
+}
 
-  // dress the scene underwater
+// swap the scene to its underwater dressing (called when he pierces the surface)
+function applyUnderwater() {
   scene.fog = new THREE.Fog(0x0b3550, 6, 42);
-  if (floor) floor.visible = false;                         // no counter underwater
-  if (bgMesh) bgMesh.material.color.setRGB(0.18, 0.42, 0.58);   // deep-water tint on the backdrop
+  if (floor) floor.visible = false;
+  if (bgMesh) bgMesh.material.color.setRGB(0.18, 0.42, 0.58);
   const tint = document.getElementById('water-tint');
   if (tint) tint.style.display = 'block';
   buildBubbles();
   frothDecals.forEach(s => s.visible = false);
+  document.body.classList.remove('surf');
+  document.body.classList.add('swim');
+  const help = document.getElementById('controls-help');
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; dodge the debris, grab the drops!';
+}
 
-  // clear leftover props
+// settle into Level 3 swim gameplay
+function finishDiveIntoSwim() {
+  state.mode = 'swim';
+  state.level = 3;
+  state.onGround = true; velocity.y = 0;
+  state.targetY = SWIM_MID;
+  playerGroup.position.y = SWIM_MID;
+  if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
     entities.splice(i, 1);
   }
   state.swimStartX = playerGroup.position.x;
-  spawnX = playerGroup.position.x + 46;                      // calm intro to learn up/down
-
-  document.body.classList.add('swim');                      // console → up/down (no jump)
-  const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; dodge the debris, grab the drops!';
-  playAnim('dive');
-  showBanner('LEVEL 3 &middot; DIVE!');
-  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; SWIM UP &amp; DOWN'); }, 2100);
+  spawnX = playerGroup.position.x + 38;                      // short calm intro
+  playAnim('swim', 0.3);
+  showBanner('LEVEL 3 &middot; SWIM!');
+  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; SWIM UP &amp; DOWN'); }, 2000);
   updateHUD();
 }
 let bannerTimer = null;
@@ -1352,7 +1410,7 @@ function collect(ent) {
 // MAIN LOOP
 // ----------------------------------------------------
 // --- foreground anchoring: world-Y of the viewport's bottom edge at a given depth ---
-const FG_HIDE = 0.8;                 // how far below the screen edge to tuck each plane's bottom
+const FG_HIDE = 1.3;                 // how far below the screen edge to tuck each plane's bottom
 const _fgRay = new THREE.Vector3();
 function screenBottomYAt(zp) {
   _fgRay.set(0, -1, 0.5).unproject(camera);          // a world point on the bottom-edge ray
@@ -1375,7 +1433,8 @@ function gameLoop() {
 
     // --- always moving forward; boost & brake only bend the pace ---
     const diff = 1 + Math.min(1.35, px0 / 450);
-    state.speed = BASE_SPEED * diff * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
+    const modeMul = state.mode === 'swim' ? 0.55 : state.mode === 'surf' ? 0.82 : state.mode === 'dive_seq' ? 0.5 : 1.0;
+    state.speed = BASE_SPEED * diff * modeMul * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
     playerGroup.position.x += state.speed * dt;
 
     if (state.mode === 'surf') {
@@ -1400,6 +1459,8 @@ function gameLoop() {
         surfTrailT = 0.08;
         burst(playerGroup.position.clone().add(new THREE.Vector3(-0.5, 0.9, 0)), 0xcdeeff, 2, 0.8, 1.4, 0.14, -1.2);
       }
+    } else if (state.mode === 'dive_seq') {
+      scriptDiveSeq(dt);                    // 2→3 cinematic: ramp launch → lose gear → dive → sink
     } else {
       playerGroup.position.z = LANE_Z;
     }
@@ -1656,13 +1717,15 @@ function gameLoop() {
   // camera / world dressing follow the run
   const surf = state.mode === 'surf';
   const swim = state.mode === 'swim';
+  const diveSeq = state.mode === 'dive_seq';
+  const followY = swim || diveSeq;                             // track his vertical (dive arc / depth)
   const pz = playerGroup.position.z, pyNow = playerGroup.position.y;
   playerBlob.position.set(playerGroup.position.x, 0.02, surf ? pz : LANE_Z);
-  playerBlob.visible = state.onGround && !swim;                 // no ground shadow underwater
+  playerBlob.visible = state.onGround && !swim && !diveSeq;    // no ground shadow underwater / mid-air
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, playerGroup.position.x + 4.0, 4 * dt);
-  const camYTarget = swim ? pyNow + 1.1 : surf ? 4.4 : 3.0 + pyNow * 0.22;   // underwater: track his depth
-  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, 3 * dt);
-  const lookY = swim ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12;
+  const camYTarget = followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, followY ? 4.5 * dt : 3 * dt);
+  const lookY = followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12;
   const lookZ = surf ? (pz - LANE_Z) * 0.4 : 0;
   camera.lookAt(camera.position.x, lookY, lookZ);
   camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
@@ -1685,12 +1748,12 @@ function gameLoop() {
       }
     }
   }
-  if (swim && bubblesBuilt) {                           // rising bubbles that recycle
+  if ((swim || diveSeq) && bubblesBuilt) {              // rising bubbles that recycle (deep → surface)
     for (const s of bubbles) {
       s.visible = true;
       s.position.y += s.userData.spd * dt;
-      if (s.position.y > 6.5 || s.position.x < camera.position.x - 20) {
-        s.position.y = -0.6;
+      if (s.position.y > 0.8 || s.position.x < camera.position.x - 20) {
+        s.position.y = SWIM_Y_MIN - 1 + Math.random() * 1.5;
         s.position.x = camera.position.x + 6 + Math.random() * 32;
         s.position.z = LANE_Z + (Math.random() * 5 - 2.5);
         s.userData.spd = 0.6 + Math.random() * 1.3;
@@ -1698,7 +1761,10 @@ function gameLoop() {
       }
     }
   }
+  const showFg = state.mode !== 'swim' && state.mode !== 'dive_seq';   // no kitchen props underwater
   for (const p of fgPlanes) {
+    p.visible = showFg;
+    if (!showFg) continue;
     if (p.position.x < camera.position.x - 30) {
       p.position.x += 260 + Math.random() * 40;
       p.position.z = p.userData.layer === 'near' ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8;
@@ -1717,7 +1783,7 @@ function gameLoop() {
 window.addEventListener('keydown', e => {
   initAudio();
   if (e.code === 'KeyR' && state.isGameOver) { location.reload(); return; }
-  if (state.isGameOver) return;
+  if (state.isGameOver || state.mode === 'dive_seq') return;   // no control during the dive cinematic
   if (e.code === 'ArrowRight') state.boost = true;
   if (e.code === 'ArrowLeft')  state.brake = true;
   if (state.mode === 'surf' || state.mode === 'swim') {   // L2/L3: up/down steer (L2 also jumps)
@@ -1758,7 +1824,7 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
     e.preventDefault();
     initAudio();
     btn.classList.add('active');
-    if (state.isGameOver) return;
+    if (state.isGameOver || state.mode === 'dive_seq') return;
     switch (act) {
       case 'jump':  doJump();               break;   // both levels
       case 'slide': startSlide();           break;   // L1
