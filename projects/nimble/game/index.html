@@ -211,6 +211,22 @@
     #gameover p { font-size: 15px; }
     #gameover .hint { margin-top: 14px; }
   }
+  /* ---- Short landscape (phone held sideways): two-column guide so the whole
+         thing fits the limited height without scrolling ---- */
+  @media (max-height: 520px) and (orientation: landscape) {
+    #guide-card { display: flex; flex-direction: row; align-items: center; text-align: left;
+                  gap: 18px; max-width: 94vw; max-height: 94vh; padding: 12px 20px; }
+    #nimble-loader { flex: 0 0 32vw; max-width: 280px; margin: 0; align-self: center; }
+    #guide-info { flex: 1 1 auto; min-width: 0; }
+    #guide-title { font-size: 20px; margin-bottom: 2px; }
+    #guide-sub { font-size: 11px; margin-bottom: 6px; }
+    .guide-rows { margin-bottom: 6px; }
+    .guide-row { margin: 3px 0; font-size: 12px; }
+    .guide-row .key { min-width: 42px; margin-right: 8px; padding: 3px 6px; }
+    #bar-wrap { width: 100%; max-width: none; margin: 6px 0; }
+    #load-status { font-size: 12px; min-height: 16px; }
+    #press-key { font-size: 15px; margin-top: 2px; }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -226,18 +242,20 @@
     <div id="nimble-loader" aria-hidden="true">
       <img id="nimble-gif" src="./nimble_loading.gif" alt="" decoding="async">
     </div>
-    <div id="guide-title">NIMBLE'S DISH DASH</div>
-    <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
-    <div class="guide-rows">
-      <div class="guide-row"><span class="key kbd">SPACE</span><span class="key touchkey">JUMP</span><span class="desc"><b>Jump</b> — leap over hazards &amp; grab high drops</span></div>
-      <div class="guide-row"><span class="key kbd">SHIFT</span><span class="key touchkey">SLIDE</span><span class="desc"><b>Slide</b> — duck under rolling pins, ride the oil</span></div>
-      <div class="guide-row"><span class="key kbd">F</span><span class="key touchkey">SOAP</span><span class="desc"><b>Fire soap</b> — clean dirty dishes, pop slimes</span></div>
-      <div class="guide-row"><span class="key kbd">&larr; &rarr;</span><span class="key touchkey">◀ ▶</span><span class="desc"><b>Brake</b> / <b>Boost</b> — bend your pace</span></div>
-      <div class="guide-row"><span class="key">&#11088;</span><span class="desc"><b>Stars</b> restore a life — don't let them float by!</span></div>
+    <div id="guide-info">
+      <div id="guide-title">NIMBLE'S DISH DASH</div>
+      <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
+      <div class="guide-rows">
+        <div class="guide-row"><span class="key kbd">SPACE</span><span class="key touchkey">JUMP</span><span class="desc"><b>Jump</b> — leap over hazards &amp; grab high drops</span></div>
+        <div class="guide-row"><span class="key kbd">SHIFT</span><span class="key touchkey">SLIDE</span><span class="desc"><b>Slide</b> — duck under rolling pins, ride the oil</span></div>
+        <div class="guide-row"><span class="key kbd">F</span><span class="key touchkey">SOAP</span><span class="desc"><b>Fire soap</b> — clean dirty dishes, pop slimes</span></div>
+        <div class="guide-row"><span class="key kbd">&larr; &rarr;</span><span class="key touchkey">◀ ▶</span><span class="desc"><b>Brake</b> / <b>Boost</b> — bend your pace</span></div>
+        <div class="guide-row"><span class="key">&#11088;</span><span class="desc"><b>Stars</b> restore a life — don't let them float by!</span></div>
+      </div>
+      <div id="bar-wrap"><div id="bar"></div></div>
+      <div id="load-status">PREPARING THE KITCHEN&hellip;</div>
+      <div id="press-key">PRESS ANY KEY TO START</div>
     </div>
-    <div id="bar-wrap"><div id="bar"></div></div>
-    <div id="load-status">PREPARING THE KITCHEN&hellip;</div>
-    <div id="press-key">PRESS ANY KEY TO START</div>
   </div>
 </div>
 <div id="water-tint"></div>
@@ -381,6 +399,25 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
 camera.position.set(4, 3.0, 17);
 scene.add(camera);   // so the backdrop (a child of the camera) is traversed & rendered
+
+// Adaptive framing. Desktop keeps the original 35° feel exactly. Touch devices
+// (phones / tablets) get a wider, consistent view so the action isn't cropped or
+// zoomed in — we preserve the desktop horizontal span whatever the landscape aspect,
+// and never go tighter than a comfortable minimum.
+const IS_TOUCH_DEV = matchMedia('(hover: none) and (pointer: coarse)').matches;
+function fitCamera() {
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = aspect;
+  if (IS_TOUCH_DEV) {
+    const hHalf = Math.atan(Math.tan(THREE.MathUtils.degToRad(35) / 2) * (16 / 9));   // desktop horizontal half-angle
+    const fovForH = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / aspect));
+    camera.fov = Math.max(46, fovForH);    // ≥46° so mobile always sees plenty; wider still on narrow screens
+  } else {
+    camera.fov = 35;                        // desktop: unchanged
+  }
+  camera.updateProjectionMatrix();
+}
+fitCamera();
 
 // backdrop: a textured plane parented to the camera so it always fills the view.
 // Lives inside the WebGL scene (unlike the old CSS layer) so it can never fail to
@@ -2220,8 +2257,7 @@ window.addEventListener('keyup', e => {
   if (e.code === 'ArrowRight' || e.code === 'KeyD') state.aimR = false;
 });
 function onResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  fitCamera();
   renderer.setSize(window.innerWidth, window.innerHeight);
   fitBackdrop();
 }
