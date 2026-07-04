@@ -2277,6 +2277,20 @@ const isTouch = matchMedia('(hover: none) and (pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
 window.addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true, passive: true });
 
+// --- Block iOS double-tap-to-zoom (THE real "crops in and is irreversible" bug) ---
+// Firing soap fast makes Safari read the quick taps as a double-tap and zoom the whole
+// page in; because the page disables user scaling, there's no way to pinch back out, so
+// the game stays permanently zoomed/cropped. Swallow the second tap of any quick pair,
+// and block pinch/gesture zoom outright. (No effect on desktop — these events don't fire.)
+let _lastTapEnd = 0;
+document.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - _lastTapEnd <= 350) e.preventDefault();   // kill the double-tap zoom, keep the tap action
+  _lastTapEnd = now;
+}, { passive: false });
+['gesturestart', 'gesturechange', 'gestureend', 'dblclick'].forEach(evt =>
+  document.addEventListener(evt, (e) => e.preventDefault(), { passive: false }));
+
 document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
   const act = btn.dataset.act;
   const press = (e) => {
