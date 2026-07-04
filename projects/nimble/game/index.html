@@ -405,15 +405,22 @@ scene.add(camera);   // so the backdrop (a child of the camera) is traversed & r
 // zoomed in — we preserve the desktop horizontal span whatever the landscape aspect,
 // and never go tighter than a comfortable minimum.
 const IS_TOUCH_DEV = matchMedia('(hover: none) and (pointer: coarse)').matches;
-// FIXED vertical FOV per device — deliberately NOT recomputed from aspect, so the
-// framing can never suddenly zoom or crop when the mobile toolbar shows/hides or
-// during rotation. Desktop stays exactly 35°; mobile is a fixed 39° (a touch wider
-// than desktop, ~20% tighter than the earlier over-wide framing). On resize we only
-// update the aspect + resolution, never the zoom.
-const GAME_FOV = IS_TOUCH_DEV ? 39 : 35;
+// Mobile: lock the HORIZONTAL field of view. When the phone's address bar shows/hides
+// (or the device rotates) the window's aspect ratio changes. A fixed *vertical* FOV
+// would then crop the sides in/out — that was the "suddenly crops in" bug. By holding
+// the horizontal FOV constant, the incoming action always stays the same width; only a
+// little headroom at the top breathes, which is unobtrusive. Desktop is untouched: it
+// keeps its original fixed 35° vertical FOV exactly.
+const H_FOV_MOBILE = 72;     // degrees of horizontal view on phones/tablets — smaller = more zoomed in
 function fitCamera() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.fov = GAME_FOV;
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = aspect;
+  if (IS_TOUCH_DEV) {
+    const a = Math.max(1, aspect);   // guard the brief near-square frame during rotation
+    camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(H_FOV_MOBILE) / 2) / a));
+  } else {
+    camera.fov = 35;                 // desktop: unchanged
+  }
   camera.updateProjectionMatrix();
 }
 fitCamera();
