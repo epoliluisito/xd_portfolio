@@ -53,13 +53,30 @@
     position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;
     background: radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(5,8,14,0.30) 100%);
   }
-  #water-tint {   /* Level 3 underwater colour wash + light shafts (subtle — lets BG_03 read) */
+  #water-tint {   /* Level 3 underwater depth wash — 3D god rays/caustics do the shimmer now */
     position: fixed; inset: 0; pointer-events: none; z-index: 4; display: none;
     background:
-      linear-gradient(180deg, rgba(20,90,130,0.10) 0%, rgba(4,28,52,0.34) 100%),
-      repeating-linear-gradient(105deg, rgba(180,230,255,0.045) 0 2px, rgba(0,0,0,0) 2px 30px);
+      radial-gradient(ellipse at 50% 12%, rgba(120,205,240,0.10) 0%, rgba(0,0,0,0) 45%),
+      linear-gradient(180deg, rgba(18,96,138,0.08) 0%, rgba(3,24,46,0.42) 100%);
   }
   #flash { position: fixed; inset: 0; background: #eaffff; opacity: 0; pointer-events: none; z-index: 42; }
+  /* droplets streaking off the "lens" the instant Nimble plunges */
+  #splash-veil {
+    position: fixed; inset: 0; pointer-events: none; z-index: 43; opacity: 0;
+    background:
+      radial-gradient(circle at 20% 28%, rgba(232,255,255,0.55) 0 5px, transparent 7px),
+      radial-gradient(circle at 72% 18%, rgba(232,255,255,0.45) 0 8px, transparent 11px),
+      radial-gradient(circle at 44% 58%, rgba(232,255,255,0.40) 0 4px, transparent 6px),
+      radial-gradient(circle at 86% 66%, rgba(232,255,255,0.42) 0 7px, transparent 9px),
+      radial-gradient(circle at 12% 78%, rgba(232,255,255,0.35) 0 6px, transparent 9px),
+      radial-gradient(circle at 60% 88%, rgba(232,255,255,0.33) 0 5px, transparent 8px),
+      radial-gradient(ellipse at 50% 0%, rgba(205,248,255,0.28) 0%, transparent 55%);
+  }
+  #splash-veil.run { animation: veilrun 0.9s ease-out forwards; }
+  @keyframes veilrun {
+    0%   { opacity: 0.9; transform: translateY(-8px);  filter: blur(0.4px); }
+    100% { opacity: 0;   transform: translateY(34px);  filter: blur(1.6px); }
+  }
   #hud {
     position: absolute; top: 16px; left: 16px; z-index: 10;
     background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
@@ -265,6 +282,7 @@
 </div>
 <div id="water-tint"></div>
 <div id="flash"></div>
+<div id="splash-veil"></div>
 <div id="vignette"></div>
 
 <div id="hud">
@@ -639,23 +657,65 @@ function buildSeabed() {
   }
 }
 
-// the water surface at y=0 — a glassy, rippling translucent plane he punches through
-let waterSurface = null, waterTex = null;
+// the water surface at y=0 — a live, rippling shader surface he punches through
+let waterSurface = null, waterMat = null;
 function buildWaterSurface() {
   if (waterSurface) return;
-  waterTex = bubbleTex.clone(); waterTex.needsUpdate = true;      // independent ripple normal
-  waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping; waterTex.repeat.set(40, 8);
-  const mat = new THREE.MeshPhysicalMaterial({
-    color: 0x2c7fa6, transparent: true, opacity: 0.6,
-    roughness: 0.12, metalness: 0, transmission: 0.55, ior: 1.33, thickness: 0.6,
-    clearcoat: 1.0, clearcoatRoughness: 0.08,
-    normalMap: waterTex, normalScale: new THREE.Vector2(0.45, 0.45),
-    side: THREE.DoubleSide, depthWrite: false, fog: false, envMapIntensity: 1.3
+  waterMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    uniforms: {
+      uTime:    { value: 0 },
+      uCamPos:  { value: new THREE.Vector3() },
+      uDeep:    { value: new THREE.Color(0x0b3a55) },
+      uShallow: { value: new THREE.Color(0x2f9fc4) },
+      uSky:     { value: new THREE.Color(0xbfe9ff) },
+      uSun:     { value: new THREE.Vector3(0.4, 0.9, 0.3).normalize() }
+    },
+    vertexShader: `
+      uniform float uTime;
+      varying vec3 vWorld; varying vec3 vNrm; varying float vCrest;
+      float wv(vec2 p){
+        float h = sin(p.x*0.55 + uTime*1.3)*0.13;
+        h += sin(p.y*0.80 - uTime*1.0)*0.10;
+        h += sin((p.x+p.y)*0.42 + uTime*1.7)*0.06;
+        h += sin((p.x*0.9 - p.y*0.6) - uTime*2.1)*0.04;
+        return h;
+      }
+      void main(){
+        vec3 pos = position;
+        float h = wv(pos.xy);
+        pos.z += h; vCrest = h;
+        float e = 0.35;
+        float hx = wv(pos.xy+vec2(e,0.0)) - wv(pos.xy-vec2(e,0.0));
+        float hy = wv(pos.xy+vec2(0.0,e)) - wv(pos.xy-vec2(0.0,e));
+        vec3 n = normalize(vec3(-hx, -hy, 2.0*e));
+        vWorld = (modelMatrix * vec4(pos,1.0)).xyz;
+        vNrm = normalize((modelMatrix * vec4(n,0.0)).xyz);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos,1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uCamPos, uDeep, uShallow, uSky, uSun;
+      varying vec3 vWorld; varying vec3 vNrm; varying float vCrest;
+      void main(){
+        vec3 N = normalize(vNrm);
+        vec3 V = normalize(uCamPos - vWorld);
+        float fres = pow(1.0 - clamp(dot(N,V),0.0,1.0), 3.0);
+        vec3 col = mix(uDeep, uShallow, clamp(fres*1.6,0.0,1.0));
+        col = mix(col, uSky, fres*0.55);
+        vec3 H = normalize(V + uSun);
+        float spec = pow(max(dot(N,H),0.0), 140.0);
+        col += spec * vec3(1.0);
+        float foam = smoothstep(0.16, 0.28, vCrest);        // white on the highest crests
+        col = mix(col, vec3(0.95,0.99,1.0), foam*0.5);
+        float alpha = 0.60 + fres*0.34 + foam*0.25;
+        gl_FragColor = vec4(col, clamp(alpha,0.0,1.0));
+      }`
   });
-  waterSurface = new THREE.Mesh(new THREE.PlaneGeometry(500, 90), mat);
+  waterSurface = new THREE.Mesh(new THREE.PlaneGeometry(400, 120, 260, 70), waterMat);
   waterSurface.rotation.x = -Math.PI / 2;
   waterSurface.position.set(0, 0, LANE_Z);
   waterSurface.renderOrder = -6;
+  waterSurface.frustumCulled = false;
   scene.add(waterSurface);
 }
 // an expanding foam ring on the surface at the moment of impact
@@ -671,25 +731,150 @@ function spawnSplashRing(pos) {
   splashRing.position.set(pos.x, 0.06, pos.z);
   splashRing.visible = true; splashRingLife = 0.7;
 }
-// quick white screen flash (the splash of breaking the surface)
-function flash(op) {
+// quick screen flash for the surface break (tintable — softer than a white-out)
+function flash(op, color) {
   const f = document.getElementById('flash');
   if (!f) return;
+  if (color) f.style.background = color;
   f.style.transition = 'none'; f.style.opacity = String(op == null ? 0.85 : op);
-  requestAnimationFrame(() => { f.style.transition = 'opacity 0.45s ease-out'; f.style.opacity = '0'; });
+  requestAnimationFrame(() => { f.style.transition = 'opacity 0.5s ease-out'; f.style.opacity = '0'; });
 }
-// the surface-break moment: flash, spray crown, foam ring, and flip the scene underwater
+// droplets streaking down the "lens" the instant he plunges
+function splashVeil() {
+  const v = document.getElementById('splash-veil');
+  if (!v) return;
+  v.classList.remove('run'); void v.offsetWidth; v.classList.add('run');
+}
+
+// ============================================================
+// LEVEL 3 underwater atmosphere — light shafts, seabed caustics, drifting motes
+// ============================================================
+let godRays = null, caustics = null, motes = null, uwT = 0;
+let splashCrown = null, splashCrownLife = 0;
+
+function buildGodRays() {
+  if (godRays) return;
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, fog: false, side: THREE.DoubleSide,
+    uniforms: { uTime: { value: 0 }, uTint: { value: new THREE.Color(0x9fe0ff) } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform float uTime; uniform vec3 uTint; varying vec2 vUv;
+      float beam(float x, float w, float sp, float ph){ return smoothstep(w, 0.0, abs(fract(x*sp+ph)-0.5)); }
+      void main(){
+        float x = vUv.x + (1.0 - vUv.y) * 0.30;                 // slant the shafts
+        float s = beam(x,0.5,5.0, uTime*0.03)*0.6
+                + beam(x,0.4,8.0,-uTime*0.05)*0.5
+                + beam(x,0.6,3.0, uTime*0.02)*0.4;
+        float fade = smoothstep(0.05, 0.55, vUv.y) * smoothstep(1.0, 0.80, vUv.y);   // from the surface, down into the deep
+        gl_FragColor = vec4(uTint, s * fade * 0.45);
+      }`
+  });
+  godRays = new THREE.Mesh(new THREE.PlaneGeometry(90, 22), mat);
+  godRays.position.set(0, -2.0, LANE_Z - 7);
+  godRays.renderOrder = -8; godRays.frustumCulled = false;
+  scene.add(godRays);
+}
+function buildCaustics() {
+  if (caustics) return;
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    uniforms: { uTime: { value: 0 }, uTint: { value: new THREE.Color(0x74d0ff) } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform float uTime; uniform vec3 uTint; varying vec2 vUv;
+      float caustic(vec2 uv){
+        vec2 p = mod(uv*6.28318, 6.28318) - 250.0;
+        vec2 i = vec2(p); float c = 1.0; float inten = 0.005;
+        for(int n=0;n<3;n++){
+          float t = uTime*0.5*(1.0-(3.5/float(n+1)));
+          i = p + vec2(cos(t-i.x)+sin(t+i.y), sin(t-i.y)+cos(t+i.x));
+          c += 1.0/length(vec2(p.x/(sin(i.x+t)/inten), p.y/(cos(i.y+t)/inten)));
+        }
+        c /= 3.0; c = 1.17 - pow(c, 1.4);
+        return clamp(pow(abs(c), 8.0), 0.0, 1.0);
+      }
+      void main(){
+        float c = caustic(vUv*3.2);
+        float edge = smoothstep(0.0,0.14,vUv.x)*smoothstep(1.0,0.86,vUv.x)
+                   * smoothstep(0.0,0.18,vUv.y)*smoothstep(1.0,0.82,vUv.y);   // fade at the plane edges (no hard tiling)
+        gl_FragColor = vec4(uTint*c, c*0.75*edge);
+      }`
+  });
+  caustics = new THREE.Mesh(new THREE.PlaneGeometry(140, 34), mat);
+  caustics.rotation.x = -Math.PI / 2;
+  caustics.position.set(0, SEABED_Y + 0.6, LANE_Z);
+  caustics.renderOrder = -7; caustics.frustumCulled = false;
+  scene.add(caustics);
+}
+function buildMotes() {
+  if (motes) return;
+  const N = 90, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i*3]   = Math.random()*70 - 10;
+    pos[i*3+1] = SWIM_Y_MIN + Math.random()*(SWIM_Y_MAX - SWIM_Y_MIN + 3);
+    pos[i*3+2] = LANE_Z + (Math.random()*9 - 4.5);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  motes = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xcdeeff, size: 0.1, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+  motes.frustumCulled = false;
+  scene.add(motes);
+}
+function buildUnderwaterFX() { buildGodRays(); buildCaustics(); buildMotes(); }
+function showUnderwaterFX(v) { if (godRays) godRays.visible = v; if (caustics) caustics.visible = v; if (motes) motes.visible = v; }
+function updateUnderwaterFX(dt) {
+  uwT += dt;
+  const cx = camera.position.x;
+  if (waterMat) { waterMat.uniforms.uTime.value = uwT; waterMat.uniforms.uCamPos.value.copy(camera.position); }
+  if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 2; }
+  if (caustics && caustics.visible) { caustics.material.uniforms.uTime.value = uwT; caustics.position.x = cx; }
+  if (motes && motes.visible) {
+    const p = motes.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      let y = p.getY(i) - dt * 0.28, x = p.getX(i) + Math.sin(uwT*0.5 + i)*dt*0.12;
+      if (y < SWIM_Y_MIN - 1 || x < cx - 18) { y = SWIM_Y_MAX + 1.5; x = cx + 8 + Math.random()*36; p.setZ(i, LANE_Z + (Math.random()*9 - 4.5)); }
+      p.setX(i, x); p.setY(i, y);
+    }
+    p.needsUpdate = true;
+  }
+  if (splashCrown && splashCrownLife > 0) {
+    splashCrownLife -= dt;
+    const f = 1 - splashCrownLife / 0.55;
+    splashCrown.scale.set(0.5 + f*4.5, 0.5 + f*3.0, 0.5 + f*4.5);
+    splashCrown.position.y = 0.2 + f*0.9;
+    splashCrown.material.opacity = (1 - f) * 0.9;
+    if (splashCrownLife <= 0) splashCrown.visible = false;
+  }
+}
+// an expanding foam crown thrown up at the pierce point
+function spawnSplashCrown(pos) {
+  if (!splashCrown) {
+    splashCrown = new THREE.Mesh(new THREE.ConeGeometry(1, 1.8, 28, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    splashCrown.renderOrder = 3; splashCrown.frustumCulled = false;
+    scene.add(splashCrown);
+  }
+  splashCrown.position.set(pos.x, 0.2, pos.z);
+  splashCrown.scale.set(0.5, 0.5, 0.5);
+  splashCrown.visible = true; splashCrownLife = 0.55;
+}
+
+// the surface-break moment: a soft cyan splash, foam crown, rings, and flip underwater
 function splashThroughSurface() {
   state.diveSplashed = true;
   applyUnderwater();
-  flash(0.7);
-  state.shake = 0.6;                               // camera jolt on impact
+  flash(0.5, '#e6feff');                          // brief cyan-white, not a full white-out
+  splashVeil();
+  state.shake = 0.7;                              // camera jolt on impact
   const at = playerGroup.position.clone(); at.y = 0;
-  burst(at, 0xffffff, 60, 11, 16, 0.32, 9.5);     // huge tall spray crown
-  burst(at, 0xffffff, 40, 14, 2.0, 0.34, 3.0);    // wide outward sheet
-  burst(at, 0xeafcff, 30, 6, 1.2, 0.4, -0.5);     // foam dragged down
+  burst(at, 0xffffff, 46, 12, 18, 0.30, 11.0);    // tall spray crown
+  burst(at, 0xffffff, 34, 15, 2.0, 0.32, 3.0);    // wide outward sheet
+  burst(at, 0xeafcff, 24, 6, 1.0, 0.40, -0.6);    // foam dragged under with him
+  spawnSplashCrown(at);
   spawnSplashRing(at);
-  setTimeout(() => spawnSplashRing(at), 90);       // second ripple ring
+  setTimeout(() => spawnSplashRing(at), 80);       // second ripple
+  setTimeout(() => spawnSplashRing(at), 170);      // third ripple
   sfx.hit(); sfx.level();
   showBanner('SPLASH!');
 }
@@ -893,48 +1078,37 @@ async function initGame() {
     plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
     fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
   };
-  const counterP = tracked(texLoader.loadAsync('./couter_top_texture.png'));
-  const counter2P = tracked(texLoader.loadAsync('./couter_top_texture_02.png')).catch(() => null);
-  const bg1P = tracked(texLoader.loadAsync('./BACKGROUND.png'), 3);
-  const bg2P = tracked(texLoader.loadAsync('./BACKGROUND_02.png'), 3).catch(() => null);
-  const bg3P = tracked(texLoader.loadAsync('./BACKGROUND_03.png'), 3).catch(() => null);   // underwater
-  const fgPs     = fgNames.map(n => tracked(texLoader.loadAsync(`./foreground_elements/${n}`)).catch(() => null));
+  // Small optimised .jpg assets with a .png fallback (works whether or not the
+  // optimised files are present). Only the character, the Level-1 backdrop and the
+  // counter are on the CRITICAL path; everything else streams in after the game starts.
+  const texJP = (base, w = 1) => tracked(texLoader.loadAsync(base + '.jpg'), w)
+    .catch(() => texLoader.loadAsync(base + '.png')).catch(() => null);
+  const counterP  = texJP('./couter_top_texture');
+  const counter2P = texJP('./couter_top_texture_02');
+  const bg1P = texJP('./BACKGROUND', 3);
+  const bg2P = texJP('./BACKGROUND_02', 1);
+  const bg3P = texJP('./BACKGROUND_03', 1);
+  const fgPs     = fgNames.map(n => texLoader.loadAsync(`./foreground_elements/${n}`).catch(() => null));   // deferred
   const modelPs  = Object.entries(modelPaths).map(([k, p]) =>
-    tracked(gltfLoader.loadAsync(p)).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));
+    gltfLoader.loadAsync(p).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));   // deferred
   const nimbleP  = tracked(gltfLoader.loadAsync('./nimble_character.glb'), 5);   // the big one
-  // Process & show Nimble the moment HE is ready — don't wait on the 34 MB of
-  // backdrops/props. He starts dancing on the loading card almost immediately.
-  nimbleP.then(g => setupNimble(g)).catch(() => {});
+  nimbleP.then(g => setupNimble(g)).catch(() => {});     // he starts dancing on the card the instant he's ready
 
-  // Countertop: box travels with the player, texture offset scrolls back,
-  // so the counter is endless but the wood visually stays put.
+  const prepBg = (tx) => { if (!tx) return null; tx.colorSpace = THREE.SRGBColorSpace; tx.wrapS = THREE.RepeatWrapping; tx.wrapT = THREE.ClampToEdgeWrapping; return tx; };
+
+  // ===== CRITICAL PATH — the minimum needed to play Level 1 =====
   counterTex = await counterP;
-  counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping;
-  counterTex.repeat.set(150, 3);
-  counterTex2 = await counter2P;                 // steel top for Level 2 (may be null)
-  if (counterTex2) {
-    counterTex2.wrapS = counterTex2.wrapT = THREE.RepeatWrapping;
-    counterTex2.repeat.set(150, 3);
-  }
+  if (counterTex) { counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping; counterTex.repeat.set(150, 3); }
   const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, color: 0x8c8c8c, roughness: 0.75, metalness: 0.1 });   // darker wood → richer, less bright
   floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
   floor.position.set(0, -5, 6);
   floor.receiveShadow = true;
   scene.add(floor);
+  dividerGroup = buildDivider(LEVEL_LEN);   // Level 1 → 2 divider waiting at the boundary
+  typeCfg.pin.heightScaled = PIN_R * 2;     // rolling pin is procedural
 
-  // pre-build the Level 1 → 2 divider so it's waiting at the boundary
-  dividerGroup = buildDivider(LEVEL_LEN);
-
-  // --- Backdrop plane (parented to camera, always fills the frame) ---
-  bgTexL1 = await bg1P;
-  bgTexL2 = await bg2P;   // may be null if the file is missing
-  bgTexL3 = await bg3P;   // underwater backdrop (may be null)
-  for (const tx of [bgTexL1, bgTexL2, bgTexL3]) {
-    if (!tx) continue;
-    tx.colorSpace = THREE.SRGBColorSpace;
-    tx.wrapS = THREE.RepeatWrapping;
-    tx.wrapT = THREE.ClampToEdgeWrapping;
-  }
+  // backdrop plane (parented to camera, always fills the frame)
+  bgTexL1 = prepBg(await bg1P);
   const bgMat = new THREE.MeshBasicMaterial({
     map: bgTexL1, depthWrite: false, depthTest: false, toneMapped: false, fog: false,   // backdrop never fogged
     color: new THREE.Color(0.82, 0.86, 0.9)   // gentle darken/cool to sit behind the action
@@ -946,56 +1120,56 @@ async function initGame() {
   camera.add(bgMesh);
   fitBackdrop();
 
-  // 2D foreground decor — two parallax layers sweeping between camera and the lane
-  const fgTextures = (await Promise.all(fgPs)).filter(Boolean);
-  function addFgPlane(x, layer) {
-    const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
-    const aspect = tex.image.width / tex.image.height;
-    const near = layer === 'near';
-    const h = near ? 1.4 + Math.random() * 1.0 : 1.7 + Math.random() * 1.2;   // shorter: only peek from the bottom
-    const topY = near ? 2.0 + Math.random() * 1.6 : 1.4 + Math.random() * 1.8;
-    const mat = new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthWrite: false,
-      color: near ? 0x707a8f : 0xa8b1c4          // darker = closer: reads as depth
-    });
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), mat);
-    plane.position.set(x, topY - h / 2, near ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8);
-    plane.renderOrder = near ? 6 : 5;
-    plane.userData.layer = layer;
-    plane.userData.halfH = h / 2;      // used to keep the bottom edge just off-screen every frame
-    scene.add(plane);
-    fgPlanes.push(plane);
-  }
-  if (fgTextures.length > 0) {                       // sparser: far fewer props on screen
+  await nimbleP;   // the character must be ready before we let the player start
+
+  // ===== DEFERRED — stream in while the player reads the guide / plays Level 1 =====
+  counter2P.then(t => { counterTex2 = t; if (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(150, 3); } });
+  bg2P.then(t => { bgTexL2 = prepBg(t); });   // Level 2 steel backdrop
+  bg3P.then(t => { bgTexL3 = prepBg(t); });   // Level 3 underwater backdrop
+
+  Promise.all(fgPs).then(list => {
+    const fgTextures = list.filter(Boolean);
+    if (!fgTextures.length) return;
+    function addFgPlane(x, layer) {
+      const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+      const aspect = tex.image.width / tex.image.height;
+      const near = layer === 'near';
+      const h = near ? 1.4 + Math.random() * 1.0 : 1.7 + Math.random() * 1.2;   // shorter: only peek from the bottom
+      const topY = near ? 2.0 + Math.random() * 1.6 : 1.4 + Math.random() * 1.8;
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, depthWrite: false,
+        color: near ? 0x707a8f : 0xa8b1c4          // darker = closer: reads as depth
+      });
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), mat);
+      plane.position.set(x, topY - h / 2, near ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8);
+      plane.renderOrder = near ? 6 : 5;
+      plane.userData.layer = layer;
+      plane.userData.halfH = h / 2;      // used to keep the bottom edge just off-screen every frame
+      scene.add(plane);
+      fgPlanes.push(plane);
+    }
     for (let x = -10; x < 260; x += 52 + Math.random() * 30) addFgPlane(x, 'near');
     for (let x = -20; x < 260; x += 42 + Math.random() * 24) addFgPlane(x, 'mid');
-  }
+  });
 
-  // 3D element models
-  for (const [key, gltf] of await Promise.all(modelPs)) {
-    if (!gltf) continue;
-    const obj = gltf.scene;
-    obj.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(obj);
-    const size = new THREE.Vector3(); box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    const cfg = typeCfg[key];
-    cfg.scaleFactor = cfg.size / maxDim;
-    cfg.groundOffset = -box.min.y * cfg.scaleFactor;
-    cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
-    obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-    // the emerald drops are little Nimbles: same glass shader
-    if (key === 'emerald') {
-      obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });
+  Promise.all(modelPs).then(entries => {
+    for (const [key, gltf] of entries) {
+      if (!gltf) continue;
+      const obj = gltf.scene;
+      obj.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const cfg = typeCfg[key];
+      cfg.scaleFactor = cfg.size / maxDim;
+      cfg.groundOffset = -box.min.y * cfg.scaleFactor;
+      cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
+      obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+      if (key === 'emerald') obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });   // emerald drops are little Nimbles
+      models[key] = obj;
     }
-    models[key] = obj;
-  }
-  // rolling pin is procedural
-  typeCfg.pin.heightScaled = PIN_R * 2;
+  });
 
-  // Nimble was already kicked off (and processed via setupNimble) at the top of the
-  // load; just make sure he's ready before we let the player press start.
-  await nimbleP;
   const loadingEl = document.getElementById('loading');
   loadingEl.classList.add('ready');
   document.getElementById('bar').style.width = '100%';
@@ -1457,17 +1631,19 @@ function scriptDiveSeq(dt) {
 
 // swap the scene to its underwater dressing (called when he pierces the surface)
 function applyUnderwater() {
-  scene.fog = new THREE.Fog(0x0a2f4a, 10, 60);                    // gentle depth haze on the props/seabed
+  scene.fog = new THREE.Fog(0x08324f, 14, 52);                    // richer teal depth haze
   if (floor) floor.visible = false;
   if (bgMesh) {
     if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
-    bgMesh.material.color.setRGB(0.72, 0.82, 0.92);                  // let the image read (not a flat tint)
+    bgMesh.material.color.setRGB(0.60, 0.78, 0.92);                  // cool the backdrop into the depths
   }
   const tint = document.getElementById('water-tint');
   if (tint) tint.style.display = 'block';
   buildWaterSurface();
   buildBubbles();
   buildSeabed();
+  buildUnderwaterFX();
+  showUnderwaterFX(true);
   frothDecals.forEach(s => s.visible = false);
   document.body.classList.remove('surf');
   document.body.classList.add('swim');
@@ -1564,6 +1740,7 @@ function enterPuzzle() {
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
   bubbles.forEach(s => s.visible = false);
   seabed.forEach(m => m.visible = false);
+  showUnderwaterFX(false);
   if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
   playerGroup.position.set(PZ.boardX, PZ.shootY - 0.5, LANE_Z);
   playerGroup.scale.set(1, 1, 1); squash = squashTarget = 1;
@@ -2177,8 +2354,7 @@ function gameLoop() {
     if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
   }
   if (waterSurface) {
-    waterSurface.position.x = camera.position.x;                   // the surface follows overhead
-    if (waterTex) waterTex.offset.x = t * 0.03;                    // drifting ripples
+    waterSurface.position.x = camera.position.x;                   // the rippling surface follows overhead
   }
   if (splashRing && splashRingLife > 0) {                          // expanding foam ring
     splashRingLife -= dt;
@@ -2196,6 +2372,7 @@ function gameLoop() {
       }
     }
   }
+  if (swim || diveSeq) updateUnderwaterFX(dt);          // water surface, god rays, caustics, motes, splash crown
   if ((swim || diveSeq) && bubblesBuilt) {              // rising bubbles that recycle (deep → surface)
     for (const s of bubbles) {
       s.visible = true;
