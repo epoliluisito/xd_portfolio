@@ -1205,8 +1205,8 @@ function setupNimble(nimbleGltf) {
     const mn = o.material ? o.material.name : '';
     if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
     else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
-    else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; }  // soap suds around the sponge
-    else if (mn.startsWith('sponge_mat'))  { spongeParts.push(o); o.visible = false; }   // sponge keeps its own baked soap texture
+    else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }  // soap suds around the sponge
+    else if (mn.startsWith('sponge_mat'))  { spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }   // sponge keeps its own baked soap texture
     else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
     else { o.material = getGlassMat(o.material); }
   });
@@ -1498,6 +1498,42 @@ function checkLevel() {
   if (playerGroup.position.x > LEVEL_LEN - 30) enterSurfMode();
 }
 
+// ---- Level 2: a "just cleaned" wet-shine streak the sponge leaves behind (commercial before/after) ----
+const cleanTrail = [];
+let cleanTrailBuilt = false, cleanTrailT = 0, spongeMountT = 0;
+function buildCleanTrail() {
+  if (cleanTrailBuilt) return; cleanTrailBuilt = true;
+  for (let i = 0; i < 64; i++) {
+    const mat = new THREE.MeshBasicMaterial({ map: blobTex, color: 0xeafdff, transparent: true, opacity: 0,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.05), mat);
+    m.rotation.x = -Math.PI / 2;                 // lie flat on the counter
+    m.renderOrder = 1; m.visible = false; m.frustumCulled = false;
+    scene.add(m);
+    cleanTrail.push({ mesh: m, life: 0, maxLife: 1 });
+  }
+}
+function spawnCleanSeg(x, z) {
+  let seg = null;
+  for (const s of cleanTrail) if (s.life <= 0) { seg = s; break; }
+  if (!seg) return;
+  seg.mesh.position.set(x, 0.03, z);
+  seg.mesh.scale.set(1, 1, 0.9 + Math.random() * 0.25);
+  seg.mesh.material.opacity = 0;
+  seg.mesh.visible = true;
+  seg.life = seg.maxLife = 2.4;                  // lingers, so the trail reads as a lasting clean streak
+}
+function updateCleanTrail(dt) {
+  for (const s of cleanTrail) {
+    if (s.life <= 0) continue;
+    s.life -= dt;
+    if (s.life <= 0) { s.mesh.visible = false; continue; }
+    const f = s.life / s.maxLife;                                // 1 → 0
+    s.mesh.material.opacity = 0.5 * Math.min(1, (1 - f) * 8) * Math.pow(f, 0.5);   // snap in, slow shiny fade
+  }
+}
+function hideCleanTrail() { for (const s of cleanTrail) { s.life = 0; s.mesh.visible = false; } }
+
 // Level 1 → Level 2, part 1: he grabs the hat and hops on the skate BEFORE the gate.
 // The counter is still the wood one here — it only changes at the gate (see crossGate).
 function enterSurfMode() {
@@ -1511,7 +1547,12 @@ function enterSurfMode() {
   state.excite = 1.0;
   sfx.level();
   boardParts.forEach(m => m.visible = !USE_SPONGE);   // skateboard only when sponge is off
-  spongeParts.forEach(m => m.visible = USE_SPONGE);   // sponge is the current ride
+  spongeParts.forEach(m => {                           // sponge is the current ride — pop it in with a bounce
+    m.visible = USE_SPONGE;
+    const fs = m.userData.fullScale;
+    if (fs) m.scale.set(fs.x * 0.12, fs.y * 0.12, fs.z * 0.12);
+  });
+  spongeMountT = USE_SPONGE ? 0.55 : 0;               // drives the grow-in bounce in the loop
   hatParts.forEach(m => m.visible = true);
   // wipe any leftover runner props
   for (let i = entities.length - 1; i >= 0; i--) {
@@ -1522,12 +1563,19 @@ function enterSurfMode() {
   // no dirt until after the gate — he skates the wood run-up first
   state.surfStartX = LEVEL_LEN;
   spawnX = LEVEL_LEN + 22;
-  playAnim('skateboard', 0.25);                   // straight onto the board
+  buildCleanTrail();
+  // he hops as the sponge pops in beneath him, then rides
+  velocity.y = 6.8; state.onGround = false;
+  playAnim('jump', 0.05);
+  squash = 0.8;
   document.body.classList.add('surf');            // console → up/down + jump
   const help = document.getElementById('controls-help');
   if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
   showBanner('ON THE SKATE!');
-  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.5, 0)), 0xffffff, 14, 3.2, 3.0, 0.28);
+  // a splashy foam poof for the reveal
+  const at = playerGroup.position.clone();
+  burst(at.clone().add(new THREE.Vector3(0, 0.4, 0)), 0xffffff, 26, 4.2, 4.2, 0.30);
+  burst(at.clone().add(new THREE.Vector3(0, 0.15, 0)), 0xeafcff, 18, 5.5, 1.4, 0.24, 2.0);
   updateHUD();
 }
 
@@ -1586,6 +1634,7 @@ function startDiveTransition() {
   state.onGround = true; velocity.y = 0; state.isSliding = false;
   state.excite = 1.0;
   sfx.level();
+  hideCleanTrail();                                   // counter's about to go — drop the shine streak
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
@@ -2035,11 +2084,19 @@ function gameLoop() {
       const dir = (state.steerDown ? 1 : 0) - (state.steerUp ? 1 : 0);
       state.targetZ = THREE.MathUtils.clamp(state.targetZ + dir * STEER_SPEED * dt, SURF_Z_MIN, SURF_Z_MAX);
       playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 10 * dt);
-      // the board leaves a froth trail
+      // the sponge leaves a foam trail + a lasting "just cleaned" shine streak
       surfTrailT -= dt;
       if (surfTrailT <= 0) {
         surfTrailT = 0.045;
         burst(playerGroup.position.clone().add(new THREE.Vector3(-0.6, 0.12, 0)), 0xffffff, 2, 1.0, 0.7, 0.17, 2.0);
+        spawnCleanSeg(playerGroup.position.x - 0.7, playerGroup.position.z);
+      }
+      // sponge pop-in bounce on mount (easeOutBack)
+      if (spongeMountT > 0) {
+        spongeMountT -= dt;
+        const p = Math.max(0, Math.min(1, 1 - spongeMountT / 0.55)), bk = 1.70158;
+        const s = spongeMountT <= 0 ? 1 : 1 + (bk + 1) * Math.pow(p - 1, 3) + bk * Math.pow(p - 1, 2);
+        spongeParts.forEach(m => { const fs = m.userData.fullScale; if (fs) m.scale.set(fs.x * s, fs.y * s, fs.z * s); });
       }
     } else if (state.mode === 'swim') {
       // swim up/down (y is the swim axis); a few bubbles trail off him
@@ -2319,6 +2376,7 @@ function gameLoop() {
   }
 
   updateParticles(dt);
+  if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
 
   // camera / world dressing follow the run
   const surf = state.mode === 'surf';
