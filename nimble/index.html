@@ -346,7 +346,8 @@ const BASE_SPEED = 6.3;             // world-scroll speed (−30%); Nimble's own
 const LEVEL_LEN = location.hash.includes('l2') ? 24 : 500;   // #l2 = quick-jump to Level 2 for testing (out-of-repo copy)
 const angleCheat = 0.49;
 const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
-const HAT_OFFSET = { x: 0.013, y: 0.375, z: 0.005 };   // Level-2 foam hat seat (tuned live in three.js). LIVE-TUNE in console: tuneHat(x,y,z). +z=toward face, +y=up, +x=his right
+// (Foam cap seating is now fully automatic — see "AUTO-SEAT THE FOAM CAP" in setupNimble.
+//  Tweak HAT_ROT_DEG / HAT_SEAT_DOWN there if you ever want to re-angle or raise/lower it.)
 const SLIDE_DUR = 0.72;             // shorter, snappier slide (hitbox + anim end together)
 
 // player capsule (world units, after CHAR_SCALE)
@@ -533,6 +534,26 @@ function getFoamMat() {
   });
   addRim(mat, '#dff3ff', 0.6);
   return mat;
+}
+// Clean procedural teal scrub texture — replaces the sponge's baked teal+yellow patchwork
+// (whose seams read as gold "cracks" across the scrub top). Cached; matte scrub-pad look.
+let _cleanSpongeTex = null;
+function getCleanSpongeTex() {
+  if (_cleanSpongeTex) return _cleanSpongeTex;
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2e8b83'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 4600; i++) {                         // pores + flecks, all in the teal family
+    const x = Math.random() * 256, y = Math.random() * 256, r = 0.6 + Math.random() * 1.8;
+    g.fillStyle = Math.random() < 0.6
+      ? `rgba(22,74,69,${0.22 + Math.random() * 0.34})`     // darker pores
+      : `rgba(120,190,178,${0.14 + Math.random() * 0.24})`; // lighter flecks
+    g.beginPath(); g.arc(x, y, r, 0, 6.28); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 2);
+  t.colorSpace = THREE.SRGBColorSpace;
+  _cleanSpongeTex = t; return t;
 }
 const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
 const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
@@ -1208,62 +1229,96 @@ function setupNimble(nimbleGltf) {
     else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
     else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }  // soap suds around the sponge
     else if (mn.startsWith('sponge_mat'))  {
-      // FIX (sponge "cracks"): sponge_mat ships a full-strength EMISSIVE texture — yellow-green
-      // patches separated by hard black gaps. Rendered as self-illumination under ACES tonemapping
-      // the dark gaps between the glowing patches read as cracks. Kill the emissive so the sponge
-      // is a normal matte surface; keep its baked baseColour + roughness. (Its metallic-roughness
-      // texture already zeroes metalness, so no metal to correct.)
+      // FIX (sponge "cracks"): the baked base-colour AND emissive maps are a teal+yellow
+      // patchwork; wherever the top scrub face samples across a teal/yellow seam you get thin
+      // gold lines that read as cracks. Killing the emissive alone didn't cure it (the seams are
+      // in the base colour too), so swap the whole surface for a clean procedural teal scrub
+      // texture and kill the emissive entirely.
+      o.material.map = getCleanSpongeTex();
+      o.material.color.setHex(0xffffff);
       if (o.material.emissive) o.material.emissive.setRGB(0, 0, 0);
       o.material.emissiveMap = null;
       o.material.emissiveIntensity = 0;
+      o.material.roughness = 0.9; o.material.metalness = 0.0;
       o.material.needsUpdate = true;
       spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone();
-    }   // sponge keeps its baked soap texture, minus the bogus emissive that caused the cracks
+    }   // sponge now shows a clean matte teal scrub surface — no patchwork seams, no cracks
     else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
     else { o.material = getGlassMat(o.material); }
   });
   playerGroup.add(root);
 
-  // ---- LIVE HAT TUNER (console) --------------------------------------------------
-  // The foam hat is rigidly skinned 100% to the Head bone, so translating its geometry
-  // offsets it in head-local space and it stays seated in every pose. Tune it live:
-  //   tuneHat(0, 0, 0.12)   -> move the hat toward the face by 0.12 (try +/- on each axis)
-  //   tuneHatOpacity(0.97)  -> make the foam less see-through (if the green shows THROUGH it)
-  // Tell me the numbers that look right and I'll bake them into HAT_OFFSET above.
-  let _hatApplied = { x: 0, y: 0, z: 0 };
-  function applyHatOffset() {
-    hatParts.forEach(m => m.geometry.translate(
-      HAT_OFFSET.x - _hatApplied.x, HAT_OFFSET.y - _hatApplied.y, HAT_OFFSET.z - _hatApplied.z));
-    _hatApplied = { x: HAT_OFFSET.x, y: HAT_OFFSET.y, z: HAT_OFFSET.z };
+  // ---- AUTO-SEAT THE FOAM CAP (self-computing — no magic numbers) ----------------
+  // The bubble baseball-cap is rigidly skinned 100% to the Head bone. three.js scales a
+  // skinned-geometry translate very differently from Blender, so a hand-picked HAT_OFFSET
+  // never held up. Instead, at load we: (1) spin the cap so its bill reads as "worn
+  // backward", then (2) directly measure how the *rendered* (skinned) hat responds to a
+  // geometry translate and solve for the shift that drops it onto the crown. The result is
+  // a fixed geometry transform, so it stays seated in every animation pose.
+  //   Tweakables: HAT_ROT_DEG (bill orientation) and HAT_SEAT_DOWN (how deep it sits).
+  const HAT_ROT_DEG   = { x: 0, y: 90, z: 0 };   // 90° spin -> bill points backward
+  const HAT_SEAT_DOWN = 0.30;                     // bigger = lower on the head
+  let bodyMesh = null;
+  root.traverse(o => { if (o.isSkinnedMesh && !hatParts.includes(o) &&
+    (!bodyMesh || o.geometry.attributes.position.count > bodyMesh.geometry.attributes.position.count)) bodyMesh = o; });
+
+  let hatSeated = false, _seatTries = 0;
+  function seatFoamCap() {
+    const hat = hatParts[0];
+    if (!hat || !bodyMesh || !headBone) { hatSeated = true; return; }   // nothing to do
+    playerGroup.updateWorldMatrix(true, true);
+    if (hat.skeleton) hat.skeleton.update();
+    if (bodyMesh.skeleton) bodyMesh.skeleton.update();
+    const BT = hat.applyBoneTransform ? 'applyBoneTransform' : 'boneTransform';
+    // one-time: spin the cap about its own centre so the bill points backward
+    if (!hat.userData._spun) {
+      hat.geometry.computeBoundingBox();
+      const c = hat.geometry.boundingBox.getCenter(new THREE.Vector3());
+      hat.geometry.translate(-c.x, -c.y, -c.z);
+      hat.geometry.rotateX(HAT_ROT_DEG.x * Math.PI / 180);
+      hat.geometry.rotateY(HAT_ROT_DEG.y * Math.PI / 180);
+      hat.geometry.rotateZ(HAT_ROT_DEG.z * Math.PI / 180);
+      hat.geometry.translate(c.x, c.y, c.z);
+      hat.userData._spun = true;
+    }
+    const V = THREE.Vector3;
+    const bnd = (m, minY = -1e9) => {
+      const p = m.geometry.attributes.position, N2 = p.count, st = Math.max(1, (N2 / 1500) | 0);
+      const v = new V(), mn = new V(1e9, 1e9, 1e9), mx = new V(-1e9, -1e9, -1e9), c = new V(); let k = 0;
+      for (let i = 0; i < N2; i += st) { v.fromBufferAttribute(p, i); m[BT](i, v); m.localToWorld(v);
+        if (v.y >= minY) { mn.min(v); mx.max(v); c.add(v); k++; } }
+      return { mn, mx, c: c.divideScalar(k || 1) };
+    };
+    const hatC = () => bnd(hat).c.clone(), tr = (x, y, z) => hat.geometry.translate(x, y, z);
+    const b0 = hatC(), P = 5;                                            // measure skinned response per axis
+    tr(P, 0, 0); const CX = hatC().sub(b0).divideScalar(P); tr(-P, 0, 0);
+    tr(0, P, 0); const CY = hatC().sub(b0).divideScalar(P); tr(0, -P, 0);
+    tr(0, 0, P); const CZ = hatC().sub(b0).divideScalar(P); tr(0, 0, -P);
+    const M = [[CX.x, CY.x, CZ.x], [CX.y, CY.y, CZ.y], [CX.z, CY.z, CZ.z]];
+    const det = M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1]) - M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0]) + M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0]);
+    if (Math.abs(det) < 1e-9) return;                                    // skeleton not posed yet — retry next frame
+    const cof = (i, j) => { const r = [0,1,2].filter(x => x!==i), c = [0,1,2].filter(x => x!==j);
+      return ((i+j)%2 ? -1 : 1) * (M[r[0]][c[0]]*M[r[1]][c[1]] - M[r[0]][c[1]]*M[r[1]][c[0]]); };
+    const Mi = [[0,0,0],[0,0,0],[0,0,0]]; for (let i=0;i<3;i++) for (let j=0;j<3;j++) Mi[i][j] = cof(j, i) / det;
+    const bodB = bnd(bodyMesh), midY = (bodB.mn.y + bodB.mx.y) / 2, head = bnd(bodyMesh, midY), h = bnd(hat);
+    const d = [ head.c.x - h.c.x,                                        // centre on the crown (x)
+                (bodB.mx.y - 0.30 * (h.mx.y - h.mn.y)) - h.mn.y - HAT_SEAT_DOWN,  // drop onto the crown (y)
+                head.c.z - h.c.z ];                                      // centre on the crown (z)
+    const o = [0,1,2].map(i => Mi[i][0]*d[0] + Mi[i][1]*d[1] + Mi[i][2]*d[2]);
+    tr(o[0], o[1], o[2]);
+    hat.geometry.computeBoundingSphere();
+    hatSeated = true;
   }
-  applyHatOffset();
-  const _v = new THREE.Vector3();
-  function hatWorld() {   // real on-screen hat location: skinned geometry centre carried by the Head bone
-    if (!hatParts[0]) return null;
-    hatParts[0].geometry.computeBoundingBox();
-    const c = hatParts[0].geometry.boundingBox.getCenter(new THREE.Vector3());
-    return (headBone ? headBone.localToWorld(c.clone()) : c);
-  }
-  window.hatInfo = () => {
-    const h = hatParts[0];
-    const info = { hatParts: hatParts.length, visible: h && h.visible, isSkinnedMesh: !!(h && h.isSkinnedMesh),
-      offset: { ...HAT_OFFSET },
-      geomCenterLocal: h ? (h.geometry.computeBoundingBox(), h.geometry.boundingBox.getCenter(new THREE.Vector3()).toArray().map(n=>+n.toFixed(3))) : null,
-      hatWorld: hatWorld() ? hatWorld().toArray().map(n=>+n.toFixed(2)) : null,
-      headBoneWorld: headBone ? headBone.getWorldPosition(_v).toArray().map(n=>+n.toFixed(2)) : null };
-    console.log('[hatInfo]', JSON.stringify(info)); return info;
-  };
-  window.tuneHat = (x = 0, y = 0, z = 0) => {
-    const before = hatWorld();
-    HAT_OFFSET.x = x; HAT_OFFSET.y = y; HAT_OFFSET.z = z; applyHatOffset();
-    const after = hatWorld();
-    console.log('[tuneHat] offset', JSON.stringify(HAT_OFFSET),
-      '| hatWorld before', before && before.toArray().map(n=>+n.toFixed(3)),
-      'after', after && after.toArray().map(n=>+n.toFixed(3)));
-    return HAT_OFFSET;
-  };
+  // run once the skeleton is actually posed by the mixer (wait a few frames, then retry if needed)
+  (function trySeat() {
+    if (hatSeated) return;
+    if (_seatTries++ < 3) { requestAnimationFrame(trySeat); return; }   // let the animation pose the skeleton first
+    try { seatFoamCap(); } catch (e) {}
+    if (!hatSeated && _seatTries < 120) requestAnimationFrame(trySeat);
+  })();
+
   window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); console.log('[tuneHatOpacity]', o); return o; };
-  window.NIMBLE = { scene, camera, hatParts, headBone };
+  window.NIMBLE = { scene, camera, hatParts, headBone, reseatHat: () => { hatSeated = false; hatParts[0] && (hatParts[0].userData._spun = true); seatFoamCap(); } };
   // --------------------------------------------------------------------------------
 
   mixer = new THREE.AnimationMixer(root);
