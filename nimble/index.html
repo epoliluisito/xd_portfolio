@@ -1257,9 +1257,9 @@ function setupNimble(nimbleGltf) {
   // a fixed geometry transform, so it stays seated in every animation pose.
   //   Tweakables: HAT_ROT_DEG (bill orientation) and HAT_SEAT_DOWN (how deep it sits).
   const HAT_ROT_DEG = { x: 0, y: 90, z: 0 };     // 90° spin -> bill worn backward
-  // Fine-tune, as fractions of head size, in the HEAD's own frame (so it never drifts as he
-  // bends). up -> +higher / -lower on the crown; fwd -> +toward his face; side -> +his right.
-  const HAT_SEAT = { up: -0.10, fwd: 0.18, side: 0.0 };
+  // Fine-tune, as fractions of head size. up -> +higher / -lower on the crown;
+  // cam -> +pulls it toward the camera (out of the plane behind him); side -> +his right.
+  const HAT_SEAT = { up: -0.10, cam: 0.24, side: 0.0 };
   let bodyMesh = null, headTopBone = null, eyesMesh = null;
   root.traverse(o => {
     if (o.isBone && /HeadTop/i.test(o.name)) headTopBone = o;
@@ -1313,15 +1313,14 @@ function setupNimble(nimbleGltf) {
     headBone.getWorldPosition(headW);
     (headTopBone || headBone).getWorldPosition(htW);
     const up = htW.clone().sub(headW); const hs = up.length() || 1; up.normalize();
-    // "forward" = from the crown toward the eyes (head-locked), flattened perpendicular to up,
-    // so +fwd reliably moves the cap toward his face (out of the plane behind him).
-    let fwdAx;
-    if (eyesMesh) { fwdAx = bnd(eyesMesh).c.sub(headW); fwdAx.addScaledVector(up, -fwdAx.dot(up)); fwdAx.normalize(); }
-    else { const me = headBone.matrixWorld.elements; fwdAx = new V(me[8], me[9], me[10]).normalize(); }
-    const sideAx = new V().crossVectors(up, fwdAx).normalize();
+    // Pull toward the camera (screen depth), flattened perpendicular to up so the height the user
+    // liked stays put; +cam brings the cap out of the plane behind him, toward the viewer.
+    const camDir = camera.position.clone().sub(htW);
+    camDir.addScaledVector(up, -camDir.dot(up)); camDir.normalize();
+    const sideAx = new V().crossVectors(up, camDir).normalize();
     const target = htW.clone()
       .addScaledVector(up,     hs * HAT_SEAT.up)
-      .addScaledVector(fwdAx,  hs * HAT_SEAT.fwd)
+      .addScaledVector(camDir, hs * HAT_SEAT.cam)
       .addScaledVector(sideAx, hs * HAT_SEAT.side);
     const d = [ target.x - h.c.x, target.y - h.c.y, target.z - h.c.z ];
     const o = [0,1,2].map(i => Mi[i][0]*d[0] + Mi[i][1]*d[1] + Mi[i][2]*d[2]);
