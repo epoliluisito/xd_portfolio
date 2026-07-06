@@ -1256,8 +1256,12 @@ function setupNimble(nimbleGltf) {
   // geometry translate and solve for the shift that drops it onto the crown. The result is
   // a fixed geometry transform, so it stays seated in every animation pose.
   //   Tweakables: HAT_ROT_DEG (bill orientation) and HAT_SEAT_DOWN (how deep it sits).
-  const HAT_ROT_DEG   = { x: 0, y: 90, z: 0 };   // 90° spin -> bill points backward
-  const HAT_SEAT_DOWN = 0.30;                     // bigger = lower on the head
+  const HAT_ROT_DEG = { x: 0, y: 90, z: 0 };     // 90° spin -> bill worn backward
+  // World-space fine-tune (metres). If the cap needs moving, nudge these and reload:
+  //   down  -> + lowers it onto the head / - raises it
+  //   side  -> + moves it to his right (screen left) / - his left
+  //   fwd   -> + toward the camera / - toward his back
+  const HAT_SEAT = { down: -0.04, side: 0.0, fwd: 0.0 };
   let bodyMesh = null;
   root.traverse(o => { if (o.isSkinnedMesh && !hatParts.includes(o) &&
     (!bodyMesh || o.geometry.attributes.position.count > bodyMesh.geometry.attributes.position.count)) bodyMesh = o; });
@@ -1301,9 +1305,11 @@ function setupNimble(nimbleGltf) {
       return ((i+j)%2 ? -1 : 1) * (M[r[0]][c[0]]*M[r[1]][c[1]] - M[r[0]][c[1]]*M[r[1]][c[0]]); };
     const Mi = [[0,0,0],[0,0,0],[0,0,0]]; for (let i=0;i<3;i++) for (let j=0;j<3;j++) Mi[i][j] = cof(j, i) / det;
     const bodB = bnd(bodyMesh), midY = (bodB.mn.y + bodB.mx.y) / 2, head = bnd(bodyMesh, midY), h = bnd(hat);
-    const d = [ head.c.x - h.c.x,                                        // centre on the crown (x)
-                (bodB.mx.y - 0.30 * (h.mx.y - h.mn.y)) - h.mn.y - HAT_SEAT_DOWN,  // drop onto the crown (y)
-                head.c.z - h.c.z ];                                      // centre on the crown (z)
+    // Seat by the hat's CENTROID (h.c) — crown-weighted, so the sideways bill can't drag the
+    // placement off. Put that centroid over the head's centre (x/z) and just above the crown (y).
+    const d = [ (head.c.x + HAT_SEAT.side) - h.c.x,
+                (bodB.mx.y - HAT_SEAT.down) - h.c.y,
+                (head.c.z + HAT_SEAT.fwd) - h.c.z ];
     const o = [0,1,2].map(i => Mi[i][0]*d[0] + Mi[i][1]*d[1] + Mi[i][2]*d[2]);
     if (!o.every(Number.isFinite) || Math.hypot(o[0], o[1], o[2]) > 12) return;   // wild calibration — retry
     tr(o[0], o[1], o[2]);
