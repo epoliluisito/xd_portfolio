@@ -1,0 +1,2594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Nimble's Dish Dash</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    font-family: system-ui, -apple-system, sans-serif;
+    /* dark fallback that reads as depth until the WebGL backdrop paints */
+    background: radial-gradient(ellipse at 50% 30%, #1a2333 0%, #0e1118 70%);
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none; overscroll-behavior: none;
+  }
+  canvas { display: block; touch-action: none; }
+  #loading {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(14, 17, 24, 1); color: #eaf6ee; z-index: 100;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    transition: background 0.6s, opacity 0.5s;
+  }
+  #loading.ready { background: rgba(10, 14, 20, 0.5); }
+  #guide-card {
+    text-align: center; max-width: 580px; padding: 28px 44px;
+    background: rgba(16, 22, 32, 0.78); border: 1px solid rgba(127, 227, 160, 0.28);
+    border-radius: 18px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+  }
+  #guide-title { font-size: 34px; font-weight: 900; letter-spacing: 3px; color: #7fe3a0; margin-bottom: 6px; text-shadow: 0 0 18px rgba(127,227,160,0.4); }
+  #guide-sub { font-size: 14px; color: #9fb8c8; margin-bottom: 14px; letter-spacing: 1px; }
+
+  /* ---- Nimble loading gif, in a rounded white frame at the top of the guide ---- */
+  #nimble-loader {
+    width: 100%; max-width: 340px; margin: 0 auto 14px; border-radius: 18px;
+    overflow: hidden; background: #ffffff;
+    border: 1px solid rgba(127, 227, 160, 0.3);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    aspect-ratio: 16 / 10;
+  }
+  #nimble-gif { width: 100%; height: 100%; display: block; object-fit: contain; }   /* full gif, no crop */
+  .guide-rows { text-align: left; display: inline-block; margin-bottom: 16px; }
+  .guide-row { display: flex; align-items: center; margin: 9px 0; font-size: 16px; color: #dfeaf2; }
+  .guide-row .key { min-width: 60px; text-align: center; margin-right: 14px; padding: 5px 8px; font-size: 14px; }
+  .guide-row .desc b { color: #7fe3a0; }
+  #bar-wrap { width: 420px; max-width: 80vw; height: 10px; background: rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden; margin: 8px auto 8px; }
+  #bar { width: 0%; height: 100%; background: linear-gradient(90deg, #39d24e, #7fe3a0); border-radius: 6px; transition: width 0.25s; }
+  #load-status { font-size: 13px; letter-spacing: 2px; color: #7fe3a0; min-height: 20px; font-weight: bold; }
+  #press-key { display: none; font-size: 18px; font-weight: 800; letter-spacing: 3px; color: #fff; margin-top: 4px; animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+  #vignette {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(5,8,14,0.30) 100%);
+  }
+  #water-tint {   /* Level 3 underwater depth wash — 3D god rays/caustics do the shimmer now */
+    position: fixed; inset: 0; pointer-events: none; z-index: 4; display: none;
+    background:
+      radial-gradient(ellipse at 50% 12%, rgba(120,205,240,0.10) 0%, rgba(0,0,0,0) 45%),
+      linear-gradient(180deg, rgba(18,96,138,0.08) 0%, rgba(3,24,46,0.42) 100%);
+  }
+  #flash { position: fixed; inset: 0; background: #eaffff; opacity: 0; pointer-events: none; z-index: 42; }
+  /* droplets streaking off the "lens" the instant Nimble plunges */
+  #splash-veil {
+    position: fixed; inset: 0; pointer-events: none; z-index: 43; opacity: 0;
+    background:
+      radial-gradient(circle at 20% 28%, rgba(232,255,255,0.55) 0 5px, transparent 7px),
+      radial-gradient(circle at 72% 18%, rgba(232,255,255,0.45) 0 8px, transparent 11px),
+      radial-gradient(circle at 44% 58%, rgba(232,255,255,0.40) 0 4px, transparent 6px),
+      radial-gradient(circle at 86% 66%, rgba(232,255,255,0.42) 0 7px, transparent 9px),
+      radial-gradient(circle at 12% 78%, rgba(232,255,255,0.35) 0 6px, transparent 9px),
+      radial-gradient(circle at 60% 88%, rgba(232,255,255,0.33) 0 5px, transparent 8px),
+      radial-gradient(ellipse at 50% 0%, rgba(205,248,255,0.28) 0%, transparent 55%);
+  }
+  #splash-veil.run { animation: veilrun 0.9s ease-out forwards; }
+  @keyframes veilrun {
+    0%   { opacity: 0.9; transform: translateY(-8px);  filter: blur(0.4px); }
+    100% { opacity: 0;   transform: translateY(34px);  filter: blur(1.6px); }
+  }
+  #hud {
+    position: absolute; top: 16px; left: 16px; z-index: 10;
+    background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
+    padding: 12px 16px; color: #fff; font-weight: bold; min-width: 190px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  }
+  .hud-row { display: flex; justify-content: space-between; gap: 18px; margin-bottom: 7px; font-size: 15px; }
+  .hud-row:last-child { margin-bottom: 0; }
+  .hud-row span:first-child { opacity: 0.85; font-weight: 600; }
+  .fairy-text { color: #39d24e; }
+  .danger-text { color: #ff5544; }
+  .level-text { color: #7fe3a0; }
+  #clean-meter { height: 7px; margin-top: 4px; background: rgba(255,255,255,0.14); border-radius: 5px; overflow: hidden; }
+  #clean-bar { width: 0%; height: 100%; background: linear-gradient(90deg, #39d24e, #bff5d2); border-radius: 5px; transition: width 0.2s; }
+  #controls-help {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: rgba(16, 20, 30, 0.55); backdrop-filter: blur(8px);
+    border-radius: 10px; padding: 9px 18px; color: #cfe; font-size: 13px; text-align: center;
+    letter-spacing: 0.04em; border: 1px solid rgba(255, 255, 255, 0.1); white-space: nowrap;
+  }
+  .key {
+    display: inline-block; background: #1c2740; border: 1px solid #38507a;
+    border-radius: 5px; padding: 2px 7px; margin: 0 3px; color: #bfe;
+    font-weight: bold; font-size: 0.92em;
+  }
+  #banner {
+    position: absolute; top: 38%; left: 50%; transform: translateX(-50%); z-index: 20;
+    color: #fff; font-size: 46px; font-weight: 900; letter-spacing: 3px;
+    text-shadow: 0 3px 18px rgba(0,0,0,0.6), 0 0 20px rgba(127,227,160,0.6);
+    opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center;
+  }
+  #countdown {
+    position: absolute; top: 30%; left: 50%; transform: translateX(-50%); z-index: 25;
+    color: #fff; font-size: 140px; font-weight: 900; letter-spacing: 6px;
+    text-shadow: 0 4px 30px rgba(0,0,0,0.7), 0 0 40px rgba(127,227,160,0.8);
+    pointer-events: none; display: none;
+  }
+  #countdown.pop { animation: cdpop 0.75s ease-out; }
+  @keyframes cdpop {
+    0%   { transform: translateX(-50%) scale(1.7); opacity: 0; }
+    25%  { transform: translateX(-50%) scale(1.0); opacity: 1; }
+    80%  { transform: translateX(-50%) scale(0.95); opacity: 1; }
+    100% { transform: translateX(-50%) scale(0.9); opacity: 0.6; }
+  }
+  .popup {
+    position: absolute; z-index: 15; pointer-events: none;
+    font-weight: 900; font-size: 22px; letter-spacing: 1px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.55);
+    animation: floatup 0.9s ease-out forwards;
+  }
+  @keyframes floatup {
+    0%   { transform: translate(-50%, 0) scale(0.6); opacity: 0; }
+    15%  { transform: translate(-50%, -14px) scale(1.15); opacity: 1; }
+    100% { transform: translate(-50%, -70px) scale(1.0); opacity: 0; }
+  }
+  #gameover {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 50;
+    background: rgba(10, 13, 20, 0.75); backdrop-filter: blur(6px);
+    display: none; flex-direction: column; justify-content: center; align-items: center;
+    color: #fff; text-align: center;
+  }
+  #gameover h1 { font-size: 52px; margin: 0 0 10px; letter-spacing: 4px; text-shadow: 0 0 24px rgba(255,85,68,0.7); }
+  #gameover p  { font-size: 22px; margin: 6px 0; color: #cfe; }
+  #gameover .hint { margin-top: 24px; font-size: 16px; color: #7fe3a0; }
+
+  /* ---- On-screen console (mobile / tablet). Sizes are viewport-relative (vh),
+         so the whole console always fits the height of whatever phone it's on. ---- */
+  #touch-controls {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: none; justify-content: space-between; align-items: flex-end;
+    padding: clamp(6px, 2vh, 16px) calc(clamp(8px, 2.5vh, 20px) + env(safe-area-inset-right))
+             calc(clamp(6px, 2vh, 16px) + env(safe-area-inset-bottom)) calc(clamp(8px, 2.5vh, 20px) + env(safe-area-inset-left));
+    pointer-events: none;
+  }
+  #touch-controls .pad { display: flex; gap: clamp(8px, 2vh, 16px); align-items: flex-end; }
+  .tbtn {
+    pointer-events: auto; -webkit-user-select: none; user-select: none; touch-action: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 50%; color: #eaf6ee; font-weight: 800; letter-spacing: 0.5px;
+    background: rgba(16, 22, 32, 0.5); backdrop-filter: blur(6px);
+    border: 1.5px solid rgba(127, 227, 160, 0.35); box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    transition: transform 0.08s, background 0.08s;
+    width: clamp(48px, 13vh, 90px); height: clamp(48px, 13vh, 90px);
+  }
+  .tbtn.big  { width: clamp(58px, 16vh, 104px); height: clamp(58px, 16vh, 104px); }
+  .tbtn .ico { font-size: clamp(18px, 5vh, 30px); line-height: 1; }
+  .tbtn .lbl { font-size: clamp(8px, 1.9vh, 11px); opacity: 0.85; margin-top: 3px; text-transform: uppercase; }
+  .tbtn.active { transform: scale(0.9); background: rgba(57, 210, 78, 0.5); }
+  .tbtn.jump { border-color: rgba(191, 232, 255, 0.55); }
+  .tbtn.fire { border-color: rgba(255, 210, 78, 0.55); }
+
+  /* per-level buttons: L1 = slide/soap/jump, L2 (surf) = up/down/jump, L3 (swim) = up/down/soap */
+  /* ---- per-level button visibility ----
+     L1 (run):    soap = far LEFT,  slide = mid-right,  jump = far RIGHT
+     L2 (surf):   up/down = left,   jump = right
+     L3 (swim):   up/down = left,   soap = right
+     L4 (puzzle): up/down = left (aim),  soap = right (shoot) */
+  #touch-controls .l2only,
+  #touch-controls .l2jump,
+  #touch-controls .l34soap { display: none; }               /* default view = Level 1 */
+  body.surf #touch-controls .l1soap,  body.swim #touch-controls .l1soap,  body.puzzle #touch-controls .l1soap,
+  body.surf #touch-controls .l1only,  body.swim #touch-controls .l1only,  body.puzzle #touch-controls .l1only,
+  body.surf #touch-controls .l1jump,
+  body.swim #touch-controls .jump,    body.puzzle #touch-controls .jump { display: none; }
+  body.surf #touch-controls .l2only,  body.swim #touch-controls .l2only,  body.puzzle #touch-controls .l2only { display: flex; }
+  body.surf #touch-controls .l2jump { display: flex; }
+  body.swim #touch-controls .l34soap, body.puzzle #touch-controls .l34soap { display: flex; }
+
+  .touchkey { display: none; }
+  body.touch .kbd { display: none; }
+  body.touch .touchkey { display: inline-block; }
+  body.touch #controls-help { display: none; }
+  body.touch #touch-controls { display: flex; }
+
+  /* ---- Force landscape on phones ---- */
+  #rotate-prompt {
+    position: fixed; inset: 0; z-index: 200; display: none;
+    flex-direction: column; align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(ellipse at 50% 35%, #1a2333 0%, #0b0f16 75%); color: #eaf6ee; padding: 24px;
+  }
+  #rotate-prompt .rot-ico { font-size: 72px; line-height: 1; animation: rotwiggle 1.8s ease-in-out infinite; transform-origin: 50% 50%; }
+  #rotate-prompt .rot-title { font-size: 20px; font-weight: 900; letter-spacing: 1px; margin-top: 20px; color: #7fe3a0; }
+  #rotate-prompt .rot-sub { font-size: 13px; color: #9fb8c8; margin-top: 8px; }
+  @keyframes rotwiggle { 0%,100% { transform: rotate(-15deg); } 50% { transform: rotate(75deg); } }
+
+  /* ---- Responsive layout ---- */
+  @media (max-width: 760px) {
+    #guide-card { max-width: 92vw; padding: 20px 20px; border-radius: 16px; }
+    #nimble-loader { max-width: 260px; margin-bottom: 10px; }
+    #guide-title { font-size: 24px; letter-spacing: 2px; }
+    #guide-sub { font-size: 12px; margin-bottom: 14px; }
+    .guide-row { font-size: 13px; margin: 6px 0; }
+    .guide-row .key { min-width: 46px; margin-right: 10px; }
+    #hud { top: 10px; left: 10px; padding: 9px 12px; min-width: 0; border-radius: 10px; }
+    .hud-row { font-size: 12px; gap: 12px; margin-bottom: 5px; }
+    #banner { font-size: 30px; }
+    #countdown { font-size: 92px; top: 32%; }
+    #gameover h1 { font-size: 38px; }
+    #gameover p { font-size: 18px; }
+  }
+  @media (max-height: 480px) {
+    #guide-card { padding: 12px 18px; max-height: 94vh; overflow-y: auto; }
+    #nimble-loader { max-width: 168px; margin-bottom: 4px; }
+    #guide-title { font-size: 20px; margin-bottom: 2px; }
+    #guide-sub { font-size: 11px; margin-bottom: 8px; }
+    .guide-rows { margin-bottom: 8px; }
+    .guide-row { margin: 3px 0; font-size: 12px; }
+    #hud { top: 8px; left: 8px; padding: 7px 10px; border-radius: 9px; }
+    .hud-row { font-size: 11px; gap: 10px; margin-bottom: 4px; }
+    #banner { font-size: 26px; }
+    #countdown { font-size: 74px; top: 30%; }
+    #gameover h1 { font-size: 30px; }
+    #gameover p { font-size: 15px; }
+    #gameover .hint { margin-top: 14px; }
+  }
+  /* ---- Short landscape (phone held sideways): two-column guide so the whole
+         thing fits the limited height without scrolling ---- */
+  @media (max-height: 520px) and (orientation: landscape) {
+    #guide-card { display: flex; flex-direction: row; align-items: center; text-align: left;
+                  gap: 18px; max-width: 94vw; max-height: 94vh; padding: 12px 20px; }
+    #nimble-loader { flex: 0 0 32vw; max-width: 280px; margin: 0; align-self: center; }
+    #guide-info { flex: 1 1 auto; min-width: 0; }
+    #guide-title { font-size: 20px; margin-bottom: 2px; }
+    #guide-sub { font-size: 11px; margin-bottom: 6px; }
+    .guide-rows { margin-bottom: 6px; }
+    .guide-row { margin: 3px 0; font-size: 12px; }
+    .guide-row .key { min-width: 42px; margin-right: 8px; padding: 3px 6px; }
+    #bar-wrap { width: 100%; max-width: none; margin: 6px 0; }
+    #load-status { font-size: 12px; min-height: 16px; }
+    #press-key { font-size: 15px; margin-top: 2px; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<div id="loading">
+  <div id="guide-card">
+    <div id="nimble-loader" aria-hidden="true">
+      <img id="nimble-gif" src="./nimble_loading.gif" alt="" decoding="async">
+    </div>
+    <div id="guide-info">
+      <div id="guide-title">NIMBLE'S DISH DASH</div>
+      <div id="guide-sub">Dash the counter, clean the dishes, dodge the mess!</div>
+      <div class="guide-rows">
+        <div class="guide-row"><span class="key kbd">SPACE</span><span class="key touchkey">JUMP</span><span class="desc"><b>Jump</b> — leap over hazards &amp; grab high drops</span></div>
+        <div class="guide-row"><span class="key kbd">SHIFT</span><span class="key touchkey">SLIDE</span><span class="desc"><b>Slide</b> — duck under rolling pins, ride the oil</span></div>
+        <div class="guide-row"><span class="key kbd">F</span><span class="key touchkey">SOAP</span><span class="desc"><b>Fire soap</b> — clean dirty dishes, pop slimes</span></div>
+        <div class="guide-row"><span class="key kbd">&larr; &rarr;</span><span class="key touchkey">◀ ▶</span><span class="desc"><b>Brake</b> / <b>Boost</b> — bend your pace</span></div>
+        <div class="guide-row"><span class="key">&#11088;</span><span class="desc"><b>Stars</b> restore a life — don't let them float by!</span></div>
+      </div>
+      <div id="bar-wrap"><div id="bar"></div></div>
+      <div id="load-status">PREPARING THE KITCHEN&hellip;</div>
+      <div id="press-key">PRESS ANY KEY TO START</div>
+    </div>
+  </div>
+</div>
+<div id="water-tint"></div>
+<div id="flash"></div>
+<div id="splash-veil"></div>
+<div id="vignette"></div>
+
+<div id="hud">
+  <div class="hud-row"><span class="level-text">Level:</span> <span id="level" class="level-text">1</span></div>
+  <div class="hud-row"><span class="danger-text">Lives:</span> <span id="lives" class="danger-text">9</span></div>
+  <div class="hud-row"><span>Score:</span> <span id="score">0</span></div>
+  <div class="hud-row"><span>Distance:</span> <span id="dist">0 m</span></div>
+  <div class="hud-row" id="ammo-row"><span class="fairy-text">Soap Ammo:</span> <span id="ammo" class="fairy-text">10</span></div>
+  <div class="hud-row" id="clean-row" style="display:none"><span class="fairy-text">Surface:</span> <span id="clean-count" class="fairy-text">0 / 24</span></div>
+  <div id="clean-meter" style="display:none"><div id="clean-bar"></div></div>
+</div>
+
+<div id="banner"></div>
+<div id="countdown"></div>
+
+<div id="gameover">
+  <h1>GAME OVER</h1>
+  <p>Score: <span id="go-score">0</span></p>
+  <p>Distance: <span id="go-dist">0 m</span></p>
+  <div class="hint"><span class="kbd">Press <span class="key">R</span> to run again</span><span class="touchkey">Tap to run again</span></div>
+</div>
+
+<div id="controls-help">
+  <span class="key">SPACE</span> Jump &nbsp;|&nbsp;
+  <span class="key">SHIFT</span> Slide &nbsp;|&nbsp;
+  <span class="key">F</span> Fire Soap &nbsp;|&nbsp;
+  <span class="key">&larr; &rarr;</span> Brake / Boost
+</div>
+
+<div id="touch-controls">
+  <div class="pad pad-left">
+    <div class="tbtn fire l1soap" data-act="fire"><span class="ico">🫧</span><span class="lbl">Soap</span></div>
+    <div class="tbtn big l2only" data-act="up"><span class="ico">▲</span><span class="lbl">Up</span></div>
+    <div class="tbtn big l2only" data-act="down"><span class="ico">▼</span><span class="lbl">Down</span></div>
+  </div>
+  <div class="pad pad-right">
+    <div class="tbtn big l1only" data-act="slide"><span class="ico">⬇</span><span class="lbl">Slide</span></div>
+    <div class="tbtn fire l34soap" data-act="fire"><span class="ico">🫧</span><span class="lbl">Soap</span></div>
+    <div class="tbtn big jump l1jump" data-act="jump"><span class="ico">⬆</span><span class="lbl">Jump</span></div>
+    <div class="tbtn big jump l2jump" data-act="jump"><span class="ico">⬆</span><span class="lbl">Jump</span></div>
+  </div>
+</div>
+
+<div id="rotate-prompt">
+  <div class="rot-ico">📱</div>
+  <div class="rot-title">ROTATE YOUR DEVICE</div>
+  <div class="rot-sub">Nimble's Dish Dash plays in landscape</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ----------------------------------------------------
+// CONFIG — single lane runner: Nimble never stops, the
+// kitchen comes to him. One Z lane, all action in X/Y.
+// ----------------------------------------------------
+const LANE_Z = 2.2;                 // the one depth lane everything lives on
+const BASE_SPEED = 6.3;             // world-scroll speed (−30%); Nimble's own anim/controls are separate
+const LEVEL_LEN = 500;              // metres of Level 1 before the skate hand-off
+const angleCheat = 0.49;
+const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
+const SLIDE_DUR = 0.72;             // shorter, snappier slide (hitbox + anim end together)
+
+// player capsule (world units, after CHAR_SCALE)
+const STAND_H = 2.05;               // standing head height
+const SLIDE_H = 0.95;               // sliding head height
+
+// --- Level 2 "surf & clean" mode ---
+const SURF_Z_MIN = 0.2;             // steer band across the counter's depth (up = away)
+const SURF_Z_MAX = 4.6;
+const STEER_SPEED = 5.2;            // z units per second while a steer key/button is held
+const SURF_GOAL_BASE = 48;          // dirt patches to scrub to finish level 2 (twice as long)
+const SURF_LIFT = 0.17;             // ride height on Level 2 so the (thick) sponge sits ON the counter, not through it
+
+// --- Level 3 "dive & swim" mode (the water surface is y = 0; he swims below it) ---
+const SWIM_Y_MIN = -5.4;            // deepest
+const SWIM_Y_MAX = -1.0;            // just under the surface
+const SWIM_STEER = 4.6;             // y units per second while up/down held
+const SWIM_MID = (SWIM_Y_MIN + SWIM_Y_MAX) / 2;   // ~ -3.2
+const SWIM_PITCH = 0.42;            // nose-up while swimming so he doesn't look down
+const SWIM_LEN = 285;              // metres of Level 3 (swim is slower, so shorter distance = same play-time as L1)
+const DIVE_LAUNCH_T = 1.0;          // seconds rolling up to the ramp before he launches
+const RAMP_HALF = 1.7;             // ramp half-width
+const RAMP_LIP_Y = 2.4;            // ramp launch-lip height
+const RAMP_RIDE = 0.5;             // seconds spent riding up the ramp face
+const RAMP_ANGLE = Math.atan2(RAMP_LIP_Y, RAMP_HALF * 2);   // incline he tilts to match
+const DIVE_V0 = 13.5;              // launch speed — big, epic hang time
+const DIVE_G  = 6.2;               // low gravity so the jump feels floaty/epic
+
+const state = {
+  level: 1, score: 0, ammo: 10, lives: 9,
+  speed: BASE_SPEED, boost: false, brake: false,
+  gravity: 26.0, jumpPower: 12.0,   // higher pop: apex ~2.8 m, airtime ~0.92 s — clears obstacles comfortably
+  onGround: true, isSliding: false, isGameOver: false,
+  invuln: 0, excite: 0, started: false,
+  mode: 'run',                      // 'run' (L1) → 'surf' (L2) → 'swim' (L3)
+  steerUp: false, steerDown: false, targetZ: LANE_Z, targetY: 0,
+  surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0, surfStartX: 0, warnedL2: false, crossedGate: false,
+  swimStartX: 0, paused: false,
+  diveT: 0, diveGearLost: false, diveSplashed: false, divePitch: 0, shake: 0,   // 2→3 ramp/dive cinematic
+  jumpT: 0, jumpSplashed: false, aimL: false, aimR: false                        // L3→L4 jump-out + puzzle aim
+};
+const MAX_LIVES = 12;
+const entities = [];
+const soaps = [];
+const fgPlanes = [];
+
+// Per-model tuning. floatY = collectible hover band (jump to grab the high ones).
+const typeCfg = {
+  emerald: { type:'ammo',      size:0.55, floatY:[1.6, 2.7] },
+  star:    { type:'score',     size:0.8,  floatY:[2.5, 3.2] },
+  slime:   { type:'enemy',     size:1.0,  ground:true },
+  oil:     { type:'hazard', subType:'slide',  size:1.6, ground:true },
+  plant:   { type:'hazard', subType:'damage', size:1.3, ground:true, sway:true },
+  salt:    { type:'hazard', subType:'slow',   size:0.8, ground:true, roll:true },
+  fork:    { type:'cleanable', size:1.1, ground:true, bounce:true },
+  plates:  { type:'cleanable', size:1.3, ground:true, bounce:true },
+  pin:     { type:'hazard', subType:'duck', size:2.4 }   // rolling pin — slide under it!
+};
+
+// ----------------------------------------------------
+// Renderer / Scene / Camera / Lights
+// ----------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.26;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(35, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(4, 3.0, 17);
+scene.add(camera);   // so the backdrop (a child of the camera) is traversed & rendered
+
+// Adaptive framing. Desktop keeps the original 35° feel exactly. Touch devices
+// (phones / tablets) get a wider, consistent view so the action isn't cropped or
+// zoomed in — we preserve the desktop horizontal span whatever the landscape aspect,
+// and never go tighter than a comfortable minimum.
+const IS_TOUCH_DEV = matchMedia('(hover: none) and (pointer: coarse)').matches;
+// Mobile: lock the HORIZONTAL field of view. When the phone's address bar shows/hides
+// (or the device rotates) the window's aspect ratio changes. A fixed *vertical* FOV
+// would then crop the sides in/out — that was the "suddenly crops in" bug. By holding
+// the horizontal FOV constant, the incoming action always stays the same width; only a
+// little headroom at the top breathes, which is unobtrusive. Desktop is untouched: it
+// keeps its original fixed 35° vertical FOV exactly.
+const H_FOV_MOBILE = 65;     // degrees of horizontal view on phones/tablets — smaller = more zoomed in (~15% closer than 72)
+function fitCamera() {
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = aspect;
+  if (IS_TOUCH_DEV) {
+    const a = Math.max(1, aspect);   // guard the brief near-square frame during rotation
+    camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(H_FOV_MOBILE) / 2) / a));
+  } else {
+    camera.fov = 35;                 // desktop: unchanged
+  }
+  camera.updateProjectionMatrix();
+}
+fitCamera();
+
+// backdrop: a textured plane parented to the camera so it always fills the view.
+// Lives inside the WebGL scene (unlike the old CSS layer) so it can never fail to
+// paint behind the transparent canvas, and it scrolls / swaps levels reliably.
+let bgMesh = null, bgTexL1 = null, bgTexL2 = null, bgTexL3 = null;
+const BG_IMG_ASPECT = 14329 / 1184;   // native panorama proportions
+function fitBackdrop() {
+  if (!bgMesh) return;
+  const dist = 42;
+  const h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist * 1.08;
+  const w = h * camera.aspect;
+  bgMesh.scale.set(w, h, 1);
+  const map = bgMesh.material.map;
+  if (map) {                                        // use the ACTIVE image's real aspect (BG_02/03 differ from BG_1)
+    const imgAspect = (map.image && map.image.width) ? map.image.width / map.image.height : BG_IMG_ASPECT;
+    map.repeat.x = (w / h) / imgAspect;
+  }
+}
+
+const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.85);
+dirLight.position.set(8, 9, 6);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 0.5; dirLight.shadow.camera.far = 34;
+dirLight.shadow.camera.left = -15; dirLight.shadow.camera.right = 15;
+dirLight.shadow.bias = -0.001;
+scene.add(dirLight); scene.add(dirLight.target);
+scene.add(new THREE.HemisphereLight(0xfff2dd, 0x8a6b4a, 0.6));
+const rimLight = new THREE.DirectionalLight(0xbfe8ff, 1.05);  // cool rim from behind — cinematic edge
+rimLight.position.set(-6, 6, -7);
+scene.add(rimLight);
+const fillLight = new THREE.DirectionalLight(0xd8ecff, 0.35); // soft camera-side fill: keeps his backside readable mid-air
+fillLight.position.set(2, 4, 14);
+scene.add(fillLight);
+
+// ----------------------------------------------------
+// Materials — Nimble glass, frothy foam, emerald drops
+// ----------------------------------------------------
+function addRim(mat, color, strength) {          // fresnel rim glow, sells the froth
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uRimColor = { value: new THREE.Color(color) };
+    sh.uniforms.uRimStrength = { value: strength };
+    sh.fragmentShader = 'uniform vec3 uRimColor;\nuniform float uRimStrength;\n' + sh.fragmentShader
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        float rimF = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0), 3.0);
+        totalEmissiveRadiance += uRimColor * rimF * uRimStrength;`);
+  };
+}
+
+const P = { transmission: 0.985, ior: 1.45, roughness: 0.05, thickness: 0.4, attenuationDistance: 2.2, attenuationColor: '#39d24e', clearcoat: 1.0 };
+const thicknessTex = new THREE.TextureLoader().load('./nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
+function getGlassMat(src, useThickMap = true) {
+  const mat = new THREE.MeshPhysicalMaterial({
+    map: (src && src.map) || null, normalMap: (src && src.normalMap) || null,
+    metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
+    thickness: P.thickness, thicknessMap: useThickMap ? thicknessTex : null,
+    attenuationColor: new THREE.Color(P.attenuationColor), attenuationDistance: P.attenuationDistance,
+    clearcoat: P.clearcoat, clearcoatRoughness: 0.06,
+    iridescence: 0.18, iridescenceIOR: 1.3,
+    envMapIntensity: 1.5, specularIntensity: 1.0, transparent: true
+  });
+  if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+  addRim(mat, '#8affc1', 0.22);
+  return mat;
+}
+const bubbleTex = new THREE.TextureLoader().load('./bubble_normal.png', t => {
+  t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(6, 6);
+});
+function getFoamMat() {
+  // frothier + more see-through: higher transmission, real opacity, punchier bubble
+  // normals and iridescent rim so the hat & board read as suds, not plastic.
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#eef5ff'), roughness: 0.5, metalness: 0,
+    sheen: 1.0, sheenRoughness: 0.3, sheenColor: new THREE.Color('#ffffff'),
+    transmission: 0.55, ior: 1.33, thickness: 0.35,
+    clearcoat: 0.6, clearcoatRoughness: 0.25, iridescence: 0.7, iridescenceIOR: 1.30,
+    iridescenceThicknessRange: [120, 460],
+    normalMap: bubbleTex, normalScale: new THREE.Vector2(1.7, 1.7),
+    envMapIntensity: 1.5, transparent: true, opacity: 0.82, depthWrite: false
+  });
+  addRim(mat, '#dff3ff', 0.6);
+  return mat;
+}
+const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
+const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
+const woodMat = new THREE.MeshStandardMaterial({ color: 0xd8a76a, roughness: 0.55, metalness: 0.05 });
+const woodDarkMat = new THREE.MeshStandardMaterial({ color: 0xa87d4c, roughness: 0.6, metalness: 0.05 });
+
+// ----------------------------------------------------
+// Rolling pin — the slide-under obstacle (procedural)
+// ----------------------------------------------------
+const PIN_Y = 1.55;         // centre height
+const PIN_R = 0.17;         // barrel radius -> bottom ~1.38: slide clears it, running head does not
+const PIN_CLEAR_Y = PIN_Y + PIN_R + 0.02;   // jump-over needs feet above this
+function makeRollingPin() {
+  const g = new THREE.Group();
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(PIN_R, PIN_R, 2.0, 20), woodMat);
+  barrel.rotation.z = Math.PI / 2;
+  barrel.castShadow = true;
+  g.add(barrel);
+  for (const s of [-1, 1]) {
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.34, 12), woodDarkMat);
+    handle.rotation.z = Math.PI / 2;
+    handle.position.x = s * 1.17;
+    handle.castShadow = true;
+    g.add(handle);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 10), woodDarkMat);
+    cap.position.x = s * 1.34;
+    g.add(cap);
+  }
+  return g;
+}
+
+// ----------------------------------------------------
+// LEVEL 2 props — procedural greasy dirt & soapy froth
+// ----------------------------------------------------
+// A blotchy grease decal, drawn to a canvas so it needs no image asset.
+function makeDirtTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 128, 128);
+  const tones = ['rgba(74,54,34,0.95)', 'rgba(96,72,40,0.9)', 'rgba(58,40,26,0.95)', 'rgba(120,96,52,0.8)'];
+  for (let i = 0; i < 22; i++) {
+    const x = 64 + (Math.random() - 0.5) * 84, y = 64 + (Math.random() - 0.5) * 84;
+    const r = 10 + Math.random() * 26;
+    const grd = g.createRadialGradient(x, y, 1, x, y, r);
+    const col = tones[(Math.random() * tones.length) | 0];
+    grd.addColorStop(0, col); grd.addColorStop(1, 'rgba(60,44,28,0)');
+    g.fillStyle = grd; g.beginPath(); g.arc(x, y, r, 0, 6.28); g.fill();
+  }
+  for (let i = 0; i < 60; i++) {          // crumbs / specks
+    g.fillStyle = `rgba(${30 + Math.random() * 40 | 0},${20 + Math.random() * 30 | 0},14,${0.4 + Math.random() * 0.5})`;
+    g.beginPath(); g.arc(Math.random() * 128, Math.random() * 128, 0.6 + Math.random() * 2.2, 0, 6.28); g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const dirtTextures = [makeDirtTexture(), makeDirtTexture(), makeDirtTexture()];
+function makeDirtPatch(size) {
+  const tex = dirtTextures[(Math.random() * dirtTextures.length) | 0];
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex, transparent: true, roughness: 0.95, metalness: 0.0,
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1
+  });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+  m.rotation.x = -Math.PI / 2;
+  m.rotation.z = Math.random() * Math.PI * 2;
+  m.position.y = 0.035;
+  m.receiveShadow = false;
+  return m;
+}
+
+// soapy froth decals scattered on the steel counter (sprite pool, recycled)
+const frothDecals = [];
+let frothDecalsBuilt = false;
+function buildCounterFroth() {
+  if (frothDecalsBuilt) return;
+  frothDecalsBuilt = true;
+  for (let i = 0; i < 26; i++) {
+    const mat = new THREE.SpriteMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.5, color: 0xffffff });
+    const s = new THREE.Sprite(mat);
+    s.scale.setScalar(0.7 + Math.random() * 1.5);
+    s.position.set(playerGroup.position.x + 10 + i * 3.4, 0.06, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+    s.visible = false;
+    scene.add(s);
+    frothDecals.push(s);
+  }
+}
+
+// Level 3 ambient bubbles — a pool of sprites that drift upward and recycle.
+const bubbles = [];
+let bubblesBuilt = false;
+function buildBubbles() {
+  if (bubblesBuilt) return;
+  bubblesBuilt = true;
+  for (let i = 0; i < 34; i++) {
+    const mat = new THREE.SpriteMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.32, color: 0xcdeeff });
+    const s = new THREE.Sprite(mat);
+    s.scale.setScalar(0.1 + Math.random() * 0.4);
+    s.userData.spd = 0.6 + Math.random() * 1.3;
+    s.position.set(playerGroup.position.x + Math.random() * 40 - 8,
+                   SWIM_Y_MIN - 1 + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN + 3),   // deep → surface
+                   LANE_Z + (Math.random() * 5 - 2.5));
+    s.visible = false;
+    scene.add(s);
+    bubbles.push(s);
+  }
+}
+
+// Level 3 seabed — a scrolling row of dirty plates along the very bottom
+const seabed = [];
+let seabedBuilt = false;
+const SEABED_Y = -8.2;
+function buildSeabed() {
+  if (seabedBuilt || !models.plates) return;
+  seabedBuilt = true;
+  const cfg = typeCfg.plates;
+  for (let i = 0; i < 16; i++) {
+    const m = models.plates.clone();
+    m.scale.setScalar(cfg.scaleFactor * (1.4 + Math.random() * 1.2));   // bigger, like a heap
+    m.rotation.set(Math.random() * 0.3, Math.random() * 6.28, Math.random() * 0.3);
+    m.position.set(playerGroup.position.x + i * 6 - 10, SEABED_Y + Math.random() * 0.8, LANE_Z + (Math.random() * 6 - 3));
+    scene.add(m);
+    seabed.push(m);
+  }
+}
+
+// the water surface at y=0 — a live, rippling shader surface he punches through
+let waterSurface = null, waterMat = null;
+function buildWaterSurface() {
+  if (waterSurface) return;
+  waterMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    uniforms: {
+      uTime:    { value: 0 },
+      uCamPos:  { value: new THREE.Vector3() },
+      uDeep:    { value: new THREE.Color(0x0b3a55) },
+      uShallow: { value: new THREE.Color(0x2f9fc4) },
+      uSky:     { value: new THREE.Color(0xbfe9ff) },
+      uSun:     { value: new THREE.Vector3(0.4, 0.9, 0.3).normalize() }
+    },
+    vertexShader: `
+      uniform float uTime;
+      varying vec3 vWorld; varying vec3 vNrm; varying float vCrest;
+      float wv(vec2 p){
+        float h = sin(p.x*0.55 + uTime*1.3)*0.13;
+        h += sin(p.y*0.80 - uTime*1.0)*0.10;
+        h += sin((p.x+p.y)*0.42 + uTime*1.7)*0.06;
+        h += sin((p.x*0.9 - p.y*0.6) - uTime*2.1)*0.04;
+        return h;
+      }
+      void main(){
+        vec3 pos = position;
+        float h = wv(pos.xy);
+        pos.z += h; vCrest = h;
+        float e = 0.35;
+        float hx = wv(pos.xy+vec2(e,0.0)) - wv(pos.xy-vec2(e,0.0));
+        float hy = wv(pos.xy+vec2(0.0,e)) - wv(pos.xy-vec2(0.0,e));
+        vec3 n = normalize(vec3(-hx, -hy, 2.0*e));
+        vWorld = (modelMatrix * vec4(pos,1.0)).xyz;
+        vNrm = normalize((modelMatrix * vec4(n,0.0)).xyz);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos,1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uCamPos, uDeep, uShallow, uSky, uSun;
+      varying vec3 vWorld; varying vec3 vNrm; varying float vCrest;
+      void main(){
+        vec3 N = normalize(vNrm);
+        vec3 V = normalize(uCamPos - vWorld);
+        float fres = pow(1.0 - clamp(dot(N,V),0.0,1.0), 3.0);
+        vec3 col = mix(uDeep, uShallow, clamp(fres*1.6,0.0,1.0));
+        col = mix(col, uSky, fres*0.55);
+        vec3 H = normalize(V + uSun);
+        float spec = pow(max(dot(N,H),0.0), 140.0);
+        col += spec * vec3(1.0);
+        float foam = smoothstep(0.16, 0.28, vCrest);        // white on the highest crests
+        col = mix(col, vec3(0.95,0.99,1.0), foam*0.5);
+        float alpha = 0.60 + fres*0.34 + foam*0.25;
+        gl_FragColor = vec4(col, clamp(alpha,0.0,1.0));
+      }`
+  });
+  waterSurface = new THREE.Mesh(new THREE.PlaneGeometry(400, 120, 260, 70), waterMat);
+  waterSurface.rotation.x = -Math.PI / 2;
+  waterSurface.position.set(0, 0, LANE_Z);
+  waterSurface.renderOrder = -6;
+  waterSurface.frustumCulled = false;
+  scene.add(waterSurface);
+}
+// an expanding foam ring on the surface at the moment of impact
+let splashRing = null, splashRingLife = 0;
+function spawnSplashRing(pos) {
+  if (!splashRing) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false });
+    splashRing = new THREE.Mesh(new THREE.RingGeometry(0.55, 1.0, 40), mat);
+    splashRing.rotation.x = -Math.PI / 2;
+    splashRing.renderOrder = 2;
+    scene.add(splashRing);
+  }
+  splashRing.position.set(pos.x, 0.06, pos.z);
+  splashRing.visible = true; splashRingLife = 0.7;
+}
+// quick screen flash for the surface break (tintable — softer than a white-out)
+function flash(op, color) {
+  const f = document.getElementById('flash');
+  if (!f) return;
+  if (color) f.style.background = color;
+  f.style.transition = 'none'; f.style.opacity = String(op == null ? 0.85 : op);
+  requestAnimationFrame(() => { f.style.transition = 'opacity 0.5s ease-out'; f.style.opacity = '0'; });
+}
+// droplets streaking down the "lens" the instant he plunges
+function splashVeil() {
+  const v = document.getElementById('splash-veil');
+  if (!v) return;
+  v.classList.remove('run'); void v.offsetWidth; v.classList.add('run');
+}
+
+// ============================================================
+// LEVEL 3 underwater atmosphere — light shafts, seabed caustics, drifting motes
+// ============================================================
+let godRays = null, caustics = null, motes = null, uwT = 0;
+let splashCrown = null, splashCrownLife = 0;
+
+function buildGodRays() {
+  if (godRays) return;
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, fog: false, side: THREE.DoubleSide,
+    uniforms: { uTime: { value: 0 }, uTint: { value: new THREE.Color(0x9fe0ff) } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform float uTime; uniform vec3 uTint; varying vec2 vUv;
+      float beam(float x, float w, float sp, float ph){ return smoothstep(w, 0.0, abs(fract(x*sp+ph)-0.5)); }
+      void main(){
+        float x = vUv.x + (1.0 - vUv.y) * 0.30;                 // slant the shafts
+        float s = beam(x,0.5,5.0, uTime*0.03)*0.6
+                + beam(x,0.4,8.0,-uTime*0.05)*0.5
+                + beam(x,0.6,3.0, uTime*0.02)*0.4;
+        float fade = smoothstep(0.05, 0.55, vUv.y) * smoothstep(1.0, 0.80, vUv.y);   // from the surface, down into the deep
+        gl_FragColor = vec4(uTint, s * fade * 0.45);
+      }`
+  });
+  godRays = new THREE.Mesh(new THREE.PlaneGeometry(90, 22), mat);
+  godRays.position.set(0, -2.0, LANE_Z - 7);
+  godRays.renderOrder = -8; godRays.frustumCulled = false;
+  scene.add(godRays);
+}
+function buildCaustics() {
+  if (caustics) return;
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    uniforms: { uTime: { value: 0 }, uTint: { value: new THREE.Color(0x74d0ff) } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform float uTime; uniform vec3 uTint; varying vec2 vUv;
+      float caustic(vec2 uv){
+        vec2 p = mod(uv*6.28318, 6.28318) - 250.0;
+        vec2 i = vec2(p); float c = 1.0; float inten = 0.005;
+        for(int n=0;n<3;n++){
+          float t = uTime*0.5*(1.0-(3.5/float(n+1)));
+          i = p + vec2(cos(t-i.x)+sin(t+i.y), sin(t-i.y)+cos(t+i.x));
+          c += 1.0/length(vec2(p.x/(sin(i.x+t)/inten), p.y/(cos(i.y+t)/inten)));
+        }
+        c /= 3.0; c = 1.17 - pow(c, 1.4);
+        return clamp(pow(abs(c), 8.0), 0.0, 1.0);
+      }
+      void main(){
+        float c = caustic(vUv*3.2);
+        float edge = smoothstep(0.0,0.14,vUv.x)*smoothstep(1.0,0.86,vUv.x)
+                   * smoothstep(0.0,0.18,vUv.y)*smoothstep(1.0,0.82,vUv.y);   // fade at the plane edges (no hard tiling)
+        gl_FragColor = vec4(uTint*c, c*0.75*edge);
+      }`
+  });
+  caustics = new THREE.Mesh(new THREE.PlaneGeometry(140, 34), mat);
+  caustics.rotation.x = -Math.PI / 2;
+  caustics.position.set(0, SEABED_Y + 0.6, LANE_Z);
+  caustics.renderOrder = -7; caustics.frustumCulled = false;
+  scene.add(caustics);
+}
+function buildMotes() {
+  if (motes) return;
+  const N = 90, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i*3]   = Math.random()*70 - 10;
+    pos[i*3+1] = SWIM_Y_MIN + Math.random()*(SWIM_Y_MAX - SWIM_Y_MIN + 3);
+    pos[i*3+2] = LANE_Z + (Math.random()*9 - 4.5);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  motes = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xcdeeff, size: 0.1, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+  motes.frustumCulled = false;
+  scene.add(motes);
+}
+function buildUnderwaterFX() { buildGodRays(); buildCaustics(); buildMotes(); }
+function showUnderwaterFX(v) { if (godRays) godRays.visible = v; if (caustics) caustics.visible = v; if (motes) motes.visible = v; }
+function updateUnderwaterFX(dt) {
+  uwT += dt;
+  const cx = camera.position.x;
+  if (waterMat) { waterMat.uniforms.uTime.value = uwT; waterMat.uniforms.uCamPos.value.copy(camera.position); }
+  if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 2; }
+  if (caustics && caustics.visible) { caustics.material.uniforms.uTime.value = uwT; caustics.position.x = cx; }
+  if (motes && motes.visible) {
+    const p = motes.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      let y = p.getY(i) - dt * 0.28, x = p.getX(i) + Math.sin(uwT*0.5 + i)*dt*0.12;
+      if (y < SWIM_Y_MIN - 1 || x < cx - 18) { y = SWIM_Y_MAX + 1.5; x = cx + 8 + Math.random()*36; p.setZ(i, LANE_Z + (Math.random()*9 - 4.5)); }
+      p.setX(i, x); p.setY(i, y);
+    }
+    p.needsUpdate = true;
+  }
+  if (splashCrown && splashCrownLife > 0) {
+    splashCrownLife -= dt;
+    const f = 1 - splashCrownLife / 0.55;
+    splashCrown.scale.set(0.5 + f*4.5, 0.5 + f*3.0, 0.5 + f*4.5);
+    splashCrown.position.y = 0.2 + f*0.9;
+    splashCrown.material.opacity = (1 - f) * 0.9;
+    if (splashCrownLife <= 0) splashCrown.visible = false;
+  }
+}
+// an expanding foam crown thrown up at the pierce point
+function spawnSplashCrown(pos) {
+  if (!splashCrown) {
+    splashCrown = new THREE.Mesh(new THREE.ConeGeometry(1, 1.8, 28, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    splashCrown.renderOrder = 3; splashCrown.frustumCulled = false;
+    scene.add(splashCrown);
+  }
+  splashCrown.position.set(pos.x, 0.2, pos.z);
+  splashCrown.scale.set(0.5, 0.5, 0.5);
+  splashCrown.visible = true; splashCrownLife = 0.55;
+}
+
+// the surface-break moment: a soft cyan splash, foam crown, rings, and flip underwater
+function splashThroughSurface() {
+  state.diveSplashed = true;
+  applyUnderwater();
+  flash(0.5, '#e6feff');                          // brief cyan-white, not a full white-out
+  splashVeil();
+  state.shake = 0.7;                              // camera jolt on impact
+  const at = playerGroup.position.clone(); at.y = 0;
+  burst(at, 0xffffff, 46, 12, 18, 0.30, 11.0);    // tall spray crown
+  burst(at, 0xffffff, 34, 15, 2.0, 0.32, 3.0);    // wide outward sheet
+  burst(at, 0xeafcff, 24, 6, 1.0, 0.40, -0.6);    // foam dragged under with him
+  spawnSplashCrown(at);
+  spawnSplashRing(at);
+  setTimeout(() => spawnSplashRing(at), 80);       // second ripple
+  setTimeout(() => spawnSplashRing(at), 170);      // third ripple
+  sfx.hit(); sfx.level();
+  showBanner('SPLASH!');
+}
+
+// The Level 1 → Level 2 divider: a soapy curtain / steel threshold Nimble bursts through.
+let dividerGroup = null;
+function buildDivider(x) {
+  const g = new THREE.Group();
+  const cz = (SURF_Z_MIN + SURF_Z_MAX) / 2, zW = (SURF_Z_MAX - SURF_Z_MIN) + 3.0;
+  // steel threshold strip on the counter
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, zW),
+    new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: 0.9, roughness: 0.28 }));
+  strip.position.set(0, 0.06, cz); g.add(strip);
+  // translucent foam curtain
+  const curtain = new THREE.Mesh(new THREE.PlaneGeometry(zW, 4.6), getFoamMat());
+  curtain.rotation.y = Math.PI / 2;
+  curtain.position.set(0, 2.1, cz); g.add(curtain);
+  // two foam posts
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 5.0, 16), getFoamMat());
+    post.position.set(0, 2.5, cz + s * (zW / 2)); g.add(post);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.5, 18, 18), getFoamMat());
+    ball.position.set(0, 5.0, cz + s * (zW / 2)); g.add(ball);
+  }
+  g.position.x = x;
+  g.userData.crossed = false;
+  scene.add(g);
+  return g;
+}
+
+// ----------------------------------------------------
+// Tiny WebAudio synth for feedback blips
+// ----------------------------------------------------
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {} }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+function beep(freq, dur, type = 'sine', vol = 0.08, slideTo = null) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, audioCtx.currentTime + dur);
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+const sfx = {
+  collect: () => beep(880, 0.12, 'square', 0.06, 1350),
+  star:    () => { beep(660, 0.1, 'square', 0.06); setTimeout(() => beep(880, 0.1, 'square', 0.06), 90); setTimeout(() => beep(1320, 0.16, 'square', 0.06), 180); },
+  hit:     () => beep(130, 0.25, 'sawtooth', 0.1, 60),
+  fire:    () => beep(420, 0.1, 'triangle', 0.07, 90),
+  clean:   () => beep(520, 0.14, 'sine', 0.07, 1040),
+  jump:    () => beep(300, 0.12, 'sine', 0.05, 520),
+  land:    () => beep(190, 0.07, 'sine', 0.04),
+  slide:   () => beep(240, 0.2, 'triangle', 0.05, 120),
+  count:   () => beep(440, 0.14, 'square', 0.08),
+  go:      () => beep(880, 0.3, 'square', 0.09, 1320),
+  level:   () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.06), i * 110)); }
+};
+
+// ----------------------------------------------------
+// Contact shadow blob + particles + score popups
+// ----------------------------------------------------
+function makeBlobTexture() {
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 64;
+  const g = cnv.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+  grd.addColorStop(0, 'rgba(255,255,255,0.55)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(cnv);
+}
+const blobTex = makeBlobTexture();
+function makeBlob(radius, colorHex) {
+  const mat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, color: colorHex });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(radius * 3.0, radius * 3.0), mat);
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.02; m.renderOrder = 1;
+  return m;
+}
+
+// sprite particle pool (foam puffs & sparkles)
+const particles = [];
+const PARTICLE_MAX = 70;
+for (let i = 0; i < PARTICLE_MAX; i++) {
+  const mat = new THREE.SpriteMaterial({ map: blobTex, transparent: true, depthWrite: false, color: 0xffffff });
+  const s = new THREE.Sprite(mat);
+  s.visible = false; scene.add(s);
+  particles.push({ s, vel: new THREE.Vector3(), life: 0, maxLife: 1, size: 0.2, grav: 0 });
+}
+function burst(pos, colorHex, n, speed, up = 2.0, size = 0.22, grav = 4.5) {
+  let spawned = 0;
+  for (const p of particles) {
+    if (p.life > 0) continue;
+    p.life = p.maxLife = 0.5 + Math.random() * 0.35;
+    p.size = size * (0.6 + Math.random() * 0.8);
+    p.grav = grav;
+    p.s.material.color.setHex(colorHex);
+    p.s.position.copy(pos);
+    p.vel.set((Math.random() - 0.5) * speed, Math.random() * up, (Math.random() - 0.5) * speed * 0.4);
+    p.s.visible = true;
+    if (++spawned >= n) break;
+  }
+}
+function updateParticles(dt) {
+  for (const p of particles) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.s.visible = false; continue; }
+    p.vel.y -= p.grav * dt;
+    p.s.position.addScaledVector(p.vel, dt);
+    const f = p.life / p.maxLife;
+    p.s.scale.setScalar(p.size * (0.5 + f));
+    p.s.material.opacity = f;
+  }
+}
+const _v = new THREE.Vector3();
+function popup(worldPos, text, color) {
+  _v.copy(worldPos).project(camera);
+  const el = document.createElement('div');
+  el.className = 'popup';
+  el.style.left = ((_v.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+  el.style.top = ((-_v.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+  el.style.color = color;
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 950);
+}
+
+// ----------------------------------------------------
+// Player
+// ----------------------------------------------------
+const playerGroup = new THREE.Group();
+playerGroup.rotation.y = (Math.PI / 2) - angleCheat;
+playerGroup.position.set(0, 0, LANE_Z);
+scene.add(playerGroup);
+const playerBlob = makeBlob(0.75, 0x7fe3a0);
+scene.add(playerBlob);
+const velocity = new THREE.Vector3(0, 0, 0);
+let mixer, actions = {}, currentAnim = null;
+let hatParts = [], boardParts = [], spongeParts = [], headBone = null;
+// Nimble's Level-2 ride. The sponge is the current ride; the skateboard is kept
+// as a fallback option — flip USE_SPONGE to false to bring the skateboard back.
+let USE_SPONGE = true;
+let squash = 1.0, squashTarget = 1.0;
+let floor = null, counterTex = null, counterTex2 = null;
+let slideTimer = null, slideHintShown = false;
+
+function playAnim(name, fade = 0.18) {
+  if (!actions[name] || name === currentAnim) return;
+  const next = actions[name], prev = actions[currentAnim];
+  next.reset();
+  if (prev) next.crossFadeFrom(prev, fade, false);
+  next.play();
+  currentAnim = name;
+}
+function moveAnim() { return state.mode === 'swim' ? 'swim' : state.mode === 'surf' ? 'skateboard' : 'running'; }
+
+function startSlide() {
+  if (!state.onGround || state.isSliding || state.isGameOver || !state.started) return;
+  state.isSliding = true;
+  sfx.slide();
+  squash = 0.72;
+  playAnim('running_slide', 0.05);                 // near-instant response
+  clearTimeout(slideTimer);
+  // hitbox and animation end together — no snap-back
+  slideTimer = setTimeout(() => {
+    state.isSliding = false;
+    if (!state.isGameOver && state.onGround) playAnim(moveAnim(), 0.16);
+  }, SLIDE_DUR * 1000 - 90);
+}
+function cancelSlide() {
+  clearTimeout(slideTimer);
+  state.isSliding = false;
+}
+
+// ----------------------------------------------------
+// ASSET LOADING
+// ----------------------------------------------------
+const models = {};
+// --- loading progress (drives the guide-screen bar) ---
+const loadUI = { total: 0, done: 0 };
+function tracked(promise, weight = 1) {
+  loadUI.total += weight;
+  const bump = () => {
+    loadUI.done += weight;
+    const bar = document.getElementById('bar');
+    if (bar) bar.style.width = Math.min(100, Math.round(100 * loadUI.done / loadUI.total)) + '%';
+  };
+  return promise.then(r => { bump(); return r; }, e => { bump(); throw e; });
+}
+async function initGame() {
+  const gltfLoader = new GLTFLoader();
+  const texLoader = new THREE.TextureLoader();
+
+  // kick EVERYTHING off in parallel — the bar tracks real progress
+  const fgNames = ['bottle.png','bowl.png','cloth.png','plant_02.png','wood_surface.png'];
+  const modelPaths = {
+    emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
+    slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
+    plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
+    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
+  };
+  // Small optimised .jpg assets with a .png fallback (works whether or not the
+  // optimised files are present). Only the character, the Level-1 backdrop and the
+  // counter are on the CRITICAL path; everything else streams in after the game starts.
+  const texJP = (base, w = 1) => tracked(texLoader.loadAsync(base + '.jpg'), w)
+    .catch(() => texLoader.loadAsync(base + '.png')).catch(() => null);
+  const counterP  = texJP('./couter_top_texture');
+  const counter2P = texJP('./couter_top_texture_02');
+  const bg1P = texJP('./BACKGROUND', 3);
+  const bg2P = texJP('./BACKGROUND_02', 1);
+  const bg3P = texJP('./BACKGROUND_03', 1);
+  const fgPs     = fgNames.map(n => texLoader.loadAsync(`./foreground_elements/${n}`).catch(() => null));   // deferred
+  const modelPs  = Object.entries(modelPaths).map(([k, p]) =>
+    gltfLoader.loadAsync(p).then(g => [k, g], () => { console.warn('Missing model: ' + p); return [k, null]; }));   // deferred
+  const nimbleP  = tracked(gltfLoader.loadAsync('./nimble_character.glb'), 5);   // the big one
+  nimbleP.then(g => setupNimble(g)).catch(() => {});     // he starts dancing on the card the instant he's ready
+
+  const prepBg = (tx) => { if (!tx) return null; tx.colorSpace = THREE.SRGBColorSpace; tx.wrapS = THREE.RepeatWrapping; tx.wrapT = THREE.ClampToEdgeWrapping; return tx; };
+
+  // ===== CRITICAL PATH — the minimum needed to play Level 1 =====
+  counterTex = await counterP;
+  if (counterTex) { counterTex.wrapS = counterTex.wrapT = THREE.RepeatWrapping; counterTex.repeat.set(150, 3); }
+  const floorMat = new THREE.MeshStandardMaterial({ map: counterTex, color: 0x8c8c8c, roughness: 0.75, metalness: 0.1 });   // darker wood → richer, less bright
+  floor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), floorMat);
+  floor.position.set(0, -5, 6);
+  floor.receiveShadow = true;
+  scene.add(floor);
+  dividerGroup = buildDivider(LEVEL_LEN);   // Level 1 → 2 divider waiting at the boundary
+  typeCfg.pin.heightScaled = PIN_R * 2;     // rolling pin is procedural
+
+  // backdrop plane (parented to camera, always fills the frame)
+  bgTexL1 = prepBg(await bg1P);
+  const bgMat = new THREE.MeshBasicMaterial({
+    map: bgTexL1, depthWrite: false, depthTest: false, toneMapped: false, fog: false,   // backdrop never fogged
+    color: new THREE.Color(0.82, 0.86, 0.9)   // gentle darken/cool to sit behind the action
+  });
+  bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMat);
+  bgMesh.position.set(0, 0, -42);   // local to the camera
+  bgMesh.renderOrder = -10;
+  bgMesh.frustumCulled = false;
+  camera.add(bgMesh);
+  fitBackdrop();
+  renderer.setAnimationLoop(gameLoop);   // start rendering the world NOW (loop guards for the not-yet-built parts) — never depends on the character loading
+
+  await nimbleP.catch(() => {});   // wait for the character, but a glb hiccup must not hang the loading screen
+
+  // ===== DEFERRED — stream in while the player reads the guide / plays Level 1 =====
+  counter2P.then(t => { counterTex2 = t; if (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(150, 3); } });
+  bg2P.then(t => { bgTexL2 = prepBg(t); });   // Level 2 steel backdrop
+  bg3P.then(t => { bgTexL3 = prepBg(t); });   // Level 3 underwater backdrop
+
+  Promise.all(fgPs).then(list => {
+    const fgTextures = list.filter(Boolean);
+    if (!fgTextures.length) return;
+    function addFgPlane(x, layer) {
+      const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+      const aspect = tex.image.width / tex.image.height;
+      const near = layer === 'near';
+      const h = near ? 1.4 + Math.random() * 1.0 : 1.7 + Math.random() * 1.2;   // shorter: only peek from the bottom
+      const topY = near ? 2.0 + Math.random() * 1.6 : 1.4 + Math.random() * 1.8;
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, depthWrite: false,
+        color: near ? 0x707a8f : 0xa8b1c4          // darker = closer: reads as depth
+      });
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), mat);
+      plane.position.set(x, topY - h / 2, near ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8);
+      plane.renderOrder = near ? 6 : 5;
+      plane.userData.layer = layer;
+      plane.userData.halfH = h / 2;      // used to keep the bottom edge just off-screen every frame
+      scene.add(plane);
+      fgPlanes.push(plane);
+    }
+    for (let x = -10; x < 260; x += 52 + Math.random() * 30) addFgPlane(x, 'near');
+    for (let x = -20; x < 260; x += 42 + Math.random() * 24) addFgPlane(x, 'mid');
+  });
+
+  Promise.all(modelPs).then(entries => {
+    for (const [key, gltf] of entries) {
+      if (!gltf) continue;
+      const obj = gltf.scene;
+      obj.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const cfg = typeCfg[key];
+      cfg.scaleFactor = cfg.size / maxDim;
+      cfg.groundOffset = -box.min.y * cfg.scaleFactor;
+      cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
+      obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+      if (key === 'emerald') obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });   // emerald drops are little Nimbles
+      models[key] = obj;
+    }
+  });
+
+  const loadingEl = document.getElementById('loading');
+  loadingEl.classList.add('ready');
+  document.getElementById('bar').style.width = '100%';
+  document.getElementById('load-status').style.display = 'none';
+  const pressKey = document.getElementById('press-key');
+  pressKey.style.display = 'block';
+  if (document.body.classList.contains('touch')) pressKey.textContent = 'TAP TO START';
+  const startOnce = () => {
+    window.removeEventListener('keydown', startOnce);
+    loadingEl.removeEventListener('pointerdown', startOnce);
+    initAudio();                                   // user gesture: countdown beeps work
+    loadingEl.style.opacity = '0';
+    setTimeout(() => loadingEl.style.display = 'none', 500);
+    runCountdown();                                // 3 — 2 — 1 — GO!
+  };
+  window.addEventListener('keydown', startOnce);
+  loadingEl.addEventListener('pointerdown', startOnce);
+}
+
+// ----------------------------------------------------
+// Nimble setup — runs as soon as the character GLB loads
+// ----------------------------------------------------
+function setupNimble(nimbleGltf) {
+  const root = nimbleGltf.scene;
+  root.scale.set(CHAR_SCALE, CHAR_SCALE, CHAR_SCALE);
+  root.traverse(o => {
+    if (o.isBone && /Head$/.test(o.name) && !/HeadTop/.test(o.name)) headBone = o;
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.frustumCulled = false;
+    const mn = o.material ? o.material.name : '';
+    if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
+    else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
+    else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }  // soap suds around the sponge
+    else if (mn.startsWith('sponge_mat'))  { spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }   // sponge keeps its own baked soap texture
+    else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
+    else { o.material = getGlassMat(o.material); }
+  });
+  playerGroup.add(root);
+
+  mixer = new THREE.AnimationMixer(root);
+  const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
+                     jump:{loop:false}, running_slide:{loop:false}, skating_start:{loop:false}, laugh:{loop:false},
+                     dive:{loop:false}, swim:{loop:true}, tread:{loop:true}, dance:{loop:true} };   // L3 clips + win dance
+  // In-place locomotion: flatten only the X/Z (horizontal) of the big locomotion tracks,
+  // keeping Y so he stays standing on the counter. The world scrolls; he runs in place.
+  const canonical = {};
+  const runClip = nimbleGltf.animations.find(c => c.name === 'running');
+  if (runClip) for (const tr of runClip.tracks)
+    if (tr.name.endsWith('.position')) canonical[tr.name] = [tr.values[0], tr.values[2]];
+  for (const clip of nimbleGltf.animations) {
+    clip.tracks.forEach(track => {
+      if (track.name.endsWith('.position')) {
+        const v = track.values;
+        let maxDiff = 0;
+        for (let i = 0; i < v.length; i += 3)
+          maxDiff = Math.max(maxDiff, Math.abs(v[i] - v[0]), Math.abs(v[i + 2] - v[2]));
+        if (maxDiff > 0.25) {                       // locomotion track → pin X/Z to a shared anchor
+          const anchor = canonical[track.name] || [v[0], v[2]];
+          for (let i = 0; i < v.length; i += 3) { v[i] = anchor[0]; v[i + 2] = anchor[1]; }
+        }
+      }
+    });
+    if (animCfgs[clip.name]) {
+      const a = mixer.clipAction(clip);
+      if (!animCfgs[clip.name].loop) { a.setLoop(THREE.LoopOnce); a.clampWhenFinished = true; }
+      actions[clip.name] = a;
+    }
+  }
+  // fit one-shot clips to gameplay timing (snappier jump/slide)
+  if (actions['jump'])          actions['jump'].timeScale = actions['jump'].getClip().duration / 0.9;   // match the higher/longer jump
+  if (actions['running_slide']) {
+    const d = actions['running_slide'].getClip().duration;      // now a single-frame held pose
+    actions['running_slide'].timeScale = d > 0.02 ? d / SLIDE_DUR : 1;
+  }
+
+  mixer.addEventListener('finished', (e) => {
+    if (e.action === actions['jump'] && state.onGround)  playAnim(moveAnim());
+    if (e.action === actions['skating_start']) playAnim('skateboard');
+    if (e.action === actions['dive'])          playAnim('swim');    // dive → swimming
+    if (e.action === actions['laugh'])         playAnim(moveAnim());
+  });
+
+  playAnim('idle');
+  updateHUD();
+  // (render loop is already running — started in initGame so the world shows even if the character is delayed)
+}
+
+function runCountdown() {
+  const el = document.getElementById('countdown');
+  el.style.display = 'block';
+  const steps = ['3', '2', '1', 'GO!'];
+  let i = 0;
+  const tick = () => {
+    if (i >= steps.length) {
+      el.style.display = 'none';
+      playAnim('running');
+      state.started = true;
+      showBanner('GO GO GO!');
+      sfx.level();
+      return;
+    }
+    const s = steps[i++];
+    el.textContent = s;
+    el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    if (s === 'GO!') sfx.go(); else sfx.count();
+    setTimeout(tick, s === 'GO!' ? 650 : 850);
+  };
+  tick();
+}
+
+// ----------------------------------------------------
+// ENDLESS SPAWNER — designed pattern chunks, not dice rolls
+// ----------------------------------------------------
+let spawnX = 16;
+function spawnEntity(key, x, y, extra = {}) {
+  const cfg = typeCfg[key];
+  let mesh;
+  if (key === 'pin') {
+    mesh = makeRollingPin();
+  } else {
+    if (!models[key]) return null;
+    mesh = models[key].clone();
+    mesh.scale.setScalar(cfg.scaleFactor);
+    mesh.rotation.y = Math.random() * Math.PI * 2;
+  }
+  mesh.position.set(x, y, LANE_Z);
+  scene.add(mesh);
+  const shadow = makeBlob(key === 'pin' ? 1.0 : cfg.size * 0.5, extra.shadowColor || 0x000000);
+  shadow.position.set(x, 0.02, LANE_Z);
+  scene.add(shadow);
+  const ent = {
+    mesh, shadow, key, type: cfg.type, subType: cfg.subType, cfg,
+    radius: key === 'pin' ? 1.05 : cfg.size * 0.5,
+    height: cfg.heightScaled || cfg.size,
+    baseY: y, phase: Math.random() * 6.28, active: true, isClean: false,
+    jumped: false, crossed: false, hint: !!extra.hint
+  };
+  entities.push(ent);
+  return ent;
+}
+const g0 = k => typeCfg[k].groundOffset || 0;
+
+// --- pattern chunks ---
+function patEmeraldArc() {           // jump arc of drops over a ground hazard
+  const key = ['plant', 'salt', 'slime'][Math.floor(Math.random() * 3)];
+  const n = 5 + Math.floor(Math.random() * 2);
+  const span = n * 0.62;
+  if (models[key]) spawnEntity(key, spawnX + span / 2, g0(key));
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    spawnEntity('emerald', spawnX + i * 0.62, 1.6 + Math.sin(Math.PI * t) * 1.6, { shadowColor: 0x39d24e });
+  }
+  spawnX += span + 2.0;
+}
+function patDuckPin() {              // rolling pin: slide under, low drops as the reward
+  const first = !slideHintShown;
+  spawnEntity('pin', spawnX + 1.2, PIN_Y, { hint: first });
+  for (let i = 0; i < 3; i++)
+    spawnEntity('emerald', spawnX + 0.4 + i * 0.8, 0.85, { shadowColor: 0x39d24e });
+  spawnX += 4.0;
+}
+function patCleanRow() {             // dirty dishes: soap practice, clean-touch bonus
+  const n = 2 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < n; i++) {
+    const key = Math.random() < 0.5 ? 'fork' : 'plates';
+    if (models[key]) spawnEntity(key, spawnX + i * 3.0, g0(key));
+  }
+  spawnX += n * 3.0 + 1.0;
+}
+function patStarHigh() {             // star way up — jump over the hazard to grab it
+  const key = ['plant', 'salt'][Math.floor(Math.random() * 2)];
+  if (models[key]) spawnEntity(key, spawnX + 0.6, g0(key));
+  const fy = typeCfg.star.floatY;
+  spawnEntity('star', spawnX + 0.6, fy[0] + Math.random() * (fy[1] - fy[0]), { shadowColor: 0xffd24e });
+  spawnX += 3.0;
+}
+function patHazard() {               // a single obstacle to hop
+  const key = ['slime', 'oil', 'plant', 'salt'][Math.floor(Math.random() * 4)];
+  if (models[key]) spawnEntity(key, spawnX, g0(key));
+  spawnX += 2.4;
+}
+function patCombo() {                // level 2+: slide then jump, quick hands
+  spawnEntity('pin', spawnX + 1.0, PIN_Y);
+  const key = ['plant', 'slime'][Math.floor(Math.random() * 2)];
+  if (models[key]) spawnEntity(key, spawnX + 5.2, g0(key));
+  spawnX += 7.5;
+}
+function patBreather() {             // gentle drops, catch your breath
+  const n = 3;
+  for (let i = 0; i < n; i++)
+    spawnEntity('emerald', spawnX + i * 1.4, 1.2 + Math.random() * 0.7, { shadowColor: 0x39d24e });
+  spawnX += n * 1.4 + 1.2;
+}
+
+// --- Level 2 surf spawner: greasy dirt scattered across the surface ---
+function spawnDirt(x, z, size) {
+  const mesh = makeDirtPatch(size);
+  mesh.position.set(x, mesh.position.y, z);
+  scene.add(mesh);
+  entities.push({
+    mesh, shadow: null, key: 'dirt', type: 'dirt', cfg: null,
+    radius: size * 0.42, height: 0, baseY: mesh.position.y,
+    phase: Math.random() * 6.28, active: true, isClean: false, crossed: false
+  });
+  state.surfSeen++;
+}
+// a jump-over obstacle for the surf stage (reuses a kitchen prop)
+function spawnSurfObstacle(x, z) {
+  const key = Math.random() < 0.5 ? 'plant' : 'salt';
+  if (!models[key]) return;
+  const cfg = typeCfg[key];
+  const mesh = models[key].clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  mesh.rotation.y = Math.random() * 6.28;
+  mesh.position.set(x, cfg.groundOffset || 0, z);
+  scene.add(mesh);
+  const shadow = makeBlob(cfg.size * 0.5, 0x000000);
+  shadow.position.set(x, 0.02, z);
+  scene.add(shadow);
+  entities.push({
+    mesh, shadow, key, type: 'surfobs', cfg,
+    radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
+    baseY: mesh.position.y, phase: Math.random() * 6.28, active: true, jumped: false, crossed: false
+  });
+}
+function spawnDirtChunk() {
+  const rows = 2 + (Math.random() * 2 | 0);
+  for (let i = 0; i < rows; i++) {
+    const z = SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN);
+    const size = 1.3 + Math.random() * 1.5;
+    spawnDirt(spawnX + Math.random() * 3.0, z, size);
+  }
+  // ease obstacles in only after the player has had room to learn the up/down steer
+  if ((spawnX - state.surfStartX) > 72 && Math.random() < 0.32) {
+    spawnSurfObstacle(spawnX + 1.5, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+  }
+  spawnX += 3.4 + Math.random() * 3.0 + state.speed * 0.14;
+}
+
+// --- Level 3 swim spawner: dodge debris at different depths, grab drops ---
+function spawnSwimObstacle(x, y) {
+  const key = ['plant', 'salt', 'slime', 'oil'][Math.random() * 4 | 0];
+  if (!models[key]) return;
+  const cfg = typeCfg[key];
+  const mesh = models[key].clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
+  mesh.position.set(x, y, LANE_Z);
+  scene.add(mesh);
+  entities.push({ mesh, shadow: null, key, type: 'swimobs', cfg,
+    radius: cfg.size * 0.5, baseY: y, phase: Math.random() * 6.28, active: true, crossed: false });
+}
+function spawnSwimCollectible(x, y, key) {
+  if (!models[key]) return;
+  const cfg = typeCfg[key];
+  const mesh = models[key].clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  mesh.position.set(x, y, LANE_Z);
+  scene.add(mesh);
+  entities.push({ mesh, shadow: null, key, type: cfg.type, cfg,
+    radius: cfg.size * 0.5, baseY: y, phase: Math.random() * 6.28, active: true });
+}
+function spawnSwimChunk() {
+  if ((spawnX - state.swimStartX) > 8) {
+    if (Math.random() < 0.5) {
+      spawnSwimObstacle(spawnX + 1, SWIM_Y_MIN + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN));
+    } else {
+      const n = 3 + (Math.random() * 2 | 0);
+      const y0 = SWIM_Y_MIN + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN - 1.5);
+      for (let i = 0; i < n; i++)
+        spawnSwimCollectible(spawnX + i * 0.95, y0 + Math.sin(i / (n - 1) * Math.PI) * 1.2,
+                             Math.random() < 0.15 ? 'star' : 'emerald');
+    }
+  }
+  spawnX += 3.2 + Math.random() * 3.2 + state.speed * 0.12;
+}
+
+function spawnChunk() {
+  if (state.mode === 'dive_seq') { spawnX = playerGroup.position.x + 200; return; }   // no spawns mid-cinematic
+  if (state.mode === 'swim') { spawnSwimChunk(); return; }
+  if (state.mode === 'surf') { spawnDirtChunk(); return; }
+  // calm stretch approaching the Level 2 hand-off so the skate mount reads clearly
+  if (spawnX > LEVEL_LEN - 60 && spawnX < LEVEL_LEN + 6) { spawnX += 6; return; }
+  const lvl = state.level;
+  const table = [
+    [0.20, patEmeraldArc],
+    [0.17, patDuckPin],
+    [0.14, patCleanRow],
+    [0.11, patStarHigh],
+    [0.14, patHazard],
+    [lvl >= 2 ? 0.12 : 0.0, patCombo],
+    [0.12, patBreather]
+  ];
+  const total = table.reduce((s, r) => s + r[0], 0);
+  let roll = Math.random() * total;
+  for (const [w, fn] of table) {
+    roll -= w;
+    if (roll <= 0) { fn(); break; }
+  }
+  spawnX += state.speed * (0.5 + Math.random() * 0.65);   // reaction-time gap scales with speed
+}
+function despawnBehind(px) {
+  for (let i = entities.length - 1; i >= 0; i--) {
+    const ent = entities[i];
+    if (!ent.active || ent.mesh.position.x < px - 18) {
+      scene.remove(ent.mesh);
+      if (ent.shadow) scene.remove(ent.shadow);
+      entities.splice(i, 1);
+    }
+  }
+}
+
+// ----------------------------------------------------
+// LEVELS / HUD / BANNERS
+// ----------------------------------------------------
+function checkLevel() {
+  if (state.mode !== 'run') return;                 // once surfing, progress is goal-based
+  if (!state.warnedL2 && playerGroup.position.x > LEVEL_LEN - 58) {
+    state.warnedL2 = true;
+    showBanner('LEVEL 1 CLEAR &middot; GRAB THE SKATE!');
+  }
+  // mount the skateboard IN the calm gap, so he's already skating when L2 gameplay begins
+  if (playerGroup.position.x > LEVEL_LEN - 30) enterSurfMode();
+}
+
+// ---- Level 2: a "just cleaned" wet-shine streak the sponge leaves behind (commercial before/after) ----
+const cleanTrail = [];
+let cleanTrailBuilt = false, cleanTrailT = 0, spongeMountT = 0;
+function buildCleanTrail() {
+  if (cleanTrailBuilt) return; cleanTrailBuilt = true;
+  for (let i = 0; i < 64; i++) {
+    const mat = new THREE.MeshBasicMaterial({ map: blobTex, color: 0xeafdff, transparent: true, opacity: 0,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.05), mat);
+    m.rotation.x = -Math.PI / 2;                 // lie flat on the counter
+    m.renderOrder = 1; m.visible = false; m.frustumCulled = false;
+    scene.add(m);
+    cleanTrail.push({ mesh: m, life: 0, maxLife: 1 });
+  }
+}
+function spawnCleanSeg(x, z) {
+  let seg = null;
+  for (const s of cleanTrail) if (s.life <= 0) { seg = s; break; }
+  if (!seg) return;
+  seg.mesh.position.set(x, 0.03, z);
+  seg.mesh.scale.set(1, 1, 0.9 + Math.random() * 0.25);
+  seg.mesh.material.opacity = 0;
+  seg.mesh.visible = true;
+  seg.life = seg.maxLife = 2.4;                  // lingers, so the trail reads as a lasting clean streak
+}
+function updateCleanTrail(dt) {
+  for (const s of cleanTrail) {
+    if (s.life <= 0) continue;
+    s.life -= dt;
+    if (s.life <= 0) { s.mesh.visible = false; continue; }
+    const f = s.life / s.maxLife;                                // 1 → 0
+    s.mesh.material.opacity = 0.5 * Math.min(1, (1 - f) * 8) * Math.pow(f, 0.5);   // snap in, slow shiny fade
+  }
+}
+function hideCleanTrail() { for (const s of cleanTrail) { s.life = 0; s.mesh.visible = false; } }
+
+// Level 1 → Level 2, part 1: he grabs the hat and hops on the skate BEFORE the gate.
+// The counter is still the wood one here — it only changes at the gate (see crossGate).
+function enterSurfMode() {
+  state.mode = 'surf';
+  state.level = 2;
+  state.crossedGate = false;
+  state.targetZ = LANE_Z;
+  playerGroup.position.y = SURF_LIFT; velocity.y = 0; state.onGround = true;   // ride up on the sponge
+  state.isSliding = false;
+  state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
+  state.excite = 1.0;
+  sfx.level();
+  boardParts.forEach(m => m.visible = !USE_SPONGE);   // skateboard only when sponge is off
+  spongeParts.forEach(m => {                           // sponge is the current ride — pop it in with a bounce
+    m.visible = USE_SPONGE;
+    const fs = m.userData.fullScale;
+    if (fs) m.scale.set(fs.x * 0.12, fs.y * 0.12, fs.z * 0.12);
+  });
+  spongeMountT = USE_SPONGE ? 0.55 : 0;               // drives the grow-in bounce in the loop
+  hatParts.forEach(m => m.visible = true);
+  // wipe any leftover runner props
+  for (let i = entities.length - 1; i >= 0; i--) {
+    scene.remove(entities[i].mesh);
+    if (entities[i].shadow) scene.remove(entities[i].shadow);
+    entities.splice(i, 1);
+  }
+  // no dirt until after the gate — he skates the wood run-up first
+  state.surfStartX = LEVEL_LEN;
+  spawnX = LEVEL_LEN + 22;
+  buildCleanTrail();
+  // he hops as the sponge pops in beneath him, then rides
+  velocity.y = 6.8; state.onGround = false;
+  playAnim('jump', 0.05);
+  squash = 0.8;
+  document.body.classList.add('surf');            // console → up/down + jump
+  const help = document.getElementById('controls-help');
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
+  showBanner('ON THE SKATE!');
+  // a splashy foam poof for the reveal
+  const at = playerGroup.position.clone();
+  burst(at.clone().add(new THREE.Vector3(0, 0.4, 0)), 0xffffff, 26, 4.2, 4.2, 0.30);
+  burst(at.clone().add(new THREE.Vector3(0, 0.15, 0)), 0xeafcff, 18, 5.5, 1.4, 0.24, 2.0);
+  updateHUD();
+}
+
+// Level 1 → Level 2, part 2: crossing the gate flips the counter to steel + the new backdrop.
+function crossGate() {
+  state.crossedGate = true;
+  if (bgMesh && bgTexL2) { bgMesh.material.map = bgTexL2; fitBackdrop(); }         // BACKGROUND_02.png
+  if (counterTex2 && floor) {                                                       // steel countertop
+    floor.material.map = counterTex2;
+    floor.material.color.setHex(0xffffff);                                          // steel stays bright
+    floor.material.metalness = 0.85; floor.material.roughness = 0.32;
+    floor.material.needsUpdate = true;
+  }
+  buildCounterFroth();
+  frothDecals.forEach(s => s.visible = true);
+  state.excite = 1.0;
+  sfx.level();
+  showBanner('LEVEL 2 &middot; SURF &amp; CLEAN!');
+  setTimeout(() => { if (state.mode === 'surf') showBanner('&uarr;&darr; MOVE UP &amp; DOWN THE COUNTER'); }, 2000);
+  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.9, 0)), 0xffffff, 24, 4.4, 3.6, 0.34);
+}
+
+// cleaned the whole surface → start the ramp-and-dive cinematic into Level 3
+function advanceSurfLevel() {
+  startDiveTransition();
+}
+
+// a steel launch ramp (right-triangle wedge rising toward +x)
+let rampMesh = null;
+function buildRamp(x) {
+  const w = (SURF_Z_MAX - SURF_Z_MIN) + 2.6;
+  const shape = new THREE.Shape();
+  shape.moveTo(-RAMP_HALF, 0); shape.lineTo(RAMP_HALF, 0); shape.lineTo(RAMP_HALF, RAMP_LIP_Y); shape.lineTo(-RAMP_HALF, 0);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
+  geo.translate(0, 0, -w / 2);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: 0.85, roughness: 0.3 });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, 0, (SURF_Z_MIN + SURF_Z_MAX) / 2);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  return m;
+}
+
+// tilt Nimble (and his board) to a pitch angle: +angle = nose up, applied about world +Z
+const _qBase = new THREE.Quaternion(), _qPitch = new THREE.Quaternion(), _zAxis = new THREE.Vector3(0, 0, 1);
+function setPlayerPitch(angle) {
+  _qBase.setFromEuler(new THREE.Euler(0, (Math.PI / 2) - angleCheat, 0));
+  _qPitch.setFromAxisAngle(_zAxis, angle);
+  playerGroup.quaternion.copy(_qPitch).multiply(_qBase);
+}
+
+// Level 2 → 3: reach a ramp, launch high, lose hat+board mid-air, assume dive, sink into water.
+function startDiveTransition() {
+  state.mode = 'dive_seq';
+  state.diveT = 0; state.diveGearLost = false; state.diveSplashed = false; state.divePitch = 0;
+  state.onGround = true; velocity.y = 0; state.isSliding = false;
+  state.excite = 1.0;
+  sfx.level();
+  hideCleanTrail();                                   // counter's about to go — drop the shine streak
+  for (let i = entities.length - 1; i >= 0; i--) {
+    scene.remove(entities[i].mesh);
+    if (entities[i].shadow) scene.remove(entities[i].shadow);
+    entities.splice(i, 1);
+  }
+  if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
+  // ramp lip lands right at his launch position
+  const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
+  rampMesh = buildRamp(playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - RAMP_HALF);
+  showBanner('RAMP AHEAD!');
+}
+
+// the scripted arc for the dive cinematic (called from the movement branch)
+function scriptDiveSeq(dt) {
+  playerGroup.position.z = LANE_Z;
+  state.diveT += dt;
+  const T = state.diveT;
+  let targetPitch = 0, y = 0;
+  if (T < DIVE_LAUNCH_T - RAMP_RIDE) {
+    y = SURF_LIFT; targetPitch = 0;                           // rolling flat toward the ramp, still up on the sponge
+  } else if (T < DIVE_LAUNCH_T) {
+    const f = (T - (DIVE_LAUNCH_T - RAMP_RIDE)) / RAMP_RIDE;  // riding up the ramp face
+    y = SURF_LIFT * (1 - f) + RAMP_LIP_Y * f; targetPitch = RAMP_ANGLE * f;   // blend the ride height out into the ramp
+  } else {
+    const jt = T - DIVE_LAUNCH_T, vy = DIVE_V0 - DIVE_G * jt;
+    y = RAMP_LIP_Y + DIVE_V0 * jt - 0.5 * DIVE_G * jt * jt;   // big epic arc
+    targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, Math.max(3, state.speed)), -1.15, 1.2);  // follow the trajectory
+    if (!state.diveGearLost && vy <= 0) {                     // apex: fling off the gear, assume the dive
+      state.diveGearLost = true;
+      hatParts.forEach(m => m.visible = false);
+      boardParts.forEach(m => m.visible = false);
+      spongeParts.forEach(m => m.visible = false);
+      burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 22, 5.5, 5, 0.32);
+      playAnim('dive', 0.22);
+      buildWaterSurface();                                    // water visible below → he dives INTO it, not onto stone
+      showBanner('DIIIVE!');
+    }
+    if (!state.diveSplashed && y <= 0 && vy < 0) { splashThroughSurface(); }
+    if (state.diveSplashed && y <= SWIM_MID) { finishDiveIntoSwim(); }
+  }
+  playerGroup.position.y = y;
+  state.divePitch += (targetPitch - state.divePitch) * Math.min(1, 8 * dt);
+  setPlayerPitch(state.divePitch);
+}
+
+// swap the scene to its underwater dressing (called when he pierces the surface)
+function applyUnderwater() {
+  scene.fog = new THREE.Fog(0x08324f, 14, 52);                    // richer teal depth haze
+  if (floor) floor.visible = false;
+  if (bgMesh) {
+    if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
+    bgMesh.material.color.setRGB(0.60, 0.78, 0.92);                  // cool the backdrop into the depths
+  }
+  const tint = document.getElementById('water-tint');
+  if (tint) tint.style.display = 'block';
+  buildWaterSurface();
+  buildBubbles();
+  buildSeabed();
+  buildUnderwaterFX();
+  showUnderwaterFX(true);
+  frothDecals.forEach(s => s.visible = false);
+  document.body.classList.remove('surf');
+  document.body.classList.add('swim');
+  const help = document.getElementById('controls-help');
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; dodge or blast the debris, grab the drops!';
+}
+
+// settle into Level 3 swim gameplay
+function finishDiveIntoSwim() {
+  state.mode = 'swim';
+  state.level = 3;
+  state.onGround = true; velocity.y = 0;
+  state.ammo = Math.max(state.ammo, 12);         // some soap to start Level 3 with
+  state.divePitch = SWIM_PITCH; setPlayerPitch(SWIM_PITCH);   // nose-up swimming pose
+  state.targetY = SWIM_MID;
+  playerGroup.position.y = SWIM_MID;
+  if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
+  if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }   // drop the surface plane → no more line, he's fully under
+  for (let i = entities.length - 1; i >= 0; i--) {
+    scene.remove(entities[i].mesh);
+    if (entities[i].shadow) scene.remove(entities[i].shadow);
+    entities.splice(i, 1);
+  }
+  state.swimStartX = playerGroup.position.x;
+  spawnX = playerGroup.position.x + 38;                      // short calm intro
+  playAnim('swim', 0.3);
+  showBanner('LEVEL 3 &middot; SWIM!');
+  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; SWIM UP &amp; DOWN'); }, 2000);
+  updateHUD();
+}
+
+// ============================================================
+// LEVEL 3 → 4: jump out of the water, then a "Bubble Pop" puzzle
+// ============================================================
+function startJumpOut() {
+  state.mode = 'jumpout';
+  state.jumpT = 0; state.jumpSplashed = false;
+  for (let i = entities.length - 1; i >= 0; i--) { scene.remove(entities[i].mesh); if (entities[i].shadow) scene.remove(entities[i].shadow); entities.splice(i, 1); }
+  document.body.classList.remove('swim');
+  playAnim('jump', 0.2);
+  showBanner('OUT OF THE WATER!');
+}
+function scriptJumpOut(dt) {
+  playerGroup.position.z = LANE_Z;
+  state.jumpT += dt;
+  const jt = state.jumpT, V0 = 16, G = 6.2, vy = V0 - G * jt;
+  playerGroup.position.y = SWIM_MID + V0 * jt - 0.5 * G * jt * jt;
+  if (!state.jumpSplashed && playerGroup.position.y >= 0 && vy > 0) {   // burst up through the surface
+    state.jumpSplashed = true;
+    buildWaterSurface(); flash(0.4); state.shake = 0.45;
+    const at = playerGroup.position.clone(); at.y = 0;
+    burst(at, 0xffffff, 46, 10, 14, 0.32, 8.5);
+    spawnSplashRing(at);
+    sfx.hit();
+  }
+  const targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, 6), -1.05, 1.2);
+  state.divePitch += (targetPitch - state.divePitch) * Math.min(1, 8 * dt);
+  setPlayerPitch(state.divePitch);
+  if (state.jumpT > 2.3) enterPuzzle();
+}
+
+// --- Level 4 board: a spacious match-3 bubble shooter using the 3D elements ---
+const ALL_TYPES = ['emerald', 'star', 'slime', 'oil', 'plant', 'salt', 'fork', 'plates'];
+const TYPE_COLOR = { emerald: 0x39d24e, star: 0xffcc33, slime: 0x7fdd5a, oil: 0x556070,
+                     plant: 0x4f9e3a, salt: 0xeaf2ff, fork: 0xcfd6de, plates: 0xf0e6d0 };
+const PZ = { cols: 6, rows0: 4, bd: 1.55, ceilY: 6.2, shootY: -1.0, boardX: 0, midY: 2.4,
+             grid: new Map(), types: [], aim: 0, fly: null, nextTi: 0, guide: null, holder: null,
+             falling: [], ready: false, revealT: 0 };
+function pzKey(r, c) { return r + ',' + c; }
+function pzPos(r, c) { return new THREE.Vector3(PZ.boardX + (c - (PZ.cols - 1) / 2) * PZ.bd, PZ.ceilY - r * PZ.bd, LANE_Z); }
+function makeBubble(ti) {
+  const key = PZ.types[ti], cfg = typeCfg[key];
+  let m;
+  if (models[key]) {
+    m = models[key].clone();
+    m.scale.setScalar((cfg.scaleFactor || 1) * (PZ.bd * 0.8 / (cfg.size || 1)));   // uniform bubble size
+    m.rotation.y = Math.random() * 6.28;
+  } else {
+    m = new THREE.Mesh(new THREE.SphereGeometry(0.55, 18, 14),
+      new THREE.MeshPhysicalMaterial({ color: TYPE_COLOR[key] || 0x88ccff, roughness: 0.25, transmission: 0.3 }));
+  }
+  m.userData.ti = ti;
+  return m;
+}
+function enterPuzzle() {
+  state.mode = 'puzzle';
+  state.level = 4;
+  flash(0.75); state.shake = 0;
+  PZ.boardX = playerGroup.position.x;
+  PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0;
+  scene.fog = null;
+  if (floor) floor.visible = false;
+  const tint = document.getElementById('water-tint'); if (tint) tint.style.display = 'none';
+  if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
+  bubbles.forEach(s => s.visible = false);
+  seabed.forEach(m => m.visible = false);
+  showUnderwaterFX(false);
+  if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
+  playerGroup.position.set(PZ.boardX, PZ.shootY - 0.5, LANE_Z);
+  playerGroup.scale.set(1, 1, 1); squash = squashTarget = 1;
+  state.divePitch = 0; setPlayerPitch(0);
+  playAnim('idle');
+  document.body.classList.remove('surf'); document.body.classList.add('puzzle');
+  buildBubbleGrid();
+  if (!PZ.guide) {
+    PZ.guide = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 6.5, 8),
+      new THREE.MeshBasicMaterial({ color: 0xbdefff, transparent: true, opacity: 0.35, depthWrite: false }));
+    scene.add(PZ.guide);
+  }
+  PZ.guide.visible = false;
+  const help = document.getElementById('controls-help');
+  if (help) help.innerHTML = '<span class="key">&larr; &rarr;</span> Aim &nbsp;|&nbsp; <span class="key">Space</span> Shoot &nbsp;|&nbsp; match 3 of the same to clear them all!';
+  showBanner('LEVEL 4 &middot; MATCH POP!');
+  updateHUD();
+}
+function buildBubbleGrid() {
+  for (const b of PZ.grid.values()) scene.remove(b.mesh);
+  PZ.grid.clear();
+  // pick 5 of the 8 element types for this board (variety across playthroughs)
+  PZ.types = [...ALL_TYPES].sort(() => Math.random() - 0.5).slice(0, 5);
+  for (let r = 0; r < PZ.rows0; r++)
+    for (let c = 0; c < PZ.cols; c++) {
+      if (Math.random() < 0.15) continue;                 // gaps → less condensed
+      const ti = Math.floor(Math.random() * PZ.types.length);
+      const m = makeBubble(ti);
+      const full = m.scale.x;                              // intended size before the grow-in
+      m.position.copy(pzPos(r, c));
+      m.scale.multiplyScalar(0.001);                       // grow in on reveal
+      m.userData.revealDelay = 0.25 + (r + c) * 0.06;
+      scene.add(m);
+      PZ.grid.set(pzKey(r, c), { mesh: m, ti, r, c, targetScale: full });
+    }
+}
+function pzNewBubble() {
+  const present = [...new Set([...PZ.grid.values()].map(b => b.ti))];
+  PZ.nextTi = present.length ? present[Math.floor(Math.random() * present.length)] : Math.floor(Math.random() * PZ.types.length);
+  if (PZ.holder) scene.remove(PZ.holder);
+  PZ.holder = makeBubble(PZ.nextTi);
+  PZ.holder.position.set(PZ.boardX, PZ.shootY + 0.5, LANE_Z + 2.2);   // sit the next bubble in front of Nimble so it's not hidden behind him
+  scene.add(PZ.holder);
+}
+function pzShoot() {
+  if (PZ.fly || !PZ.holder || !PZ.ready || state.mode !== 'puzzle') return;
+  const sp = 15;
+  PZ.fly = { mesh: PZ.holder, ti: PZ.nextTi, vx: Math.sin(PZ.aim) * sp, vy: Math.cos(PZ.aim) * sp };
+  PZ.holder = null;
+  sfx.fire();
+}
+function pzSnap(pos) {
+  let r = Math.max(0, Math.round((PZ.ceilY - pos.y) / PZ.bd));
+  let c = Math.max(0, Math.min(PZ.cols - 1, Math.round((pos.x - PZ.boardX) / PZ.bd + (PZ.cols - 1) / 2)));
+  if (PZ.grid.has(pzKey(r, c))) {
+    const cands = [[r + 1, c], [r, c - 1], [r, c + 1], [r - 1, c]]
+      .filter(([rr, cc]) => cc >= 0 && cc < PZ.cols && rr >= 0 && !PZ.grid.has(pzKey(rr, cc)));
+    if (cands.length) return cands[0];
+  }
+  return [r, c];
+}
+function pzPop(b) {                                         // matched → burst and vanish
+  burst(b.mesh.position, TYPE_COLOR[PZ.types[b.ti]] || 0xffffff, 12, 2.8, 2.8, 0.22);
+  scene.remove(b.mesh); PZ.grid.delete(pzKey(b.r, b.c));
+  state.score += 30; updateHUD();
+}
+function pzDrop(b) {                                        // disconnected → fall away (candy-crush style)
+  PZ.grid.delete(pzKey(b.r, b.c));
+  PZ.falling.push({ mesh: b.mesh, vy: 0 });
+  state.score += 45; updateHUD();
+}
+function pzMatch(r, c) {
+  const start = PZ.grid.get(pzKey(r, c)); if (!start) return 0;
+  const ti = start.ti, seen = new Set(), stack = [[r, c]], cluster = [];
+  while (stack.length) {
+    const [rr, cc] = stack.pop(), k = pzKey(rr, cc);
+    if (seen.has(k)) continue;
+    const b = PZ.grid.get(k); if (!b || b.ti !== ti) continue;
+    seen.add(k); cluster.push(b);
+    stack.push([rr + 1, cc], [rr - 1, cc], [rr, cc + 1], [rr, cc - 1]);
+  }
+  if (cluster.length >= 3) { cluster.forEach(pzPop); sfx.clean(); return cluster.length; }
+  return 0;
+}
+function pzDropFloating() {
+  const connected = new Set(), stack = [];
+  for (const b of PZ.grid.values()) if (b.r === 0) stack.push([b.r, b.c]);
+  while (stack.length) {
+    const [rr, cc] = stack.pop(), k = pzKey(rr, cc);
+    if (connected.has(k) || !PZ.grid.has(k)) continue;
+    connected.add(k);
+    stack.push([rr + 1, cc], [rr - 1, cc], [rr, cc + 1], [rr, cc - 1]);
+  }
+  for (const b of [...PZ.grid.values()]) if (!connected.has(pzKey(b.r, b.c))) pzDrop(b);
+}
+function pzUpdate(dt) {
+  // reveal the board first (staggered grow-in) — he arrives, then the game materialises
+  if (!PZ.ready) {
+    PZ.revealT += dt;
+    let allIn = true;
+    for (const b of PZ.grid.values()) {
+      b.mesh.userData.revealDelay -= dt;
+      const s = b.mesh.scale.x, tgt = b.targetScale;
+      if (b.mesh.userData.revealDelay <= 0) b.mesh.scale.setScalar(THREE.MathUtils.lerp(s, tgt, Math.min(1, 12 * dt)));
+      if (b.mesh.scale.x < tgt * 0.95) allIn = false;
+    }
+    if (allIn && PZ.revealT > 0.8) { PZ.ready = true; PZ.guide.visible = true; pzNewBubble(); }
+  }
+  // falling (dropped) pieces
+  for (let i = PZ.falling.length - 1; i >= 0; i--) {
+    const f = PZ.falling[i]; f.vy -= 14 * dt; f.mesh.position.y += f.vy * dt; f.mesh.rotation.z += dt * 4;
+    if (f.mesh.position.y < PZ.shootY - 6) { scene.remove(f.mesh); PZ.falling.splice(i, 1); }
+  }
+  if (PZ.guide) { PZ.guide.position.set(PZ.boardX + Math.sin(PZ.aim) * 3.4, PZ.shootY + Math.cos(PZ.aim) * 3.4, LANE_Z); PZ.guide.rotation.z = -PZ.aim; }
+  PZ.aim = THREE.MathUtils.clamp(PZ.aim + ((state.aimR ? 1 : 0) - (state.aimL ? 1 : 0)) * 1.5 * dt, -1.15, 1.15);
+  for (const b of PZ.grid.values()) b.mesh.rotation.y += dt * 0.5;
+  if (PZ.holder) PZ.holder.rotation.y += dt * 1.2;
+  if (PZ.fly) {
+    const f = PZ.fly, p = f.mesh.position;
+    p.x += f.vx * dt; p.y += f.vy * dt;
+    p.z += (LANE_Z - p.z) * Math.min(1, 10 * dt);       // ease from in-front-of-Nimble back into the board plane
+    const xMin = PZ.boardX - (PZ.cols / 2) * PZ.bd, xMax = PZ.boardX + (PZ.cols / 2) * PZ.bd;
+    if (p.x < xMin) { p.x = xMin; f.vx = Math.abs(f.vx); }
+    if (p.x > xMax) { p.x = xMax; f.vx = -Math.abs(f.vx); }
+    let hit = p.y >= PZ.ceilY - 0.05;
+    if (!hit) for (const b of PZ.grid.values()) if (p.distanceTo(b.mesh.position) < PZ.bd * 0.88) { hit = true; break; }
+    if (hit) {
+      const [r, c] = pzSnap(p);
+      f.mesh.position.copy(pzPos(r, c));
+      PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ti: f.ti, r, c, targetScale: f.mesh.scale.x });
+      PZ.fly = null;
+      if (pzMatch(r, c)) pzDropFloating();
+      if (PZ.grid.size === 0) { winGame(); return; }
+      pzNewBubble();
+    }
+  }
+}
+function winGame() {
+  state.mode = 'won';
+  if (PZ.guide) PZ.guide.visible = false;
+  if (PZ.holder) { scene.remove(PZ.holder); PZ.holder = null; }
+  setPlayerPitch(0);
+  playAnim('dance');
+  document.body.classList.remove('puzzle');
+  state.excite = 1.0;
+  showBanner('YOU WIN! &#127881;');
+  for (let i = 0; i < 4; i++) setTimeout(() => burst(playerGroup.position.clone().add(new THREE.Vector3(Math.random() * 3 - 1.5, 1.5, 0)), [0x39d24e, 0xffcc33, 0x3aa0ff, 0xff5da2][i % 4], 26, 5, 5, 0.3), i * 220);
+  setTimeout(() => {
+    const go = document.getElementById('gameover');
+    go.querySelector('h1').innerHTML = 'YOU WIN! &#127881;';
+    document.getElementById('go-score').innerText = state.score;
+    document.getElementById('go-dist').innerText = 'GAME COMPLETE';
+    go.style.display = 'flex';
+  }, 3400);
+}
+
+let bannerTimer = null;
+function showBanner(text) {
+  const b = document.getElementById('banner');
+  b.innerHTML = text; b.style.opacity = '1';
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { b.style.opacity = '0'; }, 1800);
+}
+function updateHUD() {
+  document.getElementById('score').innerText = state.score;
+  document.getElementById('ammo').innerText = state.ammo;
+  document.getElementById('lives').innerText = state.lives;
+  document.getElementById('level').innerText = state.level;
+  document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m';
+  const surf = state.mode === 'surf';
+  const showAmmo = state.mode === 'run' || state.mode === 'swim';   // soap used in L1 & L3 only
+  document.getElementById('ammo-row').style.display = showAmmo ? '' : 'none';
+  document.getElementById('clean-row').style.display = surf ? '' : 'none';
+  document.getElementById('clean-meter').style.display = surf ? '' : 'none';
+  if (surf) {
+    document.getElementById('clean-count').innerText = state.surfCleaned + ' / ' + state.surfGoal;
+    document.getElementById('clean-bar').style.width = Math.min(100, 100 * state.surfCleaned / state.surfGoal) + '%';
+  }
+}
+
+// ----------------------------------------------------
+// ACTIONS
+// ----------------------------------------------------
+function doJump() {
+  if (!state.onGround || !state.started || state.isGameOver) return;
+  if (state.isSliding) cancelSlide();          // jump cancels slide — stay in control
+  velocity.y = state.jumpPower; state.onGround = false;
+  sfx.jump();
+  squash = 1.3;
+  // L2 (surf): keep him in the skateboard pose and just lift off — don't swap to the
+  // running jump clip (that throws the board/structure away). L1 uses the jump clip.
+  if (state.mode !== 'surf') playAnim('jump', 0.05);
+}
+function fireSoap() {
+  if (state.ammo <= 0 || state.isGameOver || !state.started) return;
+  state.ammo--; updateHUD();
+  sfx.fire();
+  const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
+  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.15, LANE_Z);
+  soap.castShadow = true;
+  scene.add(soap);
+  soaps.push({ mesh: soap, life: 1.6 });
+}
+function takeDamage() {
+  if (state.isGameOver || state.invuln > 0) return;
+  state.lives--; updateHUD();
+  state.invuln = 1.6;
+  sfx.hit();
+  squash = 0.75;
+  burst(playerGroup.position.clone().add(new THREE.Vector3(0, 1.0, 0)), 0xff5544, 10, 3.0, 2.0, 0.25);
+  popup(playerGroup.position.clone().add(new THREE.Vector3(0, 2.2, 0)), '-1 ♥', '#ff5544');
+  playerGroup.traverse(child => {
+    if (child.isMesh && child.material && child.material.attenuationColor) {
+      const orig = child.material.attenuationColor.getHex();
+      child.material.attenuationColor.setHex(0xff0000);
+      setTimeout(() => { if (child.material) child.material.attenuationColor.setHex(orig); }, 300);
+    }
+  });
+  if (state.lives <= 0) gameOver();
+}
+function gameOver() {
+  state.isGameOver = true;
+  cancelSlide();
+  playAnim('idle');
+  document.getElementById('go-score').innerText = state.score;
+  document.getElementById('go-dist').innerText = Math.floor(playerGroup.position.x) + ' m';
+  document.getElementById('gameover').style.display = 'flex';
+}
+function collect(ent) {
+  ent.active = false;
+  scene.remove(ent.mesh);
+  if (ent.shadow) scene.remove(ent.shadow);
+  state.excite = 1.0;
+  squash = 1.18;
+  if (ent.type === 'ammo') {
+    state.ammo += 4; state.score += 25;
+    sfx.collect();
+    burst(ent.mesh.position, 0x7fe3a0, 8, 2.4, 2.4, 0.2);
+    popup(ent.mesh.position, '+4 SOAP', '#39d24e');
+  } else {
+    state.score += 500;
+    if (state.lives < MAX_LIVES) {                 // stars give a life back
+      state.lives++;
+      popup(ent.mesh.position.clone().add(new THREE.Vector3(0, 0.7, 0)), '+1 ♥', '#ff8899');
+    }
+    sfx.star();
+    burst(ent.mesh.position, 0xffd24e, 14, 3.2, 2.8, 0.26);
+    popup(ent.mesh.position, '+500', '#ffd24e');
+  }
+  updateHUD();
+}
+
+// ----------------------------------------------------
+// MAIN LOOP
+// ----------------------------------------------------
+// --- foreground anchoring: world-Y of the viewport's bottom edge at a given depth ---
+const FG_HIDE = 1.3;                 // how far below the screen edge to tuck each plane's bottom
+const _fgRay = new THREE.Vector3();
+function screenBottomYAt(zp) {
+  _fgRay.set(0, -1, 0.5).unproject(camera);          // a world point on the bottom-edge ray
+  const dy = _fgRay.y - camera.position.y, dz = _fgRay.z - camera.position.z;
+  if (Math.abs(dz) < 1e-4) return _fgRay.y;
+  return camera.position.y + dy * ((zp - camera.position.z) / dz);
+}
+
+const clock = new THREE.Clock();
+let hudT = 0, slideDustT = 0, surfTrailT = 0;
+function gameLoop() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const t = clock.elapsedTime;
+  if (mixer) mixer.update(dt);
+  hudT += dt;
+  if (hudT > 0.2) { hudT = 0; document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m'; }
+
+  if (!state.isGameOver && state.started && !state.paused && (state.mode === 'puzzle' || state.mode === 'jumpout' || state.mode === 'won')) {
+    if (state.mode === 'jumpout') scriptJumpOut(dt);
+    else if (state.mode === 'puzzle') pzUpdate(dt);
+    else if (state.mode === 'won') { state.excite = Math.min(1, state.excite + dt); }   // keep celebrating
+  } else if (!state.isGameOver && state.started && !state.paused) {
+    const px0 = playerGroup.position.x;
+
+    // --- always moving forward; boost & brake only bend the pace ---
+    const diff = 1 + Math.min(1.35, px0 / 450);
+    const modeMul = state.mode === 'swim' ? 0.55 : state.mode === 'surf' ? 0.82 : state.mode === 'dive_seq' ? 0.5 : 1.0;
+    state.speed = BASE_SPEED * diff * modeMul * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
+    playerGroup.position.x += state.speed * dt;
+
+    if (state.mode === 'surf') {
+      // steer up/down across the counter's depth (z is the surf axis)
+      const dir = (state.steerDown ? 1 : 0) - (state.steerUp ? 1 : 0);
+      state.targetZ = THREE.MathUtils.clamp(state.targetZ + dir * STEER_SPEED * dt, SURF_Z_MIN, SURF_Z_MAX);
+      playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 10 * dt);
+      // the sponge leaves a foam trail + a lasting "just cleaned" shine streak
+      surfTrailT -= dt;
+      if (surfTrailT <= 0) {
+        surfTrailT = 0.045;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(-0.6, 0.12, 0)), 0xffffff, 2, 1.0, 0.7, 0.17, 2.0);
+        spawnCleanSeg(playerGroup.position.x - 0.7, playerGroup.position.z);
+      }
+      // sponge pop-in bounce on mount (easeOutBack)
+      if (spongeMountT > 0) {
+        spongeMountT -= dt;
+        const p = Math.max(0, Math.min(1, 1 - spongeMountT / 0.55)), bk = 1.70158;
+        const s = spongeMountT <= 0 ? 1 : 1 + (bk + 1) * Math.pow(p - 1, 3) + bk * Math.pow(p - 1, 2);
+        spongeParts.forEach(m => { const fs = m.userData.fullScale; if (fs) m.scale.set(fs.x * s, fs.y * s, fs.z * s); });
+      }
+    } else if (state.mode === 'swim') {
+      // swim up/down (y is the swim axis); a few bubbles trail off him
+      const dir = (state.steerUp ? 1 : 0) - (state.steerDown ? 1 : 0);
+      state.targetY = THREE.MathUtils.clamp(state.targetY + dir * SWIM_STEER * dt, SWIM_Y_MIN, SWIM_Y_MAX);
+      playerGroup.position.y += (state.targetY - playerGroup.position.y) * Math.min(1, 8 * dt);
+      playerGroup.position.z = LANE_Z;
+      const tiltTarget = SWIM_PITCH + dir * 0.22;         // nose-up, leans with up/down
+      state.divePitch += (tiltTarget - state.divePitch) * Math.min(1, 6 * dt);
+      setPlayerPitch(state.divePitch);
+      surfTrailT -= dt;
+      if (surfTrailT <= 0) {
+        surfTrailT = 0.08;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(-0.5, 0.9, 0)), 0xcdeeff, 2, 0.8, 1.4, 0.14, -1.2);
+      }
+    } else if (state.mode === 'dive_seq') {
+      scriptDiveSeq(dt);                    // 2→3 cinematic: ramp launch → lose gear → dive → sink
+    } else {
+      playerGroup.position.z = LANE_Z;
+    }
+
+    // gravity / jump  (Level 2 rides higher, on top of the sponge)
+    if (!state.onGround) {
+      const groundY = state.mode === 'surf' ? SURF_LIFT : 0;
+      velocity.y -= state.gravity * dt;
+      playerGroup.position.y += velocity.y * dt;
+      if (playerGroup.position.y <= groundY) {
+        playerGroup.position.y = groundY; velocity.y = 0; state.onGround = true;
+        sfx.land();
+        squash = 0.82;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.1, 0)), 0xffffff, 5, 1.6, 1.2, 0.16, 2.5);
+        playAnim(moveAnim());
+      }
+    }
+
+    // sliding kicks up a little foam trail
+    if (state.isSliding && state.onGround) {
+      slideDustT -= dt;
+      if (slideDustT <= 0) {
+        slideDustT = 0.08;
+        burst(playerGroup.position.clone().add(new THREE.Vector3(-0.5, 0.15, 0)), 0xffffff, 2, 1.2, 0.9, 0.13, 3.0);
+      }
+    }
+
+    // invulnerability blink
+    if (state.invuln > 0) {
+      state.invuln -= dt;
+      playerGroup.visible = (Math.floor(t * 12) % 2 === 0);
+      if (state.invuln <= 0) playerGroup.visible = true;
+    }
+
+    // squash & stretch (cartoon body language)
+    squash += (squashTarget - squash) * Math.min(1, 10 * dt);
+    playerGroup.scale.set(2 - squash > 1.15 ? 1.15 : 2 - squash, squash, 2 - squash > 1.15 ? 1.15 : 2 - squash);
+
+    // head-bone excitement wiggle (applied after mixer pose). The foam hat is rigidly
+    // skinned to this bone, so wiggling it visibly pops the hat around on every pickup —
+    // only do it in Level 1 (hat hidden). In surf mode the hat stays put.
+    if (headBone && state.excite > 0.02 && state.mode !== 'surf') {
+      headBone.rotation.z += Math.sin(t * 26) * 0.14 * state.excite;
+      headBone.rotation.x += Math.sin(t * 19) * 0.06 * state.excite;
+    }
+    state.excite = Math.max(0, state.excite - 2.2 * dt);
+
+    // spawn ahead / clean up behind
+    while (spawnX < playerGroup.position.x + 70) spawnChunk();
+    despawnBehind(playerGroup.position.x);
+    checkLevel();
+    if (state.mode === 'surf' && !state.crossedGate && playerGroup.position.x >= LEVEL_LEN) crossGate();
+    if (state.mode === 'swim' && (playerGroup.position.x - state.swimStartX) >= SWIM_LEN) startJumpOut();
+
+    const px = playerGroup.position.x, py = playerGroup.position.y;
+    const playerR = state.isSliding ? 0.5 : 0.6;
+    const playerReachTop = py + (state.isSliding ? SLIDE_H : STAND_H);
+
+    for (const ent of entities) {
+      if (!ent.active) continue;
+      const m = ent.mesh, c = ent.cfg;
+
+      // --- Level 3 underwater: dodge debris, swim into drops (x AND y proximity) ---
+      if (state.mode === 'swim') {
+        m.rotation.y += dt * 0.7;
+        const sdx = px - m.position.x, sdy = py - m.position.y;
+        if (ent.type === 'ammo' || ent.type === 'score') {
+          m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.12;
+          if (Math.abs(sdx) < 0.7 + ent.radius && Math.abs(sdy) < 0.8 + ent.radius) collect(ent);
+        } else if (ent.type === 'swimobs') {
+          if (!ent.crossed && Math.abs(sdx) < 0.55 + ent.radius && Math.abs(sdy) < 0.55 + ent.radius) {
+            ent.crossed = true; ent.active = false; scene.remove(m);
+            takeDamage();
+          }
+        }
+        continue;
+      }
+
+      // --- Level 2 dirt: scrub it by riding over it (x AND z proximity) ---
+      if (ent.type === 'dirt') {
+        const ddx = px - m.position.x, ddz = playerGroup.position.z - m.position.z;
+        if (!ent.isClean && Math.abs(ddx) < 0.85 + ent.radius && Math.abs(ddz) < 0.75 + ent.radius) {
+          ent.isClean = true; ent.active = false;
+          scene.remove(m);
+          if (m.material.map) m.material.dispose();
+          state.surfCleaned++; state.score += 75;
+          sfx.clean();
+          burst(m.position.clone().add(new THREE.Vector3(0, 0.2, 0)), 0xffffff, 12, 2.6, 2.4, 0.22);
+          popup(m.position.clone().add(new THREE.Vector3(0, 0.7, 0)), 'SCRUB! +75', '#ffffff');
+          updateHUD();
+          if (state.surfCleaned >= state.surfGoal) advanceSurfLevel();
+        }
+        continue;
+      }
+
+      // --- Level 2 obstacle: jump over it, or take a hit (x AND z proximity) ---
+      if (ent.type === 'surfobs') {
+        m.rotation.y += dt * 0.8;
+        const odx = px - m.position.x, odz = playerGroup.position.z - m.position.z;
+        if (Math.abs(odx) < 0.6 + ent.radius && Math.abs(odz) < 0.6 + ent.radius) {
+          if (py > ent.height - 0.1) {                          // cleared it by jumping
+            if (!ent.jumped) { ent.jumped = true; state.score += 20; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, ent.height + 0.4, 0)), '+20', '#bfe8ff'); }
+          } else if (!ent.crossed) {
+            ent.crossed = true; ent.active = false;
+            scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
+            takeDamage();
+          }
+        }
+        if (ent.shadow) ent.shadow.position.x = m.position.x;
+        continue;
+      }
+
+      // --- give the props life ---
+      if (ent.type === 'enemy') {
+        m.position.x -= (2.0 + state.level * 0.4) * dt;                      // slimes charge at him
+        m.position.y = ent.baseY + 0.15 + Math.sin(t * 5 + ent.phase) * 0.12;
+        m.rotation.y += dt * 1.5;
+      } else if (ent.type === 'ammo') {
+        m.rotation.y += dt * 1.8; m.position.y = ent.baseY + Math.sin(t * 3 + ent.phase) * 0.10;
+      } else if (ent.type === 'score') {
+        m.rotation.y += dt * 2.5; m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.1;
+      }
+      if (ent.subType === 'duck') {
+        m.rotation.x += dt * 3.2;                                            // pin spins on its axis
+        m.position.y = ent.baseY + Math.sin(t * 2.2 + ent.phase) * 0.05;
+        if (ent.hint && !slideHintShown && (m.position.x - px) < 9) {
+          slideHintShown = true;
+          popup(m.position.clone().add(new THREE.Vector3(0, 1.3, 0)), 'SLIDE UNDER! [SHIFT]', '#7fe3a0');
+        }
+      }
+      if (c.bounce && !ent.isClean) m.position.y = ent.baseY + Math.abs(Math.sin(t * 3 + ent.phase)) * 0.18;
+      if (c.roll)  { m.rotation.z -= dt * 5.0; m.position.x -= 1.4 * dt; }   // salt rolls toward him
+      if (c.sway)  m.rotation.z = Math.sin(t * 1.5 + ent.phase) * 0.12;
+
+      if (ent.shadow) {
+        ent.shadow.position.x = m.position.x;
+        const pulse = (ent.type === 'ammo' || ent.type === 'score') ? 1 + Math.sin(t * 6 + ent.phase) * 0.18 : 1;
+        ent.shadow.scale.setScalar(pulse);
+      }
+
+      const dx = px - m.position.x;
+
+      // --- collectible magnet: near and reachable -> drift to him ---
+      if ((ent.type === 'ammo' || ent.type === 'score') && Math.abs(dx) < 1.5) {
+        if (m.position.y <= playerReachTop + 0.4) {
+          m.position.x += (px - m.position.x) * 6 * dt;
+          m.position.y += ((py + 1.1) - m.position.y) * 6 * dt;
+        }
+      }
+
+      // --- collisions (single lane: pure X + height) ---
+      if (Math.abs(dx) < playerR + ent.radius) {
+        if (ent.type === 'ammo' || ent.type === 'score') {
+          const ey = m.position.y;
+          if (ey >= py - 0.2 && ey <= playerReachTop + 0.3) collect(ent);
+        } else if (ent.subType === 'duck') {
+          // overhead bar: slide under it (or thread a perfect jump over it)
+          if (state.isSliding || playerReachTop < PIN_Y - PIN_R - 0.02) {
+            if (!ent.crossed) {
+              ent.crossed = true;
+              state.score += 25; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, 1.0, 0)), 'UNDER! +25', '#7fe3a0');
+            }
+          } else if (py > PIN_CLEAR_Y) {
+            if (!ent.jumped) {
+              ent.jumped = true;
+              state.score += 10; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, 0.8, 0)), '+10', '#bfe8ff');
+            }
+          } else if (!ent.crossed) {
+            ent.crossed = true;
+            takeDamage();
+          }
+        } else {
+          const top = m.position.y + ent.height;
+          if (py >= top - 0.15) {
+            if (!ent.jumped) {                                   // cleared it -> style points
+              ent.jumped = true;
+              state.score += 10; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, ent.height + 0.4, 0)), '+10', '#bfe8ff');
+            }
+          } else if (ent.type === 'enemy') {
+            takeDamage(); ent.active = false;
+            scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
+          } else if (ent.type === 'cleanable') {
+            if (ent.isClean) {
+              if (!ent.crossed) {                                // sparkly clean dishes reward a touch
+                ent.crossed = true;
+                state.score += 50; updateHUD();
+                sfx.collect();
+                burst(m.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 6, 2.0, 2.0, 0.2);
+                popup(m.position.clone().add(new THREE.Vector3(0, 1.4, 0)), '+50', '#ffffff');
+              }
+            } else takeDamage();
+          } else if (ent.type === 'hazard' && ent.subType === 'damage') {
+            takeDamage();
+          } else if (ent.type === 'hazard' && ent.subType === 'slide') {
+            if (state.isSliding) {
+              if (!ent.crossed) {                                // slid through the oil like a pro
+                ent.crossed = true;
+                state.score += 25; updateHUD();
+                popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLICK! +25', '#7fe3a0');
+              }
+            } else if (state.onGround && !ent.crossed) {
+              ent.crossed = true;                                // slipped on the oil
+              takeDamage();
+              state.brake = true;
+              popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLIPPED!', '#ffb84e');
+              setTimeout(() => { state.brake = false; }, 800);
+            }
+          } else if (ent.type === 'hazard' && ent.subType === 'slow') {
+            if (!ent.crossed) {
+              ent.crossed = true;
+              state.brake = true;                                // salt grit slows him briefly
+              popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLOWED', '#ffb84e');
+              setTimeout(() => { state.brake = false; }, 1500);
+            }
+          }
+        }
+      }
+    }
+
+    // soap projectiles
+    for (let i = soaps.length - 1; i >= 0; i--) {
+      const s = soaps[i];
+      s.mesh.position.x += 13 * dt; s.life -= dt;
+      s.mesh.position.y += Math.sin(t * 20) * 0.004;
+      let hit = false;
+      for (const ent of entities) {
+        if (!ent.active) continue;
+        if (Math.abs(s.mesh.position.x - ent.mesh.position.x) < ent.radius + 0.3) {
+          if (ent.type === 'cleanable' && !ent.isClean) {
+            ent.isClean = true;
+            ent.mesh.traverse(ch => { if (ch.isMesh) ch.material = cleanMat; });
+            state.score += 100; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0xffffff, 12, 2.6, 2.6, 0.24);
+            popup(ent.mesh.position.clone().add(new THREE.Vector3(0, 1.5, 0)), 'CLEAN! +100', '#ffffff');
+            hit = true; break;
+          } else if (ent.type === 'enemy') {
+            ent.active = false; scene.remove(ent.mesh); if (ent.shadow) scene.remove(ent.shadow);
+            state.score += 50; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0x7fe3a0, 10, 2.6, 2.6, 0.22);
+            popup(s.mesh.position, '+50', '#39d24e');
+            hit = true; break;
+          } else if (ent.type === 'swimobs' && Math.abs(s.mesh.position.y - ent.mesh.position.y) < ent.radius + 0.5) {
+            ent.active = false; scene.remove(ent.mesh);       // soap blasts underwater debris
+            state.score += 50; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0xcdeeff, 12, 2.8, 2.6, 0.24);
+            popup(s.mesh.position, '+50', '#bfe8ff');
+            hit = true; break;
+          }
+        }
+      }
+      if (s.life <= 0 || hit) { scene.remove(s.mesh); soaps.splice(i, 1); }
+    }
+  }
+
+  updateParticles(dt);
+  if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
+
+  // camera / world dressing follow the run
+  const surf = state.mode === 'surf';
+  const swim = state.mode === 'swim';
+  const diveSeq = state.mode === 'dive_seq';
+  const jumpout = state.mode === 'jumpout';
+  const puzzle = state.mode === 'puzzle' || state.mode === 'won';
+  const followY = swim || diveSeq || jumpout;                  // track his vertical
+  const pz = playerGroup.position.z, pyNow = playerGroup.position.y;
+  playerBlob.position.set(playerGroup.position.x, 0.02, surf ? pz : LANE_Z);
+  playerBlob.visible = state.onGround && !swim && !diveSeq && !jumpout && !puzzle;
+  const camXTarget = puzzle ? PZ.boardX : playerGroup.position.x + 4.0;
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, 4 * dt);
+  const camYTarget = puzzle ? PZ.midY : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, followY ? 4.5 * dt : 3 * dt);
+  const camZTarget = puzzle ? (LANE_Z + 24) : diveSeq ? 23 : 17;   // pulled back so the board fits with margins
+  camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, 2.5 * dt);
+  if (state.shake > 0.001) {                                   // impact jolt
+    camera.position.x += (Math.random() - 0.5) * state.shake;
+    camera.position.y += (Math.random() - 0.5) * state.shake;
+    state.shake = Math.max(0, state.shake - 2.5 * dt);
+  }
+  const lookX = puzzle ? PZ.boardX : camera.position.x;
+  const lookY = puzzle ? PZ.midY : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12;
+  const lookZ = surf ? (pz - LANE_Z) * 0.4 : 0;
+  camera.lookAt(lookX, lookY, lookZ);
+  camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
+  if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
+  dirLight.position.x = playerGroup.position.x + 7;
+  dirLight.target.position.set(playerGroup.position.x, 0, 0);
+  rimLight.position.x = playerGroup.position.x - 7;
+  fillLight.position.x = camera.position.x + 2;
+  if (floor) {
+    floor.position.x = playerGroup.position.x;
+    const ftex = floor.material.map;                    // scroll whichever counter texture is active
+    if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
+  }
+  if (waterSurface) {
+    waterSurface.position.x = camera.position.x;                   // the rippling surface follows overhead
+  }
+  if (splashRing && splashRingLife > 0) {                          // expanding foam ring
+    splashRingLife -= dt;
+    const f = 1 - splashRingLife / 0.7;
+    splashRing.scale.setScalar(1 + f * 9);
+    splashRing.material.opacity = (1 - f) * 0.85;
+    if (splashRingLife <= 0) splashRing.visible = false;
+  }
+  if (surf && frothDecalsBuilt) {                       // recycle soapy froth ahead of the camera
+    for (const s of frothDecals) {
+      if (s.position.x < camera.position.x - 16) {
+        s.position.x += 80 + Math.random() * 40;
+        s.position.z = SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN);
+        s.scale.setScalar(0.7 + Math.random() * 1.5);
+      }
+    }
+  }
+  if (swim || diveSeq) updateUnderwaterFX(dt);          // water surface, god rays, caustics, motes, splash crown
+  if ((swim || diveSeq) && bubblesBuilt) {              // rising bubbles that recycle (deep → surface)
+    for (const s of bubbles) {
+      s.visible = true;
+      s.position.y += s.userData.spd * dt;
+      if (s.position.y > 0.8 || s.position.x < camera.position.x - 20) {
+        s.position.y = SWIM_Y_MIN - 1 + Math.random() * 1.5;
+        s.position.x = camera.position.x + 6 + Math.random() * 32;
+        s.position.z = LANE_Z + (Math.random() * 5 - 2.5);
+        s.userData.spd = 0.6 + Math.random() * 1.3;
+        s.scale.setScalar(0.1 + Math.random() * 0.4);
+      }
+    }
+  }
+  if (swim && seabedBuilt) {                            // dirty-plate seabed drifting past at the bottom
+    for (const m of seabed) {
+      m.rotation.y += dt * 0.15;
+      if (m.position.x < camera.position.x - 22) {
+        m.position.x += 90 + Math.random() * 40;
+        m.position.z = LANE_Z + (Math.random() * 6 - 3);
+        m.position.y = SEABED_Y + Math.random() * 0.8;
+      }
+    }
+  }
+  const showFg = state.mode === 'run' || state.mode === 'surf';   // kitchen props only on the counter levels
+  for (const p of fgPlanes) {
+    p.visible = showFg;
+    if (!showFg) continue;
+    if (p.position.x < camera.position.x - 30) {
+      p.position.x += 260 + Math.random() * 40;
+      p.position.z = p.userData.layer === 'near' ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8;
+    }
+    // keep the plane's BOTTOM edge just below the viewport, so its hard bottom edge is
+    // never visible — the prop always appears to rise from the lower edge of the screen.
+    p.position.y = screenBottomYAt(p.position.z) - FG_HIDE + p.userData.halfH;
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ----------------------------------------------------
+// INPUT — SPACE jump, SHIFT slide, F fire, arrows pace
+// ----------------------------------------------------
+window.addEventListener('keydown', e => {
+  initAudio();
+  if (e.code === 'KeyR' && (state.isGameOver || state.mode === 'won')) { location.reload(); return; }
+  if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'won') return;
+  if (state.mode === 'puzzle') {                   // L4: aim + shoot
+    if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.aimL = true;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') state.aimR = true;
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyF') pzShoot();
+    return;
+  }
+  if (e.code === 'ArrowRight') state.boost = true;
+  if (e.code === 'ArrowLeft')  state.brake = true;
+  if (state.mode === 'surf' || state.mode === 'swim') {   // L2/L3: up/down steer
+    if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = true;
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = true;
+    if (e.code === 'Space' && state.mode === 'surf') doJump();              // L2 jump
+    if (e.code === 'KeyF' && !e.repeat && state.mode === 'swim') fireSoap();  // L3 soap
+  } else {                                         // L1: jump / slide / soap
+    if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
+    if (e.code === 'KeyF' && !e.repeat) fireSoap();
+  }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'ArrowRight') state.boost = false;
+  if (e.code === 'ArrowLeft')  state.brake = false;
+  if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = false;
+  if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = false;
+  if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.aimL = false;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') state.aimR = false;
+});
+function onResize() {
+  fitCamera();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  fitBackdrop();
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', () => setTimeout(onResize, 200));
+
+// ----------------------------------------------------
+// TOUCH / MOBILE — on-screen buttons mirror the keys
+// ----------------------------------------------------
+const isTouch = matchMedia('(hover: none) and (pointer: coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
+window.addEventListener('touchstart', () => document.body.classList.add('touch'), { once: true, passive: true });
+
+// --- Block iOS double-tap-to-zoom (THE real "crops in and is irreversible" bug) ---
+// Firing soap fast makes Safari read the quick taps as a double-tap and zoom the whole
+// page in; because the page disables user scaling, there's no way to pinch back out, so
+// the game stays permanently zoomed/cropped. Swallow the second tap of any quick pair,
+// and block pinch/gesture zoom outright. (No effect on desktop — these events don't fire.)
+let _lastTapEnd = 0;
+document.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - _lastTapEnd <= 350) e.preventDefault();   // kill the double-tap zoom, keep the tap action
+  _lastTapEnd = now;
+}, { passive: false });
+['gesturestart', 'gesturechange', 'gestureend', 'dblclick'].forEach(evt =>
+  document.addEventListener(evt, (e) => e.preventDefault(), { passive: false }));
+
+document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
+  const act = btn.dataset.act;
+  const press = (e) => {
+    e.preventDefault();
+    initAudio();
+    btn.classList.add('active');
+    if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'won') return;
+    if (state.mode === 'puzzle') {                 // L4: up/down aim, soap = shoot
+      if (act === 'up')   state.aimL = true;
+      else if (act === 'down') state.aimR = true;
+      else if (act === 'fire') pzShoot();
+      return;
+    }
+    switch (act) {
+      case 'jump':  doJump();               break;
+      case 'slide': startSlide();           break;   // L1
+      case 'fire':  fireSoap();             break;   // L1 / L3
+      case 'up':    state.steerUp = true;   break;
+      case 'down':  state.steerDown = true; break;
+    }
+  };
+  const release = (e) => {
+    if (e) e.preventDefault();
+    btn.classList.remove('active');
+    if (act === 'up')   { state.steerUp = false; state.aimL = false; }
+    if (act === 'down') { state.steerDown = false; state.aimR = false; }
+  };
+  btn.addEventListener('pointerdown', press);
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointercancel', release);
+  btn.addEventListener('pointerleave', release);
+});
+
+// ---- Force landscape on phones: prompt + pause while portrait ----
+function checkOrientation() {
+  const portrait = window.innerHeight > window.innerWidth;
+  const show = isTouch && portrait;
+  const el = document.getElementById('rotate-prompt');
+  if (el) el.style.display = show ? 'flex' : 'none';
+  state.paused = show;
+  // dropped-key safety when we pause/rotate
+  if (show) { state.steerUp = state.steerDown = state.boost = state.brake = false; }
+}
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 250));
+checkOrientation();
+
+// tap the game-over screen to run again (mobile has no R key)
+document.getElementById('gameover').addEventListener('pointerdown', () => {
+  if (state.isGameOver || state.mode === 'won') location.reload();
+});
+
+initGame();
+</script>
+</body>
+</html>
