@@ -1305,16 +1305,20 @@ function setupNimble(nimbleGltf) {
                 (bodB.mx.y - 0.30 * (h.mx.y - h.mn.y)) - h.mn.y - HAT_SEAT_DOWN,  // drop onto the crown (y)
                 head.c.z - h.c.z ];                                      // centre on the crown (z)
     const o = [0,1,2].map(i => Mi[i][0]*d[0] + Mi[i][1]*d[1] + Mi[i][2]*d[2]);
+    if (!o.every(Number.isFinite) || Math.hypot(o[0], o[1], o[2]) > 12) return;   // wild calibration — retry
     tr(o[0], o[1], o[2]);
     hat.geometry.computeBoundingSphere();
     hatSeated = true;
   }
-  // run once the skeleton is actually posed by the mixer (wait a few frames, then retry if needed)
+  // Seat the cap only once Level 2's surf pose is actually running (that's when the hat is worn,
+  // and matches the pose it's rendered in). Waiting for it avoids locking in a bad seat computed
+  // during the Level 1 run-up where the head pose differs and the hat is hidden.
+  let _surfFrames = 0, _giveUp = 0;
   (function trySeat() {
-    if (hatSeated) return;
-    if (_seatTries++ < 3) { requestAnimationFrame(trySeat); return; }   // let the animation pose the skeleton first
-    try { seatFoamCap(); } catch (e) {}
-    if (!hatSeated && _seatTries < 120) requestAnimationFrame(trySeat);
+    if (hatSeated || _giveUp++ > 3000) return;
+    // wait for the surf/skateboard pose to actually be running, then settle a few frames
+    if (state.mode === 'surf' && currentAnim === 'skateboard' && ++_surfFrames > 4) { try { seatFoamCap(); } catch (e) {} }
+    requestAnimationFrame(trySeat);
   })();
 
   window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); console.log('[tuneHatOpacity]', o); return o; };
