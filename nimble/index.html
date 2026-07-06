@@ -343,12 +343,10 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 // ----------------------------------------------------
 const LANE_Z = 2.2;                 // the one depth lane everything lives on
 const BASE_SPEED = 6.3;             // world-scroll speed (−30%); Nimble's own anim/controls are separate
-const LEVEL_LEN = 500;              // metres of Level 1 before the skate hand-off
+const LEVEL_LEN = location.hash.includes('l2') ? 24 : 500;   // #l2 = quick-jump to Level 2 for testing (out-of-repo copy)
 const angleCheat = 0.49;
 const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
-const HAT_LIFT = 0.12;              // FIX: the Level-2 foam hat was sunk into the head. It's rigidly
-                                    // weighted 100% to the Head bone, so raising the hat geometry along
-                                    // model-up lifts it along head-up in every pose. Tune ~0.08–0.30 to taste.
+const HAT_OFFSET = { x: 0, y: 0, z: 0 };   // Level-2 foam hat seat. LIVE-TUNE in console: tuneHat(x,y,z). +z=toward face, +y=up, +x=his right
 const SLIDE_DUR = 0.72;             // shorter, snappier slide (hitbox + anim end together)
 
 // player capsule (world units, after CHAR_SCALE)
@@ -1206,7 +1204,7 @@ function setupNimble(nimbleGltf) {
     o.castShadow = true;
     o.frustumCulled = false;
     const mn = o.material ? o.material.name : '';
-    if (mn === 'hat_foam')        { o.material = getFoamMat(); o.geometry.translate(0, HAT_LIFT, 0); hatParts.push(o);  o.visible = false; }   // lift the hat out of the head (see HAT_LIFT)
+    if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
     else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
     else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }  // soap suds around the sponge
     else if (mn.startsWith('sponge_mat'))  {
@@ -1225,6 +1223,23 @@ function setupNimble(nimbleGltf) {
     else { o.material = getGlassMat(o.material); }
   });
   playerGroup.add(root);
+
+  // ---- LIVE HAT TUNER (console) --------------------------------------------------
+  // The foam hat is rigidly skinned 100% to the Head bone, so translating its geometry
+  // offsets it in head-local space and it stays seated in every pose. Tune it live:
+  //   tuneHat(0, 0, 0.12)   -> move the hat toward the face by 0.12 (try +/- on each axis)
+  //   tuneHatOpacity(0.97)  -> make the foam less see-through (if the green shows THROUGH it)
+  // Tell me the numbers that look right and I'll bake them into HAT_OFFSET above.
+  let _hatApplied = { x: 0, y: 0, z: 0 };
+  function applyHatOffset() {
+    hatParts.forEach(m => m.geometry.translate(
+      HAT_OFFSET.x - _hatApplied.x, HAT_OFFSET.y - _hatApplied.y, HAT_OFFSET.z - _hatApplied.z));
+    _hatApplied = { x: HAT_OFFSET.x, y: HAT_OFFSET.y, z: HAT_OFFSET.z };
+  }
+  applyHatOffset();
+  window.tuneHat = (x = 0, y = 0, z = 0) => { HAT_OFFSET.x = x; HAT_OFFSET.y = y; HAT_OFFSET.z = z; applyHatOffset(); return HAT_OFFSET; };
+  window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); return o; };
+  // --------------------------------------------------------------------------------
 
   mixer = new THREE.AnimationMixer(root);
   const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
