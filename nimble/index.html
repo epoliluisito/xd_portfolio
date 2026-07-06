@@ -1237,8 +1237,33 @@ function setupNimble(nimbleGltf) {
     _hatApplied = { x: HAT_OFFSET.x, y: HAT_OFFSET.y, z: HAT_OFFSET.z };
   }
   applyHatOffset();
-  window.tuneHat = (x = 0, y = 0, z = 0) => { HAT_OFFSET.x = x; HAT_OFFSET.y = y; HAT_OFFSET.z = z; applyHatOffset(); return HAT_OFFSET; };
-  window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); return o; };
+  const _v = new THREE.Vector3();
+  function hatWorld() {   // real on-screen hat location: skinned geometry centre carried by the Head bone
+    if (!hatParts[0]) return null;
+    hatParts[0].geometry.computeBoundingBox();
+    const c = hatParts[0].geometry.boundingBox.getCenter(new THREE.Vector3());
+    return (headBone ? headBone.localToWorld(c.clone()) : c);
+  }
+  window.hatInfo = () => {
+    const h = hatParts[0];
+    const info = { hatParts: hatParts.length, visible: h && h.visible, isSkinnedMesh: !!(h && h.isSkinnedMesh),
+      offset: { ...HAT_OFFSET },
+      geomCenterLocal: h ? (h.geometry.computeBoundingBox(), h.geometry.boundingBox.getCenter(new THREE.Vector3()).toArray().map(n=>+n.toFixed(3))) : null,
+      hatWorld: hatWorld() ? hatWorld().toArray().map(n=>+n.toFixed(2)) : null,
+      headBoneWorld: headBone ? headBone.getWorldPosition(_v).toArray().map(n=>+n.toFixed(2)) : null };
+    console.log('[hatInfo]', JSON.stringify(info)); return info;
+  };
+  window.tuneHat = (x = 0, y = 0, z = 0) => {
+    const before = hatWorld();
+    HAT_OFFSET.x = x; HAT_OFFSET.y = y; HAT_OFFSET.z = z; applyHatOffset();
+    const after = hatWorld();
+    console.log('[tuneHat] offset', JSON.stringify(HAT_OFFSET),
+      '| hatWorld before', before && before.toArray().map(n=>+n.toFixed(3)),
+      'after', after && after.toArray().map(n=>+n.toFixed(3)));
+    return HAT_OFFSET;
+  };
+  window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); console.log('[tuneHatOpacity]', o); return o; };
+  window.NIMBLE = { scene, camera, hatParts, headBone };
   // --------------------------------------------------------------------------------
 
   mixer = new THREE.AnimationMixer(root);
