@@ -1257,14 +1257,15 @@ function setupNimble(nimbleGltf) {
   // a fixed geometry transform, so it stays seated in every animation pose.
   //   Tweakables: HAT_ROT_DEG (bill orientation) and HAT_SEAT_DOWN (how deep it sits).
   const HAT_ROT_DEG = { x: 0, y: 90, z: 0 };     // 90° spin -> bill worn backward
-  // World-space fine-tune (metres). If the cap needs moving, nudge these and reload:
-  //   down  -> + lowers it onto the head / - raises it
-  //   side  -> + moves it to his right (screen left) / - his left
-  //   fwd   -> + toward the camera / - toward his back
-  const HAT_SEAT = { down: 0.33, side: 0.11, fwd: 0.04 };
-  let bodyMesh = null;
-  root.traverse(o => { if (o.isSkinnedMesh && !hatParts.includes(o) &&
-    (!bodyMesh || o.geometry.attributes.position.count > bodyMesh.geometry.attributes.position.count)) bodyMesh = o; });
+  // Fine-tune, as fractions of head size, in the HEAD's own frame (so it never drifts as he
+  // bends). up -> +higher / -lower on the crown; back -> +toward his back; side -> +his right.
+  const HAT_SEAT = { up: -0.10, back: 0.0, side: 0.0 };
+  let bodyMesh = null, headTopBone = null;
+  root.traverse(o => {
+    if (o.isBone && /HeadTop/i.test(o.name)) headTopBone = o;
+    if (o.isSkinnedMesh && !hatParts.includes(o) &&
+      (!bodyMesh || o.geometry.attributes.position.count > bodyMesh.geometry.attributes.position.count)) bodyMesh = o;
+  });
 
   let hatSeated = false, _seatTries = 0;
   function seatFoamCap() {
@@ -1304,12 +1305,21 @@ function setupNimble(nimbleGltf) {
     const cof = (i, j) => { const r = [0,1,2].filter(x => x!==i), c = [0,1,2].filter(x => x!==j);
       return ((i+j)%2 ? -1 : 1) * (M[r[0]][c[0]]*M[r[1]][c[1]] - M[r[0]][c[1]]*M[r[1]][c[0]]); };
     const Mi = [[0,0,0],[0,0,0],[0,0,0]]; for (let i=0;i<3;i++) for (let j=0;j<3;j++) Mi[i][j] = cof(j, i) / det;
-    const bodB = bnd(bodyMesh), midY = (bodB.mn.y + bodB.mx.y) / 2, head = bnd(bodyMesh, midY), h = bnd(hat);
-    // Seat by the hat's CENTROID (h.c) — crown-weighted, so the sideways bill can't drag the
-    // placement off. Put that centroid over the head's centre (x/z) and just above the crown (y).
-    const d = [ (head.c.x + HAT_SEAT.side) - h.c.x,
-                (bodB.mx.y - HAT_SEAT.down) - h.c.y,
-                (head.c.z + HAT_SEAT.fwd) - h.c.z ];
+    const h = bnd(hat);
+    // Anchor to the HEAD-TOP bone (the crown) — rigidly on the head, so the seat can't drift as
+    // the body bends. Target = crown, nudged in the head's own up/back/side axes.
+    const headW = new V(), htW = new V();
+    headBone.getWorldPosition(headW);
+    (headTopBone || headBone).getWorldPosition(htW);
+    const up = htW.clone().sub(headW); const hs = up.length() || 1; up.normalize();
+    const me = headBone.matrixWorld.elements;
+    const sideAx = new V(me[0], me[1], me[2]).normalize();
+    const fwdAx  = new V(me[8], me[9], me[10]).normalize();
+    const target = htW.clone()
+      .addScaledVector(up,     hs * HAT_SEAT.up)
+      .addScaledVector(fwdAx,  hs * HAT_SEAT.back)
+      .addScaledVector(sideAx, hs * HAT_SEAT.side);
+    const d = [ target.x - h.c.x, target.y - h.c.y, target.z - h.c.z ];
     const o = [0,1,2].map(i => Mi[i][0]*d[0] + Mi[i][1]*d[1] + Mi[i][2]*d[2]);
     if (!o.every(Number.isFinite) || Math.hypot(o[0], o[1], o[2]) > 12) return;   // wild calibration — retry
     tr(o[0], o[1], o[2]);
