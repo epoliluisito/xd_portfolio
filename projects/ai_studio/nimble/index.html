@@ -357,6 +357,7 @@ const SURF_Z_MIN = 0.2;             // steer band across the counter's depth (up
 const SURF_Z_MAX = 4.6;
 const STEER_SPEED = 5.2;            // z units per second while a steer key/button is held
 const SURF_GOAL_BASE = 48;          // dirt patches to scrub to finish level 2 (twice as long)
+const SURF_LIFT = 0.17;             // ride height on Level 2 so the (thick) sponge sits ON the counter, not through it
 
 // --- Level 3 "dive & swim" mode (the water surface is y = 0; he swims below it) ---
 const SWIM_Y_MIN = -5.4;            // deepest
@@ -1504,7 +1505,7 @@ function enterSurfMode() {
   state.level = 2;
   state.crossedGate = false;
   state.targetZ = LANE_Z;
-  playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
+  playerGroup.position.y = SURF_LIFT; velocity.y = 0; state.onGround = true;   // ride up on the sponge
   state.isSliding = false;
   state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
   state.excite = 1.0;
@@ -1604,10 +1605,10 @@ function scriptDiveSeq(dt) {
   const T = state.diveT;
   let targetPitch = 0, y = 0;
   if (T < DIVE_LAUNCH_T - RAMP_RIDE) {
-    y = 0; targetPitch = 0;                                   // rolling flat toward the ramp
+    y = SURF_LIFT; targetPitch = 0;                           // rolling flat toward the ramp, still up on the sponge
   } else if (T < DIVE_LAUNCH_T) {
     const f = (T - (DIVE_LAUNCH_T - RAMP_RIDE)) / RAMP_RIDE;  // riding up the ramp face
-    y = RAMP_LIP_Y * f; targetPitch = RAMP_ANGLE * f;         // tilt to match the incline
+    y = SURF_LIFT * (1 - f) + RAMP_LIP_Y * f; targetPitch = RAMP_ANGLE * f;   // blend the ride height out into the ramp
   } else {
     const jt = T - DIVE_LAUNCH_T, vy = DIVE_V0 - DIVE_G * jt;
     y = RAMP_LIP_Y + DIVE_V0 * jt - 0.5 * DIVE_G * jt * jt;   // big epic arc
@@ -2060,12 +2061,13 @@ function gameLoop() {
       playerGroup.position.z = LANE_Z;
     }
 
-    // gravity / jump
+    // gravity / jump  (Level 2 rides higher, on top of the sponge)
     if (!state.onGround) {
+      const groundY = state.mode === 'surf' ? SURF_LIFT : 0;
       velocity.y -= state.gravity * dt;
       playerGroup.position.y += velocity.y * dt;
-      if (playerGroup.position.y <= 0) {
-        playerGroup.position.y = 0; velocity.y = 0; state.onGround = true;
+      if (playerGroup.position.y <= groundY) {
+        playerGroup.position.y = groundY; velocity.y = 0; state.onGround = true;
         sfx.land();
         squash = 0.82;
         burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.1, 0)), 0xffffff, 5, 1.6, 1.2, 0.16, 2.5);
