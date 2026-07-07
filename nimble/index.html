@@ -376,8 +376,8 @@ const RAMP_ANGLE = Math.atan2(RAMP_LIP_Y, RAMP_HALF * 2);   // incline he tilts 
 const DIVE_V0 = 13.5;              // launch speed — big, epic hang time
 const DIVE_G  = 6.2;               // low gravity so the jump feels floaty/epic
 // live-tunable dive/ramp params (window.NIMBLE.tune) — read fresh each dive so values can be tuned in the browser
-const DIVE_TUNE = { rampHalf: RAMP_HALF, rampLipY: RAMP_LIP_Y, rideAbove: SURF_LIFT, diveV0: DIVE_V0, diveG: DIVE_G, pitchLerp: 14,
-  get rampAngle() { return Math.atan2(this.rampLipY, this.rampHalf * 2); } };
+const DIVE_TUNE = { rampHalf: 1.9, rampLipY: 1.6, rideAbove: 0.16, diveV0: DIVE_V0, diveG: DIVE_G, pitchLerp: 14,
+  get rampAngle() { return Math.atan2(this.rampLipY, this.rampHalf * 2); } };   // gentle skate-kicker; board planted on the face
 
 const state = {
   level: 1, score: 0, ammo: 10, lives: 9,
@@ -1964,7 +1964,8 @@ function scriptDiveSeq(dt) {
       y = SURF_LIFT; targetPitch = 0;                          // rolling flat toward the ramp, up on the sponge
     } else if (px < state.rampLipX) {
       const f = (px - state.rampBaseX) / Math.max(0.001, state.rampLipX - state.rampBaseX);  // climb tied to the ramp face
-      y = f * DIVE_TUNE.rampLipY + DIVE_TUNE.rideAbove; targetPitch = DIVE_TUNE.rampAngle * f;   // rides a constant height ABOVE the ramp face — hugs it, never sinks in
+      const ride = SURF_LIFT + (DIVE_TUNE.rideAbove - SURF_LIFT) * Math.min(1, f / 0.12);       // ease from the flat ride height onto the planted ramp height (no drop at the foot)
+      y = f * DIVE_TUNE.rampLipY + ride; targetPitch = DIVE_TUNE.rampAngle * f;                  // board planted flush on the ramp face
     } else {
       state.launched = true; state.launchT = state.diveT;     // off the lip → into the arc
     }
@@ -1989,7 +1990,8 @@ function scriptDiveSeq(dt) {
     if (state.diveSplashed && y <= SWIM_MID) { finishDiveIntoSwim(); }
   }
   playerGroup.position.y = y;
-  state.divePitch += (targetPitch - state.divePitch) * Math.min(1, DIVE_TUNE.pitchLerp * dt);   // snappy — the board hugs the ramp face right away
+  if (state.launched) state.divePitch += (targetPitch - state.divePitch) * Math.min(1, DIVE_TUNE.pitchLerp * dt);   // in the air: ease toward the trajectory
+  else state.divePitch = targetPitch;   // on the ground/ramp: snap the board flush to the surface (no lag → no dig-through)
   setPlayerPitch(state.divePitch);
 }
 
