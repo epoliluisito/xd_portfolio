@@ -486,7 +486,7 @@ function startBgFade(tex, tint, dur = 1.4) {
   finishBgFade();                                    // commit any fade already mid-flight
   const mat = new THREE.MeshBasicMaterial({
     map: tex, transparent: true, opacity: 0,
-    depthWrite: false, depthTest: false, toneMapped: false, fog: false,
+    depthWrite: false, depthTest: true, toneMapped: false, fog: false,   // depth-tested: geometry occludes the fade — it must never wash over Nimble
     color: (tint || bgMesh.material.color).clone()
   });
   const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
@@ -2769,9 +2769,11 @@ function gameLoop() {
         m.position.y = ent.baseY + 0.15 + Math.sin(t * 5 + ent.phase) * 0.12;
         m.rotation.y += dt * 1.5;
       } else if (ent.type === 'ammo') {
-        m.rotation.y += dt * 1.8; m.position.y = ent.baseY + Math.sin(t * 3 + ent.phase) * 0.10;
+        m.rotation.y += dt * 1.8;
+        if (!ent.magnet) m.position.y = ent.baseY + Math.sin(t * 3 + ent.phase) * 0.10;   // the bob lets go once the magnet owns its y
       } else if (ent.type === 'score') {
-        m.rotation.y += dt * 2.5; m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.1;
+        m.rotation.y += dt * 2.5;
+        if (!ent.magnet) m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.1;
       }
       if (ent.subType === 'duck') {
         m.rotation.x += dt * 3.2;                                            // pin spins on its axis
@@ -2793,12 +2795,15 @@ function gameLoop() {
 
       const dx = px - m.position.x;
 
-      // --- collectible magnet: near and reachable -> drift to him ---
-      if ((ent.type === 'ammo' || ent.type === 'score') && Math.abs(dx) < 1.5) {
-        if (m.position.y <= playerReachTop + 0.4) {
-          m.position.x += (px - m.position.x) * 6 * dt;
-          m.position.y += ((py + 1.1) - m.position.y) * 6 * dt;
-        }
+      // --- collectible magnet: near and reachable -> commit to him ---
+      // Old bug: the pull (6/s) was slower than his run speed, so a drop could stabilise
+      // ~1.3u behind his back — inside magnet range, outside collect radius — forever.
+      if ((ent.type === 'ammo' || ent.type === 'score') &&
+          (ent.magnet || (Math.abs(dx) < 1.5 && m.position.y <= playerReachTop + 0.4))) {
+        ent.magnet = true;
+        const k = Math.min(1, Math.max(10, state.speed * 2.2) * dt);   // always outruns him → guaranteed catch
+        m.position.x += (px - m.position.x) * k;
+        m.position.y += ((py + 1.1) - m.position.y) * k;
       }
 
       // --- collisions (single lane: pure X + height) ---
