@@ -388,6 +388,7 @@ const state = {
   surfPhase: 1, flipping: false, flipT: 0,   // L2 two-phase: 1 = yellow foam scrub, flip, 2 = green scrub
   swimStartX: 0, paused: false,
   diveT: 0, diveGearLost: false, diveSplashed: false, divePitch: 0, shake: 0,   // 2→3 ramp/dive cinematic
+  launched: false, launchT: 0, rampBaseX: 0, rampLipX: 0,   // ramp climb is driven by his real x, not a timer
   jumpT: 0, jumpSplashed: false, aimL: false, aimR: false                        // L3→L4 jump-out + puzzle aim
 };
 const MAX_LIVES = 12;
@@ -1928,15 +1929,21 @@ function startDiveTransition() {
     entities.splice(i, 1);
   }
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
-  // ramp lip lands right at his launch position
+  // place the ramp ahead; the climb is driven by his real x reaching it (below), so no clip-through
   const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
-  rampMesh = buildRamp(playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - RAMP_HALF);
+  const rampCenterX = playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - RAMP_HALF;
+  rampMesh = buildRamp(rampCenterX);
+  state.rampBaseX = rampCenterX - RAMP_HALF;   // foot of the ramp face
+  state.rampLipX  = rampCenterX + RAMP_HALF;   // launch lip
+  state.launched = false; state.launchT = 0;
   // Pre-build the whole underwater scene NOW, hidden, so piercing the surface doesn't hitch/freeze
-  // (the water's custom shader compile + seabed clones are the costly bits — do them off the climax).
+  // (the water's custom shader + FX + seabed are the costly bits — build AND pre-compile them off the climax).
   buildWaterSurface(); if (waterSurface) waterSurface.visible = false;
   buildBubbles();
   buildSeabed(); seabed.forEach(m => m.visible = false);
   buildUnderwaterFX(); showUnderwaterFX(false);
+  renderer.compile(scene, camera);             // compile the hidden water/FX shaders now (they compile on first render otherwise)
+  if (bgTexL3) renderer.initTexture(bgTexL3);   // pre-upload the underwater backdrop to the GPU
   showBanner('RAMP AHEAD!');
 }
 
@@ -1944,15 +1951,20 @@ function startDiveTransition() {
 function scriptDiveSeq(dt) {
   playerGroup.position.z = LANE_Z;
   state.diveT += dt;
-  const T = state.diveT;
-  let targetPitch = 0, y = 0;
-  if (T < DIVE_LAUNCH_T - RAMP_RIDE) {
-    y = SURF_LIFT; targetPitch = 0;                           // rolling flat toward the ramp, still up on the sponge
-  } else if (T < DIVE_LAUNCH_T) {
-    const f = (T - (DIVE_LAUNCH_T - RAMP_RIDE)) / RAMP_RIDE;  // riding up the ramp face
-    y = SURF_LIFT * (1 - f) + RAMP_LIP_Y * f; targetPitch = RAMP_ANGLE * f;   // blend the ride height out into the ramp
-  } else {
-    const jt = T - DIVE_LAUNCH_T, vy = DIVE_V0 - DIVE_G * jt;
+  const px = playerGroup.position.x;
+  let targetPitch = 0, y = SURF_LIFT;
+  if (!state.launched) {
+    if (px < state.rampBaseX) {
+      y = SURF_LIFT; targetPitch = 0;                          // rolling flat toward the ramp, up on the sponge
+    } else if (px < state.rampLipX) {
+      const f = (px - state.rampBaseX) / Math.max(0.001, state.rampLipX - state.rampBaseX);  // climb tied to the ramp face
+      y = SURF_LIFT * (1 - f) + RAMP_LIP_Y * f; targetPitch = RAMP_ANGLE * f;                 // rides UP the ramp, no clip-through
+    } else {
+      state.launched = true; state.launchT = state.diveT;     // off the lip → into the arc
+    }
+  }
+  if (state.launched) {
+    const jt = state.diveT - state.launchT, vy = DIVE_V0 - DIVE_G * jt;
     y = RAMP_LIP_Y + DIVE_V0 * jt - 0.5 * DIVE_G * jt * jt;   // big epic arc
     targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, Math.max(3, state.speed)), -1.15, 1.2);  // follow the trajectory
     if (!state.diveGearLost && vy <= 0) {                     // apex: fling off the gear, assume the dive
