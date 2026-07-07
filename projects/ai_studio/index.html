@@ -1786,6 +1786,43 @@ function measureNimbleMinY(){
   return minY;
 }
 
+// ---- Nimble glass material: faithful port of the game's recipe, minus the
+// transmission pass. The game shades him as deep-green attenuated glass
+// (transmission 0.985, attenuation #39d24e via nimble_thickness.png, clearcoat,
+// iridescence, mint fresnel rim). True transmission re-renders the whole scene
+// every frame — fine in the game's small kitchen, lethal in the gallery. Here the
+// SAME thickness map drives an emerald depth-tint + thickness-based alpha in the
+// normal forward pass, with the game's exact rim glow on top.
+const nimbleThickTex = texLoader.load('nimble/nimble_thickness.png', t => { t.flipY = false; t.colorSpace = THREE.NoColorSpace; });
+function nimbleJellyMat(src) {
+  const m = new THREE.MeshPhysicalMaterial({
+    map: (src && src.map) || null, normalMap: (src && src.normalMap) || null,
+    metalness: 0, roughness: 0.06,
+    clearcoat: 1.0, clearcoatRoughness: 0.06,
+    iridescence: 0.18, iridescenceIOR: 1.3,
+    envMapIntensity: 1.4, specularIntensity: 1.0,
+    transparent: true, depthWrite: true
+  });
+  if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uThick = { value: nimbleThickTex };
+    sh.uniforms.uAtten = { value: new THREE.Color(0x39d24e) };      // game's attenuationColor
+    sh.uniforms.uRimColor = { value: new THREE.Color(0x8affc1) };   // game's rim
+    sh.uniforms.uRimStrength = { value: 0.3 };
+    sh.fragmentShader = 'uniform sampler2D uThick;\nuniform vec3 uAtten;\nuniform vec3 uRimColor;\nuniform float uRimStrength;\n' + sh.fragmentShader
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        {
+          float th = texture2D(uThick, vMapUv).g;
+          diffuseColor.rgb = mix(diffuseColor.rgb, uAtten, 0.35 + 0.45 * clamp(th, 0.0, 1.0));
+          diffuseColor.a = mix(0.55, 0.92, clamp(th * 1.4, 0.0, 1.0));
+        }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        float rimF = pow(1.0 - clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0), 3.0);
+        totalEmissiveRadiance += uRimColor * rimF * uRimStrength;`);
+  };
+  return m;
+}
+
 gltfLoader.load('nimble_character.glb', (gltf) => {
   try {
     nimble = gltf.scene;
@@ -1798,27 +1835,13 @@ gltfLoader.load('nimble_character.glb', (gltf) => {
         // material name and the mesh name, so re-exports keep working)
         const nm = (((mats[0] && mats[0].name) ? mats[0].name : '') + '|' + (o.name || '')).toLowerCase();
         if (nm.includes('hat') || nm.includes('board') || nm.includes('sponge')){ o.visible = false; return; }
-        // Nimble IS translucent — but never via KHR transmission: a transmissive
-        // material forces an extra full-scene render pass + a render-target allocation
-        // the moment he appears (that was the activation "crash"). Instead the jelly
-        // look is built from cheap alpha + gloss in the normal forward pass:
-        mats.forEach(m => {
-          if (!m) return;
-          if (m.transmission !== undefined && m.transmission > 0) { m.transmission = 0; m.transmissionMap = null; }
-          const mn2 = (m.name || '').toLowerCase();
-          if (mn2.includes('eye')) {
-            if ('envMapIntensity' in m) m.envMapIntensity = 0.09;   // eyes stay solid
-          } else {
-            m.transparent = true;
-            m.opacity = 0.7;                                        // see-through body
-            m.metalness = 0.0;
-            m.roughness = Math.min(m.roughness !== undefined ? m.roughness : 0.3, 0.2); // wet/glossy
-            if ('envMapIntensity' in m) m.envMapIntensity = 0.85;   // reflections sell the glass
-            if ('clearcoat' in m) { m.clearcoat = 0.5; m.clearcoatRoughness = 0.25; }
-            m.depthWrite = true;   // he's convex: keeps correct occlusion, no self-sorting mess
-          }
-          m.needsUpdate = true;
-        });
+        if ((((mats[0] && mats[0].name) || '') + (o.name || '')).toLowerCase().includes('eye')) {
+          // eyes stay solid so the face reads
+          mats.forEach(m => { if (m && 'envMapIntensity' in m) m.envMapIntensity = 0.09; });
+        } else {
+          // body -> the game's glass look, rebuilt for the forward pass (no transmission)
+          o.material = nimbleJellyMat(mats[0]);
+        }
       }
     });
     const nb = new THREE.Box3().setFromObject(nimble);
