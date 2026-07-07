@@ -1737,7 +1737,7 @@ function flowDirAt(x, z, t){
 // For a short window after he appears we sample the actual skinned pose (SkinnedMesh
 // .computeBoundingBox is pose-aware) and correct the lift once.
 let nimbleMeasureT = -1, nimbleMeasureLast = 0, nimbleFootMin = Infinity;
-const _nmB = new THREE.Box3();
+const _nmV = new THREE.Vector3();
 
 // ---- Nimble pre-warm ----
 // His materials never render until he activates, so his first frame used to pay for
@@ -1762,7 +1762,7 @@ function prewarmNimble(){
     // one hidden warm-up render also compiles his shadow-depth program
     const wasVis = nimble.visible;
     nimble.visible = true;
-    nimble.position.set(0, 1, -25);
+    nimble.position.set(2, 1.2, -10);   // inside the follow light's shadow box AND the camera frustum -> compiles his shadow-depth program too
     renderer.render(scene, camera);
     nimble.visible = wasVis;
   } catch(e){ console.warn('nimble prewarm skipped', e); }
@@ -1772,10 +1772,15 @@ function measureNimbleMinY(){
   try {
     nimble.updateMatrixWorld(true);
     nimble.traverse(o => {
-      if (!o.visible || !o.isSkinnedMesh) return;   // pose-aware pass: skinned meshes only (static parts covered by the initial estimate)
-      o.computeBoundingBox(); _nmB.copy(o.boundingBox);
-      _nmB.applyMatrix4(o.matrixWorld);
-      if (_nmB.min.y < minY) minY = _nmB.min.y;
+      if (!o.visible || !o.isSkinnedMesh) return;   // pose-aware pass: skinned meshes only
+      const pos = o.geometry.attributes.position;
+      if (!pos) return;
+      const stride = Math.max(1, Math.floor(pos.count / 2000)); // sample <=2000 verts/mesh: ~1ms, no stutter
+      for (let i = 0; i < pos.count; i += stride) {
+        o.getVertexPosition(i, _nmV);
+        _nmV.applyMatrix4(o.matrixWorld);
+        if (_nmV.y < minY) minY = _nmV.y;
+      }
     });
   } catch(e){ return Infinity; }
   return minY;
@@ -1789,11 +1794,18 @@ gltfLoader.load('nimble_character.glb', (gltf) => {
       if (o.isMesh){
         o.castShadow = true; o.receiveShadow = true; o.layers.enable(1);
         const mats = Array.isArray(o.material) ? o.material : [o.material];
-        const nm = (mats[0] && mats[0].name) ? mats[0].name.toLowerCase() : '';
-        if (nm.includes('hat') || nm.includes('board')){ o.visible = false; return; }
-        // keep the original GLB material (no transmission pass, no custom shader) -
-        // Nimble renders consistently with the scene lighting, like Greg and Tim
-        mats.forEach(m => { if (m && 'envMapIntensity' in m) m.envMapIntensity = 0.09; });
+        // hide the props: hat, skateboard and the sponge (checked on both the
+        // material name and the mesh name, so re-exports keep working)
+        const nm = (((mats[0] && mats[0].name) ? mats[0].name : '') + '|' + (o.name || '')).toLowerCase();
+        if (nm.includes('hat') || nm.includes('board') || nm.includes('sponge')){ o.visible = false; return; }
+        // keep the original GLB material but NEVER allow transmission: a transmissive
+        // material forces an extra full-scene render pass + a render-target allocation
+        // the moment he appears (that was the activation "crash")
+        mats.forEach(m => {
+          if (!m) return;
+          if ('envMapIntensity' in m) m.envMapIntensity = 0.09;
+          if (m.transmission !== undefined && m.transmission > 0) { m.transmission = 0; m.transmissionMap = null; m.needsUpdate = true; }
+        });
       }
     });
     const nb = new THREE.Box3().setFromObject(nimble);
