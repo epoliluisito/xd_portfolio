@@ -1668,6 +1668,43 @@ function updateCleanTrail(dt) {
 }
 function hideCleanTrail() { for (const s of cleanTrail) { s.life = 0; s.mesh.visible = false; } }
 
+// ---- Level 2: a frothy foam WAKE — soft white suds left on the surface behind him, so it reads
+// as "he just scrubbed this clean." Flat billboards that pop in, linger, spread a touch, and fade.
+const foamWake = [];
+let foamWakeBuilt = false;
+function buildFoamWake() {
+  if (foamWakeBuilt) return; foamWakeBuilt = true;
+  for (let i = 0; i < 140; i++) {
+    const mat = new THREE.SpriteMaterial({ map: blobTex, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false });
+    const s = new THREE.Sprite(mat); s.visible = false; s.frustumCulled = false; s.renderOrder = 2;
+    scene.add(s);
+    foamWake.push({ s, life: 0, maxLife: 1, grow: 0 });
+  }
+}
+function spawnFoamWake(x, z) {
+  let cnt = 0;
+  for (const p of foamWake) {
+    if (p.life > 0) continue;
+    p.s.position.set(x + (Math.random() - 0.5) * 0.5, 0.07 + Math.random() * 0.06, z + (Math.random() - 0.5) * 1.05);
+    const sz = 0.13 + Math.random() * 0.20;
+    p.s.scale.setScalar(sz); p.grow = sz;
+    p.life = p.maxLife = 1.8 + Math.random() * 1.5;
+    p.s.material.opacity = 0; p.s.visible = true;
+    if (++cnt >= 4) break;                         // a little cluster of suds each spawn
+  }
+}
+function updateFoamWake(dt) {
+  for (const p of foamWake) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.s.visible = false; continue; }
+    const f = p.life / p.maxLife;                                          // 1 → 0
+    p.s.material.opacity = 0.85 * Math.min(1, (1 - f) * 7) * Math.pow(f, 0.5);   // pop in, soft lingering fade
+    p.grow += dt * 0.10; p.s.scale.setScalar(p.grow);                      // suds settle & spread slightly
+  }
+}
+function hideFoamWake() { for (const p of foamWake) { p.life = 0; p.s.visible = false; } }
+
 // Level 1 → Level 2, part 1: he grabs the hat and hops on the skate BEFORE the gate.
 // The counter is still the wood one here — it only changes at the gate (see crossGate).
 function enterSurfMode() {
@@ -1698,6 +1735,7 @@ function enterSurfMode() {
   state.surfStartX = LEVEL_LEN;
   spawnX = LEVEL_LEN + 22;
   buildCleanTrail();
+  buildFoamWake();
   // he hops as the sponge pops in beneath him, then rides
   velocity.y = 6.8; state.onGround = false;
   playAnim('jump', 0.05);
@@ -1768,7 +1806,7 @@ function startDiveTransition() {
   state.onGround = true; velocity.y = 0; state.isSliding = false;
   state.excite = 1.0;
   sfx.level();
-  hideCleanTrail();                                   // counter's about to go — drop the shine streak
+  hideCleanTrail(); hideFoamWake();                   // counter's about to go — drop the shine streak + suds
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
@@ -2218,12 +2256,13 @@ function gameLoop() {
       const dir = (state.steerDown ? 1 : 0) - (state.steerUp ? 1 : 0);
       state.targetZ = THREE.MathUtils.clamp(state.targetZ + dir * STEER_SPEED * dt, SURF_Z_MIN, SURF_Z_MAX);
       playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 10 * dt);
-      // the sponge leaves a foam trail + a lasting "just cleaned" shine streak
+      // he leaves a "just cleaned" wet-shine streak + a frothy trail of suds (no more foam
+      // spraying up off his feet — that read as a stray bubble stream).
       surfTrailT -= dt;
       if (surfTrailT <= 0) {
         surfTrailT = 0.045;
-        burst(playerGroup.position.clone().add(new THREE.Vector3(-0.6, 0.12, 0)), 0xffffff, 2, 1.0, 0.7, 0.17, 2.0);
         spawnCleanSeg(playerGroup.position.x - 0.7, playerGroup.position.z);
+        spawnFoamWake(playerGroup.position.x - 0.7, playerGroup.position.z);
       }
       // sponge pop-in bounce on mount (easeOutBack)
       if (spongeMountT > 0) {
@@ -2511,6 +2550,7 @@ function gameLoop() {
 
   updateParticles(dt);
   if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
+  if (foamWakeBuilt) updateFoamWake(dt);              // fade the frothy suds wake
 
   // camera / world dressing follow the run
   const surf = state.mode === 'surf';
