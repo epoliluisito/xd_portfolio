@@ -1782,6 +1782,41 @@ function updateSparkles(dt) {
 }
 function hideSparkles() { for (const p of sparkles) { p.life = 0; p.s.visible = false; } }
 
+// ---- Level 2→3: the hat & sponge fling off him at the dive apex (instead of just vanishing) ----
+const flyGear = [];
+function spawnFlyawayGear() {
+  const base = playerGroup.position.clone();
+  const R = () => (Math.random() - 0.5);
+  // foam hat → a little cluster of suds that tumbles off
+  const hatG = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.16 + Math.random() * 0.12, 10, 10), getFoamMat());
+    s.position.set(R() * 0.5, R() * 0.4, R() * 0.5);
+    hatG.add(s);
+  }
+  hatG.position.copy(base).add(new THREE.Vector3(0.2, 1.7, 0));
+  scene.add(hatG);
+  flyGear.push({ o: hatG, vel: new THREE.Vector3(-3 - Math.random() * 2, 5 + Math.random() * 2.5, R() * 3), spin: new THREE.Vector3(R() * 8, R() * 8, R() * 8), life: 1.7 });
+  // sponge → a small green-top / yellow-body slab, spinning like a kicked board
+  const spG = new THREE.Group();
+  const yellow = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.24, 0.55), new THREE.MeshStandardMaterial({ color: 0x8a6a10, roughness: 0.9 }));
+  const green = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.10, 0.57), new THREE.MeshStandardMaterial({ color: 0x123f22, roughness: 0.95 }));
+  green.position.y = 0.13; spG.add(yellow); spG.add(green);
+  spG.position.copy(base).add(new THREE.Vector3(0, 0.2, 0));
+  scene.add(spG);
+  flyGear.push({ o: spG, vel: new THREE.Vector3(-4 - Math.random() * 2, 4 + Math.random() * 2, R() * 3.5), spin: new THREE.Vector3(R() * 6, R() * 4, 7 + Math.random() * 4), life: 1.8 });
+}
+function updateFlyGear(dt) {
+  for (let i = flyGear.length - 1; i >= 0; i--) {
+    const g = flyGear[i];
+    g.life -= dt;
+    if (g.life <= 0) { scene.remove(g.o); flyGear.splice(i, 1); continue; }
+    g.vel.y -= 11 * dt;
+    g.o.position.addScaledVector(g.vel, dt);
+    g.o.rotation.x += g.spin.x * dt; g.o.rotation.y += g.spin.y * dt; g.o.rotation.z += g.spin.z * dt;
+  }
+}
+
 // Level 1 → Level 2, part 1: he grabs the hat and hops on the skate BEFORE the gate.
 // The counter is still the wood one here — it only changes at the gate (see crossGate).
 function enterSurfMode() {
@@ -1896,6 +1931,12 @@ function startDiveTransition() {
   // ramp lip lands right at his launch position
   const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
   rampMesh = buildRamp(playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - RAMP_HALF);
+  // Pre-build the whole underwater scene NOW, hidden, so piercing the surface doesn't hitch/freeze
+  // (the water's custom shader compile + seabed clones are the costly bits — do them off the climax).
+  buildWaterSurface(); if (waterSurface) waterSurface.visible = false;
+  buildBubbles();
+  buildSeabed(); seabed.forEach(m => m.visible = false);
+  buildUnderwaterFX(); showUnderwaterFX(false);
   showBanner('RAMP AHEAD!');
 }
 
@@ -1916,12 +1957,14 @@ function scriptDiveSeq(dt) {
     targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, Math.max(3, state.speed)), -1.15, 1.2);  // follow the trajectory
     if (!state.diveGearLost && vy <= 0) {                     // apex: fling off the gear, assume the dive
       state.diveGearLost = true;
+      spawnFlyawayGear();                                     // hat + sponge tumble away for real
       hatParts.forEach(m => m.visible = false);
       boardParts.forEach(m => m.visible = false);
       spongeParts.forEach(m => m.visible = false);
+      if (floor) floor.visible = false;                       // drop the counter now so it stops fighting the water below
       burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 22, 5.5, 5, 0.32);
       playAnim('dive', 0.22);
-      buildWaterSurface();                                    // water visible below → he dives INTO it, not onto stone
+      if (waterSurface) waterSurface.visible = true; else buildWaterSurface();   // reveal the pre-built water below
       showBanner('DIIIVE!');
     }
     if (!state.diveSplashed && y <= 0 && vy < 0) { splashThroughSurface(); }
@@ -1942,9 +1985,9 @@ function applyUnderwater() {
   }
   const tint = document.getElementById('water-tint');
   if (tint) tint.style.display = 'block';
-  buildWaterSurface();
+  buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
-  buildSeabed();
+  buildSeabed(); seabed.forEach(m => m.visible = true);   // reveal the pre-built seabed heap
   buildUnderwaterFX();
   showUnderwaterFX(true);
   frothDecals.forEach(s => s.visible = false);
@@ -2631,6 +2674,7 @@ function gameLoop() {
   }
 
   updateParticles(dt);
+  if (flyGear.length) updateFlyGear(dt);               // tumbling hat/sponge on the dive launch
   if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
   if (foamWakeBuilt) updateFoamWake(dt);              // fade the frothy suds wake
   if (sparklesBuilt) updateSparkles(dt);              // phase-2 deep-clean shimmer
