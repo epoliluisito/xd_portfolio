@@ -1798,13 +1798,26 @@ gltfLoader.load('nimble_character.glb', (gltf) => {
         // material name and the mesh name, so re-exports keep working)
         const nm = (((mats[0] && mats[0].name) ? mats[0].name : '') + '|' + (o.name || '')).toLowerCase();
         if (nm.includes('hat') || nm.includes('board') || nm.includes('sponge')){ o.visible = false; return; }
-        // keep the original GLB material but NEVER allow transmission: a transmissive
+        // Nimble IS translucent — but never via KHR transmission: a transmissive
         // material forces an extra full-scene render pass + a render-target allocation
-        // the moment he appears (that was the activation "crash")
+        // the moment he appears (that was the activation "crash"). Instead the jelly
+        // look is built from cheap alpha + gloss in the normal forward pass:
         mats.forEach(m => {
           if (!m) return;
-          if ('envMapIntensity' in m) m.envMapIntensity = 0.09;
-          if (m.transmission !== undefined && m.transmission > 0) { m.transmission = 0; m.transmissionMap = null; m.needsUpdate = true; }
+          if (m.transmission !== undefined && m.transmission > 0) { m.transmission = 0; m.transmissionMap = null; }
+          const mn2 = (m.name || '').toLowerCase();
+          if (mn2.includes('eye')) {
+            if ('envMapIntensity' in m) m.envMapIntensity = 0.09;   // eyes stay solid
+          } else {
+            m.transparent = true;
+            m.opacity = 0.7;                                        // see-through body
+            m.metalness = 0.0;
+            m.roughness = Math.min(m.roughness !== undefined ? m.roughness : 0.3, 0.2); // wet/glossy
+            if ('envMapIntensity' in m) m.envMapIntensity = 0.85;   // reflections sell the glass
+            if ('clearcoat' in m) { m.clearcoat = 0.5; m.clearcoatRoughness = 0.25; }
+            m.depthWrite = true;   // he's convex: keeps correct occlusion, no self-sorting mess
+          }
+          m.needsUpdate = true;
         });
       }
     });
