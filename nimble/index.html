@@ -1951,7 +1951,14 @@ function startDiveTransition() {
   buildBubbles();
   buildSeabed(); seabed.forEach(m => m.visible = false);
   buildUnderwaterFX(); showUnderwaterFX(false);
-  renderer.compile(scene, camera);             // compile the hidden water/FX shaders now (they compile on first render otherwise)
+  // Pre-warm the FOG shader path now: assigning scene.fog for the first time forces EVERY material to
+  // recompile — that's the stutter at the surface. Enable it here pushed far away (invisible: 900u off),
+  // so at the splash we only tweak its near/far/colour (cheap uniforms), never recompile mid-plunge.
+  if (!scene.fog) scene.fog = new THREE.Fog(0x08324f, 8000, 9000);   // so far it fogs nothing during the arc — only the shader path is pre-warmed
+  // pre-create the splash ring/crown (they're built lazily on first splash → shader compile mid-plunge otherwise)
+  spawnSplashRing({ x: playerGroup.position.x, z: LANE_Z }); if (splashRing) { splashRing.visible = false; splashRingLife = 0; }
+  spawnSplashCrown({ x: playerGroup.position.x, z: LANE_Z }); if (splashCrown) { splashCrown.visible = false; splashCrownLife = 0; }
+  renderer.compile(scene, camera);             // compile the hidden water/FX shaders + the fog path + splash FX now
   if (bgTexL3) renderer.initTexture(bgTexL3);   // pre-upload the underwater backdrop to the GPU
   showBanner('RAMP AHEAD!');
 }
@@ -2001,7 +2008,8 @@ function scriptDiveSeq(dt) {
 
 // swap the scene to its underwater dressing (called when he pierces the surface)
 function applyUnderwater() {
-  scene.fog = new THREE.Fog(0x08324f, 14, 52);                    // richer teal depth haze
+  if (scene.fog) { scene.fog.color.setHex(0x08324f); scene.fog.near = 14; scene.fog.far = 52; }  // pre-warmed at dive start → uniform tweak only, no recompile stutter
+  else scene.fog = new THREE.Fog(0x08324f, 14, 52);               // (fallback) richer teal depth haze
   if (floor) floor.visible = false;
   if (bgMesh) {
     if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
