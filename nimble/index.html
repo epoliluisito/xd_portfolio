@@ -464,17 +464,69 @@ fitCamera();
 // paint behind the transparent canvas, and it scrolls / swaps levels reliably.
 let bgMesh = null, bgTexL1 = null, bgTexL2 = null, bgTexL3 = null;
 const BG_IMG_ASPECT = 14329 / 1184;   // native panorama proportions
-function fitBackdrop() {
-  if (!bgMesh) return;
+function sizeBackdropMesh(m) {
+  if (!m) return;
   const dist = 42;
   const h = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * dist * 1.08;
   const w = h * camera.aspect;
-  bgMesh.scale.set(w, h, 1);
-  const map = bgMesh.material.map;
+  m.scale.set(w, h, 1);
+  const map = m.material.map;
   if (map) {                                        // use the ACTIVE image's real aspect (BG_02/03 differ from BG_1)
     const imgAspect = (map.image && map.image.width) ? map.image.width / map.image.height : BG_IMG_ASPECT;
     map.repeat.x = (w / h) / imgAspect;
   }
+}
+function fitBackdrop() { sizeBackdropMesh(bgMesh); if (bgFade) sizeBackdropMesh(bgFade.mesh); }
+
+// ---- backdrop CROSSFADE: a second camera-locked plane fades in over the old panorama, so a
+// level change dissolves across ~1.5s instead of the whole horizon snapping in one frame ----
+let bgFade = null;                                   // { mesh, t, dur }
+function startBgFade(tex, tint, dur = 1.4) {
+  if (!bgMesh || !tex) { if (tint && bgMesh) bgMesh.material.color.copy(tint); return; }
+  finishBgFade();                                    // commit any fade already mid-flight
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity: 0,
+    depthWrite: false, depthTest: false, toneMapped: false, fog: false,
+    color: (tint || bgMesh.material.color).clone()
+  });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  m.position.set(0, 0, -41.98);                      // a hair in front of the old backdrop
+  m.renderOrder = -9;
+  m.frustumCulled = false;
+  camera.add(m);
+  bgFade = { mesh: m, t: 0, dur };
+  sizeBackdropMesh(m);
+}
+function finishBgFade() {
+  if (!bgFade) return;
+  bgMesh.material.map = bgFade.mesh.material.map;
+  bgMesh.material.color.copy(bgFade.mesh.material.color);
+  camera.remove(bgFade.mesh);
+  bgFade.mesh.geometry.dispose();
+  bgFade.mesh.material.dispose();
+  bgFade = null;
+  fitBackdrop();
+}
+function updateBgFade(dt) {
+  if (!bgFade) return;
+  bgFade.t += dt;
+  const f = Math.min(1, bgFade.t / bgFade.dur);
+  bgFade.mesh.material.opacity = f * f * (3 - 2 * f);
+  if (bgFade.mesh.material.map) bgFade.mesh.material.map.offset.x = camera.position.x * 0.0016;   // keep the parallax drift in step
+  if (f >= 1) finishBgFade();
+}
+
+// ---- fog EASE: the plunge enters thick (all foam and churn) and relaxes to swim visibility,
+// so the underwater world develops out of the splash instead of appearing fully formed ----
+let fogEase = null;
+function updateFogEase(dt) {
+  if (!fogEase) return;
+  if (!scene.fog) { fogEase = null; return; }
+  fogEase.t += dt;
+  const f = Math.min(1, fogEase.t / fogEase.dur), e = f * f * (3 - 2 * f);
+  scene.fog.near = THREE.MathUtils.lerp(fogEase.n0, fogEase.n1, e);
+  scene.fog.far  = THREE.MathUtils.lerp(fogEase.f0, fogEase.f1, e);
+  if (f >= 1) fogEase = null;
 }
 
 const dirLight = new THREE.DirectionalLight(0xffeeb1, 1.85);
@@ -687,13 +739,14 @@ function buildSeabed() {
 }
 
 // the water surface at y=0 — a live, rippling shader surface he punches through
-let waterSurface = null, waterMat = null;
+let waterSurface = null, waterMat = null, waterFadeT = 0;   // waterFadeT > 0 -> surface dissolving out
 function buildWaterSurface() {
   if (waterSurface) return;
   waterMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
     uniforms: {
       uTime:    { value: 0 },
+      uFade:    { value: 1 },
       uCamPos:  { value: new THREE.Vector3() },
       uDeep:    { value: new THREE.Color(0x0b3a55) },
       uShallow: { value: new THREE.Color(0x2f9fc4) },
@@ -724,6 +777,7 @@ function buildWaterSurface() {
       }`,
     fragmentShader: `
       uniform vec3 uCamPos, uDeep, uShallow, uSky, uSun;
+      uniform float uFade;
       varying vec3 vWorld; varying vec3 vNrm; varying float vCrest;
       void main(){
         vec3 N = normalize(vNrm);
@@ -737,7 +791,7 @@ function buildWaterSurface() {
         float foam = smoothstep(0.16, 0.28, vCrest);        // white on the highest crests
         col = mix(col, vec3(0.95,0.99,1.0), foam*0.5);
         float alpha = 0.60 + fres*0.34 + foam*0.25;
-        gl_FragColor = vec4(col, clamp(alpha,0.0,1.0));
+        gl_FragColor = vec4(col, clamp(alpha,0.0,1.0) * uFade);
       }`
   });
   waterSurface = new THREE.Mesh(new THREE.PlaneGeometry(400, 120, 260, 70), waterMat);
@@ -745,6 +799,7 @@ function buildWaterSurface() {
   waterSurface.position.set(0, 0, LANE_Z);
   waterSurface.renderOrder = -6;
   waterSurface.frustumCulled = false;
+  waterFadeT = 0;                                    // fresh surface: fully visible
   scene.add(waterSurface);
 }
 // an expanding foam ring on the surface at the moment of impact
@@ -855,6 +910,11 @@ function showUnderwaterFX(v) { if (godRays) godRays.visible = v; if (caustics) c
 function updateUnderwaterFX(dt) {
   uwT += dt;
   const cx = camera.position.x;
+  if (waterFadeT > 0 && waterSurface) {              // the surface line dissolves overhead - no one-frame vanish
+    waterFadeT -= dt;
+    if (waterMat) waterMat.uniforms.uFade.value = Math.max(0, waterFadeT / 1.3);
+    if (waterFadeT <= 0) { scene.remove(waterSurface); waterSurface = null; }
+  }
   if (waterMat) { waterMat.uniforms.uTime.value = uwT; waterMat.uniforms.uCamPos.value.copy(camera.position); }
   if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 2; }
   if (caustics && caustics.visible) { caustics.material.uniforms.uTime.value = uwT; caustics.position.x = cx; }
@@ -1051,6 +1111,7 @@ let spongePivot = null;   // pivot at the sponge's centre so it can kickflip in 
 let USE_SPONGE = true;
 let squash = 1.0, squashTarget = 1.0;
 let floor = null, counterTex = null, counterTex2 = null;
+let steelFloor = null, floorFrozen = false;   // L1→2: the counter splits at the gate (wood ends, steel begins)
 let slideTimer = null, slideHintShown = false;
 
 function playAnim(name, fade = 0.18) {
@@ -1351,6 +1412,7 @@ function setupNimble(nimbleGltf) {
 
   window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); console.log('[tuneHatOpacity]', o); return o; };
   window.NIMBLE = { scene, camera, hatParts, headBone, reseatHat: () => { hatSeated = false; hatParts[0] && (hatParts[0].userData._spun = true); seatFoamCap(); },
+    seatHatNow: () => { hatSeated = false; try { seatFoamCap(); } catch (e) {} },   // seat/refine against the CURRENT pose (handles the first-time spin itself)
     state, tune: DIVE_TUNE, get mode() { return state.mode; }, startDive: () => startDiveTransition(),
     testDive: () => { state.started = true; const o = document.getElementById('loading'); if (o) o.style.display = 'none'; enterSurfMode(); startDiveTransition(); }, rampMesh: () => rampMesh };   // debug hooks for live dive tuning
   // --------------------------------------------------------------------------------
@@ -1395,7 +1457,7 @@ function setupNimble(nimbleGltf) {
   }
 
   mixer.addEventListener('finished', (e) => {
-    if (e.action === actions['jump'] && state.onGround)  playAnim(moveAnim());
+    if (e.action === actions['jump'] && state.onGround && currentAnim === 'jump')  playAnim(moveAnim());
     if (e.action === actions['skating_start']) playAnim('skateboard');
     if (e.action === actions['dive'])          playAnim('swim');    // dive → swimming
     if (e.action === actions['laugh'])         playAnim(moveAnim());
@@ -1635,14 +1697,138 @@ function despawnBehind(px) {
 // ----------------------------------------------------
 // LEVELS / HUD / BANNERS
 // ----------------------------------------------------
+// ---- Level 1 → 2 hand-off choreography --------------------------------------------
+// Beat by beat in the calm gap: the foam cap tumbles down onto his head → the sponge
+// comes skidding in along the counter and parks ahead → he times a hop and lands on it
+// (skate push-off) → surfs the last stretch of wood → bursts the foam curtain, where
+// the counter REALLY changes from wood to steel (a seam in the world laid under the
+// divider strip — you see it coming) and the backdrop crossfades. No one-frame re-skin.
+const mountSeq = { active: false, done: false, t: 0, hat: null, hatVY: 0,
+                   sponge: null, spongeVX: 0, resting: false, stopX: 0, jumped: false };
+function buildHatDrop() {                            // a tumbling puff of suds stands in for the cap while it falls
+  const g = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.15 + Math.random() * 0.11, 10, 10), getFoamMat());
+    s.position.set((Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.35, (Math.random() - 0.5) * 0.5);
+    g.add(s);
+  }
+  return g;
+}
+function buildSpongeSkid() {                         // stand-in slab: yellow body, green scrub top (like the real ride)
+  const g = new THREE.Group();
+  const body  = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.26, 0.85), new THREE.MeshStandardMaterial({ color: 0xc9a032, roughness: 0.9 }));
+  body.position.y = 0.13;
+  const scrub = new THREE.Mesh(new THREE.BoxGeometry(1.47, 0.10, 0.87), new THREE.MeshStandardMaterial({ color: 0x1e5a33, roughness: 0.95 }));
+  scrub.position.y = 0.31;
+  g.add(body); g.add(scrub);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+function startMountSeq() {
+  mountSeq.active = true;
+  mountSeq.t = 0;
+  mountSeq.stopX = LEVEL_LEN - 18;                   // where the sponge parks — leaves a surf run-up to the gate
+  mountSeq.hat = buildHatDrop();
+  mountSeq.hat.position.set(playerGroup.position.x + 0.8, playerGroup.position.y + 7.4, LANE_Z);
+  mountSeq.hatVY = 0;
+  scene.add(mountSeq.hat);
+  buildCleanTrail(); buildFoamWake(); buildSparkles();   // pools ready — the skid and the surf both use them
+  // Split the counter at the gate NOW. Both halves are world-fixed and texture phase-matched,
+  // so this frame looks identical — but from here the steel counter is genuinely THERE ahead,
+  // and the wood ends exactly under the divider strip. The colour change becomes a place.
+  if (counterTex2 && floor && !steelFloor) {
+    floorFrozen = true;
+    floor.position.x = LEVEL_LEN - 750;                                             // wood ends at the gate
+    if (floor.material.map) floor.material.map.offset.x = (LEVEL_LEN - 750) * 0.1;  // same world-space texture phase as the follow-scroll
+    const steelMat = new THREE.MeshStandardMaterial({ map: counterTex2, color: 0xffffff, metalness: 0.85, roughness: 0.32 });
+    steelFloor = new THREE.Mesh(new THREE.BoxGeometry(1500, 10, 14), steelMat);
+    steelFloor.position.set(LEVEL_LEN + 750, -5, 6);                                // steel begins at the gate
+    steelFloor.receiveShadow = true;
+    counterTex2.offset.x = (LEVEL_LEN + 750) * 0.1;                                 // phase-matched → the later follow-handoff is seamless
+    scene.add(steelFloor);
+  }
+}
+function updateMountSeq(dt) {
+  if (!mountSeq.active) return;
+  mountSeq.t += dt;
+  const px = playerGroup.position.x, py = playerGroup.position.y;
+  // 1) the foam cap falls, drifting to stay over his head, and lands ON
+  if (mountSeq.hat) {
+    const h = mountSeq.hat;
+    mountSeq.hatVY -= 15 * dt;                       // floaty foam fall
+    h.position.y += mountSeq.hatVY * dt;
+    h.position.x += (px - h.position.x) * Math.min(1, 9 * dt);
+    h.rotation.y += dt * 2.4; h.rotation.z = Math.sin(mountSeq.t * 7) * 0.18;
+    const headY = py + (state.isSliding ? SLIDE_H : STAND_H) - 0.15;
+    if (h.position.y <= headY) {
+      scene.remove(h); mountSeq.hat = null;
+      if (window.NIMBLE && NIMBLE.seatHatNow) NIMBLE.seatHatNow();   // seat the real cap to his CURRENT pose before revealing it
+      hatParts.forEach(m => { m.visible = true; });
+      state.excite = 0;                              // no head-wiggle with the cap on (it would rattle it)
+      squash = 1.16;                                 // happy stretch
+      burst(new THREE.Vector3(px, headY + 0.3, LANE_Z), 0xffffff, 14, 2.6, 2.6, 0.22);
+      burst(new THREE.Vector3(px, headY + 0.3, LANE_Z), 0xbfe8ff, 8, 2.0, 2.0, 0.18);
+      popup(new THREE.Vector3(px, headY + 1.0, LANE_Z), 'FOAM CAP ON!', '#bfe8ff');
+      sfx.star();
+    }
+  }
+  // 2) the sponge skids in from ahead and parks
+  if (!mountSeq.sponge && mountSeq.t >= 0.35) {
+    mountSeq.sponge = buildSpongeSkid();
+    mountSeq.sponge.position.set(mountSeq.stopX + 17, 0, LANE_Z);
+    mountSeq.spongeVX = -46;
+    scene.add(mountSeq.sponge);
+  }
+  if (mountSeq.sponge && !mountSeq.resting) {
+    const s = mountSeq.sponge;
+    s.position.x += mountSeq.spongeVX * dt;
+    mountSeq.spongeVX = Math.min(0, mountSeq.spongeVX + 62 * dt);    // skid friction
+    if (Math.random() < 0.6) spawnFoamWake(s.position.x - 0.9, s.position.z);   // suds kicked up by the skid
+    if (mountSeq.spongeVX >= -0.5 || s.position.x <= mountSeq.stopX) {
+      s.position.x = mountSeq.stopX; mountSeq.resting = true;
+      burst(s.position.clone().add(new THREE.Vector3(-0.6, 0.3, 0)), 0xffffff, 10, 2.2, 2.0, 0.2);
+      sfx.slide();
+    }
+  }
+  // 3) time the hop so he comes down right on it
+  if (mountSeq.resting && !mountSeq.jumped && !mountSeq.hat && state.onGround) {
+    if (px >= mountSeq.stopX - state.speed * 0.9) {  // jumpPower 12 / gravity 26 → back at sponge height ~0.9s out
+      mountSeq.jumped = true;
+      cancelSlide();
+      velocity.y = state.jumpPower; state.onGround = false;
+      sfx.jump(); squash = 1.3;
+      playAnim('jump', 0.05);
+    }
+  }
+  if (mountSeq.jumped && mountSeq.sponge && velocity.y < 0) {
+    // coming down: the sponge scoots to catch him (also absorbs boost/brake timing wobble)
+    mountSeq.sponge.position.x += (px - mountSeq.sponge.position.x) * Math.min(1, 6 * dt);
+    if (py <= SURF_LIFT + 0.05) mountSponge();       // touchdown → he's riding
+  }
+}
+function mountSponge() {                             // land ON the sponge → surf mode (also the failsafe path)
+  if (!mountSeq.active) return;
+  mountSeq.active = false; mountSeq.done = true;
+  if (mountSeq.hat) { scene.remove(mountSeq.hat); mountSeq.hat = null;
+    if (window.NIMBLE && NIMBLE.seatHatNow) NIMBLE.seatHatNow(); }
+  if (mountSeq.sponge) { scene.remove(mountSeq.sponge); mountSeq.sponge = null; }
+  enterSurfMode(false);                              // no hop, no pop-in — he's already standing on it
+  setTimeout(() => { if (window.NIMBLE && NIMBLE.seatHatNow && state.mode === 'surf') NIMBLE.seatHatNow(); }, 400);   // refine the cap seat in the riding pose
+}
+
 function checkLevel() {
   if (state.mode !== 'run') return;                 // once surfing, progress is goal-based
   if (!state.warnedL2 && playerGroup.position.x > LEVEL_LEN - 58) {
     state.warnedL2 = true;
-    showBanner('LEVEL 1 CLEAR &middot; GRAB THE SKATE!');
+    showBanner('LEVEL 1 CLEAR &middot; GEAR INCOMING!');
   }
-  // mount the skateboard IN the calm gap, so he's already skating when L2 gameplay begins
-  if (playerGroup.position.x > LEVEL_LEN - 30) enterSurfMode();
+  if (LEVEL_LEN < 100) {                            // #l2 quick-jump build: keep the instant mount for testing
+    if (playerGroup.position.x > LEVEL_LEN - 30) enterSurfMode();
+    return;
+  }
+  // choreographed hand-off in the calm gap: cap on → sponge skids in → hop on → surf to the gate
+  if (!mountSeq.active && !mountSeq.done && playerGroup.position.x > LEVEL_LEN - 50) startMountSeq();
+  if (mountSeq.active && playerGroup.position.x > LEVEL_LEN - 8) mountSponge();   // failsafe: never cross the gate on foot
 }
 
 // ---- Level 2: a "just cleaned" wet-shine streak the sponge leaves behind (commercial before/after) ----
@@ -1829,7 +2015,7 @@ function updateFlyGear(dt) {
 
 // Level 1 → Level 2, part 1: he grabs the hat and hops on the skate BEFORE the gate.
 // The counter is still the wood one here — it only changes at the gate (see crossGate).
-function enterSurfMode() {
+function enterSurfMode(hop = true) {
   state.mode = 'surf';
   state.level = 2;
   state.crossedGate = false;
@@ -1842,12 +2028,12 @@ function enterSurfMode() {
   state.excite = 1.0;
   sfx.level();
   boardParts.forEach(m => m.visible = !USE_SPONGE);   // skateboard only when sponge is off
-  spongeParts.forEach(m => {                           // sponge is the current ride — pop it in with a bounce
+  spongeParts.forEach(m => {                           // sponge is the current ride
     m.visible = USE_SPONGE;
     const fs = m.userData.fullScale;
-    if (fs) m.scale.set(fs.x * 0.12, fs.y * 0.12, fs.z * 0.12);
+    if (fs) { if (hop) m.scale.set(fs.x * 0.12, fs.y * 0.12, fs.z * 0.12); else m.scale.copy(fs); }   // hop = pop-in bounce; mount = it was already under him
   });
-  spongeMountT = USE_SPONGE ? 0.55 : 0;               // drives the grow-in bounce in the loop
+  spongeMountT = (hop && USE_SPONGE) ? 0.55 : 0;      // drives the grow-in bounce in the loop
   hatParts.forEach(m => m.visible = true);
   // wipe any leftover runner props
   for (let i = entities.length - 1; i >= 0; i--) {
@@ -1861,14 +2047,22 @@ function enterSurfMode() {
   buildCleanTrail();
   buildFoamWake();
   buildSparkles();
-  // he hops as the sponge pops in beneath him, then rides
-  velocity.y = 6.8; state.onGround = false;
-  playAnim('jump', 0.05);
-  squash = 0.8;
+  if (hop) {
+    // he hops as the sponge pops in beneath him, then rides
+    velocity.y = 6.8; state.onGround = false;
+    playAnim('jump', 0.05);
+    squash = 0.8;
+  } else {
+    // choreographed mount: he just LANDED on it — stick the landing and push off
+    playAnim('skating_start', 0.08);                 // one-shot push-off, flows into the skateboard loop
+    squash = 0.84;
+    sfx.land();
+    burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.15, 0)), 0xffffff, 14, 2.8, 2.0, 0.22, 2.5);
+  }
   document.body.classList.add('surf');            // console → up/down + jump
   const help = document.getElementById('controls-help');
   if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
-  showBanner('ON THE SKATE!');
+  showBanner(hop ? 'ON THE SKATE!' : 'SURF THE COUNTER!');
   // a splashy foam poof for the reveal
   const at = playerGroup.position.clone();
   burst(at.clone().add(new THREE.Vector3(0, 0.4, 0)), 0xffffff, 26, 4.2, 4.2, 0.30);
@@ -1879,10 +2073,11 @@ function enterSurfMode() {
 // Level 1 → Level 2, part 2: crossing the gate flips the counter to steel + the new backdrop.
 function crossGate() {
   state.crossedGate = true;
-  if (bgMesh && bgTexL2) { bgMesh.material.map = bgTexL2; fitBackdrop(); }         // BACKGROUND_02.png
-  if (counterTex2 && floor) {                                                       // steel countertop
+  startBgFade(bgTexL2, null, 1.6);                   // backdrop dissolves to the steel kitchen as he bursts the curtain
+  if (!steelFloor && !floorFrozen && counterTex2 && floor && floor.material.map !== counterTex2) {
+    // fallback only (the split counter wasn't built — e.g. the #l2 test build): old instant swap
     floor.material.map = counterTex2;
-    floor.material.color.setHex(0xffffff);                                          // steel stays bright
+    floor.material.color.setHex(0xffffff);
     floor.material.metalness = 0.85; floor.material.roughness = 0.32;
     floor.material.needsUpdate = true;
   }
@@ -2010,12 +2205,15 @@ function scriptDiveSeq(dt) {
 
 // swap the scene to its underwater dressing (called when he pierces the surface)
 function applyUnderwater() {
-  if (scene.fog) { scene.fog.color.setHex(0x08324f); scene.fog.near = 14; scene.fog.far = 52; }  // pre-warmed at dive start → uniform tweak only, no recompile stutter
-  else scene.fog = new THREE.Fog(0x08324f, 14, 52);               // (fallback) richer teal depth haze
+  // Enter THICK (the first beat underwater is all foam and churn), then ease out to swim
+  // visibility over ~1.7s — the reveal breathes in instead of snapping to the next screen.
+  if (scene.fog) { scene.fog.color.setHex(0x08324f); scene.fog.near = 4; scene.fog.far = 19; }  // pre-warmed at dive start → uniform tweak only, no recompile stutter
+  else scene.fog = new THREE.Fog(0x08324f, 4, 19);
+  fogEase = { t: 0, dur: 1.7, n0: 4, f0: 19, n1: 14, f1: 52 };
   if (floor) floor.visible = false;
   if (bgMesh) {
-    if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
-    bgMesh.material.color.setRGB(0.60, 0.78, 0.92);                  // cool the backdrop into the depths
+    if (bgTexL3) startBgFade(bgTexL3, new THREE.Color(0.60, 0.78, 0.92), 1.2);   // dissolve to the underwater backdrop
+    else bgMesh.material.color.setRGB(0.60, 0.78, 0.92);                          // (fallback) just cool the old one
   }
   // NOTE: no flat #water-tint foreground layer — it sat on top of the canvas and killed the sense
   // of the camera actually dropping under the surface. The 3D fog + cooled backdrop + god-rays carry
@@ -2042,7 +2240,7 @@ function finishDiveIntoSwim() {
   state.targetY = SWIM_MID;
   // no y-snap — he keeps his current plunge depth and the swim glide (below) eases him into the lane, so there's no second "dive" beat
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
-  if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }   // drop the surface plane → no more line, he's fully under
+  if (waterSurface) waterFadeT = 1.3;   // the surface line dissolves overhead instead of vanishing the frame he settles
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
@@ -2115,7 +2313,7 @@ function enterPuzzle() {
   flash(0.75); state.shake = 0;
   PZ.boardX = playerGroup.position.x;
   PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0;
-  scene.fog = null;
+  scene.fog = null; fogEase = null; finishBgFade();
   if (floor) floor.visible = false;
   const tint = document.getElementById('water-tint'); if (tint) tint.style.display = 'none';
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
@@ -2487,7 +2685,7 @@ function gameLoop() {
     // head-bone excitement wiggle (applied after mixer pose). The foam hat is rigidly
     // skinned to this bone, so wiggling it visibly pops the hat around on every pickup —
     // only do it in Level 1 (hat hidden). In surf mode the hat stays put.
-    if (headBone && state.excite > 0.02 && state.mode !== 'surf') {
+    if (headBone && state.excite > 0.02 && state.mode !== 'surf' && !(hatParts[0] && hatParts[0].visible)) {
       headBone.rotation.z += Math.sin(t * 26) * 0.14 * state.excite;
       headBone.rotation.x += Math.sin(t * 19) * 0.06 * state.excite;
     }
@@ -2497,6 +2695,7 @@ function gameLoop() {
     while (spawnX < playerGroup.position.x + 70) spawnChunk();
     despawnBehind(playerGroup.position.x);
     checkLevel();
+    if (mountSeq.active) updateMountSeq(dt);
     if (state.mode === 'surf' && !state.crossedGate && playerGroup.position.x >= LEVEL_LEN) crossGate();
     if (state.mode === 'swim' && (playerGroup.position.x - state.swimStartX) >= SWIM_LEN) startJumpOut();
 
@@ -2709,6 +2908,8 @@ function gameLoop() {
   }
 
   updateParticles(dt);
+  updateBgFade(dt);                                    // backdrop crossfades (gate / splash)
+  updateFogEase(dt);                                   // underwater murk relaxing after the plunge
   if (flyGear.length) updateFlyGear(dt);               // tumbling hat/sponge on the dive launch
   if (rampMesh && rampMesh.userData.rise < 1) {        // ramp rises up out of the counter (no hard pop-in)
     rampMesh.userData.rise = Math.min(1, rampMesh.userData.rise + dt / 0.4);
@@ -2755,9 +2956,19 @@ function gameLoop() {
   rimLight.position.x = playerGroup.position.x - 7;
   fillLight.position.x = camera.position.x + 2;
   if (floor) {
-    floor.position.x = playerGroup.position.x;
-    const ftex = floor.material.map;                    // scroll whichever counter texture is active
-    if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
+    if (floorFrozen) {
+      // Counter is world-fixed through the gate (wood ends AT the divider, steel runs on).
+      // Once the wood is far behind the camera, the steel slab takes over as the endless
+      // follow-floor — position/offset line up exactly, so there's no visible jump.
+      if (steelFloor && playerGroup.position.x > LEVEL_LEN + 40) {
+        scene.remove(floor); floor.geometry.dispose();
+        floor = steelFloor; steelFloor = null; floorFrozen = false;
+      }
+    } else {
+      floor.position.x = playerGroup.position.x;
+      const ftex = floor.material.map;                  // scroll whichever counter texture is active
+      if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
+    }
   }
   if (waterSurface) {
     waterSurface.position.x = camera.position.x;                   // the rippling surface follows overhead
