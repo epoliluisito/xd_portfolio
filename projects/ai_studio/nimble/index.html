@@ -375,6 +375,9 @@ const RAMP_RIDE = 0.5;             // seconds spent riding up the ramp face
 const RAMP_ANGLE = Math.atan2(RAMP_LIP_Y, RAMP_HALF * 2);   // incline he tilts to match
 const DIVE_V0 = 13.5;              // launch speed — big, epic hang time
 const DIVE_G  = 6.2;               // low gravity so the jump feels floaty/epic
+// live-tunable dive/ramp params (window.NIMBLE.tune) — read fresh each dive so values can be tuned in the browser
+const DIVE_TUNE = { rampHalf: 1.9, rampLipY: 1.6, rideAbove: 0.2, diveV0: DIVE_V0, diveG: DIVE_G, pitchLerp: 14,
+  get rampAngle() { return Math.atan2(this.rampLipY, this.rampHalf * 2); } };   // gentle skate-kicker; board planted on the face
 
 const state = {
   level: 1, score: 0, ammo: 10, lives: 9,
@@ -385,8 +388,10 @@ const state = {
   mode: 'run',                      // 'run' (L1) → 'surf' (L2) → 'swim' (L3)
   steerUp: false, steerDown: false, targetZ: LANE_Z, targetY: 0,
   surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0, surfStartX: 0, warnedL2: false, crossedGate: false,
+  surfPhase: 1, flipping: false, flipT: 0,   // L2 two-phase: 1 = yellow foam scrub, flip, 2 = green scrub
   swimStartX: 0, paused: false,
   diveT: 0, diveGearLost: false, diveSplashed: false, divePitch: 0, shake: 0,   // 2→3 ramp/dive cinematic
+  launched: false, launchT: 0, rampBaseX: 0, rampLipX: 0,   // ramp climb is driven by his real x, not a timer
   jumpT: 0, jumpSplashed: false, aimL: false, aimR: false                        // L3→L4 jump-out + puzzle aim
 };
 const MAX_LIVES = 12;
@@ -1038,7 +1043,8 @@ const playerBlob = makeBlob(0.75, 0x7fe3a0);
 scene.add(playerBlob);
 const velocity = new THREE.Vector3(0, 0, 0);
 let mixer, actions = {}, currentAnim = null;
-let hatParts = [], boardParts = [], spongeParts = [], headBone = null;
+let hatParts = [], boardParts = [], spongeParts = [], spongeSlab = [], headBone = null;
+let spongePivot = null;   // pivot at the sponge's centre so it can kickflip in place (Level 2 phase 2)
 // Nimble's Level-2 ride. The sponge is the current ride; the skateboard is kept
 // as a fallback option — flip USE_SPONGE to false to bring the skateboard back.
 let USE_SPONGE = true;
@@ -1243,7 +1249,7 @@ function setupNimble(nimbleGltf) {
       o.material.roughness = 0.95;     o.material.metalness = 0.0;
       if (o.material.normalScale) o.material.normalScale.set(0.3, 0.3);  // soften the pores
       o.material.needsUpdate = true;
-      spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone();
+      spongeParts.push(o); spongeSlab.push(o); o.visible = false; o.userData.fullScale = o.scale.clone();
     }   // sponge keeps its yellow/green scrub colour as a clean matte surface — no crack-reading maps
     else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
     else { o.material = getGlassMat(o.material); }
@@ -1343,7 +1349,9 @@ function setupNimble(nimbleGltf) {
   })();
 
   window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); console.log('[tuneHatOpacity]', o); return o; };
-  window.NIMBLE = { scene, camera, hatParts, headBone, reseatHat: () => { hatSeated = false; hatParts[0] && (hatParts[0].userData._spun = true); seatFoamCap(); } };
+  window.NIMBLE = { scene, camera, hatParts, headBone, reseatHat: () => { hatSeated = false; hatParts[0] && (hatParts[0].userData._spun = true); seatFoamCap(); },
+    state, tune: DIVE_TUNE, get mode() { return state.mode; }, startDive: () => startDiveTransition(),
+    testDive: () => { state.started = true; const o = document.getElementById('loading'); if (o) o.style.display = 'none'; enterSurfMode(); startDiveTransition(); }, rampMesh: () => rampMesh };   // debug hooks for live dive tuning
   // --------------------------------------------------------------------------------
 
   mixer = new THREE.AnimationMixer(root);
@@ -1533,17 +1541,18 @@ function spawnSurfObstacle(x, z) {
   });
 }
 function spawnDirtChunk() {
-  const rows = 2 + (Math.random() * 2 | 0);
+  const p2 = state.surfPhase === 2;                       // phase 2 = denser, tougher grime
+  const rows = (p2 ? 3 : 2) + (Math.random() * 2 | 0);
   for (let i = 0; i < rows; i++) {
     const z = SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN);
     const size = 1.3 + Math.random() * 1.5;
     spawnDirt(spawnX + Math.random() * 3.0, z, size);
   }
   // ease obstacles in only after the player has had room to learn the up/down steer
-  if ((spawnX - state.surfStartX) > 72 && Math.random() < 0.32) {
+  if ((spawnX - state.surfStartX) > 72 && Math.random() < (p2 ? 0.4 : 0.32)) {
     spawnSurfObstacle(spawnX + 1.5, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
   }
-  spawnX += 3.4 + Math.random() * 3.0 + state.speed * 0.14;
+  spawnX += (p2 ? 2.7 : 3.4) + Math.random() * 3.0 + state.speed * 0.14;
 }
 
 // --- Level 3 swim spawner: dodge debris at different depths, grab drops ---
@@ -1653,6 +1662,7 @@ function spawnCleanSeg(x, z) {
   if (!seg) return;
   seg.mesh.position.set(x, 0.03, z);
   seg.mesh.scale.set(1, 1, 0.9 + Math.random() * 0.25);
+  seg.mesh.material.color.setHex(state.surfPhase === 2 ? 0xbfe4ff : 0xeafdff);  // cool "squeaky clean" tint on the green pass
   seg.mesh.material.opacity = 0;
   seg.mesh.visible = true;
   seg.life = seg.maxLife = 2.4;                  // lingers, so the trail reads as a lasting clean streak
@@ -1688,6 +1698,7 @@ function spawnFoamWake(x, z) {
     p.s.position.set(x + (Math.random() - 0.5) * 0.5, 0.07 + Math.random() * 0.06, z + (Math.random() - 0.5) * 1.05);
     const sz = 0.13 + Math.random() * 0.20;
     p.s.scale.setScalar(sz); p.grow = sz;
+    p.s.material.color.setHex(state.surfPhase === 2 ? 0xdaf1ff : 0xffffff);   // cool tint on the deep-clean pass
     p.life = p.maxLife = 1.8 + Math.random() * 1.5;
     p.s.material.opacity = 0; p.s.visible = true;
     if (++cnt >= 4) break;                         // a little cluster of suds each spawn
@@ -1705,6 +1716,113 @@ function updateFoamWake(dt) {
 }
 function hideFoamWake() { for (const p of foamWake) { p.life = 0; p.s.visible = false; } }
 
+// ---- Level 2 phase change: kickflip the sponge so the GREEN scrub side hits the counter ----
+// The green/yellow slab is reparented under a pivot at its own centre, so a 180° roll flips it
+// in place beneath Nimble (the froth ring stays put). Runs once mid-level, then Phase 2 begins.
+function ensureSpongePivot() {
+  if (spongePivot || spongeSlab.length === 0) return;
+  const parent = spongeSlab[0].parent;
+  const box = new THREE.Box3();
+  spongeSlab.forEach(m => { m.updateWorldMatrix(true, false); box.expandByObject(m); });
+  const center = box.getCenter(new THREE.Vector3());
+  spongePivot = new THREE.Group();
+  parent.add(spongePivot);
+  spongePivot.position.copy(parent.worldToLocal(center.clone()));
+  spongeSlab.forEach(m => spongePivot.attach(m));      // reparent, preserving world transform
+}
+function startSpongeFlip() {
+  if (state.flipping || state.surfPhase !== 1) return;
+  ensureSpongePivot();
+  state.surfPhase = 2;
+  state.flipping = true; state.flipT = 0;
+  if (state.onGround) { velocity.y = 14.0; state.onGround = false; }
+  squash = 0.72; state.excite = 1.0;
+  if (sfx.jump) sfx.jump();
+  showBanner('FLIP! &middot; GREEN SCRUB &mdash; DEEP CLEAN');
+  const at = playerGroup.position.clone().add(new THREE.Vector3(0, 0.5, 0));
+  burst(at, 0xcfeeff, 22, 5.5, 5, 0.30);
+  burst(at, 0xffffff, 14, 4, 3, 0.24, 2.0);
+}
+function updateSpongeFlip(dt) {
+  if (!state.flipping) return;
+  state.flipT += dt;
+  const dur = 0.62, p = Math.min(1, state.flipT / dur);
+  const ease = p * p * (3 - 2 * p);                     // smoothstep
+  if (spongePivot) spongePivot.rotation.z = Math.PI * ease;   // 180° roll → green side down
+  if (p >= 1) { state.flipping = false; if (spongePivot) spongePivot.rotation.z = Math.PI; }
+}
+
+// ---- Level 2 phase-2 sparkle glints — the "deep clean" shimmer trailing the green scrub ----
+const sparkles = [];
+let sparklesBuilt = false;
+function buildSparkles() {
+  if (sparklesBuilt) return; sparklesBuilt = true;
+  for (let i = 0; i < 70; i++) {
+    const mat = new THREE.SpriteMaterial({ map: blobTex, color: 0xeaffff, transparent: true, opacity: 0,
+      depthWrite: false, blending: THREE.AdditiveBlending });
+    const s = new THREE.Sprite(mat); s.visible = false; s.frustumCulled = false; s.renderOrder = 3;
+    scene.add(s);
+    sparkles.push({ s, life: 0, maxLife: 1, sz: 0.06 });
+  }
+}
+function spawnSparkle(x, z) {
+  let cnt = 0;
+  for (const p of sparkles) {
+    if (p.life > 0) continue;
+    p.s.position.set(x + (Math.random() - 0.5) * 1.5, 0.10 + Math.random() * 0.55, z + (Math.random() - 0.5) * 1.5);
+    p.sz = 0.05 + Math.random() * 0.09;
+    p.life = p.maxLife = 0.32 + Math.random() * 0.4;
+    p.s.material.opacity = 0; p.s.visible = true;
+    if (++cnt >= 2) break;
+  }
+}
+function updateSparkles(dt) {
+  for (const p of sparkles) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.s.visible = false; continue; }
+    const f = p.life / p.maxLife;
+    p.s.material.opacity = Math.sin(f * Math.PI);        // twinkle in and out
+    p.s.scale.setScalar(p.sz * (0.6 + (1 - f) * 0.9));
+  }
+}
+function hideSparkles() { for (const p of sparkles) { p.life = 0; p.s.visible = false; } }
+
+// ---- Level 2→3: the hat & sponge fling off him at the dive apex (instead of just vanishing) ----
+const flyGear = [];
+function spawnFlyawayGear() {
+  const base = playerGroup.position.clone();
+  const R = () => (Math.random() - 0.5);
+  // foam hat → a little cluster of suds that tumbles off
+  const hatG = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.16 + Math.random() * 0.12, 10, 10), getFoamMat());
+    s.position.set(R() * 0.5, R() * 0.4, R() * 0.5);
+    hatG.add(s);
+  }
+  hatG.position.copy(base).add(new THREE.Vector3(0.2, 1.7, 0));
+  scene.add(hatG);
+  flyGear.push({ o: hatG, vel: new THREE.Vector3(-3 - Math.random() * 2, 5 + Math.random() * 2.5, R() * 3), spin: new THREE.Vector3(R() * 8, R() * 8, R() * 8), life: 1.7 });
+  // sponge → a small green-top / yellow-body slab, spinning like a kicked board
+  const spG = new THREE.Group();
+  const yellow = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.24, 0.55), new THREE.MeshStandardMaterial({ color: 0x8a6a10, roughness: 0.9 }));
+  const green = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.10, 0.57), new THREE.MeshStandardMaterial({ color: 0x123f22, roughness: 0.95 }));
+  green.position.y = 0.13; spG.add(yellow); spG.add(green);
+  spG.position.copy(base).add(new THREE.Vector3(0, 0.2, 0));
+  scene.add(spG);
+  flyGear.push({ o: spG, vel: new THREE.Vector3(-4 - Math.random() * 2, 4 + Math.random() * 2, R() * 3.5), spin: new THREE.Vector3(R() * 6, R() * 4, 7 + Math.random() * 4), life: 1.8 });
+}
+function updateFlyGear(dt) {
+  for (let i = flyGear.length - 1; i >= 0; i--) {
+    const g = flyGear[i];
+    g.life -= dt;
+    if (g.life <= 0) { scene.remove(g.o); flyGear.splice(i, 1); continue; }
+    g.vel.y -= 11 * dt;
+    g.o.position.addScaledVector(g.vel, dt);
+    g.o.rotation.x += g.spin.x * dt; g.o.rotation.y += g.spin.y * dt; g.o.rotation.z += g.spin.z * dt;
+  }
+}
+
 // Level 1 → Level 2, part 1: he grabs the hat and hops on the skate BEFORE the gate.
 // The counter is still the wood one here — it only changes at the gate (see crossGate).
 function enterSurfMode() {
@@ -1714,7 +1832,9 @@ function enterSurfMode() {
   state.targetZ = LANE_Z;
   playerGroup.position.y = SURF_LIFT; velocity.y = 0; state.onGround = true;   // ride up on the sponge
   state.isSliding = false;
-  state.surfGoal = SURF_GOAL_BASE; state.surfCleaned = 0; state.surfSeen = 0;
+  state.surfGoal = SURF_GOAL_BASE * 2; state.surfCleaned = 0; state.surfSeen = 0;   // two phases (flip at the halfway mark)
+  state.surfPhase = 1; state.flipping = false; state.flipT = 0;
+  if (spongePivot) spongePivot.rotation.set(0, 0, 0);   // reset to green-up (yellow scrubbing) for phase 1
   state.excite = 1.0;
   sfx.level();
   boardParts.forEach(m => m.visible = !USE_SPONGE);   // skateboard only when sponge is off
@@ -1736,6 +1856,7 @@ function enterSurfMode() {
   spawnX = LEVEL_LEN + 22;
   buildCleanTrail();
   buildFoamWake();
+  buildSparkles();
   // he hops as the sponge pops in beneath him, then rides
   velocity.y = 6.8; state.onGround = false;
   playAnim('jump', 0.05);
@@ -1779,8 +1900,9 @@ function advanceSurfLevel() {
 let rampMesh = null;
 function buildRamp(x) {
   const w = (SURF_Z_MAX - SURF_Z_MIN) + 2.6;
+  const rh = DIVE_TUNE.rampHalf, rl = DIVE_TUNE.rampLipY;
   const shape = new THREE.Shape();
-  shape.moveTo(-RAMP_HALF, 0); shape.lineTo(RAMP_HALF, 0); shape.lineTo(RAMP_HALF, RAMP_LIP_Y); shape.lineTo(-RAMP_HALF, 0);
+  shape.moveTo(-rh, 0); shape.lineTo(rh, 0); shape.lineTo(rh, rl); shape.lineTo(-rh, 0);
   const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
   geo.translate(0, 0, -w / 2);
   const mat = new THREE.MeshStandardMaterial({ color: 0xcfd6de, metalness: 0.85, roughness: 0.3 });
@@ -1806,16 +1928,28 @@ function startDiveTransition() {
   state.onGround = true; velocity.y = 0; state.isSliding = false;
   state.excite = 1.0;
   sfx.level();
-  hideCleanTrail(); hideFoamWake();                   // counter's about to go — drop the shine streak + suds
+  hideCleanTrail(); hideFoamWake(); hideSparkles();   // counter's about to go — drop the shine streak + suds
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
     entities.splice(i, 1);
   }
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
-  // ramp lip lands right at his launch position
+  // place the ramp ahead; the climb is driven by his real x reaching it (below), so no clip-through
   const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
-  rampMesh = buildRamp(playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - RAMP_HALF);
+  const rampCenterX = playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - DIVE_TUNE.rampHalf;
+  rampMesh = buildRamp(rampCenterX);
+  state.rampBaseX = rampCenterX - DIVE_TUNE.rampHalf;   // foot of the ramp face
+  state.rampLipX  = rampCenterX + DIVE_TUNE.rampHalf;   // launch lip
+  state.launched = false; state.launchT = 0;
+  // Pre-build the whole underwater scene NOW, hidden, so piercing the surface doesn't hitch/freeze
+  // (the water's custom shader + FX + seabed are the costly bits — build AND pre-compile them off the climax).
+  buildWaterSurface(); if (waterSurface) waterSurface.visible = false;
+  buildBubbles();
+  buildSeabed(); seabed.forEach(m => m.visible = false);
+  buildUnderwaterFX(); showUnderwaterFX(false);
+  renderer.compile(scene, camera);             // compile the hidden water/FX shaders now (they compile on first render otherwise)
+  if (bgTexL3) renderer.initTexture(bgTexL3);   // pre-upload the underwater backdrop to the GPU
   showBanner('RAMP AHEAD!');
 }
 
@@ -1823,32 +1957,42 @@ function startDiveTransition() {
 function scriptDiveSeq(dt) {
   playerGroup.position.z = LANE_Z;
   state.diveT += dt;
-  const T = state.diveT;
-  let targetPitch = 0, y = 0;
-  if (T < DIVE_LAUNCH_T - RAMP_RIDE) {
-    y = SURF_LIFT; targetPitch = 0;                           // rolling flat toward the ramp, still up on the sponge
-  } else if (T < DIVE_LAUNCH_T) {
-    const f = (T - (DIVE_LAUNCH_T - RAMP_RIDE)) / RAMP_RIDE;  // riding up the ramp face
-    y = SURF_LIFT * (1 - f) + RAMP_LIP_Y * f; targetPitch = RAMP_ANGLE * f;   // blend the ride height out into the ramp
-  } else {
-    const jt = T - DIVE_LAUNCH_T, vy = DIVE_V0 - DIVE_G * jt;
-    y = RAMP_LIP_Y + DIVE_V0 * jt - 0.5 * DIVE_G * jt * jt;   // big epic arc
+  const px = playerGroup.position.x;
+  let targetPitch = 0, y = SURF_LIFT;
+  if (!state.launched) {
+    if (px < state.rampBaseX) {
+      y = SURF_LIFT; targetPitch = 0;                          // rolling flat toward the ramp, up on the sponge
+    } else if (px < state.rampLipX) {
+      const f = (px - state.rampBaseX) / Math.max(0.001, state.rampLipX - state.rampBaseX);  // climb tied to the ramp face
+      const ride = SURF_LIFT + (DIVE_TUNE.rideAbove - SURF_LIFT) * Math.min(1, f / 0.12);       // ease from the flat ride height onto the planted ramp height (no drop at the foot)
+      y = f * DIVE_TUNE.rampLipY + ride;
+      targetPitch = DIVE_TUNE.rampAngle * Math.min(1, f / 0.1);   // FULL slope angle the whole climb (quick ease at the foot) — board stays parallel to the face, never cuts in
+    } else {
+      state.launched = true; state.launchT = state.diveT;     // off the lip → into the arc
+    }
+  }
+  if (state.launched) {
+    const jt = state.diveT - state.launchT, vy = DIVE_TUNE.diveV0 - DIVE_TUNE.diveG * jt;
+    y = (DIVE_TUNE.rampLipY + DIVE_TUNE.rideAbove) + DIVE_TUNE.diveV0 * jt - 0.5 * DIVE_TUNE.diveG * jt * jt;   // big epic arc, off the top of the ramp
     targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, Math.max(3, state.speed)), -1.15, 1.2);  // follow the trajectory
     if (!state.diveGearLost && vy <= 0) {                     // apex: fling off the gear, assume the dive
       state.diveGearLost = true;
+      spawnFlyawayGear();                                     // hat + sponge tumble away for real
       hatParts.forEach(m => m.visible = false);
       boardParts.forEach(m => m.visible = false);
       spongeParts.forEach(m => m.visible = false);
+      if (floor) floor.visible = false;                       // drop the counter now so it stops fighting the water below
       burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.6, 0)), 0xffffff, 22, 5.5, 5, 0.32);
       playAnim('dive', 0.22);
-      buildWaterSurface();                                    // water visible below → he dives INTO it, not onto stone
+      if (waterSurface) waterSurface.visible = true; else buildWaterSurface();   // reveal the pre-built water below
       showBanner('DIIIVE!');
     }
     if (!state.diveSplashed && y <= 0 && vy < 0) { splashThroughSurface(); }
-    if (state.diveSplashed && y <= SWIM_MID) { finishDiveIntoSwim(); }
+    if (state.diveSplashed && y <= SWIM_MID + 1.4) { finishDiveIntoSwim(); }   // hand off to swim just under the surface; the swim glide eases him the rest of the way down (one continuous plunge)
   }
   playerGroup.position.y = y;
-  state.divePitch += (targetPitch - state.divePitch) * Math.min(1, 8 * dt);
+  if (state.launched) state.divePitch += (targetPitch - state.divePitch) * Math.min(1, DIVE_TUNE.pitchLerp * dt);   // in the air: ease toward the trajectory
+  else state.divePitch = targetPitch;   // on the ground/ramp: snap the board flush to the surface (no lag → no dig-through)
   setPlayerPitch(state.divePitch);
 }
 
@@ -1860,11 +2004,12 @@ function applyUnderwater() {
     if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
     bgMesh.material.color.setRGB(0.60, 0.78, 0.92);                  // cool the backdrop into the depths
   }
-  const tint = document.getElementById('water-tint');
-  if (tint) tint.style.display = 'block';
-  buildWaterSurface();
+  // NOTE: no flat #water-tint foreground layer — it sat on top of the canvas and killed the sense
+  // of the camera actually dropping under the surface. The 3D fog + cooled backdrop + god-rays carry
+  // the underwater look now, so you truly descend into it instead of a 2D wash cutting in.
+  buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
-  buildSeabed();
+  buildSeabed(); seabed.forEach(m => m.visible = true);   // reveal the pre-built seabed heap
   buildUnderwaterFX();
   showUnderwaterFX(true);
   frothDecals.forEach(s => s.visible = false);
@@ -1880,9 +2025,9 @@ function finishDiveIntoSwim() {
   state.level = 3;
   state.onGround = true; velocity.y = 0;
   state.ammo = Math.max(state.ammo, 12);         // some soap to start Level 3 with
-  state.divePitch = SWIM_PITCH; setPlayerPitch(SWIM_PITCH);   // nose-up swimming pose
+  // keep his current (nose-down) plunge pitch; the swim glide eases it up into the swim pose — no instant flip
   state.targetY = SWIM_MID;
-  playerGroup.position.y = SWIM_MID;
+  // no y-snap — he keeps his current plunge depth and the swim glide (below) eases him into the lane, so there's no second "dive" beat
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }   // drop the surface plane → no more line, he's fully under
   for (let i = entities.length - 1; i >= 0; i--) {
@@ -2260,9 +2405,10 @@ function gameLoop() {
       // spraying up off his feet — that read as a stray bubble stream).
       surfTrailT -= dt;
       if (surfTrailT <= 0) {
-        surfTrailT = 0.045;
+        surfTrailT = state.surfPhase === 2 ? 0.038 : 0.045;    // slightly denser trail on the deep-clean pass
         spawnCleanSeg(playerGroup.position.x - 0.7, playerGroup.position.z);
         spawnFoamWake(playerGroup.position.x - 0.7, playerGroup.position.z);
+        if (state.surfPhase === 2) spawnSparkle(playerGroup.position.x - 0.7, playerGroup.position.z);
       }
       // sponge pop-in bounce on mount (easeOutBack)
       if (spongeMountT > 0) {
@@ -2377,7 +2523,8 @@ function gameLoop() {
           burst(m.position.clone().add(new THREE.Vector3(0, 0.2, 0)), 0xffffff, 12, 2.6, 2.4, 0.22);
           popup(m.position.clone().add(new THREE.Vector3(0, 0.7, 0)), 'SCRUB! +75', '#ffffff');
           updateHUD();
-          if (state.surfCleaned >= state.surfGoal) advanceSurfLevel();
+          if (state.surfPhase === 1 && state.surfCleaned >= SURF_GOAL_BASE) startSpongeFlip();  // halfway → flip to green scrub
+          else if (state.surfCleaned >= state.surfGoal) advanceSurfLevel();                       // all clean → ramp & dive
         }
         continue;
       }
@@ -2549,8 +2696,11 @@ function gameLoop() {
   }
 
   updateParticles(dt);
+  if (flyGear.length) updateFlyGear(dt);               // tumbling hat/sponge on the dive launch
   if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
   if (foamWakeBuilt) updateFoamWake(dt);              // fade the frothy suds wake
+  if (sparklesBuilt) updateSparkles(dt);              // phase-2 deep-clean shimmer
+  updateSpongeFlip(dt);                               // drive the mid-level sponge kickflip
 
   // camera / world dressing follow the run
   const surf = state.mode === 'surf';
@@ -2565,7 +2715,7 @@ function gameLoop() {
   const camXTarget = puzzle ? PZ.boardX : playerGroup.position.x + 4.0;
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, 4 * dt);
   const camYTarget = puzzle ? PZ.midY : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
-  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, followY ? 4.5 * dt : 3 * dt);
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, diveSeq ? 9 * dt : followY ? 5 * dt : 3 * dt);   // plunge tightly with him through the surface — no lag/freeze, one continuous descent underwater
   const camZTarget = puzzle ? (LANE_Z + 24) : diveSeq ? 23 : 17;   // pulled back so the board fits with margins
   camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, 2.5 * dt);
   if (state.shake > 0.001) {                                   // impact jolt
