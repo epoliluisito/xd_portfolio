@@ -1988,7 +1988,7 @@ function scriptDiveSeq(dt) {
       showBanner('DIIIVE!');
     }
     if (!state.diveSplashed && y <= 0 && vy < 0) { splashThroughSurface(); }
-    if (state.diveSplashed && y <= SWIM_MID) { finishDiveIntoSwim(); }
+    if (state.diveSplashed && y <= SWIM_MID + 1.4) { finishDiveIntoSwim(); }   // hand off to swim just under the surface; the swim glide eases him the rest of the way down (one continuous plunge)
   }
   playerGroup.position.y = y;
   if (state.launched) state.divePitch += (targetPitch - state.divePitch) * Math.min(1, DIVE_TUNE.pitchLerp * dt);   // in the air: ease toward the trajectory
@@ -2004,8 +2004,9 @@ function applyUnderwater() {
     if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
     bgMesh.material.color.setRGB(0.60, 0.78, 0.92);                  // cool the backdrop into the depths
   }
-  const tint = document.getElementById('water-tint');
-  if (tint) tint.style.display = 'block';
+  // NOTE: no flat #water-tint foreground layer — it sat on top of the canvas and killed the sense
+  // of the camera actually dropping under the surface. The 3D fog + cooled backdrop + god-rays carry
+  // the underwater look now, so you truly descend into it instead of a 2D wash cutting in.
   buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
   buildSeabed(); seabed.forEach(m => m.visible = true);   // reveal the pre-built seabed heap
@@ -2024,9 +2025,9 @@ function finishDiveIntoSwim() {
   state.level = 3;
   state.onGround = true; velocity.y = 0;
   state.ammo = Math.max(state.ammo, 12);         // some soap to start Level 3 with
-  state.divePitch = SWIM_PITCH; setPlayerPitch(SWIM_PITCH);   // nose-up swimming pose
+  // keep his current (nose-down) plunge pitch; the swim glide eases it up into the swim pose — no instant flip
   state.targetY = SWIM_MID;
-  playerGroup.position.y = SWIM_MID;
+  // no y-snap — he keeps his current plunge depth and the swim glide (below) eases him into the lane, so there's no second "dive" beat
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }   // drop the surface plane → no more line, he's fully under
   for (let i = entities.length - 1; i >= 0; i--) {
@@ -2714,7 +2715,7 @@ function gameLoop() {
   const camXTarget = puzzle ? PZ.boardX : playerGroup.position.x + 4.0;
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, 4 * dt);
   const camYTarget = puzzle ? PZ.midY : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
-  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, followY ? 4.5 * dt : 3 * dt);
+  camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, diveSeq ? 9 * dt : followY ? 5 * dt : 3 * dt);   // plunge tightly with him through the surface — no lag/freeze, one continuous descent underwater
   const camZTarget = puzzle ? (LANE_Z + 24) : diveSeq ? 23 : 17;   // pulled back so the board fits with margins
   camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, 2.5 * dt);
   if (state.shake > 0.001) {                                   // impact jolt
