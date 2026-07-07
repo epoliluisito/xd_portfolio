@@ -343,9 +343,11 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 // ----------------------------------------------------
 const LANE_Z = 2.2;                 // the one depth lane everything lives on
 const BASE_SPEED = 6.3;             // world-scroll speed (−30%); Nimble's own anim/controls are separate
-const LEVEL_LEN = 500;              // metres of Level 1 before the skate hand-off
+const LEVEL_LEN = location.hash.includes('l2') ? 24 : 500;   // #l2 = quick-jump to Level 2 for testing (out-of-repo copy)
 const angleCheat = 0.49;
 const CHAR_SCALE = 1.343;           // was 1.58 — reduced by 15%
+// (Foam cap seating is now fully automatic — see "AUTO-SEAT THE FOAM CAP" in setupNimble.
+//  Tweak HAT_ROT_DEG / HAT_SEAT_DOWN there if you ever want to re-angle or raise/lower it.)
 const SLIDE_DUR = 0.72;             // shorter, snappier slide (hitbox + anim end together)
 
 // player capsule (world units, after CHAR_SCALE)
@@ -357,7 +359,7 @@ const SURF_Z_MIN = 0.2;             // steer band across the counter's depth (up
 const SURF_Z_MAX = 4.6;
 const STEER_SPEED = 5.2;            // z units per second while a steer key/button is held
 const SURF_GOAL_BASE = 48;          // dirt patches to scrub to finish level 2 (twice as long)
-const SURF_LIFT = 0.17;             // ride height on Level 2 so the (thick) sponge sits ON the counter, not through it
+const SURF_LIFT = 0.34;             // ride height on Level 2 — raised so the sponge (and Nimble on it) sit higher off the counter
 
 // --- Level 3 "dive & swim" mode (the water surface is y = 0; he swims below it) ---
 const SWIM_Y_MIN = -5.4;            // deepest
@@ -532,6 +534,26 @@ function getFoamMat() {
   });
   addRim(mat, '#dff3ff', 0.6);
   return mat;
+}
+// Clean procedural teal scrub texture — replaces the sponge's baked teal+yellow patchwork
+// (whose seams read as gold "cracks" across the scrub top). Cached; matte scrub-pad look.
+let _cleanSpongeTex = null;
+function getCleanSpongeTex() {
+  if (_cleanSpongeTex) return _cleanSpongeTex;
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2e8b83'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 4600; i++) {                         // pores + flecks, all in the teal family
+    const x = Math.random() * 256, y = Math.random() * 256, r = 0.6 + Math.random() * 1.8;
+    g.fillStyle = Math.random() < 0.6
+      ? `rgba(22,74,69,${0.22 + Math.random() * 0.34})`     // darker pores
+      : `rgba(120,190,178,${0.14 + Math.random() * 0.24})`; // lighter flecks
+    g.beginPath(); g.arc(x, y, r, 0, 6.28); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3, 2);
+  t.colorSpace = THREE.SRGBColorSpace;
+  _cleanSpongeTex = t; return t;
 }
 const cleanMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, clearcoat: 1.0, clearcoatRoughness: 0.05, envMapIntensity: 2.0 });
 const soapMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.3, thickness: 0.5 });
@@ -1203,14 +1225,126 @@ function setupNimble(nimbleGltf) {
     o.castShadow = true;
     o.frustumCulled = false;
     const mn = o.material ? o.material.name : '';
-    if (mn === 'hat_foam')        { o.material = getFoamMat(); hatParts.push(o);  o.visible = false; }
+    if (mn === 'hat_foam')        { o.material = getFoamMat();
+      // Draw the cap on top of Nimble's transparent glass body (otherwise his body sorts in front
+      // of the foam and hides it). renderOrder + no depth-test = always visible on his head.
+      o.material.depthTest = false; o.material.depthWrite = false; o.renderOrder = 20;
+      hatParts.push(o);  o.visible = false; }
     else if (mn === 'board_foam') { o.material = getFoamMat(); boardParts.push(o); o.visible = false; }
     else if (mn.startsWith('sponge_foam')) { o.material = getFoamMat(); spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }  // soap suds around the sponge
-    else if (mn.startsWith('sponge_mat'))  { spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone(); }   // sponge keeps its own baked soap texture
+    else if (mn.startsWith('sponge_mat'))  {
+      // Keep the real yellow + green scrub COLOUR, but flatten everything that made the patchwork
+      // read as cracks: the metallic-roughness map carries the same patchwork (shiny vs matte
+      // patches) whose edges catch specular under ACES; the emissive map glowed; the normal map's
+      // pores cut hard shadows. Drop those maps, keep only the base colour, and go uniformly matte.
+      o.material.emissive && o.material.emissive.setRGB(0, 0, 0);
+      o.material.emissiveMap = null;   o.material.emissiveIntensity = 0;
+      o.material.roughnessMap = null;  o.material.metalnessMap = null;   // uniform matte — no specular patch-edges
+      o.material.roughness = 0.95;     o.material.metalness = 0.0;
+      if (o.material.normalScale) o.material.normalScale.set(0.3, 0.3);  // soften the pores
+      o.material.needsUpdate = true;
+      spongeParts.push(o); o.visible = false; o.userData.fullScale = o.scale.clone();
+    }   // sponge keeps its yellow/green scrub colour as a clean matte surface — no crack-reading maps
     else if (mn === 'eye_material') { /* transplanted eyes keep their own look — no glass here */ }
     else { o.material = getGlassMat(o.material); }
   });
   playerGroup.add(root);
+
+  // ---- AUTO-SEAT THE FOAM CAP (self-computing — no magic numbers) ----------------
+  // The bubble baseball-cap is rigidly skinned 100% to the Head bone. three.js scales a
+  // skinned-geometry translate very differently from Blender, so a hand-picked HAT_OFFSET
+  // never held up. Instead, at load we: (1) spin the cap so its bill reads as "worn
+  // backward", then (2) directly measure how the *rendered* (skinned) hat responds to a
+  // geometry translate and solve for the shift that drops it onto the crown. The result is
+  // a fixed geometry transform, so it stays seated in every animation pose.
+  //   Tweakables: HAT_ROT_DEG (bill orientation) and HAT_SEAT_DOWN (how deep it sits).
+  const HAT_ROT_DEG = { x: 0, y: 90, z: 0 };     // 90° spin -> bill worn backward
+  // Fine-tune, as fractions of head size. up -> +higher / -lower on the crown;
+  // cam -> +pulls it toward the camera (out of the plane behind him); side -> +his right.
+  const HAT_SEAT = { up: -0.10, cam: 0.06, side: 0.0 };
+  let bodyMesh = null, headTopBone = null, eyesMesh = null;
+  root.traverse(o => {
+    if (o.isBone && /HeadTop/i.test(o.name)) headTopBone = o;
+    if (o.isMesh && o.material && /eye/i.test(o.material.name || '')) eyesMesh = o;
+    if (o.isSkinnedMesh && !hatParts.includes(o) &&
+      (!bodyMesh || o.geometry.attributes.position.count > bodyMesh.geometry.attributes.position.count)) bodyMesh = o;
+  });
+
+  let hatSeated = false, _seatTries = 0;
+  function seatFoamCap() {
+    const hat = hatParts[0];
+    if (!hat || !bodyMesh || !headBone) { hatSeated = true; return; }   // nothing to do
+    playerGroup.updateWorldMatrix(true, true);
+    if (hat.skeleton) hat.skeleton.update();
+    if (bodyMesh.skeleton) bodyMesh.skeleton.update();
+    const BT = hat.applyBoneTransform ? 'applyBoneTransform' : 'boneTransform';
+    // one-time: spin the cap about its own centre so the bill points backward
+    if (!hat.userData._spun) {
+      hat.geometry.computeBoundingBox();
+      const c = hat.geometry.boundingBox.getCenter(new THREE.Vector3());
+      hat.geometry.translate(-c.x, -c.y, -c.z);
+      hat.geometry.rotateX(HAT_ROT_DEG.x * Math.PI / 180);
+      hat.geometry.rotateY(HAT_ROT_DEG.y * Math.PI / 180);
+      hat.geometry.rotateZ(HAT_ROT_DEG.z * Math.PI / 180);
+      hat.geometry.translate(c.x, c.y, c.z);
+      hat.userData._spun = true;
+    }
+    const V = THREE.Vector3;
+    const bnd = (m, minY = -1e9) => {
+      const p = m.geometry.attributes.position, N2 = p.count, st = Math.max(1, (N2 / 1500) | 0);
+      const v = new V(), mn = new V(1e9, 1e9, 1e9), mx = new V(-1e9, -1e9, -1e9), c = new V(); let k = 0;
+      for (let i = 0; i < N2; i += st) { v.fromBufferAttribute(p, i); m[BT](i, v); m.localToWorld(v);
+        if (v.y >= minY) { mn.min(v); mx.max(v); c.add(v); k++; } }
+      return { mn, mx, c: c.divideScalar(k || 1) };
+    };
+    const hatC = () => bnd(hat).c.clone(), tr = (x, y, z) => hat.geometry.translate(x, y, z);
+    const b0 = hatC(), P = 5;                                            // measure skinned response per axis
+    tr(P, 0, 0); const CX = hatC().sub(b0).divideScalar(P); tr(-P, 0, 0);
+    tr(0, P, 0); const CY = hatC().sub(b0).divideScalar(P); tr(0, -P, 0);
+    tr(0, 0, P); const CZ = hatC().sub(b0).divideScalar(P); tr(0, 0, -P);
+    const M = [[CX.x, CY.x, CZ.x], [CX.y, CY.y, CZ.y], [CX.z, CY.z, CZ.z]];
+    const det = M[0][0]*(M[1][1]*M[2][2]-M[1][2]*M[2][1]) - M[0][1]*(M[1][0]*M[2][2]-M[1][2]*M[2][0]) + M[0][2]*(M[1][0]*M[2][1]-M[1][1]*M[2][0]);
+    if (Math.abs(det) < 1e-9) return;                                    // skeleton not posed yet — retry next frame
+    const cof = (i, j) => { const r = [0,1,2].filter(x => x!==i), c = [0,1,2].filter(x => x!==j);
+      return ((i+j)%2 ? -1 : 1) * (M[r[0]][c[0]]*M[r[1]][c[1]] - M[r[0]][c[1]]*M[r[1]][c[0]]); };
+    const Mi = [[0,0,0],[0,0,0],[0,0,0]]; for (let i=0;i<3;i++) for (let j=0;j<3;j++) Mi[i][j] = cof(j, i) / det;
+    const h = bnd(hat);
+    // Anchor to the HEAD-TOP bone (the crown) — rigidly on the head, so the seat can't drift as
+    // the body bends. Target = crown, nudged in the head's own up/back/side axes.
+    const headW = new V(), htW = new V();
+    headBone.getWorldPosition(headW);
+    (headTopBone || headBone).getWorldPosition(htW);
+    const up = htW.clone().sub(headW); const hs = up.length() || 1; up.normalize();
+    // Pull toward the camera (screen depth), flattened perpendicular to up so the height the user
+    // liked stays put; +cam brings the cap out of the plane behind him, toward the viewer.
+    const camDir = camera.position.clone().sub(htW);
+    camDir.addScaledVector(up, -camDir.dot(up)); camDir.normalize();
+    const sideAx = new V().crossVectors(up, camDir).normalize();
+    const target = htW.clone()
+      .addScaledVector(up,     hs * HAT_SEAT.up)
+      .addScaledVector(camDir, hs * HAT_SEAT.cam)
+      .addScaledVector(sideAx, hs * HAT_SEAT.side);
+    const d = [ target.x - h.c.x, target.y - h.c.y, target.z - h.c.z ];
+    const o = [0,1,2].map(i => Mi[i][0]*d[0] + Mi[i][1]*d[1] + Mi[i][2]*d[2]);
+    if (!o.every(Number.isFinite) || Math.hypot(o[0], o[1], o[2]) > 12) return;   // wild calibration — retry
+    tr(o[0], o[1], o[2]);
+    hat.geometry.computeBoundingSphere();
+    hatSeated = true;
+  }
+  // Seat the cap only once Level 2's surf pose is actually running (that's when the hat is worn,
+  // and matches the pose it's rendered in). Waiting for it avoids locking in a bad seat computed
+  // during the Level 1 run-up where the head pose differs and the hat is hidden.
+  let _surfFrames = 0, _giveUp = 0;
+  (function trySeat() {
+    if (hatSeated || _giveUp++ > 3000) return;
+    // wait for the surf/skateboard pose to actually be running, then settle a few frames
+    if (state.mode === 'surf' && currentAnim === 'skateboard' && ++_surfFrames > 4) { try { seatFoamCap(); } catch (e) {} }
+    requestAnimationFrame(trySeat);
+  })();
+
+  window.tuneHatOpacity = (o = 1) => { hatParts.forEach(m => { m.material.opacity = o; m.material.transparent = o < 1; if (m.material.transmission !== undefined) m.material.transmission = Math.min(m.material.transmission, 1 - o); m.material.needsUpdate = true; }); console.log('[tuneHatOpacity]', o); return o; };
+  window.NIMBLE = { scene, camera, hatParts, headBone, reseatHat: () => { hatSeated = false; hatParts[0] && (hatParts[0].userData._spun = true); seatFoamCap(); } };
+  // --------------------------------------------------------------------------------
 
   mixer = new THREE.AnimationMixer(root);
   const animCfgs = { idle:{loop:true}, running:{loop:true}, skateboard:{loop:true},
