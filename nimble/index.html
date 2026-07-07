@@ -369,6 +369,7 @@ const SWIM_MID = (SWIM_Y_MIN + SWIM_Y_MAX) / 2;   // ~ -3.2
 const SWIM_PITCH = 0.42;            // nose-up while swimming so he doesn't look down
 const SWIM_LEN = 285;              // metres of Level 3 (swim is slower, so shorter distance = same play-time as L1)
 const DIVE_LAUNCH_T = 1.0;          // seconds rolling up to the ramp before he launches
+const RAMP_ROLLIN = 9;             // units of flat roll-in ahead of the ramp so the surf→autopilot handoff settles first
 const RAMP_HALF = 1.7;             // ramp half-width
 const RAMP_LIP_Y = 2.4;            // ramp launch-lip height
 const RAMP_RIDE = 0.5;             // seconds spent riding up the ramp face
@@ -1938,10 +1939,11 @@ function startDiveTransition() {
     entities.splice(i, 1);
   }
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
-  // place the ramp ahead; the climb is driven by his real x reaching it (below), so no clip-through
-  const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
-  const rampCenterX = playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - DIVE_TUNE.rampHalf;
+  // Place the ramp a good ROLL-IN ahead (not at his feet) so the surf→autopilot handoff (camera/speed/lane
+  // eases, ~0.8s) fully settles before he reaches it. The climb is driven by his real x reaching it (no clip-through).
+  const rampCenterX = playerGroup.position.x + RAMP_ROLLIN + DIVE_TUNE.rampHalf;
   rampMesh = buildRamp(rampCenterX);
+  rampMesh.scale.y = 0.02; rampMesh.userData.rise = 0;   // rise it up out of the counter instead of popping in
   state.rampBaseX = rampCenterX - DIVE_TUNE.rampHalf;   // foot of the ramp face
   state.rampLipX  = rampCenterX + DIVE_TUNE.rampHalf;   // launch lip
   state.launched = false; state.launchT = 0;
@@ -2708,6 +2710,11 @@ function gameLoop() {
 
   updateParticles(dt);
   if (flyGear.length) updateFlyGear(dt);               // tumbling hat/sponge on the dive launch
+  if (rampMesh && rampMesh.userData.rise < 1) {        // ramp rises up out of the counter (no hard pop-in)
+    rampMesh.userData.rise = Math.min(1, rampMesh.userData.rise + dt / 0.4);
+    const e = 1 - Math.pow(1 - rampMesh.userData.rise, 3);   // easeOutCubic
+    rampMesh.scale.y = 0.02 + 0.98 * e;
+  }
   if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
   if (foamWakeBuilt) updateFoamWake(dt);              // fade the frothy suds wake
   if (sparklesBuilt) updateSparkles(dt);              // phase-2 deep-clean shimmer
