@@ -369,6 +369,7 @@ const SWIM_MID = (SWIM_Y_MIN + SWIM_Y_MAX) / 2;   // ~ -3.2
 const SWIM_PITCH = 0.42;            // nose-up while swimming so he doesn't look down
 const SWIM_LEN = 285;              // metres of Level 3 (swim is slower, so shorter distance = same play-time as L1)
 const DIVE_LAUNCH_T = 1.0;          // seconds rolling up to the ramp before he launches
+const RAMP_ROLLIN = 9;             // units of flat roll-in ahead of the ramp so the surf→autopilot handoff settles first
 const RAMP_HALF = 1.7;             // ramp half-width
 const RAMP_LIP_Y = 2.4;            // ramp launch-lip height
 const RAMP_RIDE = 0.5;             // seconds spent riding up the ramp face
@@ -1938,10 +1939,11 @@ function startDiveTransition() {
     entities.splice(i, 1);
   }
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
-  // place the ramp ahead; the climb is driven by his real x reaching it (below), so no clip-through
-  const diveFwd = BASE_SPEED * (1 + Math.min(1.35, playerGroup.position.x / 450)) * 0.5;
-  const rampCenterX = playerGroup.position.x + diveFwd * DIVE_LAUNCH_T - DIVE_TUNE.rampHalf;
+  // Place the ramp a good ROLL-IN ahead (not at his feet) so the surf→autopilot handoff (camera/speed/lane
+  // eases, ~0.8s) fully settles before he reaches it. The climb is driven by his real x reaching it (no clip-through).
+  const rampCenterX = playerGroup.position.x + RAMP_ROLLIN + DIVE_TUNE.rampHalf;
   rampMesh = buildRamp(rampCenterX);
+  rampMesh.scale.y = 0.02; rampMesh.userData.rise = 0;   // rise it up out of the counter instead of popping in
   state.rampBaseX = rampCenterX - DIVE_TUNE.rampHalf;   // foot of the ramp face
   state.rampLipX  = rampCenterX + DIVE_TUNE.rampHalf;   // launch lip
   state.launched = false; state.launchT = 0;
@@ -1951,14 +1953,21 @@ function startDiveTransition() {
   buildBubbles();
   buildSeabed(); seabed.forEach(m => m.visible = false);
   buildUnderwaterFX(); showUnderwaterFX(false);
-  renderer.compile(scene, camera);             // compile the hidden water/FX shaders now (they compile on first render otherwise)
+  // Pre-warm the FOG shader path now: assigning scene.fog for the first time forces EVERY material to
+  // recompile — that's the stutter at the surface. Enable it here pushed far away (invisible: 900u off),
+  // so at the splash we only tweak its near/far/colour (cheap uniforms), never recompile mid-plunge.
+  if (!scene.fog) scene.fog = new THREE.Fog(0x08324f, 8000, 9000);   // so far it fogs nothing during the arc — only the shader path is pre-warmed
+  // pre-create the splash ring/crown (they're built lazily on first splash → shader compile mid-plunge otherwise)
+  spawnSplashRing({ x: playerGroup.position.x, z: LANE_Z }); if (splashRing) { splashRing.visible = false; splashRingLife = 0; }
+  spawnSplashCrown({ x: playerGroup.position.x, z: LANE_Z }); if (splashCrown) { splashCrown.visible = false; splashCrownLife = 0; }
+  renderer.compile(scene, camera);             // compile the hidden water/FX shaders + the fog path + splash FX now
   if (bgTexL3) renderer.initTexture(bgTexL3);   // pre-upload the underwater backdrop to the GPU
   showBanner('RAMP AHEAD!');
 }
 
 // the scripted arc for the dive cinematic (called from the movement branch)
 function scriptDiveSeq(dt) {
-  playerGroup.position.z = LANE_Z;
+  playerGroup.position.z += (LANE_Z - playerGroup.position.z) * Math.min(1, 5 * dt);   // ease his surf lane back to centre, don't snap it
   state.diveT += dt;
   const px = playerGroup.position.x;
   let targetPitch = 0, y = SURF_LIFT;
@@ -2001,7 +2010,8 @@ function scriptDiveSeq(dt) {
 
 // swap the scene to its underwater dressing (called when he pierces the surface)
 function applyUnderwater() {
-  scene.fog = new THREE.Fog(0x08324f, 14, 52);                    // richer teal depth haze
+  if (scene.fog) { scene.fog.color.setHex(0x08324f); scene.fog.near = 14; scene.fog.far = 52; }  // pre-warmed at dive start → uniform tweak only, no recompile stutter
+  else scene.fog = new THREE.Fog(0x08324f, 14, 52);               // (fallback) richer teal depth haze
   if (floor) floor.visible = false;
   if (bgMesh) {
     if (bgTexL3) { bgMesh.material.map = bgTexL3; fitBackdrop(); }   // real underwater backdrop
@@ -2395,7 +2405,7 @@ function gameLoop() {
 
     // --- always moving forward; boost & brake only bend the pace ---
     const diff = 1 + Math.min(1.35, px0 / 450);
-    const modeMul = state.mode === 'swim' ? 0.55 : state.mode === 'surf' ? 0.82 : state.mode === 'dive_seq' ? 0.5 : 1.0;
+    const modeMul = state.mode === 'swim' ? 0.55 : state.mode === 'surf' ? 0.82 : state.mode === 'dive_seq' ? THREE.MathUtils.lerp(0.82, 0.5, Math.min(1, state.diveT / 0.8)) : 1.0;   // ease down from surf pace, don't brake-snap into the ramp autopilot
     state.speed = BASE_SPEED * diff * modeMul * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
     playerGroup.position.x += state.speed * dt;
 
@@ -2700,6 +2710,11 @@ function gameLoop() {
 
   updateParticles(dt);
   if (flyGear.length) updateFlyGear(dt);               // tumbling hat/sponge on the dive launch
+  if (rampMesh && rampMesh.userData.rise < 1) {        // ramp rises up out of the counter (no hard pop-in)
+    rampMesh.userData.rise = Math.min(1, rampMesh.userData.rise + dt / 0.4);
+    const e = 1 - Math.pow(1 - rampMesh.userData.rise, 3);   // easeOutCubic
+    rampMesh.scale.y = 0.02 + 0.98 * e;
+  }
   if (cleanTrailBuilt) updateCleanTrail(dt);          // fade the "cleaned" shine streak
   if (foamWakeBuilt) updateFoamWake(dt);              // fade the frothy suds wake
   if (sparklesBuilt) updateSparkles(dt);              // phase-2 deep-clean shimmer
@@ -2717,9 +2732,12 @@ function gameLoop() {
   playerBlob.visible = state.onGround && !swim && !diveSeq && !jumpout && !puzzle;
   const camXTarget = puzzle ? PZ.boardX : playerGroup.position.x + 4.0;
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, 4 * dt);
-  const camYTarget = puzzle ? PZ.midY : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
+  // seamless surf→ramp handoff: over the first 0.8s of the dive, ease the camera framing (and speed/lane, below)
+  // from the surf values to the dive values instead of snapping the instant cleaning finishes.
+  const diveEase = diveSeq ? Math.min(1, state.diveT / 0.8) : 1;
+  const camYTarget = puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, diveSeq ? 9 * dt : followY ? 5 * dt : 3 * dt);   // plunge tightly with him through the surface — no lag/freeze, one continuous descent underwater
-  const camZTarget = puzzle ? (LANE_Z + 24) : diveSeq ? 23 : 17;   // pulled back so the board fits with margins
+  const camZTarget = puzzle ? (LANE_Z + 24) : diveSeq ? THREE.MathUtils.lerp(17, 23, diveEase) : 17;   // ease the pull-back in, don't jump it
   camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, 2.5 * dt);
   if (state.shake > 0.001) {                                   // impact jolt
     camera.position.x += (Math.random() - 0.5) * state.shake;
@@ -2727,8 +2745,8 @@ function gameLoop() {
     state.shake = Math.max(0, state.shake - 2.5 * dt);
   }
   const lookX = puzzle ? PZ.boardX : camera.position.x;
-  const lookY = puzzle ? PZ.midY : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12;
-  const lookZ = surf ? (pz - LANE_Z) * 0.4 : 0;
+  const lookY = puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(1.0, pyNow, diveEase) : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12;
+  const lookZ = surf ? (pz - LANE_Z) * 0.4 : diveSeq ? (pz - LANE_Z) * 0.4 * (1 - diveEase) : 0;   // ease the surf steer-look back to centre
   camera.lookAt(lookX, lookY, lookZ);
   camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
   if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
