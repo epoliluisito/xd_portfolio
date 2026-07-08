@@ -2591,25 +2591,25 @@ function scriptJumpOut(dt) {
 }
 
 // --- Level 4: "the teca" — a Puzzle-Bobble style tank of coloured drops on the counter ---
-const BUBBLE_COLORS = [0x39d24e, 0x3a86ff, 0xff4f58, 0xffcc33, 0xb266ff];   // green, blue, red, gold, violet
+const BUBBLE_COLORS = [0x2ecc4e, 0x1e6dff, 0xff3b30, 0xffc400, 0x9b30ff];   // green, blue, red, gold, violet — max separation
 let bubbleMats = null;
 function getBubbleMats() {                           // one glossy candy material per colour (cheap — no transmission)
   if (bubbleMats) return bubbleMats;
   bubbleMats = BUBBLE_COLORS.map(hex => {
-    const m = new THREE.MeshPhysicalMaterial({          // real tinted glass, like Nimble himself
-      color: 0xffffff, metalness: 0, roughness: 0.04,
-      transmission: 0.92, ior: 1.4, thickness: 0.6,
-      attenuationColor: new THREE.Color(hex), attenuationDistance: 0.8,
+    const m = new THREE.MeshPhysicalMaterial({          // tinted glass with an emissive core:
+      color: hex, metalness: 0, roughness: 0.05,        // the hue reads the SAME from any angle
+      transmission: 0.8, ior: 1.4, thickness: 0.6,
+      attenuationColor: new THREE.Color(hex), attenuationDistance: 0.45,
+      emissive: new THREE.Color(hex), emissiveIntensity: 0.22,
       clearcoat: 1.0, clearcoatRoughness: 0.05,
-      iridescence: 0.15, iridescenceIOR: 1.3,
-      envMapIntensity: 1.6, specularIntensity: 1.0, transparent: true
+      envMapIntensity: 1.4, specularIntensity: 1.0, transparent: true
     });
-    addRim(m, hex, 0.3);
+    addRim(m, hex, 0.25);
     return m;
   });
   return bubbleMats;
 }
-const PZ = { cols: 8, rows0: 4, bd: 1.3, ceilY: 8.6, shootY: 0.45, boardX: 0, midY: 4.6,
+const PZ = { cols: 7, rows0: 3, bd: 1.3, ceilY: 8.6, shootY: 0.45, boardX: 0, midY: 4.6,
              grid: new Map(), types: [], aim: 0, fly: null, nextTi: 0, curTi: 0, guide: null, holder: null,
              nextMesh: null, tank: null, falling: [], ready: false, revealT: 0 };
 function pzKey(r, c) { return r + ',' + c; }
@@ -2636,7 +2636,7 @@ function buildPuzzleTank() {
   const g = new THREE.Group();
   const steel = new THREE.MeshStandardMaterial({ map: counterTex2 || null, color: 0xb8c4ce, metalness: 0.8, roughness: 0.35 });
   const halfW = (PZ.cols / 2) * PZ.bd + 0.55;
-  const topY = PZ.ceilY + 0.75;
+  const topY = PZ.ceilY + 1.3;                       // air between the top row and the beam
   for (const sgn of [-1, 1]) {
     const wall = new THREE.Mesh(new THREE.BoxGeometry(0.5, topY, 1.4), steel);
     wall.position.set(PZ.boardX + sgn * halfW, topY / 2, LANE_Z);
@@ -2724,7 +2724,7 @@ function buildBubbleGrid() {
   PZ.types = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5).slice(0, 4);
   for (let r = 0; r < PZ.rows0; r++)
     for (let c = 0; c < PZ.cols; c++) {
-      if (Math.random() < 0.08) continue;                 // a rare gap
+      if (Math.random() < 0.12) continue;                 // an occasional gap
       const ti = Math.floor(Math.random() * PZ.types.length);
       const m = makeBubble(ti);
       const full = m.scale.x;                              // intended size before the grow-in
@@ -2751,7 +2751,7 @@ function pzNewBubble() {
 }
 function pzShoot() {
   if (PZ.fly || !PZ.holder || !PZ.ready || state.mode !== 'puzzle') return;
-  const sp = 15;
+  const sp = 17;
   PZ.fly = { mesh: PZ.holder, ti: PZ.curTi, vx: Math.sin(PZ.aim) * sp, vy: Math.cos(PZ.aim) * sp };
   PZ.holder = null;
   sfx.fire();
@@ -2841,7 +2841,10 @@ function pzUpdate(dt) {
       PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ti: f.ti, r, c, targetScale: f.mesh.scale.x });
       PZ.fly = null;
       if (pzMatch(r, c)) pzDropFloating();
-      if (PZ.grid.size === 0) { winGame(); return; }
+      if (PZ.grid.size <= 2) {                        // last stragglers pop on their own — no tedious mop-up
+        [...PZ.grid.values()].forEach(pzPop);
+        winGame(); return;
+      }
       pzNewBubble();
     }
   }
@@ -2989,7 +2992,7 @@ function gameLoop() {
     else if (state.mode === 'puzzle' || state.mode === 'await') pzUpdate(dt);   // await: the teca fills while he waits
     else if (state.mode === 'walkin') {
       playerGroup.position.x += 7.5 * dt;                                       // he steps up to the launcher
-      if (playerGroup.position.x >= PZ.boardX - 2.6) enterPuzzle();
+      if (playerGroup.position.x >= PZ.boardX - 4.3) enterPuzzle();   // stands left, clear of the arrow's full sweep
     }
     else if (state.mode === 'won') { state.excite = Math.min(1, state.excite + dt); }   // keep celebrating
   } else if (!state.isGameOver && state.started && !state.paused) {
@@ -3402,7 +3405,7 @@ function gameLoop() {
   const swim = state.mode === 'swim';
   const diveSeq = state.mode === 'dive_seq';
   const jumpout = state.mode === 'jumpout';
-  const puzzle = state.mode === 'puzzle' || state.mode === 'won';
+  const puzzle = state.mode === 'puzzle' || state.mode === 'won' || state.mode === 'await' || state.mode === 'walkin';   // teca framing from the moment he stops in front of it
   const followY = swim || diveSeq || jumpout;                  // track his vertical
   const pz = playerGroup.position.z, pyNow = playerGroup.position.y;
   playerBlob.position.set(playerGroup.position.x, 0.02, surf ? pz : LANE_Z);
