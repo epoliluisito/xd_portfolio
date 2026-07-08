@@ -2596,17 +2596,20 @@ let bubbleMats = null;
 function getBubbleMats() {                           // one glossy candy material per colour (cheap — no transmission)
   if (bubbleMats) return bubbleMats;
   bubbleMats = BUBBLE_COLORS.map(hex => {
-    const m = new THREE.MeshPhysicalMaterial({
-      color: hex, metalness: 0, roughness: 0.12,
-      clearcoat: 1.0, clearcoatRoughness: 0.08,
-      envMapIntensity: 1.6, transparent: true, opacity: 0.96
+    const m = new THREE.MeshPhysicalMaterial({          // real tinted glass, like Nimble himself
+      color: 0xffffff, metalness: 0, roughness: 0.04,
+      transmission: 0.92, ior: 1.4, thickness: 0.6,
+      attenuationColor: new THREE.Color(hex), attenuationDistance: 0.8,
+      clearcoat: 1.0, clearcoatRoughness: 0.05,
+      iridescence: 0.15, iridescenceIOR: 1.3,
+      envMapIntensity: 1.6, specularIntensity: 1.0, transparent: true
     });
-    addRim(m, hex, 0.4);
+    addRim(m, hex, 0.3);
     return m;
   });
   return bubbleMats;
 }
-const PZ = { cols: 8, rows0: 5, bd: 1.3, ceilY: 7.3, shootY: 0.45, boardX: 0, midY: 3.9,
+const PZ = { cols: 8, rows0: 4, bd: 1.3, ceilY: 8.6, shootY: 0.45, boardX: 0, midY: 4.6,
              grid: new Map(), types: [], aim: 0, fly: null, nextTi: 0, curTi: 0, guide: null, holder: null,
              nextMesh: null, tank: null, falling: [], ready: false, revealT: 0 };
 function pzKey(r, c) { return r + ',' + c; }
@@ -2671,14 +2674,11 @@ function buildAimArrow() {
   scene.add(g);
   PZ.guide = g;
 }
-function enterPuzzle() {
-  state.mode = 'puzzle';
-  state.level = 4;
-  state.shake = 0;                                 // no hard flash — he ran here on his own two feet
-  PZ.boardX = playerGroup.position.x;
-  PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0; PZ.nextTi = null;
+function startAwait() {                            // the run-out ends HERE: he stops in front of the teca
+  state.mode = 'await';
+  state.shake = 0;
   scene.fog = null; fogEase = null; finishBgFade(); state.camBehind = 0; swimBank = 0;
-  if (floor) floor.visible = true;                 // the puzzle plays ON the counter now
+  if (floor) floor.visible = true;
   const tint = document.getElementById('water-tint'); if (tint) tint.style.display = 'none';
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
   bubbles.forEach(s => s.visible = false);
@@ -2686,18 +2686,35 @@ function enterPuzzle() {
   if (sinkEnv) sinkEnv.visible = false;
   showUnderwaterFX(false);
   if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
-  playerGroup.position.set(PZ.boardX, 0, LANE_Z);   // standing on the counter
   playerGroup.scale.set(1, 1, 1); squash = squashTarget = 1;
   state.divePitch = 0; setPlayerPitch(0);
   playAnim('idle');
-  document.body.classList.remove('surf'); document.body.classList.add('puzzle');
-  buildBubbleGrid();
+  document.body.classList.remove('surf');
+  PZ.boardX = playerGroup.position.x + 7.6;        // the teca stands just ahead of him
+  PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0; PZ.nextTi = null;
   buildPuzzleTank();
+  buildBubbleGrid();                               // the drops grow in while he waits — the teca fills up
+  const help = document.getElementById('controls-help');
+  if (help) help.innerHTML = '<span class="key kbd">Space</span><span class="key touchkey">TAP</span> step up to the teca and start the match!';
+  showBanner('THE TECA! &middot; <span class="kbd">PRESS SPACE</span><span class="touchkey">TAP</span> TO PLAY');
+  updateHUD();
+}
+function startWalkIn() {                           // player said go — he walks in to the launcher
+  if (state.mode !== 'await') return;
+  state.mode = 'walkin';
+  playAnim('running', 0.2);
+  sfx.go();
+}
+function enterPuzzle() {                           // he's at the launcher — the match begins
+  state.mode = 'puzzle';
+  state.level = 4;
+  playAnim('idle');
+  document.body.classList.add('puzzle');
   buildAimArrow();
-  PZ.guide.visible = false;
+  PZ.guide.visible = false;                        // shown once the board is ready
   const help = document.getElementById('controls-help');
   if (help) help.innerHTML = '<span class="key">&larr; &rarr;</span> Aim &nbsp;|&nbsp; <span class="key">Space</span> Shoot &nbsp;|&nbsp; match 3 of the same to clear them all!';
-  showBanner('LEVEL 4 &middot; MATCH POP!');
+  showBanner('MATCH 3 TO POP!');
   updateHUD();
 }
 function buildBubbleGrid() {
@@ -2794,7 +2811,7 @@ function pzUpdate(dt) {
       if (b.mesh.userData.revealDelay <= 0) b.mesh.scale.setScalar(THREE.MathUtils.lerp(s, tgt, Math.min(1, 12 * dt)));
       if (b.mesh.scale.x < tgt * 0.95) allIn = false;
     }
-    if (allIn && PZ.revealT > 0.8) { PZ.ready = true; PZ.guide.visible = true; pzNewBubble(); }
+    if (allIn && PZ.revealT > 0.8 && state.mode === 'puzzle' && PZ.guide) { PZ.ready = true; PZ.guide.visible = true; pzNewBubble(); }
   }
   // falling (dropped) pieces
   for (let i = PZ.falling.length - 1; i >= 0; i--) {
@@ -2967,9 +2984,13 @@ function gameLoop() {
   hudT += dt;
   if (hudT > 0.2) { hudT = 0; document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m'; }
 
-  if (!state.isGameOver && state.started && !state.paused && (state.mode === 'puzzle' || state.mode === 'jumpout' || state.mode === 'won')) {
+  if (!state.isGameOver && state.started && !state.paused && (state.mode === 'puzzle' || state.mode === 'jumpout' || state.mode === 'won' || state.mode === 'await' || state.mode === 'walkin')) {
     if (state.mode === 'jumpout') scriptJumpOut(dt);
-    else if (state.mode === 'puzzle') pzUpdate(dt);
+    else if (state.mode === 'puzzle' || state.mode === 'await') pzUpdate(dt);   // await: the teca fills while he waits
+    else if (state.mode === 'walkin') {
+      playerGroup.position.x += 7.5 * dt;                                       // he steps up to the launcher
+      if (playerGroup.position.x >= PZ.boardX - 2.6) enterPuzzle();
+    }
     else if (state.mode === 'won') { state.excite = Math.min(1, state.excite + dt); }   // keep celebrating
   } else if (!state.isGameOver && state.started && !state.paused) {
     const px0 = playerGroup.position.x;
@@ -3072,7 +3093,7 @@ function gameLoop() {
     if (mountSeq.active) updateMountSeq(dt);
     if (state.mode === 'surf' && !state.crossedGate && playerGroup.position.x >= LEVEL_LEN) crossGate();
     if (state.mode === 'swim' && (playerGroup.position.x - state.swimStartX) >= SWIM_LEN) startJumpOut();
-    if (state.mode === 'runout' && playerGroup.position.x >= state.runOutX) enterPuzzle();
+    if (state.mode === 'runout' && playerGroup.position.x >= state.runOutX) startAwait();
 
     const px = playerGroup.position.x, py = playerGroup.position.y;
     const playerR = state.isSliding ? 0.5 : 0.6;
@@ -3462,7 +3483,7 @@ function gameLoop() {
       }
     }
   }
-  if (swim || diveSeq) updateUnderwaterFX(dt);          // water surface, god rays, caustics, motes, splash crown
+  if (swim || diveSeq || jumpout || state.mode === 'runout') updateUnderwaterFX(dt);   // also fades the leftover surface during jump-out/run-out
   if (swim) updateWallDyns(dt);                         // sliding walls drift and bounce
   if ((swim || diveSeq) && bubblesBuilt) {              // rising bubbles that recycle (deep → surface)
     for (const s of bubbles) {
@@ -3511,7 +3532,8 @@ function gameLoop() {
 window.addEventListener('keydown', e => {
   initAudio();
   if (e.code === 'KeyR' && (state.isGameOver || state.mode === 'won')) { location.reload(); return; }
-  if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'won') return;
+  if (state.mode === 'await' && !e.repeat) { startWalkIn(); return; }           // any key: step up to the teca
+  if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'walkin' || state.mode === 'won') return;
   if (state.mode === 'puzzle') {                   // L4: aim + shoot
     if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.aimL = true;
     if (e.code === 'ArrowRight' || e.code === 'KeyD') state.aimR = true;
@@ -3576,7 +3598,7 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
     e.preventDefault();
     initAudio();
     btn.classList.add('active');
-    if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'won') return;
+    if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'await' || state.mode === 'walkin' || state.mode === 'won') return;
     if (state.mode === 'puzzle') {                 // L4: up/down aim, soap = shoot
       if (act === 'up')   state.aimL = true;
       else if (act === 'down') state.aimR = true;
@@ -3625,6 +3647,9 @@ checkOrientation();
 document.getElementById('gameover').addEventListener('pointerdown', () => {
   if (state.isGameOver || state.mode === 'won') location.reload();
 });
+
+// tap anywhere to step up to the teca (mobile has no Space key)
+window.addEventListener('pointerdown', () => { if (state.mode === 'await') startWalkIn(); });
 
 initGame();
 </script>
