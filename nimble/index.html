@@ -800,9 +800,15 @@ function buildWaterSurface() {
         gl_FragColor = vec4(col, clamp(alpha,0.0,1.0) * uFade);
       }`
   });
-  waterSurface = new THREE.Mesh(new THREE.PlaneGeometry(400, 120, 260, 70), waterMat);
+  // The water is sized and pinned to fit EXACTLY inside the sink basin, rim to rim —
+  // world-anchored, never following the camera. It's the sink's water, not an ocean sheet.
+  const x0 = state.rampLipX - 2, x1 = state.sinkEndX || (state.rampLipX + 340);
+  const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
+  const LEN = Math.max(40, x1 - x0);
+  waterSurface = new THREE.Mesh(
+    new THREE.PlaneGeometry(LEN, zR - zL + 0.4, Math.min(320, Math.round(LEN / 1.4)), 8), waterMat);
   waterSurface.rotation.x = -Math.PI / 2;
-  waterSurface.position.set(0, 0, LANE_Z);
+  waterSurface.position.set((x0 + x1) / 2, 0, (zL + zR) / 2);
   waterSurface.renderOrder = -6;
   waterSurface.frustumCulled = false;
   waterFadeT = 0;                                    // fresh surface: fully visible
@@ -2372,7 +2378,7 @@ function makeSinkTexture() {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
-function buildSinkEnv(x0) {
+function buildSinkEnv(x0, x1) {
   if (sinkEnv) return;
   sinkEnv = new THREE.Group();
   // the real steel counter texture (couter_top_texture_02), cloned so the L2 floor's repeat isn't disturbed
@@ -2380,25 +2386,54 @@ function buildSinkEnv(x0) {
   if (counterTex2) {
     tex = counterTex2.clone();
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(46, 2);
     tex.needsUpdate = true;
   } else tex = makeSinkTexture();                    // fallback if the texture never loaded
+  const LEN = x1 - x0, cx = (x0 + x1) / 2;
+  tex.repeat.set(Math.max(8, Math.round(LEN / 13.5)), 2);
   const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x86b4cc, metalness: 0.55, roughness: 0.5 });
-  const LEN = 620, cx = x0 + 260;
   const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
-  // side view: only the BACK wall (behind the action) — a near wall would block the camera
+  // BACK wall — tall, rising ABOVE the waterline (top at +1.1), so the basin reads as a
+  // real steel container from the counter view too, not just from underwater
   const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 11, 0.6), wallMat);
   w.position.set(cx, -4.4, zL);
   sinkEnv.add(w);
+  // NEAR rim — a shallow steel band along the camera side, floating just above the water.
+  // It closes the composition ("water held inside steel") without ever blocking the swim:
+  // the underwater camera stays below y=-0.55, safely under the band's bottom edge (-0.37).
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.9, 0.6), wallMat);
+  rim.position.set(cx, 0.08, zR);
+  sinkEnv.add(rim);
   const floorMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x5f889f, metalness: 0.5, roughness: 0.6 });
   const f = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.5, zR - zL + 0.6), floorMat);
   f.position.set(cx, -9.0, (zL + zR) / 2);
   sinkEnv.add(f);
   // the basin's END wall — you SEE the sink finishing ahead; he must leap out over this rim
   const end = new THREE.Mesh(new THREE.BoxGeometry(0.8, 11.2, zR - zL + 0.6), wallMat);
-  end.position.set(cx + LEN / 2, -4.35, (zL + zR) / 2);
+  end.position.set(x1, -4.35, (zL + zR) / 2);
   sinkEnv.add(end);
-  sinkEnv.userData = { side: w, base: f, end };
+  // FAUCET planted on the back wall near the exit end — the one prop that says "sink" at a
+  // glance, from the ramp approach AND framing the jump-out. Simple chrome primitives.
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xe9eff5, metalness: 0.95, roughness: 0.18 });
+  const fc = new THREE.Group();
+  const fBase = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.66, 0.5, 16), chrome);
+  fBase.position.y = 1.3;                            // seated on the back wall's top edge (+1.1)
+  const fCol = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 3.4, 14), chrome);
+  fCol.position.y = 3.0;
+  const fNeck = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.26, 12, 28, Math.PI), chrome);
+  fNeck.position.set(-1.35, 4.7, 0);                 // gooseneck: half-torus capping the column
+  const fSpout = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.9, 12), chrome);
+  fSpout.position.set(-2.7, 4.35, 0);
+  fc.add(fBase); fc.add(fCol); fc.add(fNeck); fc.add(fSpout);
+  fc.position.set(x1 - 24, 0, -2.35);
+  fc.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  sinkEnv.add(fc);
+  // a soft running stream from the spout down into the water — the sink is ALIVE, and the
+  // water visibly belongs to it (this is what justifies the surface being there at all)
+  const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 3.9, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xcdeeff, transparent: true, opacity: 0.4, depthWrite: false }));
+  stream.position.set(x1 - 24 - 2.7, 1.95, -2.35);
+  sinkEnv.add(stream);
+  sinkEnv.userData = { side: w, base: f, end, rim, faucet: fc };
   sinkEnv.visible = false;
   scene.add(sinkEnv);
 }
@@ -2432,11 +2467,15 @@ function startDiveTransition() {
     if (floor.material.map) floor.material.map.offset.x = floor.position.x * 0.1;
   }
   state.launched = false; state.launchT = 0;
-  // Pre-build the whole underwater scene NOW, hidden, so piercing the surface doesn't hitch/freeze
-  // (the water's custom shader + FX + seabed are the costly bits — build AND pre-compile them off the climax).
-  buildWaterSurface(); if (waterSurface) waterSurface.visible = true;   // the sink water lies ahead, past the counter edge
+  // THE SINK IS A PLACE, fixed in the world from this moment on. Its end rim is where the
+  // jump-out to Level 4 happens — decided NOW, so basin, water and swim length always agree.
+  state.sinkEndX = state.rampLipX + SWIM_LEN + 56;   // + margin for the dive arc before the swim proper
+  // Build the basin AND its water VISIBLE right away: from the ramp you dive toward water
+  // held inside a steel sink — walls above the surface, rim, faucet — never a bare sheet.
+  buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
-  buildSinkEnv(playerGroup.position.x);           // the steel basin, pre-built hidden (no shader hitch at the splash)
+  buildSinkEnv(state.rampLipX - 2, state.sinkEndX);
+  if (sinkEnv) sinkEnv.visible = true;
   buildUnderwaterFX(); showUnderwaterFX(false);
   // Pre-warm the FOG shader path now: assigning scene.fog for the first time forces EVERY material to
   // recompile — that's the stutter at the surface. Enable it here pushed far away (invisible: 900u off),
@@ -2532,13 +2571,9 @@ function finishDiveIntoSwim() {
   state.targetY = SWIM_MID;
   state.targetZ = LANE_Z; swimBank = 0;          // chase-view strafe starts on the centre lane
   wallDyns.length = 0; swimBeat = 0;             // fresh formation rhythm
-  state.swimStartX = playerGroup.position.x;     // MUST be set before sinkEndX — reading the stale value placed the whole basin hundreds of units behind him (L3 swam in a void, no end rim to jump)
-  state.sinkEndX = state.swimStartX + SWIM_LEN + 16;   // the basin ENDS here — you'll see it coming
-  if (sinkEnv && sinkEnv.userData && sinkEnv.userData.end) {
-    sinkEnv.userData.side.position.x = state.sinkEndX - 310;   // side wall & floor terminate AT the end rim
-    sinkEnv.userData.base.position.x = state.sinkEndX - 310;
-    sinkEnv.userData.end.position.x  = state.sinkEndX;
-  }
+  state.swimStartX = playerGroup.position.x;     // paces the spawn rhythm & speed ramp
+  // basin + water + end rim were fixed in the world at dive start (state.sinkEndX) —
+  // nothing to reposition here: he simply swims through the place he dove into
   // no y-snap — he keeps his current plunge depth and the swim glide (below) eases him into the lane, so there's no second "dive" beat
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
   // the surface STAYS alive overhead for the whole swim — he's inside a real sink, and the
@@ -3151,7 +3186,7 @@ function gameLoop() {
     checkLevel();
     if (mountSeq.active) updateMountSeq(dt);
     if (state.mode === 'surf' && !state.crossedGate && playerGroup.position.x >= LEVEL_LEN) crossGate();
-    if (state.mode === 'swim' && (playerGroup.position.x - state.swimStartX) >= SWIM_LEN) startJumpOut();
+    if (state.mode === 'swim' && state.sinkEndX && playerGroup.position.x >= state.sinkEndX - 16) startJumpOut();   // the leap keys off the REAL end rim — arc, rim and landing always agree
     if (state.mode === 'runout' && playerGroup.position.x >= state.runOutX) startAwait();
 
     const px = playerGroup.position.x, py = playerGroup.position.y;
@@ -3529,16 +3564,7 @@ function gameLoop() {
       if (ftex) ftex.offset.x = playerGroup.position.x * (150 / 1500);
     }
   }
-  if (waterSurface) {
-    if (state.mode === 'dive_seq' && !state.diveSplashed) {
-      waterSurface.position.x = state.rampLipX + 200.5;            // pre-splash: water only BEYOND the counter edge
-    } else {
-      let wx = camera.position.x;                                  // after: the rippling surface follows overhead…
-      if (state.rampLipX) wx = Math.max(wx, state.rampLipX + 199.5);   // …never reaching back over the L2 counter (no snap at the splash, no z-fight)
-      if (state.sinkEndX) wx = Math.min(wx, state.sinkEndX - 199.5);   // …and never past the end rim onto the L4 counter — the water stays IN the sink
-      waterSurface.position.x = wx;
-    }
-  }
+  // (the water surface is world-anchored inside the sink basin — it never follows the camera)
   if (splashRing && splashRingLife > 0) {                          // expanding foam ring
     splashRingLife -= dt;
     const f = 1 - splashRingLife / 0.7;
