@@ -1630,6 +1630,21 @@ function spawnSurfSlime(x, z) {
     radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
     baseY: mesh.position.y, phase: Math.random() * 6.28, active: true, jumped: false, crossed: false });
 }
+// a star floating over the counter: ride (or hop) through it — restores a life
+function spawnSurfStar(x, z) {
+  if (!models.star) return;
+  const cfg = typeCfg.star;
+  const mesh = models.star.clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  const y = Math.random() < 0.3 ? 2.7 + Math.random() * 0.5 : 1.1 + Math.random() * 0.7;   // a few demand a hop
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  const shadow = makeBlob(cfg.size * 0.5, 0xffd24e);
+  shadow.position.set(x, 0.02, z);
+  scene.add(shadow);
+  entities.push({ mesh, shadow, key: 'star', type: 'score', cfg, radius: cfg.size * 0.5,
+    height: cfg.heightScaled || cfg.size, baseY: y, phase: Math.random() * 6.28, active: true });
+}
 function spawnDirtChunk() {
   const p2 = state.surfPhase === 2;                       // phase 2 = denser, tougher grime
   const rows = (p2 ? 3 : 2) + (Math.random() * 2 | 0);
@@ -1647,6 +1662,9 @@ function spawnDirtChunk() {
   }
   if (run > 64 && Math.random() < (p2 ? 0.34 : 0.26)) {
     spawnSurfSlime(spawnX + 4.0, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+  }
+  if (run > 24 && Math.random() < 0.12) {                          // a life-back star now and then
+    spawnSurfStar(spawnX + 2.2, SURF_Z_MIN + 0.4 + Math.random() * (SURF_Z_MAX - SURF_Z_MIN - 0.8));
   }
   spawnX += (p2 ? 2.7 : 3.4) + Math.random() * 3.0 + state.speed * 0.14;
 }
@@ -1771,6 +1789,7 @@ function buildSpongeSkid() {                         // stand-in slab: yellow bo
   const scrub = new THREE.Mesh(new THREE.BoxGeometry(1.47, 0.10, 0.87), new THREE.MeshStandardMaterial({ color: 0x1e5a33, roughness: 0.95 }));
   scrub.position.y = 0.31;
   g.add(body); g.add(scrub);
+  g.rotation.y = -angleCheat;                        // same yaw as the real sponge under his feet — no twist at the swap
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
@@ -1851,9 +1870,13 @@ function updateMountSeq(dt) {
     }
   }
   if (mountSeq.jumped && mountSeq.sponge && velocity.y < 0) {
-    // coming down: the sponge scoots to catch him (also absorbs boost/brake timing wobble)
-    mountSeq.sponge.position.x += (px - mountSeq.sponge.position.x) * Math.min(1, 6 * dt);
-    if (py <= SURF_LIFT + 0.05) mountSponge();       // touchdown → he's riding
+    // coming down: aim the sponge at his PREDICTED touchdown point, not his current x —
+    // it sits exactly under him when he lands (and absorbs boost/brake timing wobble)
+    const dy = Math.max(0, py - SURF_LIFT);
+    const tLand = (velocity.y + Math.sqrt(velocity.y * velocity.y + 2 * state.gravity * dy)) / state.gravity;
+    const targetX = px + state.speed * Math.max(0, tLand);
+    mountSeq.sponge.position.x += (targetX - mountSeq.sponge.position.x) * Math.min(1, 10 * dt);
+    if (py + velocity.y * dt <= SURF_LIFT + 0.01) mountSponge();   // touchdown this frame → sub-frame snap only
   }
 }
 function mountSponge() {                             // land ON the sponge → surf mode (also the failsafe path)
@@ -2692,7 +2715,7 @@ function gameLoop() {
       const dir = (state.steerUp ? 1 : 0) - (state.steerDown ? 1 : 0);
       state.targetY = THREE.MathUtils.clamp(state.targetY + dir * SWIM_STEER * dt, SWIM_Y_MIN, SWIM_Y_MAX);
       playerGroup.position.y += (state.targetY - playerGroup.position.y) * Math.min(1, 8 * dt);
-      const zdir = (state.steerLeft ? 1 : 0) - (state.steerRight ? 1 : 0);   // screen-left = +z in the chase view
+      const zdir = (state.steerRight ? 1 : 0) - (state.steerLeft ? 1 : 0);   // chase view: screen-right = world +z
       state.targetZ = THREE.MathUtils.clamp(state.targetZ + zdir * SWIM_STEER * dt, SURF_Z_MIN, SURF_Z_MAX);
       playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 8 * dt);
       swimBank += (zdir * 0.38 - swimBank) * Math.min(1, 6 * dt);            // lean into the strafe
@@ -2848,6 +2871,26 @@ function gameLoop() {
         continue;
       }
 
+      // --- Level 2 star / drop: ride or hop through it (x AND z proximity) ---
+      if (state.mode === 'surf' && (ent.type === 'score' || ent.type === 'ammo')) {
+        m.rotation.y += dt * 2.5;
+        if (!ent.magnet) m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.1;
+        const gdx = px - m.position.x, gdz = playerGroup.position.z - m.position.z;
+        if (ent.magnet || (Math.abs(gdx) < 1.5 && Math.abs(gdz) < 1.3 && m.position.y <= playerReachTop + 0.4)) {
+          ent.magnet = true;                                       // latched → it always closes the gap
+          const k = Math.min(1, Math.max(10, state.speed * 2.2) * dt);
+          m.position.x += gdx * k;
+          m.position.z += gdz * k;
+          m.position.y += ((py + 1.1) - m.position.y) * k;
+        }
+        if (ent.shadow) { ent.shadow.position.x = m.position.x; ent.shadow.position.z = m.position.z; }
+        if (Math.abs(gdx) < playerR + ent.radius && Math.abs(gdz) < 0.8 + ent.radius) {
+          const ey = m.position.y;
+          if (ey >= py - 0.2 && ey <= playerReachTop + 0.3) collect(ent);
+        }
+        continue;
+      }
+
       // --- give the props life ---
       if (ent.type === 'enemy') {
         m.position.x -= (2.0 + state.level * 0.4) * dt;                      // slimes charge at him
@@ -2966,7 +3009,7 @@ function gameLoop() {
     // soap projectiles
     for (let i = soaps.length - 1; i >= 0; i--) {
       const s = soaps[i];
-      s.mesh.position.x += 13 * dt; s.life -= dt;
+      s.mesh.position.x += (state.speed + 9) * dt; s.life -= dt;   // relative speed — never hangs beside him at L2 pace
       s.mesh.position.y += Math.sin(t * 20) * 0.004;
       let hit = false;
       for (const ent of entities) {
