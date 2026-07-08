@@ -393,7 +393,7 @@ const state = {
   steerUp: false, steerDown: false, targetZ: LANE_Z, targetY: 0,
   surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0, surfStartX: 0, warnedL2: false, crossedGate: false,
   surfPhase: 1, flipping: false, flipT: 0,   // L2 two-phase: 1 = yellow foam scrub, flip, 2 = green scrub
-  swimStartX: 0, paused: false, camBehind: 0, steerLeft: false, steerRight: false, chainHits: 0,
+  swimStartX: 0, paused: false, camBehind: 0, steerLeft: false, steerRight: false, chainHits: 0, uwApplied: false,
   diveT: 0, diveGearLost: false, diveSplashed: false, divePitch: 0, shake: 0,   // 2→3 ramp/dive cinematic
   launched: false, launchT: 0, rampBaseX: 0, rampLipX: 0,   // ramp climb is driven by his real x, not a timer
   jumpT: 0, jumpSplashed: false, aimL: false, aimR: false                        // L3→L4 jump-out + puzzle aim
@@ -957,8 +957,9 @@ function spawnSplashCrown(pos) {
 // the surface-break moment: a soft cyan splash, foam crown, rings, and flip underwater
 function splashThroughSurface() {
   state.diveSplashed = true;
-  applyUnderwater();
-  flash(0.32, '#e6feff');                         // gentle cyan wash — continuity over spectacle
+  // NOTE: no applyUnderwater() here — the fog/backdrop change waits until the CAMERA itself
+  // passes below the waterline (see the submerge trigger in the loop). The lens follows him
+  // under in clear continuity; only then does the world dress underwater.
   splashVeil();
   state.shake = 0.45;                             // softer jolt
   const at = playerGroup.position.clone(); at.y = 0;
@@ -1811,19 +1812,19 @@ let swimBeat = 0;
 function spawnSwimChunk() {
   if ((spawnX - state.swimStartX) > 8) {
     const beat = swimBeat++ % 8;
-    if (beat === 1) { spawnSlidingWall(spawnX + 8); spawnX += 21; }
+    if (beat === 1) { spawnSlidingWall(spawnX + 8); spawnX += 18; }
     else if (beat === 2 || beat === 6) {             // slime ambushes TWICE a cycle, 3-4 hunters each
-      spawnSwimSlime(spawnX + 9, swimRandY());
-      spawnSwimSlime(spawnX + 14, swimRandY());
-      spawnSwimSlime(spawnX + 19, swimRandY());
-      if (Math.random() < 0.5) spawnSwimSlime(spawnX + 24, swimRandY());
-      spawnSwimCollectible(spawnX + 14, swimRandY(), 'emerald');
-      spawnX += 24;
+      spawnSwimSlime(spawnX + 8, swimRandY());
+      spawnSwimSlime(spawnX + 13, swimRandY());
+      spawnSwimSlime(spawnX + 18, swimRandY());
+      if (Math.random() < 0.5) spawnSwimSlime(spawnX + 22, swimRandY());
+      spawnSwimCollectible(spawnX + 13, swimRandY(), 'emerald');
+      spawnX += 21;
     }
-    else if (beat === 4) { spawnSplitWall(spawnX + 8); spawnX += 26; }
-    else if (beat === 5) { spawnBlockedWall(spawnX + 8); spawnX += 22; }
-    else if (beat === 7) { spawnDropLine(spawnX + 4); spawnX += 14; }
-    else { spawnDebrisWall(spawnX + 8); spawnX += 18 + Math.random() * 4; }
+    else if (beat === 4) { spawnSplitWall(spawnX + 8); spawnX += 23; }
+    else if (beat === 5) { spawnBlockedWall(spawnX + 8); spawnX += 19; }
+    else if (beat === 7) { spawnDropLine(spawnX + 4); spawnX += 12; }
+    else { spawnDebrisWall(spawnX + 8); spawnX += 15 + Math.random() * 4; }
     if (beat !== 2 && beat !== 6 && beat !== 7) {    // loose debris in the space between formations
       spawnLooseDebris(spawnX - 9 + Math.random() * 4);
       if (Math.random() < 0.6) spawnLooseDebris(spawnX - 4 + Math.random() * 3);
@@ -1843,7 +1844,7 @@ const patQuota = [
   { fn: patEmeraldArc, last: 0, gap: 60 }    // the soap-ammo supply line
 ];
 function spawnChunk() {
-  if (state.mode === 'dive_seq') { spawnX = playerGroup.position.x + 200; return; }   // no spawns mid-cinematic
+  if (state.mode === 'dive_seq' || state.mode === 'runout') { spawnX = playerGroup.position.x + 200; return; }   // no spawns mid-cinematic
   if (state.mode === 'swim') { spawnSwimChunk(); return; }
   if (state.mode === 'surf') { spawnDirtChunk(); return; }
   // calm stretch approaching the Level 2 hand-off so the skate mount reads clearly
@@ -2545,27 +2546,46 @@ function startJumpOut() {
 function scriptJumpOut(dt) {
   playerGroup.position.z += (LANE_Z - playerGroup.position.z) * Math.min(1, 5 * dt);
   state.jumpT += dt;
-  const jt = state.jumpT, V0 = 16, G = 6.2, vy = V0 - G * jt;
+  const jt = state.jumpT, V0 = 11.0, G = 9.0, vy = V0 - G * jt;
   playerGroup.position.y = SWIM_MID + V0 * jt - 0.5 * G * jt * jt;
   if (!state.jumpSplashed && playerGroup.position.y >= 0 && vy > 0) {   // burst up through the surface
     state.jumpSplashed = true;
-    buildWaterSurface(); flash(0.4); state.shake = 0.45;
+    buildWaterSurface(); flash(0.3); state.shake = 0.4;
     const at = playerGroup.position.clone(); at.y = 0;
-    burst(at, 0xffffff, 46, 10, 14, 0.32, 8.5);
+    burst(at, 0xffffff, 40, 9, 12, 0.3, 8.0);
     spawnSplashRing(at);
     sfx.hit();
+    // back to the kitchen while he's airborne: fog lifts, the counter fades back in
+    waterFadeT = 1.0;                                // the surface dissolves under him
+    scene.fog = null; fogEase = null;
+    startBgFade(bgTexL1, new THREE.Color(0.82, 0.86, 0.9), 1.0);
+    showUnderwaterFX(false);
+    if (sinkEnv) sinkEnv.visible = false;
+    bubbles.forEach(s => s.visible = false);
+    if (floor) floor.visible = true;                 // the steel counter he's about to land on
   }
   const targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, 6), -1.05, 1.2);
   state.divePitch += (targetPitch - state.divePitch) * Math.min(1, 8 * dt);
   setPlayerPitch(state.divePitch);
-  if (state.jumpT > 2.3) enterPuzzle();
+  // touchdown ON the counter → run to the puzzle
+  if (state.jumpSplashed && vy < 0 && playerGroup.position.y <= 0) {
+    playerGroup.position.y = 0;
+    state.mode = 'runout';
+    state.runOutX = playerGroup.position.x + 13;     // a short dash before the puzzle materialises
+    state.onGround = true; velocity.y = 0;
+    state.divePitch = 0; setPlayerPitch(0);
+    squash = 0.82; sfx.land();
+    burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.15, 0)), 0xffffff, 12, 2.5, 2.0, 0.2, 3.0);
+    playAnim('running', 0.15);
+    showBanner('BACK ON THE COUNTER!');
+  }
 }
 
 // --- Level 4 board: a spacious match-3 bubble shooter using the 3D elements ---
 const ALL_TYPES = ['emerald', 'star', 'slime', 'oil', 'plant', 'salt', 'fork', 'plates'];
 const TYPE_COLOR = { emerald: 0x39d24e, star: 0xffcc33, slime: 0x7fdd5a, oil: 0x556070,
                      plant: 0x4f9e3a, salt: 0xeaf2ff, fork: 0xcfd6de, plates: 0xf0e6d0 };
-const PZ = { cols: 6, rows0: 4, bd: 1.55, ceilY: 6.2, shootY: -1.0, boardX: 0, midY: 2.4,
+const PZ = { cols: 6, rows0: 4, bd: 1.55, ceilY: 6.2, shootY: 0.45, boardX: 0, midY: 3.4,
              grid: new Map(), types: [], aim: 0, fly: null, nextTi: 0, guide: null, holder: null,
              falling: [], ready: false, revealT: 0 };
 function pzKey(r, c) { return r + ',' + c; }
@@ -2587,11 +2607,11 @@ function makeBubble(ti) {
 function enterPuzzle() {
   state.mode = 'puzzle';
   state.level = 4;
-  flash(0.75); state.shake = 0;
+  state.shake = 0;                                 // no hard flash — he ran here on his own two feet
   PZ.boardX = playerGroup.position.x;
   PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0;
   scene.fog = null; fogEase = null; finishBgFade(); state.camBehind = 0; swimBank = 0;
-  if (floor) floor.visible = false;
+  if (floor) floor.visible = true;                 // the puzzle plays ON the counter now
   const tint = document.getElementById('water-tint'); if (tint) tint.style.display = 'none';
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
   bubbles.forEach(s => s.visible = false);
@@ -2599,7 +2619,7 @@ function enterPuzzle() {
   if (sinkEnv) sinkEnv.visible = false;
   showUnderwaterFX(false);
   if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
-  playerGroup.position.set(PZ.boardX, PZ.shootY - 0.5, LANE_Z);
+  playerGroup.position.set(PZ.boardX, 0, LANE_Z);   // standing on the counter
   playerGroup.scale.set(1, 1, 1); squash = squashTarget = 1;
   state.divePitch = 0; setPlayerPitch(0);
   playAnim('idle');
@@ -2709,7 +2729,7 @@ function pzUpdate(dt) {
   // falling (dropped) pieces
   for (let i = PZ.falling.length - 1; i >= 0; i--) {
     const f = PZ.falling[i]; f.vy -= 14 * dt; f.mesh.position.y += f.vy * dt; f.mesh.rotation.z += dt * 4;
-    if (f.mesh.position.y < PZ.shootY - 6) { scene.remove(f.mesh); PZ.falling.splice(i, 1); }
+    if (f.mesh.position.y < -0.6) { scene.remove(f.mesh); PZ.falling.splice(i, 1); }   // cleared pieces vanish at the counter edge
   }
   if (PZ.guide) { PZ.guide.position.set(PZ.boardX + Math.sin(PZ.aim) * 3.4, PZ.shootY + Math.cos(PZ.aim) * 3.4, LANE_Z); PZ.guide.rotation.z = -PZ.aim; }
   PZ.aim = THREE.MathUtils.clamp(PZ.aim + ((state.aimR ? 1 : 0) - (state.aimL ? 1 : 0)) * 1.5 * dt, -1.15, 1.15);
@@ -2977,6 +2997,7 @@ function gameLoop() {
     if (mountSeq.active) updateMountSeq(dt);
     if (state.mode === 'surf' && !state.crossedGate && playerGroup.position.x >= LEVEL_LEN) crossGate();
     if (state.mode === 'swim' && (playerGroup.position.x - state.swimStartX) >= SWIM_LEN) startJumpOut();
+    if (state.mode === 'runout' && playerGroup.position.x >= state.runOutX) enterPuzzle();
 
     const px = playerGroup.position.x, py = playerGroup.position.y;
     const playerR = state.isSliding ? 0.5 : 0.6;
@@ -3322,6 +3343,11 @@ function gameLoop() {
   const lookZ = THREE.MathUtils.lerp(surf ? (pz - LANE_Z) * 0.4 : diveSeq ? (pz - LANE_Z) * 0.4 * (1 - diveEase) : 0, LANE_Z + (pz - LANE_Z) * 0.75, cb);   // looks down the lane, leading his strafe a touch
   camera.lookAt(lookX, lookY, lookZ);
   camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
+  if (state.diveSplashed && !state.uwApplied && camera.position.y < 0.05) {
+    state.uwApplied = true;                            // the lens just went under — NOW the world dresses underwater
+    applyUnderwater();
+    flash(0.3, '#dffdff');
+  }
   if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
   dirLight.position.x = playerGroup.position.x + 7;
   dirLight.target.position.set(playerGroup.position.x, 0, 0);
