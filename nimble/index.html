@@ -186,7 +186,6 @@
   body.surf #touch-controls .l2only,  body.swim #touch-controls .l2only,  body.puzzle #touch-controls .l2only { display: flex; }
   body.surf #touch-controls .l2jump { display: flex; }
   body.surf #touch-controls .l34soap, body.swim #touch-controls .l34soap, body.puzzle #touch-controls .l34soap { display: flex; }
-  body.swim #touch-controls .l3only { display: flex; }
 
   .touchkey { display: none; }
   body.touch .kbd { display: none; }
@@ -861,8 +860,7 @@ function buildGodRays() {
       }`
   });
   godRays = new THREE.Mesh(new THREE.PlaneGeometry(90, 22), mat);
-  godRays.rotation.y = -Math.PI / 2;                 // face the chase camera — L3 is played from behind
-  godRays.position.set(0, -2.0, LANE_Z);
+  godRays.position.set(0, -2.0, LANE_Z - 7);
   godRays.renderOrder = -8; godRays.frustumCulled = false;
   scene.add(godRays);
 }
@@ -923,7 +921,7 @@ function updateUnderwaterFX(dt) {
     if (waterFadeT <= 0) { scene.remove(waterSurface); waterSurface = null; }
   }
   if (waterMat) { waterMat.uniforms.uTime.value = uwT; waterMat.uniforms.uCamPos.value.copy(camera.position); }
-  if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 26; }   // shafts hang ahead, down the lane
+  if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 2; }
   if (caustics && caustics.visible) { caustics.material.uniforms.uTime.value = uwT; caustics.position.x = cx; }
   if (motes && motes.visible) {
     const p = motes.geometry.attributes.position;
@@ -1696,129 +1694,113 @@ function spawnSwimCollectible(x, y, key, z = LANE_Z) {
 const SWIM_ROWS = 3, SWIM_COLS = 3;                  // the swim window as a wall-building grid
 function swimCellY(r) { return SWIM_Y_MIN + (r + 0.5) * (SWIM_Y_MAX - SWIM_Y_MIN) / SWIM_ROWS; }
 function swimCellZ(c) { return SURF_Z_MIN + (c + 0.5) * (SURF_Z_MAX - SURF_Z_MIN) / SWIM_COLS; }
-// ---- wall-building kit -----------------------------------------------------------
-const wallDyns = [];                                 // shared per-wall drift (sliding walls)
+// ---- wall-building kit (2.5D: dish COLUMNS on the single lane) --------------------
+const wallDyns = [];                                 // shared per-column drift (sliding gaps)
 function updateWallDyns(dt) {
   for (const d of wallDyns) {
-    d.oy += d.vy * dt; d.oz += d.vz * dt;
+    d.oy += d.vy * dt;
     if (d.oy > d.ry) { d.oy = d.ry; d.vy = -Math.abs(d.vy); } else if (d.oy < -d.ry) { d.oy = -d.ry; d.vy = Math.abs(d.vy); }
-    if (d.oz > d.rz) { d.oz = d.rz; d.vz = -Math.abs(d.vz); } else if (d.oz < -d.rz) { d.oz = -d.rz; d.vz = Math.abs(d.vz); }
   }
 }
 function wallKey() { return ['plates', 'fork', 'plates'][Math.random() * 3 | 0]; }   // dishes & cutlery only
-function placeWallCell(x, r, c, key, dyn, solid) {
+function placeWallCell(x, r, key, dyn, solid) {
   const cfg = typeCfg[key];
   const mesh = models[key].clone();
-  mesh.scale.setScalar(cfg.scaleFactor * (1.4 / (cfg.size || 1)));   // fill the cell
+  mesh.scale.setScalar(cfg.scaleFactor * (1.5 / (cfg.size || 1)));   // fill the cell
   mesh.rotation.y = (Math.random() - 0.5) * 0.5;
-  mesh.position.set(x, swimCellY(r), swimCellZ(c));
+  mesh.position.set(x, swimCellY(r), LANE_Z);
   scene.add(mesh);
-  const inWindow = r >= 0 && r < SWIM_ROWS && c >= 0 && c < SWIM_COLS;
+  const inWindow = r >= 0 && r < SWIM_ROWS;
   const ent = { mesh, shadow: null, key, type: (solid || inWindow) ? 'swimobs' : 'decor', cfg, wall: true,
-    radius: 0.58, baseY: mesh.position.y, baseZ: mesh.position.z, dyn,
+    radius: 0.6, baseY: mesh.position.y, dyn,
     phase: Math.random() * 6.28, active: true, crossed: false };
   entities.push(ent);
   return ent;
 }
-function placeGapMark(x, y, z, dyn) {                // cool glow marking a safe hole
+function placeGapMark(x, y, dyn) {                   // cool glow marking the safe hole
   const mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: blobTex, color: 0x9fe8ff,
     transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
-  mark.scale.setScalar(2.4);
-  mark.position.set(x - 0.6, y, z);
+  mark.scale.setScalar(2.2);
+  mark.position.set(x - 0.4, y, LANE_Z);
   scene.add(mark);
   entities.push({ mesh: mark, shadow: null, key: 'gapmark', type: 'decor', cfg: null, radius: 0,
-    baseY: y, baseZ: z, dyn, phase: 0, active: true, crossed: false });
+    baseY: y, dyn, phase: 0, active: true, crossed: false });
 }
 
-// ---- formation: static dish wall, TWO gaps (sometimes three) ----------------------
+// ---- formation: a dish column with one gap — swim through the hole ------------------
 function spawnDebrisWall(x) {
   const key = wallKey();
   if (!models[key]) return;
-  const gaps = [[(Math.random() * SWIM_ROWS) | 0, (Math.random() * SWIM_COLS) | 0]];
-  while (gaps.length < 2 + (Math.random() < 0.3 ? 1 : 0)) {
-    const g = [(Math.random() * SWIM_ROWS) | 0, (Math.random() * SWIM_COLS) | 0];
-    if (!gaps.some(q => q[0] === g[0] && q[1] === g[1])) gaps.push(g);
-  }
-  for (let r = -1; r <= SWIM_ROWS; r++) for (let c = -1; c <= SWIM_COLS; c++) {
-    if (gaps.some(q => q[0] === r && q[1] === c)) continue;
-    placeWallCell(x, r, c, key, null, false);
-  }
-  const gy = swimCellY(gaps[0][0]), gz = swimCellZ(gaps[0][1]);
-  placeGapMark(x, gy, gz, null);
-  for (const off of [-8, -4.5, -1]) spawnSwimCollectible(x + off, gy, 'emerald', gz);
-  if (Math.random() < 0.6)                           // the OTHER hole pays a star
-    spawnSwimCollectible(x, swimCellY(gaps[1][0]), 'star', swimCellZ(gaps[1][1]));
+  const gap = (Math.random() * SWIM_ROWS) | 0;
+  for (let r = -1; r <= SWIM_ROWS; r++) { if (r === gap) continue; placeWallCell(x, r, key, null, false); }
+  const gy = swimCellY(gap);
+  placeGapMark(x, gy, null);
+  for (const off of [-7, -3.5]) spawnSwimCollectible(x + off, gy, 'emerald');
+  spawnSwimCollectible(x + 1.5, gy, Math.random() < 0.2 ? 'star' : 'emerald');
 }
 
-// ---- formation: SLIDING wall — one gap that MOVES; track it (motion = depth cue) ---
+// ---- formation: SLIDING column — the hole moves up and down; time your pass ---------
 function spawnSlidingWall(x) {
   const key = wallKey();
   if (!models[key]) return;
-  const gr = 1, gc = (Math.random() * SWIM_COLS) | 0;
-  const vert = Math.random() < 0.5;
-  const dyn = vert ? { oy: 0, oz: 0, vy: 0.55 + Math.random() * 0.2, vz: 0, ry: 1.0, rz: 0 }
-                   : { oy: 0, oz: 0, vy: 0, vz: 0.6 + Math.random() * 0.2, ry: 0, rz: 1.1 };
+  const gap = 1;
+  const dyn = { oy: 0, vy: 0.55 + Math.random() * 0.25, ry: 1.05 };
   wallDyns.push(dyn);
-  for (let r = -1; r <= SWIM_ROWS; r++) for (let c = -1; c <= SWIM_COLS; c++) {
-    if (r === gr && c === gc) continue;
-    placeWallCell(x, r, c, key, dyn, true);          // ALL cells solid — the wall slides across the window
-  }
-  placeGapMark(x, swimCellY(gr), swimCellZ(gc), dyn);   // the mark rides the moving hole
-  spawnSwimCollectible(x - 6, swimCellY(gr), 'emerald', swimCellZ(gc));
+  for (let r = -1; r <= SWIM_ROWS; r++) { if (r === gap) continue; placeWallCell(x, r, key, dyn, true); }
+  placeGapMark(x, swimCellY(gap), dyn);
+  spawnSwimCollectible(x - 5, swimCellY(gap), 'emerald');
 }
 
-// ---- formation: SPLIT wall — duck low, then rise high (a weave in depth) -----------
+// ---- formation: SPLIT columns — duck low, then rise high (the weave) ----------------
 function spawnSplitWall(x) {
   const key = wallKey();
   if (!models[key]) return;
-  for (let r = 1; r <= SWIM_ROWS; r++) for (let c = -1; c <= SWIM_COLS; c++) placeWallCell(x, r, c, key, null, false);      // top blocked → go LOW
-  for (let r = -1; r <= 0; r++)       for (let c = -1; c <= SWIM_COLS; c++) placeWallCell(x + 8, r, c, key, null, false);   // then bottom blocked → RISE
-  const loY = swimCellY(0), hiY = swimCellY(2), cz = swimCellZ(1);
-  placeGapMark(x, loY, cz, null);
-  placeGapMark(x + 8, hiY, cz, null);
-  spawnSwimCollectible(x - 5, loY, 'emerald', cz);
-  spawnSwimCollectible(x + 1.5, loY, 'emerald', cz);
-  spawnSwimCollectible(x + 6, (loY + hiY) / 2, 'emerald', cz);
-  spawnSwimCollectible(x + 9.5, hiY, Math.random() < 0.3 ? 'star' : 'emerald', cz);
+  for (let r = 1; r <= SWIM_ROWS; r++) placeWallCell(x, r, key, null, false);        // top blocked → go LOW
+  for (let r = -1; r <= 0; r++)       placeWallCell(x + 7, r, key, null, false);     // then bottom blocked → RISE
+  const loY = swimCellY(0), hiY = swimCellY(2);
+  placeGapMark(x, loY, null);
+  placeGapMark(x + 7, hiY, null);
+  spawnSwimCollectible(x - 4, loY, 'emerald');
+  spawnSwimCollectible(x + 1.5, loY, 'emerald');
+  spawnSwimCollectible(x + 5, (loY + hiY) / 2, 'emerald');
+  spawnSwimCollectible(x + 8.5, hiY, Math.random() < 0.3 ? 'star' : 'emerald');
 }
 
-// ---- formation: BLOCKED wall — no gap at all: SOAP the glowing dish to open one ----
+// ---- formation: BLOCKED column — no hole at all: SOAP the glowing dish --------------
 function spawnBlockedWall(x) {
   const key = 'plates';
   if (!models[key]) return;
-  const wr = (Math.random() * SWIM_ROWS) | 0, wc = (Math.random() * SWIM_COLS) | 0;
-  for (let r = -1; r <= SWIM_ROWS; r++) for (let c = -1; c <= SWIM_COLS; c++) {
-    const ent = placeWallCell(x, r, c, key, null, false);
-    if (r === wr && c === wc) {                      // the weak spot — begs for a soap shot
+  const wr = (Math.random() * SWIM_ROWS) | 0;
+  for (let r = -1; r <= SWIM_ROWS; r++) {
+    const ent = placeWallCell(x, r, key, null, false);
+    if (r === wr) {                                  // the weak spot — begs for a soap shot
       ent.weak = true;
       addGlow(ent.mesh, 0x8fffb0, 1.9);
     }
   }
-  spawnSwimCollectible(x + 3.5, swimCellY(wr), 'star', swimCellZ(wc));   // the prize sits right behind the hole you make
+  spawnSwimCollectible(x + 3, swimCellY(wr), 'star');   // the prize sits right behind the hole you make
 }
 
 // ---- slime torpedo + drop line ------------------------------------------------------
-function spawnSwimSlime(x, y, z) {
+function spawnSwimSlime(x, y) {
   if (!models.slime) return;
   const cfg = typeCfg.slime;
   const mesh = models.slime.clone();
   mesh.scale.setScalar(cfg.scaleFactor * 1.25);
-  mesh.position.set(x, y, z);
+  mesh.position.set(x, y, LANE_Z);
   addGlow(mesh, 0xff5544, 1.5);                      // angry red glow — THIS one hunts you
   scene.add(mesh);
   entities.push({ mesh, shadow: null, key: 'slime', type: 'swimenemy', cfg,
     radius: cfg.size * 0.6, baseY: y, phase: Math.random() * 6.28, active: true, crossed: false });
 }
 function swimRandY() { return SWIM_Y_MIN + 1 + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN - 2); }
-function swimRandZ() { return SURF_Z_MIN + 1 + Math.random() * (SURF_Z_MAX - SURF_Z_MIN - 2); }
 function spawnDropLine(x) {                          // breather beat: refuel soap, often a star
-  const y = swimRandY(), z = swimRandZ();
-  const dy = (Math.random() - 0.5) * 0.4, dz = (Math.random() - 0.5) * 0.5;
+  const y = swimRandY();
+  const dy = (Math.random() - 0.5) * 0.4;
   for (let i = 0; i < 5; i++)
     spawnSwimCollectible(x + i * 2.4,
       THREE.MathUtils.clamp(y + dy * i, SWIM_Y_MIN + 0.5, SWIM_Y_MAX - 0.3),
-      i === 4 && Math.random() < 0.5 ? 'star' : 'emerald',
-      THREE.MathUtils.clamp(z + dz * i, SURF_Z_MIN + 0.6, SURF_Z_MAX - 0.6));
+      i === 4 && Math.random() < 0.5 ? 'star' : 'emerald');
 }
 
 // ---- the level rhythm: every beat has ONE readable job ------------------------------
@@ -1826,17 +1808,17 @@ let swimBeat = 0;
 function spawnSwimChunk() {
   if ((spawnX - state.swimStartX) > 8) {
     const beat = swimBeat++ % 8;
-    if (beat === 1) { spawnSlidingWall(spawnX + 10); spawnX += 32; }
+    if (beat === 1) { spawnSlidingWall(spawnX + 10); spawnX += 30; }
     else if (beat === 2) {                           // slime ambush (+ refuel behind them)
-      spawnSwimSlime(spawnX + 12, swimRandY(), swimRandZ());
-      if (Math.random() < 0.6) spawnSwimSlime(spawnX + 19, swimRandY(), swimRandZ());
-      spawnSwimCollectible(spawnX + 16, swimRandY(), 'emerald', swimRandZ());
+      spawnSwimSlime(spawnX + 12, swimRandY());
+      if (Math.random() < 0.6) spawnSwimSlime(spawnX + 19, swimRandY());
+      spawnSwimCollectible(spawnX + 16, swimRandY(), 'emerald');
       spawnX += 26;
     }
-    else if (beat === 3 || beat === 7) { spawnDropLine(spawnX + 6); spawnX += 24; }
-    else if (beat === 4) { spawnSplitWall(spawnX + 10); spawnX += 38; }
-    else if (beat === 6) { spawnBlockedWall(spawnX + 10); spawnX += 32; }
-    else { spawnDebrisWall(spawnX + 10); spawnX += 30 + Math.random() * 6; }
+    else if (beat === 3 || beat === 7) { spawnDropLine(spawnX + 6); spawnX += 22; }
+    else if (beat === 4) { spawnSplitWall(spawnX + 10); spawnX += 34; }
+    else if (beat === 6) { spawnBlockedWall(spawnX + 10); spawnX += 30; }
+    else { spawnDebrisWall(spawnX + 10); spawnX += 27 + Math.random() * 5; }
   } else {
     spawnX += 6;                                     // calm entry stretch
   }
@@ -2393,11 +2375,10 @@ function buildSinkEnv(x0) {
   const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x86b4cc, metalness: 0.55, roughness: 0.5 });
   const LEN = 620, cx = x0 + 260;
   const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
-  for (const z of [zL, zR]) {
-    const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 11, 0.6), wallMat);
-    w.position.set(cx, -4.4, z);
-    sinkEnv.add(w);
-  }
+  // side view: only the BACK wall (behind the action) — a near wall would block the camera
+  const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 11, 0.6), wallMat);
+  w.position.set(cx, -4.4, zL);
+  sinkEnv.add(w);
   const floorMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x5f889f, metalness: 0.5, roughness: 0.6 });
   const f = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.5, zR - zL + 0.6), floorMat);
   f.position.set(cx, -9.0, (zL + zR) / 2);
@@ -2512,7 +2493,7 @@ function applyUnderwater() {
   document.body.classList.remove('surf');
   document.body.classList.add('swim');
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Depth &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Steer &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; follow the drops through the GAPS &mdash; SOAP the slimes hunting you!';
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; find the gap in the dish walls &mdash; or soap one open!';
 }
 
 // settle into Level 3 swim gameplay
@@ -2537,7 +2518,7 @@ function finishDiveIntoSwim() {
   spawnX = playerGroup.position.x + 38;                      // short calm intro
   playAnim('swim', 0.3);
   showBanner('LEVEL 3 &middot; SWIM!');
-  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; DEPTH &middot; &larr;&rarr; STEER'); }, 2000);
+  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; SWIM UP &amp; DOWN'); }, 2000);
   updateHUD();
 }
 
@@ -2921,10 +2902,7 @@ function gameLoop() {
       const dir = (state.steerUp ? 1 : 0) - (state.steerDown ? 1 : 0);
       state.targetY = THREE.MathUtils.clamp(state.targetY + dir * SWIM_STEER * dt, SWIM_Y_MIN, SWIM_Y_MAX);
       playerGroup.position.y += (state.targetY - playerGroup.position.y) * Math.min(1, 8 * dt);
-      const zdir = (state.steerRight ? 1 : 0) - (state.steerLeft ? 1 : 0);   // chase view: screen-right = world +z
-      state.targetZ = THREE.MathUtils.clamp(state.targetZ + zdir * SWIM_STEER * dt, SURF_Z_MIN, SURF_Z_MAX);
-      playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 8 * dt);
-      swimBank += (zdir * 0.38 - swimBank) * Math.min(1, 6 * dt);            // lean into the strafe
+      playerGroup.position.z = LANE_Z;               // single lane — classic 2.5D side view
       const tiltTarget = SWIM_PITCH + dir * 0.22;         // nose-up, leans with up/down
       state.divePitch += (tiltTarget - state.divePitch) * Math.min(1, 6 * dt);
       setPlayerPitch(state.divePitch);
@@ -3000,15 +2978,13 @@ function gameLoop() {
 
       // --- Level 3 underwater: dodge debris, swim into drops (x AND y proximity) ---
       if (state.mode === 'swim') {
-        const pzNow = playerGroup.position.z;
-        if (ent.dyn) { m.position.y = ent.baseY + ent.dyn.oy; m.position.z = ent.baseZ + ent.dyn.oz; }   // sliding walls
-        const sdx = px - m.position.x, sdy = py - m.position.y, sdz = pzNow - m.position.z;
-        if (ent.type === 'swimenemy') {            // slime torpedo: hunts his lane — soap it or outswim it
+        if (ent.dyn) m.position.y = ent.baseY + ent.dyn.oy;   // sliding columns
+        const sdx = px - m.position.x, sdy = py - m.position.y;
+        if (ent.type === 'swimenemy') {            // slime torpedo: hunts him — soap it or outswim it
           m.position.x -= 3.5 * dt;                  // closing speed on top of the world scroll
-          m.position.y += (py - m.position.y) * Math.min(1, 0.85 * dt) + Math.sin(t * 4 + ent.phase) * 0.4 * dt;
-          m.position.z += (pzNow - m.position.z) * Math.min(1, 0.85 * dt);
+          m.position.y += (py - m.position.y) * Math.min(1, 0.9 * dt) + Math.sin(t * 4 + ent.phase) * 0.4 * dt;
           m.rotation.y += dt * 2.5;
-          if (!ent.crossed && Math.abs(sdx) < 0.6 + ent.radius && Math.abs(sdy) < 0.6 + ent.radius && Math.abs(sdz) < 0.65 + ent.radius) {
+          if (!ent.crossed && Math.abs(sdx) < 0.6 + ent.radius && Math.abs(sdy) < 0.6 + ent.radius) {
             ent.crossed = true; ent.active = false; scene.remove(m);
             takeDamage();
           }
@@ -3017,16 +2993,16 @@ function gameLoop() {
         if (ent.type === 'ammo' || ent.type === 'score') {
           m.rotation.y += dt * 1.6;
           if (!ent.magnet) m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.12;
-          if (ent.magnet || (Math.abs(sdx) < 2.2 && Math.abs(sdy) < 1.6 && Math.abs(sdz) < 1.6)) {
-            ent.magnet = true;                       // 3D lanes are harder to thread — the magnet closes the last stretch
+          if (ent.magnet || (Math.abs(sdx) < 2.0 && Math.abs(sdy) < 1.5)) {
+            ent.magnet = true;                       // latched → always closes the last stretch
             const k = Math.min(1, Math.max(10, state.speed * 2.2) * dt);
-            m.position.x += sdx * k; m.position.y += sdy * k; m.position.z += sdz * k;
+            m.position.x += sdx * k; m.position.y += sdy * k;
           }
-          if (Math.abs(sdx) < 0.7 + ent.radius && Math.abs(sdy) < 0.8 + ent.radius && Math.abs(sdz) < 0.9 + ent.radius) collect(ent);
+          if (Math.abs(sdx) < 0.7 + ent.radius && Math.abs(sdy) < 0.8 + ent.radius) collect(ent);
         } else if (ent.type === 'swimobs') {
           m.rotation.y += dt * 0.5;                  // slow upright spin — position stays readable
-          if (ent.weak && !ent.hinted && (m.position.x - px) < 26) { ent.hinted = true; showBanner('BLOCKED &middot; SOAP THE GLOWING DISH!'); }
-          if (!ent.crossed && Math.abs(sdx) < 0.55 + ent.radius && Math.abs(sdy) < 0.55 + ent.radius && Math.abs(sdz) < 0.6 + ent.radius) {
+          if (ent.weak && !ent.hinted && (m.position.x - px) < 24) { ent.hinted = true; showBanner('BLOCKED &middot; SOAP THE GLOWING DISH!'); }
+          if (!ent.crossed && Math.abs(sdx) < 0.55 + ent.radius && Math.abs(sdy) < 0.55 + ent.radius) {
             ent.crossed = true; ent.active = false; scene.remove(m);
             takeDamage();
           }
@@ -3306,7 +3282,7 @@ function gameLoop() {
   playerBlob.visible = state.onGround && !swim && !diveSeq && !jumpout && !puzzle;
   // behind-the-back blend: 0 = classic side view, 1 = chase cam. Kicks in the moment he
   // pierces the surface, so the camera ROTATES around him during the plunge into Level 3.
-  const behindT = (swim || (diveSeq && state.diveSplashed)) ? 1 : 0;
+  const behindT = 0;   // chase cam retired — Level 3 plays in the classic side view (perf + clarity)
   state.camBehind += (behindT - state.camBehind) * Math.min(1, 2.0 * dt);
   if (state.camBehind < 0.003) state.camBehind = 0;
   const cb = state.camBehind;
@@ -3429,13 +3405,8 @@ window.addEventListener('keydown', e => {
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyF') pzShoot();
     return;
   }
-  if (state.mode === 'swim') {                            // L3 (chase view): ←→ strafes across the sink
-    if (e.code === 'ArrowRight' || e.code === 'KeyD') state.steerRight = true;
-    if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.steerLeft = true;
-  } else {
-    if (e.code === 'ArrowRight') state.boost = true;
-    if (e.code === 'ArrowLeft')  state.brake = true;
-  }
+  if (e.code === 'ArrowRight') state.boost = true;
+  if (e.code === 'ArrowLeft')  state.brake = true;
   if (state.mode === 'surf' || state.mode === 'swim') {   // L2/L3: up/down steer
     if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = true;
     if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = true;
