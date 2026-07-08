@@ -1166,7 +1166,7 @@ async function initGame() {
   const texLoader = new THREE.TextureLoader();
 
   // kick EVERYTHING off in parallel — the bar tracks real progress
-  const fgNames = ['bottle.png','bowl.png','cloth.png','plant_02.png','wood_surface.png'];
+  const fgNames = ['bottle.png','bowl.png','cloth.png','fork.png','plant.png','plant_02.png','salt.png','spoon.png','wood_surface.png'];
   const modelPaths = {
     emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
     slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
@@ -1802,23 +1802,42 @@ function spawnDropLine(x) {                          // breather beat: refuel so
       i === 4 && Math.random() < 0.5 ? 'star' : 'emerald');
 }
 
+// loose single debris drifting between formations — keeps the water busy
+function spawnLooseDebris(x) {
+  const key = wallKey();
+  if (!models[key]) return;
+  const cfg = typeCfg[key];
+  const mesh = models[key].clone();
+  mesh.scale.setScalar(cfg.scaleFactor * 1.1);
+  mesh.rotation.y = Math.random() * 6.28;
+  mesh.position.set(x, swimRandY(), LANE_Z);
+  scene.add(mesh);
+  entities.push({ mesh, shadow: null, key, type: 'swimobs', cfg, radius: 0.55,
+    baseY: mesh.position.y, phase: Math.random() * 6.28, active: true, crossed: false });
+}
+
 // ---- the level rhythm: every beat has ONE readable job ------------------------------
 let swimBeat = 0;
 function spawnSwimChunk() {
   if ((spawnX - state.swimStartX) > 8) {
     const beat = swimBeat++ % 8;
-    if (beat === 1) { spawnSlidingWall(spawnX + 10); spawnX += 30; }
-    else if (beat === 2 || beat === 6) {             // slime ambushes TWICE a cycle, 2-3 hunters each
-      spawnSwimSlime(spawnX + 12, swimRandY());
-      spawnSwimSlime(spawnX + 18, swimRandY());
-      if (Math.random() < 0.5) spawnSwimSlime(spawnX + 24, swimRandY());
+    if (beat === 1) { spawnSlidingWall(spawnX + 9); spawnX += 26; }
+    else if (beat === 2 || beat === 6) {             // slime ambushes TWICE a cycle, 3-4 hunters each
+      spawnSwimSlime(spawnX + 10, swimRandY());
+      spawnSwimSlime(spawnX + 15, swimRandY());
+      spawnSwimSlime(spawnX + 21, swimRandY());
+      if (Math.random() < 0.5) spawnSwimSlime(spawnX + 26, swimRandY());
       spawnSwimCollectible(spawnX + 16, swimRandY(), 'emerald');
-      spawnX += 30;
+      spawnX += 27;
     }
-    else if (beat === 4) { spawnSplitWall(spawnX + 10); spawnX += 34; }
-    else if (beat === 5) { spawnBlockedWall(spawnX + 10); spawnX += 30; }
-    else if (beat === 7) { spawnDropLine(spawnX + 6); spawnX += 22; }
-    else { spawnDebrisWall(spawnX + 10); spawnX += 26 + Math.random() * 5; }
+    else if (beat === 4) { spawnSplitWall(spawnX + 9); spawnX += 29; }
+    else if (beat === 5) { spawnBlockedWall(spawnX + 9); spawnX += 26; }
+    else if (beat === 7) { spawnDropLine(spawnX + 5); spawnX += 18; }
+    else { spawnDebrisWall(spawnX + 9); spawnX += 22 + Math.random() * 4; }
+    if (beat !== 2 && beat !== 6 && beat !== 7) {    // loose debris in the space between formations
+      spawnLooseDebris(spawnX - 11 + Math.random() * 5);
+      if (Math.random() < 0.55) spawnLooseDebris(spawnX - 5 + Math.random() * 3);
+    }
   } else {
     spawnX += 6;                                     // calm entry stretch
   }
@@ -2414,7 +2433,6 @@ function startDiveTransition() {
   buildWaterSurface(); if (waterSurface) waterSurface.visible = false;
   buildBubbles();
   buildSinkEnv(playerGroup.position.x);           // the steel basin, pre-built hidden (no shader hitch at the splash)
-  buildSeabed(); seabed.forEach(m => m.visible = false);   // foreground dish heaps, hidden until the splash
   buildUnderwaterFX(); showUnderwaterFX(false);
   // Pre-warm the FOG shader path now: assigning scene.fog for the first time forces EVERY material to
   // recompile — that's the stutter at the surface. Enable it here pushed far away (invisible: 900u off),
@@ -2488,7 +2506,6 @@ function applyUnderwater() {
   buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
   if (sinkEnv) sinkEnv.visible = true;            // the sink basin: back wall + floor bound the corridor
-  seabed.forEach(m => m.visible = true);          // foreground dish heaps at the bottom of frame
   buildUnderwaterFX();
   showUnderwaterFX(true);
   frothDecals.forEach(s => s.visible = false);
@@ -2874,8 +2891,8 @@ function gameLoop() {
 
     // --- always moving forward; boost & brake only bend the pace ---
     const diff = 1 + Math.min(1.35, px0 / 450);
-    const modeMul = state.mode === 'swim' ? (0.5 + 0.27 * Math.min(1, (playerGroup.position.x - state.swimStartX) / 14))
-      : state.mode === 'surf' ? 0.98 : state.mode === 'dive_seq' ? THREE.MathUtils.lerp(0.98, 0.5, Math.min(1, state.diveT / 0.8)) : 1.0;   // swim ramps 0.5→0.77 out of the plunge — continuous with the dive, then +10% pace
+    const modeMul = state.mode === 'swim' ? (0.5 + 0.34 * Math.min(1, (playerGroup.position.x - state.swimStartX) / 14))
+      : state.mode === 'surf' ? 0.98 : state.mode === 'dive_seq' ? THREE.MathUtils.lerp(0.98, 0.5, Math.min(1, state.diveT / 0.8)) : 1.0;   // swim ramps 0.5→0.84 out of the plunge — continuous with the dive, then +20% pace
     state.speed = BASE_SPEED * diff * modeMul * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
     playerGroup.position.x += state.speed * dt;
 
@@ -2984,7 +3001,7 @@ function gameLoop() {
         if (ent.dyn) m.position.y = ent.baseY + ent.dyn.oy;   // sliding columns
         const sdx = px - m.position.x, sdy = py - m.position.y;
         if (ent.type === 'swimenemy') {            // slime torpedo: hunts him — soap it or outswim it
-          m.position.x -= 3.5 * dt;                  // closing speed on top of the world scroll
+          m.position.x -= 4.2 * dt;                  // closing speed on top of the world scroll
           m.position.y += (py - m.position.y) * Math.min(1, 0.9 * dt) + Math.sin(t * 4 + ent.phase) * 0.4 * dt;
           m.rotation.y += dt * 2.5;
           if (!ent.crossed && Math.abs(sdx) < 0.6 + ent.radius && Math.abs(sdy) < 0.6 + ent.radius) {
@@ -3379,10 +3396,12 @@ function gameLoop() {
       }
     }
   }
-  const showFg = state.mode === 'run' || state.mode === 'surf';   // kitchen props only on the counter levels
+  const showFg = state.mode === 'run' || state.mode === 'surf' || state.mode === 'swim';   // kitchen-prop foreground on every side-view level
   for (const p of fgPlanes) {
     p.visible = showFg;
     if (!showFg) continue;
+    p.material.color.setHex(state.mode === 'swim' ? (p.userData.layer === 'near' ? 0x2f4a66 : 0x4a6d8c)
+                                                  : (p.userData.layer === 'near' ? 0x707a8f : 0xa8b1c4));   // cool dark silhouettes underwater
     if (p.position.x < camera.position.x - 30) {
       p.position.x += 260 + Math.random() * 40;
       p.position.z = p.userData.layer === 'near' ? 12.8 + Math.random() * 1.8 : 8.6 + Math.random() * 1.8;
