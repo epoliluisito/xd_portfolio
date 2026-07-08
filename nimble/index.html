@@ -1700,24 +1700,35 @@ function spawnDebrisWall(x) {
   const gapR = (Math.random() * SWIM_ROWS) | 0, gapC = (Math.random() * SWIM_COLS) | 0;
   let gap2R = -1, gap2C = -1;
   if (Math.random() < 0.35) { gap2R = (Math.random() * SWIM_ROWS) | 0; gap2C = (Math.random() * SWIM_COLS) | 0; }
-  for (let r = 0; r < SWIM_ROWS; r++) for (let c = 0; c < SWIM_COLS; c++) {
-    if ((r === gapR && c === gapC) || (r === gap2R && c === gap2C)) continue;
-    const key = ['plant', 'salt', 'fork', 'plates'][Math.random() * 4 | 0];
-    if (!models[key]) continue;
-    const cfg = typeCfg[key];
+  // ONE prop type per wall (uniform = instantly readable), scaled to FILL its cell, and
+  // padded one cell past the playable window on every side — the wall visually seals
+  // against the sink, so the gap is the ONLY way through. No floating junk, no way over.
+  const key = ['plates', 'fork', 'plates', 'salt'][Math.random() * 4 | 0];
+  if (!models[key]) return;
+  const cfg = typeCfg[key];
+  const fill = cfg.scaleFactor * (1.4 / (cfg.size || 1));
+  for (let r = -1; r <= SWIM_ROWS; r++) for (let c = -1; c <= SWIM_COLS; c++) {
+    const inWindow = r >= 0 && r < SWIM_ROWS && c >= 0 && c < SWIM_COLS;
+    if (inWindow && ((r === gapR && c === gapC) || (r === gap2R && c === gap2C))) continue;
     const mesh = models[key].clone();
-    mesh.scale.setScalar(cfg.scaleFactor * 1.15);    // chunky — a wall should read as a wall
-    mesh.rotation.y = Math.random() * 6.28;          // upright, no random tumbling
+    mesh.scale.setScalar(fill);
+    mesh.rotation.y = (Math.random() - 0.5) * 0.5;   // near-aligned — reads as a built wall
     mesh.position.set(x, swimCellY(r), swimCellZ(c));
-    addGlow(mesh, 0xff8866, 1.15);                   // warm glow = danger
     scene.add(mesh);
-    entities.push({ mesh, shadow: null, key, type: 'swimobs', cfg, wall: true,
-      radius: Math.min(0.62, cfg.size * 0.5), baseY: mesh.position.y,
+    entities.push({ mesh, shadow: null, key, type: inWindow ? 'swimobs' : 'decor', cfg, wall: true,
+      radius: 0.66, baseY: mesh.position.y,
       phase: Math.random() * 6.28, active: true, crossed: false });
   }
-  // a trail of drops leads INTO and THROUGH the main gap — the safe line is always telegraphed
+  // the safe hole is marked: a cool glow in the gap + a short trail of drops through it
   const gy = swimCellY(gapR), gz = swimCellZ(gapC);
-  for (const off of [-9, -5.5, -2, 1.5]) spawnSwimCollectible(x + off, gy, 'emerald', gz);
+  const mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: blobTex, color: 0x9fe8ff,
+    transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+  mark.scale.setScalar(2.4);
+  mark.position.set(x - 0.6, gy, gz);
+  scene.add(mark);
+  entities.push({ mesh: mark, shadow: null, key: 'gapmark', type: 'decor', cfg: null, radius: 0,
+    baseY: gy, phase: 0, active: true });
+  for (const off of [-8, -4.5, -1]) spawnSwimCollectible(x + off, gy, 'emerald', gz);
   if (gap2R >= 0 && (gap2R !== gapR || gap2C !== gapC) && Math.random() < 0.5)
     spawnSwimCollectible(x, swimCellY(gap2R), 'star', swimCellZ(gap2C));   // the riskier hole pays a star
 }
@@ -2280,6 +2291,47 @@ function getUnderwaterTex() {
   return t;
 }
 
+// THE SINK — the swim corridor lives inside a steel basin: two long side walls and a
+// floor. Bounded space reads as a real place (and streams past for speed/parallax),
+// instead of obstacles floating in an empty void.
+let sinkEnv = null;
+function makeSinkTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#16455f'; g.fillRect(0, 0, 256, 128);
+  g.fillStyle = 'rgba(10,40,58,0.7)';
+  for (let y = 0; y < 128; y += 32) g.fillRect(0, y, 256, 2);        // panel seams
+  for (let i = 0; i < 22; i++) {                                     // soft caustic light blotches
+    const x = Math.random() * 256, y = Math.random() * 128, r = 8 + Math.random() * 22;
+    const rg = g.createRadialGradient(x, y, 1, x, y, r);
+    rg.addColorStop(0, 'rgba(150,215,240,0.10)'); rg.addColorStop(1, 'rgba(150,215,240,0)');
+    g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 6.28); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(40, 1);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function buildSinkEnv(x0) {
+  if (sinkEnv) return;
+  sinkEnv = new THREE.Group();
+  const tex = makeSinkTexture();
+  const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x9fc4d8, metalness: 0.55, roughness: 0.5 });
+  const LEN = 620, cx = x0 + 260;
+  const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
+  for (const z of [zL, zR]) {
+    const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 11, 0.6), wallMat);
+    w.position.set(cx, -4.4, z);
+    sinkEnv.add(w);
+  }
+  const floorMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x6f95ab, metalness: 0.5, roughness: 0.6 });
+  const f = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.5, zR - zL + 0.6), floorMat);
+  f.position.set(cx, -9.0, (zL + zR) / 2);
+  sinkEnv.add(f);
+  sinkEnv.visible = false;
+  scene.add(sinkEnv);
+}
+
 // Level 2 → 3: reach a ramp, launch high, lose hat+board mid-air, assume dive, sink into water.
 function startDiveTransition() {
   state.mode = 'dive_seq';
@@ -2306,7 +2358,7 @@ function startDiveTransition() {
   // (the water's custom shader + FX + seabed are the costly bits — build AND pre-compile them off the climax).
   buildWaterSurface(); if (waterSurface) waterSurface.visible = false;
   buildBubbles();
-  buildSeabed(); seabed.forEach(m => m.visible = false);
+  buildSinkEnv(playerGroup.position.x);           // the steel basin, pre-built hidden (no shader hitch at the splash)
   buildUnderwaterFX(); showUnderwaterFX(false);
   // Pre-warm the FOG shader path now: assigning scene.fog for the first time forces EVERY material to
   // recompile — that's the stutter at the surface. Enable it here pushed far away (invisible: 900u off),
@@ -2379,7 +2431,7 @@ function applyUnderwater() {
   // the underwater look now, so you truly descend into it instead of a 2D wash cutting in.
   buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
-  buildSeabed(); seabed.forEach(m => m.visible = true);   // reveal the pre-built seabed heap
+  if (sinkEnv) sinkEnv.visible = true;            // the sink basin: side walls + floor bound the corridor
   buildUnderwaterFX();
   showUnderwaterFX(true);
   frothDecals.forEach(s => s.visible = false);
@@ -2479,6 +2531,7 @@ function enterPuzzle() {
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
   bubbles.forEach(s => s.visible = false);
   seabed.forEach(m => m.visible = false);
+  if (sinkEnv) sinkEnv.visible = false;
   showUnderwaterFX(false);
   if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
   playerGroup.position.set(PZ.boardX, PZ.shootY - 0.5, LANE_Z);
@@ -2875,9 +2928,9 @@ function gameLoop() {
         const pzNow = playerGroup.position.z;
         const sdx = px - m.position.x, sdy = py - m.position.y, sdz = pzNow - m.position.z;
         if (ent.type === 'swimenemy') {            // slime torpedo: hunts his lane — soap it or outswim it
-          m.position.x -= 3.0 * dt;                  // closing speed on top of the world scroll
-          m.position.y += (py - m.position.y) * Math.min(1, 0.55 * dt) + Math.sin(t * 4 + ent.phase) * 0.4 * dt;
-          m.position.z += (pzNow - m.position.z) * Math.min(1, 0.55 * dt);
+          m.position.x -= 3.5 * dt;                  // closing speed on top of the world scroll
+          m.position.y += (py - m.position.y) * Math.min(1, 0.85 * dt) + Math.sin(t * 4 + ent.phase) * 0.4 * dt;
+          m.position.z += (pzNow - m.position.z) * Math.min(1, 0.85 * dt);
           m.rotation.y += dt * 2.5;
           if (!ent.crossed && Math.abs(sdx) < 0.6 + ent.radius && Math.abs(sdy) < 0.6 + ent.radius && Math.abs(sdz) < 0.65 + ent.radius) {
             ent.crossed = true; ent.active = false; scene.remove(m);
