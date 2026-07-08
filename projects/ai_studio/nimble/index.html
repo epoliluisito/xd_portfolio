@@ -1726,58 +1726,48 @@ function placeGapMark(x, y, dyn) {                   // cool glow marking the sa
     baseY: y, dyn, phase: 0, active: true, crossed: false });
 }
 
-// ---- formation: a dish column with one gap — swim through the hole ------------------
-function spawnDebrisWall(x) {
+// ---- EVERY wall is SOLID: you are FORCED to soap a hole through the dishes ----------
+let swimWallHintShown = false;
+function spawnSolidWall(x, dyn, weakR) {             // one column, one glowing target dish
   const key = wallKey();
-  if (!models[key]) return;
-  const gap = (Math.random() * SWIM_ROWS) | 0;
-  for (let r = -1; r <= SWIM_ROWS; r++) { if (r === gap) continue; placeWallCell(x, r, key, null, false); }
-  const gy = swimCellY(gap);
-  placeGapMark(x, gy, null);
-  for (const off of [-7, -3.5]) spawnSwimCollectible(x + off, gy, 'emerald');
-  spawnSwimCollectible(x + 1.5, gy, Math.random() < 0.2 ? 'star' : 'emerald');
+  if (!models[key]) return null;
+  let weakEnt = null;
+  for (let r = -1; r <= SWIM_ROWS; r++) {
+    const ent = placeWallCell(x, r, key, dyn, !!dyn);
+    if (r === weakR) { weakEnt = ent; ent.weak = true; addGlow(ent.mesh, 0x8fffb0, 1.9); }
+  }
+  return weakEnt;
 }
-
-// ---- formation: SLIDING column — the hole moves up and down; time your pass ---------
-function spawnSlidingWall(x) {
-  const key = wallKey();
-  if (!models[key]) return;
-  const gap = 1;
+function spawnDebrisWall(x) {                        // static solid wall — line up on the glow and fire
+  const wr = (Math.random() * SWIM_ROWS) | 0;
+  if (!spawnSolidWall(x, null, wr)) return;
+  const gy = swimCellY(wr);
+  for (const off of [-7, -3.5]) spawnSwimCollectible(x + off, gy, 'emerald');
+  if (Math.random() < 0.35) spawnSwimCollectible(x + 3, gy, 'star');
+}
+function spawnSlidingWall(x) {                       // solid wall sliding up & down — a MOVING target
   const dyn = { oy: 0, vy: 0.55 + Math.random() * 0.25, ry: 1.05 };
   wallDyns.push(dyn);
-  for (let r = -1; r <= SWIM_ROWS; r++) { if (r === gap) continue; placeWallCell(x, r, key, dyn, true); }
-  placeGapMark(x, swimCellY(gap), dyn);
-  spawnSwimCollectible(x - 5, swimCellY(gap), 'emerald');
+  if (!spawnSolidWall(x, dyn, 1)) return;
+  spawnSwimCollectible(x - 5, swimCellY(1), 'emerald');
 }
-
-// ---- formation: SPLIT columns — duck low, then rise high (the weave) ----------------
-function spawnSplitWall(x) {
-  const key = wallKey();
-  if (!models[key]) return;
-  for (let r = 1; r <= SWIM_ROWS; r++) placeWallCell(x, r, key, null, false);        // top blocked → go LOW
-  for (let r = -1; r <= 0; r++)       placeWallCell(x + 7, r, key, null, false);     // then bottom blocked → RISE
-  const loY = swimCellY(0), hiY = swimCellY(2);
-  placeGapMark(x, loY, null);
-  placeGapMark(x + 7, hiY, null);
-  spawnSwimCollectible(x - 4, loY, 'emerald');
-  spawnSwimCollectible(x + 1.5, loY, 'emerald');
-  spawnSwimCollectible(x + 5, (loY + hiY) / 2, 'emerald');
-  spawnSwimCollectible(x + 8.5, hiY, Math.random() < 0.3 ? 'star' : 'emerald');
+function spawnSplitWall(x) {                         // DOUBLE wall: shoot low, climb, shoot high
+  const r1 = 0, r2 = 2;
+  if (!spawnSolidWall(x, null, r1)) return;
+  spawnSolidWall(x + 9, null, r2);
+  spawnSwimCollectible(x - 5, swimCellY(r1), 'emerald');
+  spawnSwimCollectible(x + 2, swimCellY(r1) + 0.8, 'emerald');
+  spawnSwimCollectible(x + 4.5, swimCellY(r2), 'emerald');
+  spawnSwimCollectible(x + 11.5, swimCellY(r2), Math.random() < 0.35 ? 'star' : 'emerald');
 }
-
-// ---- formation: BLOCKED column — no hole at all: SOAP the glowing dish --------------
-function spawnBlockedWall(x) {
-  const key = 'plates';
-  if (!models[key]) return;
+function spawnBlockedWall(x) {                       // THICK wall: two layers — punch the same hole TWICE
   const wr = (Math.random() * SWIM_ROWS) | 0;
-  for (let r = -1; r <= SWIM_ROWS; r++) {
-    const ent = placeWallCell(x, r, key, null, false);
-    if (r === wr) {                                  // the weak spot — begs for a soap shot
-      ent.weak = true;
-      addGlow(ent.mesh, 0x8fffb0, 1.9);
-    }
-  }
-  spawnSwimCollectible(x + 3, swimCellY(wr), 'star');   // the prize sits right behind the hole you make
+  if (!spawnSolidWall(x, null, wr)) return;
+  spawnSolidWall(x + 1.7, null, wr);                 // aligned weak spots
+  const gy = swimCellY(wr);
+  spawnSwimCollectible(x - 6, gy, 'emerald');
+  spawnSwimCollectible(x - 3, gy, 'emerald');
+  spawnSwimCollectible(x + 5, gy, 'star');           // the thick one always pays a star
 }
 
 // ---- slime torpedo + drop line ------------------------------------------------------
@@ -1821,22 +1811,22 @@ let swimBeat = 0;
 function spawnSwimChunk() {
   if ((spawnX - state.swimStartX) > 8) {
     const beat = swimBeat++ % 8;
-    if (beat === 1) { spawnSlidingWall(spawnX + 9); spawnX += 26; }
+    if (beat === 1) { spawnSlidingWall(spawnX + 8); spawnX += 21; }
     else if (beat === 2 || beat === 6) {             // slime ambushes TWICE a cycle, 3-4 hunters each
-      spawnSwimSlime(spawnX + 10, swimRandY());
-      spawnSwimSlime(spawnX + 15, swimRandY());
-      spawnSwimSlime(spawnX + 21, swimRandY());
-      if (Math.random() < 0.5) spawnSwimSlime(spawnX + 26, swimRandY());
-      spawnSwimCollectible(spawnX + 16, swimRandY(), 'emerald');
-      spawnX += 27;
+      spawnSwimSlime(spawnX + 9, swimRandY());
+      spawnSwimSlime(spawnX + 14, swimRandY());
+      spawnSwimSlime(spawnX + 19, swimRandY());
+      if (Math.random() < 0.5) spawnSwimSlime(spawnX + 24, swimRandY());
+      spawnSwimCollectible(spawnX + 14, swimRandY(), 'emerald');
+      spawnX += 24;
     }
-    else if (beat === 4) { spawnSplitWall(spawnX + 9); spawnX += 29; }
-    else if (beat === 5) { spawnBlockedWall(spawnX + 9); spawnX += 26; }
-    else if (beat === 7) { spawnDropLine(spawnX + 5); spawnX += 18; }
-    else { spawnDebrisWall(spawnX + 9); spawnX += 22 + Math.random() * 4; }
+    else if (beat === 4) { spawnSplitWall(spawnX + 8); spawnX += 26; }
+    else if (beat === 5) { spawnBlockedWall(spawnX + 8); spawnX += 22; }
+    else if (beat === 7) { spawnDropLine(spawnX + 4); spawnX += 14; }
+    else { spawnDebrisWall(spawnX + 8); spawnX += 18 + Math.random() * 4; }
     if (beat !== 2 && beat !== 6 && beat !== 7) {    // loose debris in the space between formations
-      spawnLooseDebris(spawnX - 11 + Math.random() * 5);
-      if (Math.random() < 0.55) spawnLooseDebris(spawnX - 5 + Math.random() * 3);
+      spawnLooseDebris(spawnX - 9 + Math.random() * 4);
+      if (Math.random() < 0.6) spawnLooseDebris(spawnX - 4 + Math.random() * 3);
     }
   } else {
     spawnX += 6;                                     // calm entry stretch
@@ -2512,7 +2502,7 @@ function applyUnderwater() {
   document.body.classList.remove('surf');
   document.body.classList.add('swim');
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; find the gap in the dish walls &mdash; or soap one open!';
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; the dish walls are SOLID &mdash; soap a hole through the glow!';
 }
 
 // settle into Level 3 swim gameplay
@@ -2534,7 +2524,7 @@ function finishDiveIntoSwim() {
     entities.splice(i, 1);
   }
   state.swimStartX = playerGroup.position.x;
-  spawnX = playerGroup.position.x + 38;                      // short calm intro
+  spawnX = playerGroup.position.x + 26;                      // brief calm intro
   playAnim('swim', 0.3);
   showBanner('LEVEL 3 &middot; SWIM!');
   setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; SWIM UP &amp; DOWN'); }, 2000);
@@ -2806,7 +2796,7 @@ function fireSoap() {
   state.ammo--; updateHUD();
   sfx.fire();
   const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
-  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.15, playerGroup.position.z);
+  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + (state.mode === 'swim' ? 0.25 : 1.15), playerGroup.position.z);   // swim: aim from his midline so the shot lands on the dish he's facing
   soap.castShadow = true;
   scene.add(soap);
   soaps.push({ mesh: soap, life: 1.6 });
@@ -3021,7 +3011,7 @@ function gameLoop() {
           if (Math.abs(sdx) < 0.7 + ent.radius && Math.abs(sdy) < 0.8 + ent.radius) collect(ent);
         } else if (ent.type === 'swimobs') {
           m.rotation.y += dt * 0.5;                  // slow upright spin — position stays readable
-          if (ent.weak && !ent.hinted && (m.position.x - px) < 24) { ent.hinted = true; showBanner('BLOCKED &middot; SOAP THE GLOWING DISH!'); }
+          if (ent.weak && !swimWallHintShown && (m.position.x - px) < 24) { swimWallHintShown = true; showBanner('SOAP A HOLE THROUGH THE DISHES!'); }
           if (!ent.crossed && Math.abs(sdx) < 0.55 + ent.radius && Math.abs(sdy) < 0.55 + ent.radius) {
             ent.crossed = true; ent.active = false; scene.remove(m);
             takeDamage();
