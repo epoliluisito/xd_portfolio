@@ -177,6 +177,7 @@
      L4 (puzzle): up/down = left (aim),  soap = right (shoot) */
   #touch-controls .l2only,
   #touch-controls .l2jump,
+  #touch-controls .l3only,
   #touch-controls .l34soap { display: none; }               /* default view = Level 1 */
   body.surf #touch-controls .l1soap,  body.swim #touch-controls .l1soap,  body.puzzle #touch-controls .l1soap,
   body.surf #touch-controls .l1only,  body.swim #touch-controls .l1only,  body.puzzle #touch-controls .l1only,
@@ -184,7 +185,8 @@
   body.swim #touch-controls .jump,    body.puzzle #touch-controls .jump { display: none; }
   body.surf #touch-controls .l2only,  body.swim #touch-controls .l2only,  body.puzzle #touch-controls .l2only { display: flex; }
   body.surf #touch-controls .l2jump { display: flex; }
-  body.swim #touch-controls .l34soap, body.puzzle #touch-controls .l34soap { display: flex; }
+  body.surf #touch-controls .l34soap, body.swim #touch-controls .l34soap, body.puzzle #touch-controls .l34soap { display: flex; }
+  body.swim #touch-controls .l3only { display: flex; }
 
   .touchkey { display: none; }
   body.touch .kbd { display: none; }
@@ -320,6 +322,8 @@
   </div>
   <div class="pad pad-right">
     <div class="tbtn big l1only" data-act="slide"><span class="ico">⬇</span><span class="lbl">Slide</span></div>
+    <div class="tbtn big l3only" data-act="left"><span class="ico">◀</span><span class="lbl">Left</span></div>
+    <div class="tbtn big l3only" data-act="right"><span class="ico">▶</span><span class="lbl">Right</span></div>
     <div class="tbtn fire l34soap" data-act="fire"><span class="ico">🫧</span><span class="lbl">Soap</span></div>
     <div class="tbtn big jump l1jump" data-act="jump"><span class="ico">⬆</span><span class="lbl">Jump</span></div>
     <div class="tbtn big jump l2jump" data-act="jump"><span class="ico">⬆</span><span class="lbl">Jump</span></div>
@@ -390,7 +394,7 @@ const state = {
   steerUp: false, steerDown: false, targetZ: LANE_Z, targetY: 0,
   surfGoal: SURF_GOAL_BASE, surfCleaned: 0, surfSeen: 0, surfStartX: 0, warnedL2: false, crossedGate: false,
   surfPhase: 1, flipping: false, flipT: 0,   // L2 two-phase: 1 = yellow foam scrub, flip, 2 = green scrub
-  swimStartX: 0, paused: false,
+  swimStartX: 0, paused: false, camBehind: 0, steerLeft: false, steerRight: false,
   diveT: 0, diveGearLost: false, diveSplashed: false, divePitch: 0, shake: 0,   // 2→3 ramp/dive cinematic
   launched: false, launchT: 0, rampBaseX: 0, rampLipX: 0,   // ramp climb is driven by his real x, not a timer
   jumpT: 0, jumpSplashed: false, aimL: false, aimR: false                        // L3→L4 jump-out + puzzle aim
@@ -855,7 +859,8 @@ function buildGodRays() {
       }`
   });
   godRays = new THREE.Mesh(new THREE.PlaneGeometry(90, 22), mat);
-  godRays.position.set(0, -2.0, LANE_Z - 7);
+  godRays.rotation.y = -Math.PI / 2;                 // face the chase camera — L3 is played from behind
+  godRays.position.set(0, -2.0, LANE_Z);
   godRays.renderOrder = -8; godRays.frustumCulled = false;
   scene.add(godRays);
 }
@@ -916,7 +921,7 @@ function updateUnderwaterFX(dt) {
     if (waterFadeT <= 0) { scene.remove(waterSurface); waterSurface = null; }
   }
   if (waterMat) { waterMat.uniforms.uTime.value = uwT; waterMat.uniforms.uCamPos.value.copy(camera.position); }
-  if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 2; }
+  if (godRays && godRays.visible) { godRays.material.uniforms.uTime.value = uwT; godRays.position.x = cx + 26; }   // shafts hang ahead, down the lane
   if (caustics && caustics.visible) { caustics.material.uniforms.uTime.value = uwT; caustics.position.x = cx; }
   if (motes && motes.visible) {
     const p = motes.geometry.attributes.position;
@@ -1609,6 +1614,22 @@ function spawnSurfObstacle(x, z) {
     baseY: mesh.position.y, phase: Math.random() * 6.28, active: true, jumped: false, crossed: false
   });
 }
+// a grumpy slime for the surf stage: charges along the counter, lazily hunts his lane
+function spawnSurfSlime(x, z) {
+  if (!models.slime) return;
+  const cfg = typeCfg.slime;
+  const mesh = models.slime.clone();
+  mesh.scale.setScalar(cfg.scaleFactor);
+  mesh.rotation.y = Math.random() * 6.28;
+  mesh.position.set(x, cfg.groundOffset || 0, z);
+  scene.add(mesh);
+  const shadow = makeBlob(cfg.size * 0.5, 0x000000);
+  shadow.position.set(x, 0.02, z);
+  scene.add(shadow);
+  entities.push({ mesh, shadow, key: 'slime', type: 'surfenemy', cfg,
+    radius: cfg.size * 0.5, height: cfg.heightScaled || cfg.size,
+    baseY: mesh.position.y, phase: Math.random() * 6.28, active: true, jumped: false, crossed: false });
+}
 function spawnDirtChunk() {
   const p2 = state.surfPhase === 2;                       // phase 2 = denser, tougher grime
   const rows = (p2 ? 3 : 2) + (Math.random() * 2 | 0);
@@ -1617,57 +1638,83 @@ function spawnDirtChunk() {
     const size = 1.3 + Math.random() * 1.5;
     spawnDirt(spawnX + Math.random() * 3.0, z, size);
   }
-  // ease obstacles in only after the player has had room to learn the up/down steer
-  if ((spawnX - state.surfStartX) > 72 && Math.random() < (p2 ? 0.4 : 0.32)) {
+  // obstacles ease in after a short learning stretch — denser now, sometimes paired,
+  // and grumpy slimes patrol the counter (soap them, jump them, or take the hit)
+  const run = spawnX - state.surfStartX;
+  if (run > 56 && Math.random() < (p2 ? 0.55 : 0.45)) {
     spawnSurfObstacle(spawnX + 1.5, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+    if (Math.random() < 0.3) spawnSurfObstacle(spawnX + 3.4, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
+  }
+  if (run > 64 && Math.random() < (p2 ? 0.34 : 0.26)) {
+    spawnSurfSlime(spawnX + 4.0, SURF_Z_MIN + Math.random() * (SURF_Z_MAX - SURF_Z_MIN));
   }
   spawnX += (p2 ? 2.7 : 3.4) + Math.random() * 3.0 + state.speed * 0.14;
 }
 
 // --- Level 3 swim spawner: dodge debris at different depths, grab drops ---
-function spawnSwimObstacle(x, y) {
+function spawnSwimObstacle(x, y, z = LANE_Z) {
   const key = ['plant', 'salt', 'slime', 'oil'][Math.random() * 4 | 0];
   if (!models[key]) return;
   const cfg = typeCfg[key];
   const mesh = models[key].clone();
   mesh.scale.setScalar(cfg.scaleFactor);
   mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
-  mesh.position.set(x, y, LANE_Z);
+  mesh.position.set(x, y, z);
   scene.add(mesh);
   entities.push({ mesh, shadow: null, key, type: 'swimobs', cfg,
     radius: cfg.size * 0.5, baseY: y, phase: Math.random() * 6.28, active: true, crossed: false });
 }
-function spawnSwimCollectible(x, y, key) {
+function spawnSwimCollectible(x, y, key, z = LANE_Z) {
   if (!models[key]) return;
   const cfg = typeCfg[key];
   const mesh = models[key].clone();
   mesh.scale.setScalar(cfg.scaleFactor);
-  mesh.position.set(x, y, LANE_Z);
+  mesh.position.set(x, y, z);
   scene.add(mesh);
   entities.push({ mesh, shadow: null, key, type: cfg.type, cfg,
     radius: cfg.size * 0.5, baseY: y, phase: Math.random() * 6.28, active: true });
 }
 function spawnSwimChunk() {
+  // chase view: hazards and drop-lines are spread across z lanes as well as depth
   if ((spawnX - state.swimStartX) > 8) {
     if (Math.random() < 0.5) {
-      spawnSwimObstacle(spawnX + 1, SWIM_Y_MIN + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN));
+      spawnSwimObstacle(spawnX + 1, SWIM_Y_MIN + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN),
+                        LANE_Z + (Math.random() * 4.4 - 2.2));
     } else {
       const n = 3 + (Math.random() * 2 | 0);
       const y0 = SWIM_Y_MIN + Math.random() * (SWIM_Y_MAX - SWIM_Y_MIN - 1.5);
+      const z0 = LANE_Z + (Math.random() * 4 - 2);           // the whole arc rides one z lane
       for (let i = 0; i < n; i++)
         spawnSwimCollectible(spawnX + i * 0.95, y0 + Math.sin(i / (n - 1) * Math.PI) * 1.2,
-                             Math.random() < 0.15 ? 'star' : 'emerald');
+                             Math.random() < 0.15 ? 'star' : 'emerald', z0);
     }
   }
   spawnX += 3.2 + Math.random() * 3.2 + state.speed * 0.12;
 }
 
+// GUARANTEED variety: pure dice can starve a whole level of a pattern (a run with no
+// dishes to clean, say) — every player would get a different game. Each core pattern
+// is forced in if it hasn't shown up within its distance window.
+const patQuota = [
+  { fn: patCleanRow,   last: 0, gap: 65 },   // dirty dishes to soap
+  { fn: patDuckPin,    last: 0, gap: 75 },   // a pin to slide under
+  { fn: patStarHigh,   last: 0, gap: 95 },   // a star to chase
+  { fn: patEmeraldArc, last: 0, gap: 60 }    // the soap-ammo supply line
+];
 function spawnChunk() {
   if (state.mode === 'dive_seq') { spawnX = playerGroup.position.x + 200; return; }   // no spawns mid-cinematic
   if (state.mode === 'swim') { spawnSwimChunk(); return; }
   if (state.mode === 'surf') { spawnDirtChunk(); return; }
   // calm stretch approaching the Level 2 hand-off so the skate mount reads clearly
   if (spawnX > LEVEL_LEN - 60 && spawnX < LEVEL_LEN + 6) { spawnX += 6; return; }
+  for (const q of patQuota) {
+    if (spawnX - q.last > q.gap) {                  // overdue → force it in ahead of the dice
+      q.last = spawnX;
+      q.fn();
+      spawnX += state.speed * (0.5 + Math.random() * 0.65);   // same reaction-time gap as a rolled chunk
+      return;
+    }
+  }
   const lvl = state.level;
   const table = [
     [0.20, patEmeraldArc],
@@ -1682,7 +1729,7 @@ function spawnChunk() {
   let roll = Math.random() * total;
   for (const [w, fn] of table) {
     roll -= w;
-    if (roll <= 0) { fn(); break; }
+    if (roll <= 0) { const q = patQuota.find(p => p.fn === fn); if (q) q.last = spawnX; fn(); break; }
   }
   spawnX += state.speed * (0.5 + Math.random() * 0.65);   // reaction-time gap scales with speed
 }
@@ -2027,6 +2074,7 @@ function enterSurfMode(hop = true) {
   state.isSliding = false;
   state.surfGoal = SURF_GOAL_BASE * 2; state.surfCleaned = 0; state.surfSeen = 0;   // two phases (flip at the halfway mark)
   state.surfPhase = 1; state.flipping = false; state.flipT = 0;
+  state.ammo = Math.max(state.ammo, 10);              // soap in the tank for the grumpy slimes
   if (spongePivot) spongePivot.rotation.set(0, 0, 0);   // reset to green-up (yellow scrubbing) for phase 1
   state.excite = 1.0;
   sfx.level();
@@ -2065,7 +2113,7 @@ function enterSurfMode(hop = true) {
   }
   document.body.classList.add('surf');            // console → up/down + jump
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; ride over the grime to scrub it!';
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Move &nbsp;|&nbsp; <span class="key">Space</span> Jump &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; scrub the grime, blast the slimes!';
   showBanner(hop ? 'ON THE SKATE!' : 'SURF THE COUNTER!');
   // a splashy foam poof for the reveal
   const at = playerGroup.position.clone();
@@ -2116,12 +2164,18 @@ function buildRamp(x) {
   return m;
 }
 
-// tilt Nimble (and his board) to a pitch angle: +angle = nose up, applied about world +Z
+// tilt Nimble (and his board) to a pitch angle: +angle = nose up, applied about world +Z.
+// In the behind-the-back view (L3) his yaw eases to dead-ahead and he banks into strafes.
 const _qBase = new THREE.Quaternion(), _qPitch = new THREE.Quaternion(), _zAxis = new THREE.Vector3(0, 0, 1);
+const _qBank = new THREE.Quaternion(), _xAxis = new THREE.Vector3(1, 0, 0);
+let swimBank = 0;                                    // strafe lean, eased in the swim branch
 function setPlayerPitch(angle) {
-  _qBase.setFromEuler(new THREE.Euler(0, (Math.PI / 2) - angleCheat, 0));
+  const cb = state.camBehind || 0;
+  _qBase.setFromEuler(new THREE.Euler(0, (Math.PI / 2) - angleCheat * (1 - cb), 0));
   _qPitch.setFromAxisAngle(_zAxis, angle);
   playerGroup.quaternion.copy(_qPitch).multiply(_qBase);
+  const bank = swimBank * cb;
+  if (Math.abs(bank) > 0.001) { _qBank.setFromAxisAngle(_xAxis, bank); playerGroup.quaternion.premultiply(_qBank); }
 }
 
 // Level 2 → 3: reach a ramp, launch high, lose hat+board mid-air, assume dive, sink into water.
@@ -2231,7 +2285,7 @@ function applyUnderwater() {
   document.body.classList.remove('surf');
   document.body.classList.add('swim');
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Swim &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Brake / Boost &nbsp;|&nbsp; dodge or blast the debris, grab the drops!';
+  if (help) help.innerHTML = '<span class="key">&uarr;&darr;</span> Depth &nbsp;|&nbsp; <span class="key">&larr; &rarr;</span> Steer &nbsp;|&nbsp; <span class="key">F</span> Soap &nbsp;|&nbsp; dodge or blast the debris, grab the drops!';
 }
 
 // settle into Level 3 swim gameplay
@@ -2242,6 +2296,7 @@ function finishDiveIntoSwim() {
   state.ammo = Math.max(state.ammo, 12);         // some soap to start Level 3 with
   // keep his current (nose-down) plunge pitch; the swim glide eases it up into the swim pose — no instant flip
   state.targetY = SWIM_MID;
+  state.targetZ = LANE_Z; swimBank = 0;          // chase-view strafe starts on the centre lane
   // no y-snap — he keeps his current plunge depth and the swim glide (below) eases him into the lane, so there's no second "dive" beat
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
   if (waterSurface) waterFadeT = 1.3;   // the surface line dissolves overhead instead of vanishing the frame he settles
@@ -2254,7 +2309,7 @@ function finishDiveIntoSwim() {
   spawnX = playerGroup.position.x + 38;                      // short calm intro
   playAnim('swim', 0.3);
   showBanner('LEVEL 3 &middot; SWIM!');
-  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; SWIM UP &amp; DOWN'); }, 2000);
+  setTimeout(() => { if (state.mode === 'swim') showBanner('&uarr;&darr; DEPTH &middot; &larr;&rarr; STEER'); }, 2000);
   updateHUD();
 }
 
@@ -2270,7 +2325,7 @@ function startJumpOut() {
   showBanner('OUT OF THE WATER!');
 }
 function scriptJumpOut(dt) {
-  playerGroup.position.z = LANE_Z;
+  playerGroup.position.z += (LANE_Z - playerGroup.position.z) * Math.min(1, 5 * dt);
   state.jumpT += dt;
   const jt = state.jumpT, V0 = 16, G = 6.2, vy = V0 - G * jt;
   playerGroup.position.y = SWIM_MID + V0 * jt - 0.5 * G * jt * jt;
@@ -2317,7 +2372,7 @@ function enterPuzzle() {
   flash(0.75); state.shake = 0;
   PZ.boardX = playerGroup.position.x;
   PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0;
-  scene.fog = null; fogEase = null; finishBgFade();
+  scene.fog = null; fogEase = null; finishBgFade(); state.camBehind = 0; swimBank = 0;
   if (floor) floor.visible = false;
   const tint = document.getElementById('water-tint'); if (tint) tint.style.display = 'none';
   if (waterSurface) { scene.remove(waterSurface); waterSurface = null; }
@@ -2494,7 +2549,7 @@ function updateHUD() {
   document.getElementById('level').innerText = state.level;
   document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m';
   const surf = state.mode === 'surf';
-  const showAmmo = state.mode === 'run' || state.mode === 'swim';   // soap used in L1 & L3 only
+  const showAmmo = state.mode === 'run' || state.mode === 'surf' || state.mode === 'swim';   // soap: L1 dishes, L2 slimes, L3 debris
   document.getElementById('ammo-row').style.display = showAmmo ? '' : 'none';
   document.getElementById('clean-row').style.display = surf ? '' : 'none';
   document.getElementById('clean-meter').style.display = surf ? '' : 'none';
@@ -2522,7 +2577,7 @@ function fireSoap() {
   state.ammo--; updateHUD();
   sfx.fire();
   const soap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), soapMat);
-  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.15, LANE_Z);
+  soap.position.set(playerGroup.position.x + 0.6, playerGroup.position.y + 1.15, playerGroup.position.z);
   soap.castShadow = true;
   scene.add(soap);
   soaps.push({ mesh: soap, life: 1.6 });
@@ -2607,7 +2662,7 @@ function gameLoop() {
 
     // --- always moving forward; boost & brake only bend the pace ---
     const diff = 1 + Math.min(1.35, px0 / 450);
-    const modeMul = state.mode === 'swim' ? 0.55 : state.mode === 'surf' ? 0.82 : state.mode === 'dive_seq' ? THREE.MathUtils.lerp(0.82, 0.5, Math.min(1, state.diveT / 0.8)) : 1.0;   // ease down from surf pace, don't brake-snap into the ramp autopilot
+    const modeMul = state.mode === 'swim' ? 0.55 : state.mode === 'surf' ? 0.98 : state.mode === 'dive_seq' ? THREE.MathUtils.lerp(0.98, 0.5, Math.min(1, state.diveT / 0.8)) : 1.0;   // surf pace +20%; ease down into the ramp autopilot, don't brake-snap
     state.speed = BASE_SPEED * diff * modeMul * (state.boost ? 1.5 : state.brake ? 0.6 : 1.0);
     playerGroup.position.x += state.speed * dt;
 
@@ -2633,11 +2688,14 @@ function gameLoop() {
         spongeParts.forEach(m => { const fs = m.userData.fullScale; if (fs) m.scale.set(fs.x * s, fs.y * s, fs.z * s); });
       }
     } else if (state.mode === 'swim') {
-      // swim up/down (y is the swim axis); a few bubbles trail off him
+      // behind-the-back swim: ↑↓ = depth (y), ←→ = strafe across the sink (z)
       const dir = (state.steerUp ? 1 : 0) - (state.steerDown ? 1 : 0);
       state.targetY = THREE.MathUtils.clamp(state.targetY + dir * SWIM_STEER * dt, SWIM_Y_MIN, SWIM_Y_MAX);
       playerGroup.position.y += (state.targetY - playerGroup.position.y) * Math.min(1, 8 * dt);
-      playerGroup.position.z = LANE_Z;
+      const zdir = (state.steerLeft ? 1 : 0) - (state.steerRight ? 1 : 0);   // screen-left = +z in the chase view
+      state.targetZ = THREE.MathUtils.clamp(state.targetZ + zdir * SWIM_STEER * dt, SURF_Z_MIN, SURF_Z_MAX);
+      playerGroup.position.z += (state.targetZ - playerGroup.position.z) * Math.min(1, 8 * dt);
+      swimBank += (zdir * 0.38 - swimBank) * Math.min(1, 6 * dt);            // lean into the strafe
       const tiltTarget = SWIM_PITCH + dir * 0.22;         // nose-up, leans with up/down
       state.divePitch += (tiltTarget - state.divePitch) * Math.min(1, 6 * dt);
       setPlayerPitch(state.divePitch);
@@ -2714,12 +2772,18 @@ function gameLoop() {
       // --- Level 3 underwater: dodge debris, swim into drops (x AND y proximity) ---
       if (state.mode === 'swim') {
         m.rotation.y += dt * 0.7;
-        const sdx = px - m.position.x, sdy = py - m.position.y;
+        const pzNow = playerGroup.position.z;
+        const sdx = px - m.position.x, sdy = py - m.position.y, sdz = pzNow - m.position.z;
         if (ent.type === 'ammo' || ent.type === 'score') {
-          m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.12;
-          if (Math.abs(sdx) < 0.7 + ent.radius && Math.abs(sdy) < 0.8 + ent.radius) collect(ent);
+          if (!ent.magnet) m.position.y = ent.baseY + Math.sin(t * 2 + ent.phase) * 0.12;
+          if (ent.magnet || (Math.abs(sdx) < 2.2 && Math.abs(sdy) < 1.6 && Math.abs(sdz) < 1.6)) {
+            ent.magnet = true;                       // 3D lanes are harder to thread — the magnet closes the last stretch
+            const k = Math.min(1, Math.max(10, state.speed * 2.2) * dt);
+            m.position.x += sdx * k; m.position.y += sdy * k; m.position.z += sdz * k;
+          }
+          if (Math.abs(sdx) < 0.7 + ent.radius && Math.abs(sdy) < 0.8 + ent.radius && Math.abs(sdz) < 0.9 + ent.radius) collect(ent);
         } else if (ent.type === 'swimobs') {
-          if (!ent.crossed && Math.abs(sdx) < 0.55 + ent.radius && Math.abs(sdy) < 0.55 + ent.radius) {
+          if (!ent.crossed && Math.abs(sdx) < 0.55 + ent.radius && Math.abs(sdy) < 0.55 + ent.radius && Math.abs(sdz) < 0.6 + ent.radius) {
             ent.crossed = true; ent.active = false; scene.remove(m);
             takeDamage();
           }
@@ -2760,6 +2824,27 @@ function gameLoop() {
           }
         }
         if (ent.shadow) ent.shadow.position.x = m.position.x;
+        continue;
+      }
+
+      // --- Level 2 grumpy slime: charges him along the counter — soap it, jump it, or hurt ---
+      if (ent.type === 'surfenemy') {
+        m.position.x -= 2.4 * dt;                                            // charges toward him
+        m.position.z += (playerGroup.position.z - m.position.z) * Math.min(1, 0.7 * dt);   // lazily hunts his lane
+        m.position.y = ent.baseY + Math.abs(Math.sin(t * 5 + ent.phase)) * 0.25;
+        m.rotation.y += dt * 2.0;
+        if (ent.shadow) { ent.shadow.position.x = m.position.x; ent.shadow.position.z = m.position.z; }
+        const edx = px - m.position.x, edz = playerGroup.position.z - m.position.z;
+        if (Math.abs(edx) < 0.6 + ent.radius && Math.abs(edz) < 0.6 + ent.radius) {
+          if (py > ent.height - 0.1) {                                       // cleared it with a hop
+            if (!ent.jumped) { ent.jumped = true; state.score += 20; updateHUD();
+              popup(m.position.clone().add(new THREE.Vector3(0, ent.height + 0.4, 0)), '+20', '#bfe8ff'); }
+          } else if (!ent.crossed) {
+            ent.crossed = true; ent.active = false;
+            scene.remove(m); if (ent.shadow) scene.remove(ent.shadow);
+            takeDamage();
+          }
+        }
         continue;
       }
 
@@ -2902,7 +2987,15 @@ function gameLoop() {
             burst(s.mesh.position, 0x7fe3a0, 10, 2.6, 2.6, 0.22);
             popup(s.mesh.position, '+50', '#39d24e');
             hit = true; break;
-          } else if (ent.type === 'swimobs' && Math.abs(s.mesh.position.y - ent.mesh.position.y) < ent.radius + 0.5) {
+          } else if (ent.type === 'surfenemy' && Math.abs(s.mesh.position.z - ent.mesh.position.z) < ent.radius + 0.7) {
+            ent.active = false; scene.remove(ent.mesh); if (ent.shadow) scene.remove(ent.shadow);
+            state.score += 50; updateHUD();
+            sfx.clean();
+            burst(s.mesh.position, 0x7fdd5a, 12, 2.8, 2.6, 0.24);
+            popup(s.mesh.position, 'SPLAT! +50', '#7fdd5a');
+            hit = true; break;
+          } else if (ent.type === 'swimobs' && Math.abs(s.mesh.position.y - ent.mesh.position.y) < ent.radius + 0.5
+                     && Math.abs(s.mesh.position.z - ent.mesh.position.z) < ent.radius + 0.7) {
             ent.active = false; scene.remove(ent.mesh);       // soap blasts underwater debris
             state.score += 50; updateHUD();
             sfx.clean();
@@ -2940,23 +3033,33 @@ function gameLoop() {
   const pz = playerGroup.position.z, pyNow = playerGroup.position.y;
   playerBlob.position.set(playerGroup.position.x, 0.02, surf ? pz : LANE_Z);
   playerBlob.visible = state.onGround && !swim && !diveSeq && !jumpout && !puzzle;
-  const camXTarget = puzzle ? PZ.boardX : playerGroup.position.x + 4.0;
-  camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, 4 * dt);
+  // behind-the-back blend: 0 = classic side view, 1 = chase cam. Kicks in the moment he
+  // pierces the surface, so the camera ROTATES around him during the plunge into Level 3.
+  const behindT = (swim || (diveSeq && state.diveSplashed)) ? 1 : 0;
+  state.camBehind += (behindT - state.camBehind) * Math.min(1, 2.0 * dt);
+  if (state.camBehind < 0.003) state.camBehind = 0;
+  const cb = state.camBehind;
+  const camXTarget = THREE.MathUtils.lerp(puzzle ? PZ.boardX : playerGroup.position.x + 4.0, playerGroup.position.x - 8.5, cb);
+  camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, (4 + cb * 2) * dt);
   // seamless surf→ramp handoff: over the first 0.8s of the dive, ease the camera framing (and speed/lane, below)
   // from the surf values to the dive values instead of snapping the instant cleaning finishes.
   const diveEase = diveSeq ? Math.min(1, state.diveT / 0.8) : 1;
-  const camYTarget = puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22;
+  const camYTarget = THREE.MathUtils.lerp(
+    puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22,
+    pyNow + 2.3, cb);
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, diveSeq ? 9 * dt : followY ? 5 * dt : 3 * dt);   // plunge tightly with him through the surface — no lag/freeze, one continuous descent underwater
-  const camZTarget = puzzle ? (LANE_Z + 24) : diveSeq ? THREE.MathUtils.lerp(17, 23, diveEase) : 17;   // ease the pull-back in, don't jump it
-  camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, 2.5 * dt);
+  const camZTarget = THREE.MathUtils.lerp(
+    puzzle ? (LANE_Z + 24) : diveSeq ? THREE.MathUtils.lerp(17, 23, diveEase) : 17,
+    pz, cb);   // cb→1: tuck the camera directly behind his lane
+  camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, (2.5 + cb) * dt);
   if (state.shake > 0.001) {                                   // impact jolt
     camera.position.x += (Math.random() - 0.5) * state.shake;
     camera.position.y += (Math.random() - 0.5) * state.shake;
     state.shake = Math.max(0, state.shake - 2.5 * dt);
   }
-  const lookX = puzzle ? PZ.boardX : camera.position.x;
-  const lookY = puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(1.0, pyNow, diveEase) : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12;
-  const lookZ = surf ? (pz - LANE_Z) * 0.4 : diveSeq ? (pz - LANE_Z) * 0.4 * (1 - diveEase) : 0;   // ease the surf steer-look back to centre
+  const lookX = THREE.MathUtils.lerp(puzzle ? PZ.boardX : camera.position.x, playerGroup.position.x + 12, cb);
+  const lookY = THREE.MathUtils.lerp(puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(1.0, pyNow, diveEase) : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12, pyNow + 0.6, cb);
+  const lookZ = THREE.MathUtils.lerp(surf ? (pz - LANE_Z) * 0.4 : diveSeq ? (pz - LANE_Z) * 0.4 * (1 - diveEase) : 0, pz, cb);   // behind view looks down his lane
   camera.lookAt(lookX, lookY, lookZ);
   camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
   if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
@@ -3051,13 +3154,18 @@ window.addEventListener('keydown', e => {
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyF') pzShoot();
     return;
   }
-  if (e.code === 'ArrowRight') state.boost = true;
-  if (e.code === 'ArrowLeft')  state.brake = true;
+  if (state.mode === 'swim') {                            // L3 (chase view): ←→ strafes across the sink
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') state.steerRight = true;
+    if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.steerLeft = true;
+  } else {
+    if (e.code === 'ArrowRight') state.boost = true;
+    if (e.code === 'ArrowLeft')  state.brake = true;
+  }
   if (state.mode === 'surf' || state.mode === 'swim') {   // L2/L3: up/down steer
     if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = true;
     if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = true;
     if (e.code === 'Space' && state.mode === 'surf') doJump();              // L2 jump
-    if (e.code === 'KeyF' && !e.repeat && state.mode === 'swim') fireSoap();  // L3 soap
+    if (e.code === 'KeyF' && !e.repeat) fireSoap();                          // soap: L2 slimes & L3 debris
   } else {                                         // L1: jump / slide / soap
     if (e.code === 'Space' || e.code === 'ArrowUp') doJump();
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'ArrowDown') startSlide();
@@ -3067,6 +3175,8 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
   if (e.code === 'ArrowRight') state.boost = false;
   if (e.code === 'ArrowLeft')  state.brake = false;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') state.steerRight = false;
+  if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.steerLeft = false;
   if (e.code === 'ArrowUp' || e.code === 'KeyW')   state.steerUp = false;
   if (e.code === 'ArrowDown' || e.code === 'KeyS') state.steerDown = false;
   if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.aimL = false;
@@ -3115,11 +3225,13 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
       return;
     }
     switch (act) {
-      case 'jump':  doJump();               break;
-      case 'slide': startSlide();           break;   // L1
-      case 'fire':  fireSoap();             break;   // L1 / L3
-      case 'up':    state.steerUp = true;   break;
-      case 'down':  state.steerDown = true; break;
+      case 'jump':  doJump();                break;
+      case 'slide': startSlide();            break;   // L1
+      case 'fire':  fireSoap();              break;   // L1 / L2 / L3
+      case 'up':    state.steerUp = true;    break;
+      case 'down':  state.steerDown = true;  break;
+      case 'left':  state.steerLeft = true;  break;   // L3 strafe
+      case 'right': state.steerRight = true; break;
     }
   };
   const release = (e) => {
@@ -3127,6 +3239,8 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
     btn.classList.remove('active');
     if (act === 'up')   { state.steerUp = false; state.aimL = false; }
     if (act === 'down') { state.steerDown = false; state.aimR = false; }
+    if (act === 'left')  state.steerLeft = false;
+    if (act === 'right') state.steerRight = false;
   };
   btn.addEventListener('pointerdown', press);
   btn.addEventListener('pointerup', release);
@@ -3142,7 +3256,7 @@ function checkOrientation() {
   if (el) el.style.display = show ? 'flex' : 'none';
   state.paused = show;
   // dropped-key safety when we pause/rotate
-  if (show) { state.steerUp = state.steerDown = state.boost = state.brake = false; }
+  if (show) { state.steerUp = state.steerDown = state.boost = state.brake = state.steerLeft = state.steerRight = false; }
 }
 window.addEventListener('resize', checkOrientation);
 window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 250));
