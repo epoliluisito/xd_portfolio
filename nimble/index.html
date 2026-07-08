@@ -770,11 +770,12 @@ function buildWaterSurface() {
       }
       void main(){
         vec3 pos = position;
-        float h = wv(pos.xy);
+        vec2 wp = (modelMatrix * vec4(position,1.0)).xz;   // WORLD-space wave phase: the surface now follows the camera / re-anchors, and the ripple field must stay pinned to the world (no pattern-slide when the plane moves)
+        float h = wv(wp);
         pos.z += h; vCrest = h;
         float e = 0.35;
-        float hx = wv(pos.xy+vec2(e,0.0)) - wv(pos.xy-vec2(e,0.0));
-        float hy = wv(pos.xy+vec2(0.0,e)) - wv(pos.xy-vec2(0.0,e));
+        float hx = wv(wp+vec2(e,0.0)) - wv(wp-vec2(e,0.0));
+        float hy = -(wv(wp+vec2(0.0,e)) - wv(wp-vec2(0.0,e)));   // local y runs opposite world z on this -90° plane
         vec3 n = normalize(vec3(-hx, -hy, 2.0*e));
         vWorld = (modelMatrix * vec4(pos,1.0)).xyz;
         vNrm = normalize((modelMatrix * vec4(n,0.0)).xyz);
@@ -2531,6 +2532,7 @@ function finishDiveIntoSwim() {
   state.targetY = SWIM_MID;
   state.targetZ = LANE_Z; swimBank = 0;          // chase-view strafe starts on the centre lane
   wallDyns.length = 0; swimBeat = 0;             // fresh formation rhythm
+  state.swimStartX = playerGroup.position.x;     // MUST be set before sinkEndX — reading the stale value placed the whole basin hundreds of units behind him (L3 swam in a void, no end rim to jump)
   state.sinkEndX = state.swimStartX + SWIM_LEN + 16;   // the basin ENDS here — you'll see it coming
   if (sinkEnv && sinkEnv.userData && sinkEnv.userData.end) {
     sinkEnv.userData.side.position.x = state.sinkEndX - 310;   // side wall & floor terminate AT the end rim
@@ -2539,13 +2541,13 @@ function finishDiveIntoSwim() {
   }
   // no y-snap — he keeps his current plunge depth and the swim glide (below) eases him into the lane, so there's no second "dive" beat
   if (rampMesh) { scene.remove(rampMesh); rampMesh = null; }
-  if (waterSurface) waterFadeT = 1.3;   // the surface line dissolves overhead instead of vanishing the frame he settles
+  // the surface STAYS alive overhead for the whole swim — he's inside a real sink, and the
+  // jump-out later bursts back through this same surface (no dissolve-then-rebuild seam)
   for (let i = entities.length - 1; i >= 0; i--) {
     scene.remove(entities[i].mesh);
     if (entities[i].shadow) scene.remove(entities[i].shadow);
     entities.splice(i, 1);
   }
-  state.swimStartX = playerGroup.position.x;
   spawnX = playerGroup.position.x + 26;                      // brief calm intro
   playAnim('swim', 0.3);
   showBanner('LEVEL 3 &middot; SWIM!');
@@ -2556,9 +2558,26 @@ function finishDiveIntoSwim() {
 // ============================================================
 // LEVEL 3 → 4: jump out of the water, then a "Bubble Pop" puzzle
 // ============================================================
+// mirror of applyUnderwater: the lens climbs back OUT of the water — a hard cut to the
+// kitchen air, fired only when the CAMERA crosses the waterline (never while it's still under)
+function applyAboveWater() {
+  scene.fog = null; fogEase = null;
+  if (bgMesh) {                                    // instant swap, same rule as the dive-in: a lens crossing a waterline cuts
+    finishBgFade();
+    if (bgTexL1) bgMesh.material.map = bgTexL1;
+    bgMesh.material.color.setRGB(0.82, 0.86, 0.9);
+    fitBackdrop();
+  }
+  showUnderwaterFX(false);
+  bubbles.forEach(s => s.visible = false);
+  // the sink basin STAYS visible — it's the real place he just left, its end rim sits right
+  // behind him on the counter (it only strikes at startAwait, well out of frame)
+}
 function startJumpOut() {
   state.mode = 'jumpout';
   state.jumpT = 0; state.jumpSplashed = false;
+  state.jumpY0 = playerGroup.position.y;                          // launch from wherever he's ACTUALLY swimming — no depth snap
+  state.jumpV0 = Math.sqrt(2 * 9.0 * (3.5 - state.jumpY0));       // same ~3.5u apex whatever the launch depth (always clears the rim)
   for (let i = entities.length - 1; i >= 0; i--) { scene.remove(entities[i].mesh); if (entities[i].shadow) scene.remove(entities[i].shadow); entities.splice(i, 1); }
   document.body.classList.remove('swim');
   playAnim('jump', 0.2);
@@ -2568,22 +2587,21 @@ function scriptJumpOut(dt) {
   playerGroup.position.z += (LANE_Z - playerGroup.position.z) * Math.min(1, 5 * dt);
   state.jumpT += dt;
   playerGroup.position.x += 10 * dt;               // he arcs FORWARD — over the sink rim, onto the counter
-  const jt = state.jumpT, V0 = 11.0, G = 9.0, vy = V0 - G * jt;
-  playerGroup.position.y = SWIM_MID + V0 * jt - 0.5 * G * jt * jt;
+  const jt = state.jumpT, V0 = state.jumpV0 || 11.0, G = 9.0, vy = V0 - G * jt;
+  playerGroup.position.y = state.jumpY0 + V0 * jt - 0.5 * G * jt * jt;
   if (!state.jumpSplashed && playerGroup.position.y >= 0 && vy > 0) {   // burst up through the surface
     state.jumpSplashed = true;
-    buildWaterSurface(); flash(0.3); state.shake = 0.4;
+    state.shake = 0.45;
     const at = playerGroup.position.clone(); at.y = 0;
-    burst(at, 0xffffff, 40, 9, 12, 0.3, 8.0);
+    burst(at, 0xffffff, 40, 9, 12, 0.3, 8.0);        // tall spray — the same splash language as the dive-in
+    burst(at, 0xffffff, 26, 13, 2.0, 0.30, 3.0);     // wide outward sheet
+    spawnSplashCrown(at);
     spawnSplashRing(at);
+    setTimeout(() => spawnSplashRing(at), 90);       // second ripple
     sfx.hit();
-    // back to the kitchen while he's airborne: fog lifts, the counter fades back in
-    waterFadeT = 1.0;                                // the surface dissolves under him
-    scene.fog = null; fogEase = null;
-    startBgFade(bgTexL1, new THREE.Color(0.82, 0.86, 0.9), 1.0);
-    showUnderwaterFX(false);
-    if (sinkEnv) sinkEnv.visible = false;
-    bubbles.forEach(s => s.visible = false);
+    // NOTE: the world does NOT flip here. Fog / backdrop / FX swap only when the CAMERA
+    // itself climbs above the waterline (the surface trigger in the loop) — the exact
+    // mirror of the dive-in cut. Until then the lens is still underwater and stays there.
     if (floor) {                                     // the WOOD counter he's about to land on (couter_top_texture)
       floor.visible = true;
       if (counterTex) {
@@ -2700,6 +2718,7 @@ function buildAimArrow() {
 }
 function startAwait() {                            // the run-out ends HERE: he stops in front of the teca
   state.mode = 'await';
+  state.level = 4;                                 // the HUD flips with the place, not a beat later
   state.shake = 0;
   scene.fog = null; fogEase = null; finishBgFade(); state.camBehind = 0; swimBank = 0;
   if (floor) floor.visible = true;
@@ -2781,14 +2800,21 @@ function pzShoot() {
   sfx.fire();
 }
 function pzSnap(pos) {
-  let r = Math.max(0, Math.round((PZ.ceilY - pos.y) / PZ.bd));
-  let c = Math.max(0, Math.min(PZ.cols - 1, Math.round((pos.x - PZ.boardX) / PZ.bd + (PZ.cols - 1) / 2)));
-  if (PZ.grid.has(pzKey(r, c))) {
-    const cands = [[r + 1, c], [r, c - 1], [r, c + 1], [r - 1, c]]
-      .filter(([rr, cc]) => cc >= 0 && cc < PZ.cols && rr >= 0 && !PZ.grid.has(pzKey(rr, cc)));
-    if (cands.length) return cands[0];
-  }
-  return [r, c];
+  // NEVER overwrite an occupied cell: an overwritten bubble left the grid map but its mesh
+  // stayed in the scene — a ghost you could never pop, and a falsely shrinking grid.size
+  // that triggered "YOU WIN" with bubbles still on screen. Snap to the nearest FREE cell.
+  const R_MAX = Math.max(PZ.rows0, Math.floor((PZ.ceilY - 1.4) / PZ.bd));   // keep snaps clear of the launcher
+  const r = THREE.MathUtils.clamp(Math.round((PZ.ceilY - pos.y) / PZ.bd), 0, R_MAX);
+  const c = Math.max(0, Math.min(PZ.cols - 1, Math.round((pos.x - PZ.boardX) / PZ.bd + (PZ.cols - 1) / 2)));
+  if (!PZ.grid.has(pzKey(r, c))) return [r, c];
+  let best = null, bestD = Infinity;                 // occupied → closest free cell to the impact point
+  for (let rr = 0; rr <= R_MAX; rr++)
+    for (let cc = 0; cc < PZ.cols; cc++) {
+      if (PZ.grid.has(pzKey(rr, cc))) continue;
+      const d = pzPos(rr, cc).distanceToSquared(pos);
+      if (d < bestD) { bestD = d; best = [rr, cc]; }
+    }
+  return best || [r, c];
 }
 function pzPop(b) {                                         // matched → burst and vanish
   burst(b.mesh.position, BUBBLE_COLORS[PZ.types[b.ti]] || 0xffffff, 12, 2.8, 2.8, 0.22);
@@ -2867,10 +2893,7 @@ function pzUpdate(dt) {
       PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ti: f.ti, r, c, targetScale: f.mesh.scale.x });
       PZ.fly = null;
       if (pzMatch(r, c)) pzDropFloating();
-      if (PZ.grid.size <= 2) {                        // last stragglers pop on their own — no tedious mop-up
-        [...PZ.grid.values()].forEach(pzPop);
-        winGame(); return;
-      }
+      if (PZ.grid.size === 0) { winGame(); return; }  // the win means the board is TRULY clear — no early call while bubbles remain
       pzNewBubble();
     }
   }
@@ -3458,7 +3481,7 @@ function gameLoop() {
   // from the surf values to the dive values instead of snapping the instant cleaning finishes.
   const diveEase = diveSeq ? Math.min(1, state.diveT / 0.8) : 1;
   const camYTarget = THREE.MathUtils.lerp(
-    puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22,
+    puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : swim ? Math.min(pyNow + 1.3, -0.55) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22,   // swim: the lens never pokes above the live surface when he skims shallow
     Math.min(pyNow + 4.1, -0.5), cb);   // high enough to put him in the lower third; clamped below the waterline
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, diveSeq ? 9 * dt : followY ? 5 * dt : 3 * dt);   // plunge tightly with him through the surface — no lag/freeze, one continuous descent underwater
   const camZTarget = THREE.MathUtils.lerp(
@@ -3475,10 +3498,16 @@ function gameLoop() {
   const lookZ = THREE.MathUtils.lerp(surf ? (pz - LANE_Z) * 0.4 : diveSeq ? (pz - LANE_Z) * 0.4 * (1 - diveEase) : 0, LANE_Z + (pz - LANE_Z) * 0.75, cb);   // looks down the lane, leading his strafe a touch
   camera.lookAt(lookX, lookY, lookZ);
   camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
-  if (state.diveSplashed && !state.uwApplied && camera.position.y < 0.05) {
+  if ((state.mode === 'dive_seq' || state.mode === 'swim') && state.diveSplashed && !state.uwApplied && camera.position.y < 0.05) {
     state.uwApplied = true;                            // the lens just went under — hard cut to underwater, like a real camera
     applyUnderwater();
     splashVeil();                                      // droplets streak the lens as it crosses
+  }
+  if ((state.mode === 'jumpout' || state.mode === 'runout') && state.jumpSplashed && state.uwApplied && camera.position.y > 0.05) {
+    state.uwApplied = false;                           // …and the SAME cut on the way back out — L3→4 mirrors L2→3 exactly
+    applyAboveWater();
+    splashVeil();                                      // droplets streak off the lens as it breaks the surface
+    flash(0.28, '#eaffff');
   }
   if (bgMesh && bgMesh.material.map) bgMesh.material.map.offset.x = camera.position.x * 0.0016;   // slow parallax drift
   dirLight.position.x = playerGroup.position.x + 7;
@@ -3501,9 +3530,14 @@ function gameLoop() {
     }
   }
   if (waterSurface) {
-    waterSurface.position.x = (state.mode === 'dive_seq' && !state.diveSplashed)
-      ? state.rampLipX + 200.5                                     // pre-splash: water only BEYOND the counter edge
-      : camera.position.x;                                         // after: the rippling surface follows overhead
+    if (state.mode === 'dive_seq' && !state.diveSplashed) {
+      waterSurface.position.x = state.rampLipX + 200.5;            // pre-splash: water only BEYOND the counter edge
+    } else {
+      let wx = camera.position.x;                                  // after: the rippling surface follows overhead…
+      if (state.rampLipX) wx = Math.max(wx, state.rampLipX + 199.5);   // …never reaching back over the L2 counter (no snap at the splash, no z-fight)
+      if (state.sinkEndX) wx = Math.min(wx, state.sinkEndX - 199.5);   // …and never past the end rim onto the L4 counter — the water stays IN the sink
+      waterSurface.position.x = wx;
+    }
   }
   if (splashRing && splashRingLife > 0) {                          // expanding foam ring
     splashRingLife -= dt;
