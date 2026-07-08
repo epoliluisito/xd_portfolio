@@ -939,6 +939,10 @@ function updateUnderwaterFX(dt) {
     }
     p.needsUpdate = true;
   }
+  if (sinkEnv && sinkEnv.visible && sinkEnv.userData.streamFoam) {   // the faucet's landing foam churns gently
+    const pf = 1 + Math.sin(uwT * 7) * 0.12;
+    sinkEnv.userData.streamFoam.scale.set(1.6 * pf, 0.9 * (2 - pf), 1);
+  }
   if (splashCrown && splashCrownLife > 0) {
     splashCrownLife -= dt;
     const f = 1 - splashCrownLife / 0.55;
@@ -2390,7 +2394,7 @@ function buildSinkEnv(x0, x1) {
   } else tex = makeSinkTexture();                    // fallback if the texture never loaded
   const LEN = x1 - x0, cx = (x0 + x1) / 2;
   tex.repeat.set(Math.max(8, Math.round(LEN / 13.5)), 2);
-  const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x86b4cc, metalness: 0.55, roughness: 0.5 });
+  const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x86b4cc, metalness: 0.6, roughness: 0.42, envMapIntensity: 1.25 });
   const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
   // BACK wall — tall, rising ABOVE the waterline (top at +1.1), so the basin reads as a
   // real steel container from the counter view too, not just from underwater
@@ -2411,6 +2415,18 @@ function buildSinkEnv(x0, x1) {
   const end = new THREE.Mesh(new THREE.BoxGeometry(0.8, 11.2, zR - zL + 0.6), wallMat);
   end.position.set(x1, -4.35, (zL + zR) / 2);
   sinkEnv.add(end);
+  // POLISHED ROLLED EDGES — a bright chrome lip caps every rim. This one detail is what
+  // makes the basin read as a finished steel sink instead of raw boxes.
+  const lipMat = new THREE.MeshStandardMaterial({ color: 0xdfe9f2, metalness: 0.95, roughness: 0.22, envMapIntensity: 1.4 });
+  const backLip = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.2, 0.9), lipMat);
+  backLip.position.set(cx, 1.18, zL);
+  sinkEnv.add(backLip);
+  const nearLip = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.2, 0.9), lipMat);
+  nearLip.position.set(cx, 0.6, zR);
+  sinkEnv.add(nearLip);
+  const endLip = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.2, zR - zL + 0.9), lipMat);
+  endLip.position.set(x1, 1.33, (zL + zR) / 2);
+  sinkEnv.add(endLip);
   // FAUCET planted on the back wall near the exit end — the one prop that says "sink" at a
   // glance, from the ramp approach AND framing the jump-out. Simple chrome primitives.
   const chrome = new THREE.MeshStandardMaterial({ color: 0xe9eff5, metalness: 0.95, roughness: 0.18 });
@@ -2423,6 +2439,14 @@ function buildSinkEnv(x0, x1) {
   fNeck.position.set(-1.35, 4.7, 0);                 // gooseneck: half-torus capping the column
   const fSpout = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.9, 12), chrome);
   fSpout.position.set(-2.7, 4.35, 0);
+  for (const s of [-1, 1]) {                         // hot / cold handles flanking the column
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 10), chrome);
+    stem.position.set(s * 1.05, 1.55, 0);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10),
+      new THREE.MeshStandardMaterial({ color: s < 0 ? 0xd94f3d : 0x3d7dd9, metalness: 0.55, roughness: 0.3 }));
+    knob.position.set(s * 1.05, 1.85, 0);
+    fc.add(stem); fc.add(knob);
+  }
   fc.add(fBase); fc.add(fCol); fc.add(fNeck); fc.add(fSpout);
   fc.position.set(x1 - 24, 0, -2.35);
   fc.traverse(o => { if (o.isMesh) o.castShadow = true; });
@@ -2433,7 +2457,12 @@ function buildSinkEnv(x0, x1) {
     new THREE.MeshBasicMaterial({ color: 0xcdeeff, transparent: true, opacity: 0.4, depthWrite: false }));
   stream.position.set(x1 - 24 - 2.7, 1.95, -2.35);
   sinkEnv.add(stream);
-  sinkEnv.userData = { side: w, base: f, end, rim, faucet: fc };
+  // a churning foam patch where the stream lands (gently pulsed in updateUnderwaterFX)
+  const streamFoam = new THREE.Sprite(new THREE.SpriteMaterial({ map: blobTex, transparent: true, opacity: 0.55, color: 0xffffff, depthWrite: false }));
+  streamFoam.scale.set(1.6, 0.9, 1);
+  streamFoam.position.set(x1 - 24 - 2.7, 0.14, -2.35);
+  sinkEnv.add(streamFoam);
+  sinkEnv.userData = { side: w, base: f, end, rim, faucet: fc, streamFoam };
   sinkEnv.visible = false;
   scene.add(sinkEnv);
 }
@@ -2653,16 +2682,22 @@ function scriptJumpOut(dt) {
   const targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, 6), -1.05, 1.2);
   state.divePitch += (targetPitch - state.divePitch) * Math.min(1, 8 * dt);
   setPlayerPitch(state.divePitch);
-  // touchdown ON the counter → run to the puzzle
+  // touchdown ON the counter → one continuous autopilot dash to the teca (no snaps anywhere:
+  // the pitch relaxes while he runs, the camera cranes over, and he decelerates to a stop)
   if (state.jumpSplashed && vy < 0 && playerGroup.position.y <= 0) {
     playerGroup.position.y = 0;
     state.mode = 'runout';
-    state.runOutX = playerGroup.position.x + 13;     // a short dash before the puzzle materialises
     state.onGround = true; velocity.y = 0;
-    state.divePitch = 0; setPlayerPitch(0);
     squash = 0.82; sfx.land();
     burst(playerGroup.position.clone().add(new THREE.Vector3(0, 0.15, 0)), 0xffffff, 12, 2.5, 2.0, 0.2, 3.0);
     playAnim('running', 0.15);
+    // the teca is placed NOW, well ahead — it grows in while he runs up to it, so arriving
+    // and revealing are one continuous take instead of a stop-then-pop
+    PZ.boardX = playerGroup.position.x + 26;
+    PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0; PZ.nextTi = null;
+    buildPuzzleTank();
+    buildBubbleGrid();
+    state.runStopX = PZ.boardX - 7.2;                // he pulls up IN FRONT of the teca, outside its doorway
     showBanner('BACK ON THE COUNTER!');
   }
 }
@@ -2714,11 +2749,18 @@ function buildPuzzleTank() {
   const steel = new THREE.MeshStandardMaterial({ map: counterTex2 || null, color: 0xb8c4ce, metalness: 0.8, roughness: 0.35 });
   const halfW = (PZ.cols / 2) * PZ.bd + 0.55;
   const topY = PZ.ceilY + 1.3;                       // air between the top row and the beam
-  for (const sgn of [-1, 1]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.5, topY, 1.4), steel);
-    wall.position.set(PZ.boardX + sgn * halfW, topY / 2, LANE_Z);
-    g.add(wall);
-  }
+  // LEFT wall has a DOORWAY at counter level — Nimble walks IN through this aperture to man
+  // the launcher (never through solid steel). The wall continues above the opening.
+  const DOOR_H = 3.2;
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(0.5, topY - DOOR_H, 1.4), steel);
+  upper.position.set(PZ.boardX - halfW, DOOR_H + (topY - DOOR_H) / 2, LANE_Z);
+  g.add(upper);
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.22, 1.6), steel);   // header lip marks the doorway
+  lintel.position.set(PZ.boardX - halfW, DOOR_H - 0.11, LANE_Z);
+  g.add(lintel);
+  const wallR = new THREE.Mesh(new THREE.BoxGeometry(0.5, topY, 1.4), steel);    // right wall: full height
+  wallR.position.set(PZ.boardX + halfW, topY / 2, LANE_Z);
+  g.add(wallR);
   const beam = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.5, 0.5, 1.4), steel);
   beam.position.set(PZ.boardX, topY, LANE_Z);
   g.add(beam);
@@ -2764,14 +2806,10 @@ function startAwait() {                            // the run-out ends HERE: he 
   if (sinkEnv) sinkEnv.visible = false;
   showUnderwaterFX(false);
   if (bgMesh) { if (bgTexL1) { bgMesh.material.map = bgTexL1; fitBackdrop(); } bgMesh.material.color.setRGB(0.82, 0.86, 0.9); }
-  playerGroup.scale.set(1, 1, 1); squash = squashTarget = 1;
-  state.divePitch = 0; setPlayerPitch(0);
-  playAnim('idle');
+  state.divePitch = 0; setPlayerPitch(0);          // pitch already eased to ~0 during the run-out — this just pins it
+  playAnim('idle', 0.25);                          // soft fade out of the run cycle as he pulls up
   document.body.classList.remove('surf');
-  PZ.boardX = playerGroup.position.x + 7.6;        // the teca stands just ahead of him
-  PZ.aim = 0; PZ.fly = null; PZ.ready = false; PZ.revealT = 0; PZ.falling.length = 0; PZ.nextTi = null;
-  buildPuzzleTank();
-  buildBubbleGrid();                               // the drops grow in while he waits — the teca fills up
+  // (the teca was built at touchdown and revealed itself during his run — nothing to build here)
   const help = document.getElementById('controls-help');
   if (help) help.innerHTML = '<span class="key kbd">Space</span><span class="key touchkey">TAP</span> step up to the teca and start the match!';
   showBanner('THE TECA! &middot; <span class="kbd">PRESS SPACE</span><span class="touchkey">TAP</span> TO PLAY');
@@ -3063,6 +3101,7 @@ function screenBottomYAt(zp) {
 }
 
 const clock = new THREE.Clock();
+const camLook = new THREE.Vector3(4, 1.8, 0);   // smoothed lookAt target — glides across mode changes
 let hudT = 0, slideDustT = 0, surfTrailT = 0;
 function gameLoop() {
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -3071,12 +3110,25 @@ function gameLoop() {
   hudT += dt;
   if (hudT > 0.2) { hudT = 0; document.getElementById('dist').innerText = Math.floor(playerGroup.position.x) + ' m'; }
 
-  if (!state.isGameOver && state.started && !state.paused && (state.mode === 'puzzle' || state.mode === 'jumpout' || state.mode === 'won' || state.mode === 'await' || state.mode === 'walkin')) {
+  if (!state.isGameOver && state.started && !state.paused && (state.mode === 'puzzle' || state.mode === 'jumpout' || state.mode === 'runout' || state.mode === 'won' || state.mode === 'await' || state.mode === 'walkin')) {
     if (state.mode === 'jumpout') scriptJumpOut(dt);
+    else if (state.mode === 'runout') {              // autopilot: land → dash → DECELERATE to a stop at the teca, one take
+      playerGroup.position.z = LANE_Z;
+      const dist = state.runStopX - playerGroup.position.x;
+      playerGroup.position.x += THREE.MathUtils.clamp(dist * 1.8, 1.6, 13) * dt;
+      if (Math.abs(state.divePitch) > 0.001) {       // the splash pitch relaxes WHILE he runs — no snap-to-zero at touchdown
+        state.divePitch += (0 - state.divePitch) * Math.min(1, 6 * dt);
+        setPlayerPitch(state.divePitch);
+      }
+      pzUpdate(dt);                                  // the teca's drops grow in as he approaches
+      if (dist <= 0.08) startAwait();
+    }
     else if (state.mode === 'puzzle' || state.mode === 'await') pzUpdate(dt);   // await: the teca fills while he waits
-    else if (state.mode === 'walkin') {
-      playerGroup.position.x += 7.5 * dt;                                       // he steps up to the launcher
-      if (playerGroup.position.x >= PZ.boardX - 4.3) enterPuzzle();   // stands left, clear of the arrow's full sweep
+    else if (state.mode === 'walkin') {              // he walks IN through the doorway and eases to a stop AT the launcher
+      const dist = (PZ.boardX - 2.1) - playerGroup.position.x;   // he mans the spear — it's HIS launcher, Puzzle-Bobble style
+      playerGroup.position.x += THREE.MathUtils.clamp(dist * 2.5, 1.2, 6.0) * dt;
+      pzUpdate(dt);                                  // the board keeps living while he steps in
+      if (dist <= 0.08) enterPuzzle();
     }
     else if (state.mode === 'won') {
       state.excite = Math.min(1, state.excite + dt);   // keep celebrating
@@ -3167,10 +3219,6 @@ function gameLoop() {
       if (state.invuln <= 0) playerGroup.visible = true;
     }
 
-    // squash & stretch (cartoon body language)
-    squash += (squashTarget - squash) * Math.min(1, 10 * dt);
-    playerGroup.scale.set(2 - squash > 1.15 ? 1.15 : 2 - squash, squash, 2 - squash > 1.15 ? 1.15 : 2 - squash);
-
     // head-bone excitement wiggle (applied after mixer pose). The foam hat is rigidly
     // skinned to this bone, so wiggling it visibly pops the hat around on every pickup —
     // only do it in Level 1 (hat hidden). In surf mode the hat stays put.
@@ -3187,7 +3235,6 @@ function gameLoop() {
     if (mountSeq.active) updateMountSeq(dt);
     if (state.mode === 'surf' && !state.crossedGate && playerGroup.position.x >= LEVEL_LEN) crossGate();
     if (state.mode === 'swim' && state.sinkEndX && playerGroup.position.x >= state.sinkEndX - 16) startJumpOut();   // the leap keys off the REAL end rim — arc, rim and landing always agree
-    if (state.mode === 'runout' && playerGroup.position.x >= state.runOutX) startAwait();
 
     const px = playerGroup.position.x, py = playerGroup.position.y;
     const playerR = state.isSliding ? 0.5 : 0.6;
@@ -3477,6 +3524,13 @@ function gameLoop() {
     }
   }
 
+  // squash & stretch (cartoon body language) — eased in EVERY mode, so a landing squash
+  // relaxes naturally through the run-out / teca beats instead of being snap-reset
+  if (state.started && !state.paused) {
+    squash += (squashTarget - squash) * Math.min(1, 10 * dt);
+    playerGroup.scale.set(2 - squash > 1.15 ? 1.15 : 2 - squash, squash, 2 - squash > 1.15 ? 1.15 : 2 - squash);
+  }
+
   updateParticles(dt);
   updateBgFade(dt);                                    // backdrop crossfades (gate / splash)
   updateFogEase(dt);                                   // underwater murk relaxing after the plunge
@@ -3496,7 +3550,8 @@ function gameLoop() {
   const swim = state.mode === 'swim';
   const diveSeq = state.mode === 'dive_seq';
   const jumpout = state.mode === 'jumpout';
-  const puzzle = state.mode === 'puzzle' || state.mode === 'won' || state.mode === 'await' || state.mode === 'walkin';   // teca framing from the moment he stops in front of it
+  const puzzle = state.mode === 'puzzle' || state.mode === 'won' || state.mode === 'await' || state.mode === 'walkin';
+  const teca = puzzle || state.mode === 'runout';              // teca framing begins the moment he LANDS — the camera cranes over to the display case while he runs up, one continuous move
   const followY = swim || diveSeq || jumpout;                  // track his vertical
   const pz = playerGroup.position.z, pyNow = playerGroup.position.y;
   playerBlob.position.set(playerGroup.position.x, 0.02, surf ? pz : LANE_Z);
@@ -3510,17 +3565,17 @@ function gameLoop() {
   // the chase view needs a wide lens — 35° is a telephoto side-view look with no depth cues
   const fovT = THREE.MathUtils.lerp(baseFov, Math.max(baseFov, 58), cb);
   if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov = fovT; camera.updateProjectionMatrix(); fitBackdrop(); }
-  const camXTarget = THREE.MathUtils.lerp(puzzle ? PZ.boardX : playerGroup.position.x + 4.0, playerGroup.position.x - 9.0, cb);
+  const camXTarget = THREE.MathUtils.lerp(teca ? PZ.boardX : playerGroup.position.x + 4.0, playerGroup.position.x - 9.0, cb);
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camXTarget, (4 + cb * 2) * dt);
   // seamless surf→ramp handoff: over the first 0.8s of the dive, ease the camera framing (and speed/lane, below)
   // from the surf values to the dive values instead of snapping the instant cleaning finishes.
   const diveEase = diveSeq ? Math.min(1, state.diveT / 0.8) : 1;
   const camYTarget = THREE.MathUtils.lerp(
-    puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : swim ? Math.min(pyNow + 1.3, -0.55) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22,   // swim: the lens never pokes above the live surface when he skims shallow
+    teca ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(4.4, pyNow + 1.3, diveEase) : swim ? Math.min(pyNow + 1.3, -0.55) : followY ? pyNow + 1.3 : surf ? 4.4 : 3.0 + pyNow * 0.22,   // swim: the lens never pokes above the live surface when he skims shallow
     Math.min(pyNow + 4.1, -0.5), cb);   // high enough to put him in the lower third; clamped below the waterline
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camYTarget, diveSeq ? 9 * dt : followY ? 5 * dt : 3 * dt);   // plunge tightly with him through the surface — no lag/freeze, one continuous descent underwater
   const camZTarget = THREE.MathUtils.lerp(
-    puzzle ? (LANE_Z + 24) : diveSeq ? THREE.MathUtils.lerp(17, state.diveSplashed ? 18.7 : 23, diveEase) : swim ? 18.7 : 17,
+    teca ? (LANE_Z + 24) : diveSeq ? THREE.MathUtils.lerp(17, state.diveSplashed ? 18.7 : 23, diveEase) : swim ? 18.7 : 17,
     LANE_Z + (pz - LANE_Z) * 0.45, cb);   // swim sits 10% further back; after the splash the dive cam glides to the SAME distance — no zoom jump
   camera.position.z = THREE.MathUtils.lerp(camera.position.z, camZTarget, (2.5 + cb) * dt);
   if (state.shake > 0.001) {                                   // impact jolt
@@ -3528,10 +3583,16 @@ function gameLoop() {
     camera.position.y += (Math.random() - 0.5) * state.shake;
     state.shake = Math.max(0, state.shake - 2.5 * dt);
   }
-  const lookX = THREE.MathUtils.lerp(puzzle ? PZ.boardX : camera.position.x, playerGroup.position.x + 16, cb);
-  const lookY = THREE.MathUtils.lerp(puzzle ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(1.0, pyNow, diveEase) : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12, pyNow + 0.2, cb);
+  const lookX = THREE.MathUtils.lerp(teca ? PZ.boardX : camera.position.x, playerGroup.position.x + 16, cb);
+  const lookY = THREE.MathUtils.lerp(teca ? PZ.midY : diveSeq ? THREE.MathUtils.lerp(1.0, pyNow, diveEase) : followY ? pyNow : surf ? 1.0 : 1.8 + pyNow * 0.12, pyNow + 0.2, cb);
   const lookZ = THREE.MathUtils.lerp(surf ? (pz - LANE_Z) * 0.4 : diveSeq ? (pz - LANE_Z) * 0.4 * (1 - diveEase) : 0, LANE_Z + (pz - LANE_Z) * 0.75, cb);   // looks down the lane, leading his strafe a touch
-  camera.lookAt(lookX, lookY, lookZ);
+  // SMOOTHED look target: the aim point glides between modes instead of jumping the frame a
+  // mode flips (jumpout→runout→await was a hard whip-pan; now it's one continuous camera move)
+  const lookK = Math.min(1, 7 * dt);
+  camLook.x += (lookX - camLook.x) * lookK;
+  camLook.y += (lookY - camLook.y) * lookK;
+  camLook.z += (lookZ - camLook.z) * lookK;
+  camera.lookAt(camLook);
   camera.updateMatrixWorld();                          // fresh matrices for the bottom-of-screen math below
   if ((state.mode === 'dive_seq' || state.mode === 'swim') && state.diveSplashed && !state.uwApplied && camera.position.y < 0.05) {
     state.uwApplied = true;                            // the lens just went under — hard cut to underwater, like a real camera
@@ -3631,7 +3692,7 @@ window.addEventListener('keydown', e => {
   initAudio();
   if (e.code === 'KeyR' && (state.isGameOver || state.mode === 'won')) { location.reload(); return; }
   if (state.mode === 'await' && !e.repeat) { startWalkIn(); return; }           // any key: step up to the teca
-  if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'walkin' || state.mode === 'won') return;
+  if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'runout' || state.mode === 'walkin' || state.mode === 'won') return;
   if (state.mode === 'puzzle') {                   // L4: aim + shoot
     if (e.code === 'ArrowLeft'  || e.code === 'KeyA') state.aimL = true;
     if (e.code === 'ArrowRight' || e.code === 'KeyD') state.aimR = true;
@@ -3696,7 +3757,7 @@ document.querySelectorAll('#touch-controls .tbtn').forEach(btn => {
     e.preventDefault();
     initAudio();
     btn.classList.add('active');
-    if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'await' || state.mode === 'walkin' || state.mode === 'won') return;
+    if (state.isGameOver || state.mode === 'dive_seq' || state.mode === 'jumpout' || state.mode === 'runout' || state.mode === 'await' || state.mode === 'walkin' || state.mode === 'won') return;
     if (state.mode === 'puzzle') {                 // L4: up/down aim, soap = shoot
       if (act === 'up')   state.aimL = true;
       else if (act === 'down') state.aimR = true;
