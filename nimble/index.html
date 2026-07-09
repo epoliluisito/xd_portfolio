@@ -366,6 +366,10 @@ const SURF_GOAL_BASE = 48;          // dirt patches to scrub to finish level 2 (
 const SURF_LIFT = 0.34;             // ride height on Level 2 — raised so the sponge (and Nimble on it) sit higher off the counter
 
 // --- Level 3 "dive & swim" mode (the water surface is y = 0; he swims below it) ---
+// the sink basin's footprint in z — nearly the FULL counter depth (counter spans z -1..13),
+// so the L2→L3 passage reads as the counter opening into its own sink, not a narrow trough
+const SINK_ZL = -1.8;
+const SINK_ZR = 11.6;
 const SWIM_Y_MIN = -5.4;            // deepest
 const SWIM_Y_MAX = -1.0;            // just under the surface
 const SWIM_STEER = 4.6;             // y units per second while up/down held
@@ -846,7 +850,7 @@ function buildWaterSurface() {
   // The water is sized and pinned to fit EXACTLY inside the sink basin, rim to rim —
   // world-anchored, never following the camera. It's the sink's water, not an ocean sheet.
   const x0 = state.rampLipX - 2, x1 = state.sinkEndX || (state.rampLipX + 340);
-  const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
+  const zL = SINK_ZL, zR = SINK_ZR;
   const LEN = Math.max(40, x1 - x0);
   waterSurface = new THREE.Mesh(
     new THREE.PlaneGeometry(LEN, zR - zL + 0.4, Math.min(320, Math.round(LEN / 1.4)), 8), waterMat);
@@ -2454,8 +2458,10 @@ function buildSinkEnv(x0, x1) {
   } else tex = makeSinkTexture();                    // fallback if the texture never loaded
   const LEN = x1 - x0, cx = (x0 + x1) / 2;
   tex.repeat.set(Math.max(8, Math.round(LEN / 13.5)), 2);
-  const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x86b4cc, metalness: 0.6, roughness: 0.42, envMapIntensity: 1.25 });
-  const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
+  // SAME steel as the L2 counter (couter_top_texture_02, same colour/finish) — the basin is
+  // visibly carved out of the counter it interrupts, not a different blue material
+  const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0xe8edf2, metalness: 0.85, roughness: 0.32, envMapIntensity: 1.15 });
+  const zL = SINK_ZL, zR = SINK_ZR;
   // BACK wall — TALL and THICK: these are sink walls, not pool edges. Top rides +2.1 above
   // the water so the basin visibly contains it from the counter view.
   const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 12, 1.1), wallMat);
@@ -2465,7 +2471,7 @@ function buildSinkEnv(x0, x1) {
   const rim = new THREE.Mesh(new THREE.BoxGeometry(LEN, 1.1, 1.1), wallMat);
   rim.position.set(cx, 0.1, zR);
   sinkEnv.add(rim);
-  const floorMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x5f889f, metalness: 0.5, roughness: 0.6 });
+  const floorMat = new THREE.MeshStandardMaterial({ map: tex, color: 0xaebfcc, metalness: 0.75, roughness: 0.4 });   // same steel, a shade deeper for depth
   const f = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.5, zR - zL + 1.1), floorMat);
   f.position.set(cx, -9.0, (zL + zR) / 2);
   sinkEnv.add(f);
@@ -2538,7 +2544,7 @@ function buildSinkEnv(x0, x1) {
     sinkEnv.add(foam);
     streamFoams.push(foam);
   };
-  addFaucet(x0 + 30, 1.9);                           // the BIG one he dives past
+  addFaucet(x0 + 78, 1.9);                           // the BIG one — well CLEAR of the dive path, so Nimble is always in front
   addFaucet(x1 - 26, 1.55);                          // the one framing the leap out
   sinkEnv.userData = { side: w, base: f, end, rim, streamFoams };
   sinkEnv.visible = false;
