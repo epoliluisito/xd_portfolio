@@ -1324,13 +1324,7 @@ async function initGame() {
       cfg.groundOffset = -box.min.y * cfg.scaleFactor;
       cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
       obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-      if (key === 'emerald') obj.traverse(c => {     // emerald drops are little Nimbles — same liquid-glass shader as the bottle
-        if (c.isMesh) {
-          const map = c.material && c.material.map || null;
-          if (map) map.colorSpace = THREE.SRGBColorSpace;
-          c.material = makeGlassShader({ map, color: 0xbfffd4, alphaMin: 0.34, alphaGain: 0.60, rimColor: 0xc8ffdc, depthWrite: true });
-        }
-      });
+      if (key === 'emerald') obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });   // emerald drops are little Nimbles
       models[key] = obj;
   }
 
@@ -2769,11 +2763,20 @@ function scriptJumpOut(dt) {
 // --- Level 4: "the teca" — a Puzzle-Bobble style tank of coloured drops on the counter ---
 const BUBBLE_COLORS = [0x2ecc4e, 0x1e6dff, 0xff3b30, 0xffc400, 0x9b30ff];   // green, blue, red, gold, violet — max separation
 let bubbleMats = null;
-function getBubbleMats() {                           // one liquid-glass shader per colour — truly transparent drops
+function getBubbleMats() {
+  // SAME quality glass as the L1-3 emerald droplets (they set the bar) — full physical
+  // transmission, clearcoat and iridescence — just tinted per colour for the match-3 read.
   if (bubbleMats) return bubbleMats;
   bubbleMats = BUBBLE_COLORS.map(hex => {
-    const rim = new THREE.Color(hex).lerp(new THREE.Color(0xffffff), 0.55);
-    return makeGlassShader({ color: hex, rimColor: rim.getHex(), alphaMin: 0.26, alphaGain: 0.62, depthWrite: false });
+    const m = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
+      thickness: P.thickness, attenuationColor: new THREE.Color(hex), attenuationDistance: 0.55,
+      clearcoat: P.clearcoat, clearcoatRoughness: 0.06,
+      iridescence: 0.18, iridescenceIOR: 1.3,
+      envMapIntensity: 1.5, specularIntensity: 1.0, transparent: true
+    });
+    addRim(m, new THREE.Color(hex).lerp(new THREE.Color(0xffffff), 0.45).getHex(), 0.3);
+    return m;
   });
   return bubbleMats;
 }
@@ -2851,13 +2854,18 @@ function buildAimArrow() {
     // THE FAIRY BOTTLE is the launcher — nozzle up, label to the camera; each drop
     // fires straight out of its push-pull cap as Nimble tilts the whole bottle.
     const b = models.fairy.clone();
-    // LIQUID-GLASS shader: the baked colour map through the fresnel glass — properly
-    // transparent face-on, solid green at the silhouette, hot rim + specular.
+    // QUALITY glass-plastic (same physical family as the emerald droplets): real transmission
+    // through the baked colour map, clearcoat shine — reads as moulded transparent plastic.
     b.traverse(ch => {
       if (ch.isMesh && ch.material) {
         const map = ch.material.map || null;
         if (map) map.colorSpace = THREE.SRGBColorSpace;
-        ch.material = makeGlassShader({ map, alphaMin: 0.30, alphaGain: 0.58, rimColor: 0xcfffe0, depthWrite: true });
+        ch.material = new THREE.MeshPhysicalMaterial({
+          map, metalness: 0, roughness: 0.08,
+          transmission: 0.7, ior: 1.45, thickness: 0.5,
+          clearcoat: 1.0, clearcoatRoughness: 0.08, iridescence: 0.1, iridescenceIOR: 1.3,
+          envMapIntensity: 1.4, specularIntensity: 1.0, transparent: true
+        });
       }
     });
     b.rotation.y = Math.PI;                          // FAIRY label OUT, toward the player
