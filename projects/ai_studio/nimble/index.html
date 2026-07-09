@@ -2502,7 +2502,7 @@ function buildSinkEnv(x0, x1) {
     bar.rotation.y = i * Math.PI / 3; bar.position.y = 0.1;
     drainG.add(bar);
   }
-  drainG.position.set(x0 + 46, -8.7, (zL + zR) / 2);
+  drainG.position.set(x0 + 40, -8.7, (zL + zR) / 2);   // right under the big tap's stream — tap over drain, like a real sink
   sinkEnv.add(drainG);
   // FAUCETS at SINK scale — the big tap right where he dives in is the scale anchor that
   // makes the whole basin read as a sink; a second one frames the jump-out at the far end.
@@ -2544,8 +2544,12 @@ function buildSinkEnv(x0, x1) {
     sinkEnv.add(foam);
     streamFoams.push(foam);
   };
-  addFaucet(x0 + 78, 1.9);                           // the BIG one — well CLEAR of the dive path, so Nimble is always in front
-  addFaucet(x1 - 26, 1.55);                          // the one framing the leap out
+  // The big tap stands JUST PAST the splash point (dive lands ~x0+35): it's in frame for the
+  // whole dive as the thing he's diving toward, but ahead of his arc — he never crosses it in
+  // screen space, so he always reads cleanly in front. (Above the waterline it's invisible
+  // during the swim itself — these two moments are its whole job.)
+  addFaucet(x0 + 45, 1.9);
+  addFaucet(x1 - 20, 1.55);                          // in frame at the leap-out launch, behind him the whole arc
   sinkEnv.userData = { side: w, base: f, end, rim, streamFoams };
   sinkEnv.visible = false;
   scene.add(sinkEnv);
@@ -2764,7 +2768,11 @@ function scriptJumpOut(dt) {
       if (floor.material.map) floor.material.map.offset.x = floor.position.x * 0.1;
     }
   }
-  const targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, 6), -1.05, 1.2);
+  let targetPitch = THREE.MathUtils.clamp(Math.atan2(vy, 6), -1.05, 1.2);
+  if (vy < 0) {                                      // descending: swing his FEET under him before touchdown —
+    const landT = THREE.MathUtils.clamp(playerGroup.position.y / 3.0, 0, 1);   // 1 = still high, 0 = at the counter
+    targetPitch *= landT;                            // upright by the moment he lands (no face-plant beat)
+  }
   state.divePitch += (targetPitch - state.divePitch) * Math.min(1, 8 * dt);
   setPlayerPitch(state.divePitch);
   // touchdown ON the counter → one continuous autopilot dash to the teca (no snaps anywhere:
