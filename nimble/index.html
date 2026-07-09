@@ -338,6 +338,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';   // the prop GLBs are meshopt-compressed (EXT_meshopt_compression)
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // ----------------------------------------------------
@@ -1174,6 +1175,7 @@ function tracked(promise, weight = 1) {
 }
 async function initGame() {
   const gltfLoader = new GLTFLoader();
+  gltfLoader.setMeshoptDecoder(MeshoptDecoder);    // decodes the compressed props; uncompressed GLBs (Nimble) are unaffected
   const texLoader = new THREE.TextureLoader();
 
   // kick EVERYTHING off in parallel — the bar tracks real progress
@@ -1187,8 +1189,8 @@ async function initGame() {
   // Small optimised .jpg assets with a .png fallback (works whether or not the
   // optimised files are present). Only the character, the Level-1 backdrop and the
   // counter are on the CRITICAL path; everything else streams in after the game starts.
-  const texJP = (base, w = 1) => tracked(texLoader.loadAsync(base + '.jpg'), w)
-    .catch(() => texLoader.loadAsync(base + '.png')).catch(() => null);
+  const texJP = (base, w = 1) => tracked(texLoader.loadAsync(base + '.png'), w)   // .png is what ships — try it FIRST (no 404 noise / wasted round-trip on the critical path)
+    .catch(() => texLoader.loadAsync(base + '.jpg')).catch(() => null);
   const counterP  = texJP('./couter_top_texture');
   const counter2P = texJP('./couter_top_texture_02');
   const bg1P = texJP('./BACKGROUND', 3);
