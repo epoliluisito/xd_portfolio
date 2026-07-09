@@ -414,7 +414,8 @@ const typeCfg = {
   salt:    { type:'hazard', subType:'slow',   size:0.8, ground:true, roll:true },
   fork:    { type:'cleanable', size:1.1, ground:true, bounce:true },
   plates:  { type:'cleanable', size:1.3, ground:true, bounce:true },
-  pin:     { type:'hazard', subType:'duck', size:2.4 }   // rolling pin — slide under it!
+  pin:     { type:'hazard', subType:'duck', size:2.4 },  // rolling pin — slide under it!
+  fairy:   { type:'prop', size:2.0 }                     // the Fairy bottle — the L4 launcher, never spawned as a pickup
 };
 
 // ----------------------------------------------------
@@ -738,7 +739,7 @@ function buildSeabed() {                             // FOREGROUND band: dirty-d
     const m = models.plates.clone();
     m.scale.setScalar(cfg.scaleFactor * (1.8 + Math.random() * 1.4));
     m.rotation.set(Math.random() * 0.3, Math.random() * 6.28, Math.random() * 0.3);
-    m.position.set(playerGroup.position.x + i * 10 - 10, -8.9 + Math.random() * 1.1, 8.5 + Math.random() * 3.0);
+    m.position.set(playerGroup.position.x + i * 12 - 10, -7.7 + Math.random() * 1.2, 8.5 + Math.random() * 3.0);   // raised so the heaps just peek into the lower frame
     scene.add(m);
     seabed.push(m);
   }
@@ -1184,7 +1185,8 @@ async function initGame() {
     emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
     slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
     plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
-    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
+    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb',
+    fairy:'./3d_elements/fairy_bottle.glb'
   };
   // Small optimised .jpg assets with a .png fallback (works whether or not the
   // optimised files are present). Only the character, the Level-1 backdrop and the
@@ -1238,10 +1240,15 @@ async function initGame() {
   bg2P.then(t => { bgTexL2 = prepBg(t); });   // Level 2 steel backdrop
 
   Promise.all(fgPs).then(list => {
-    const fgTextures = list.filter(Boolean);
-    if (!fgTextures.length) return;
+    const byName = {};
+    list.forEach((t, i) => { if (t) byName[fgNames[i].replace('.png', '')] = t; });
+    // WEIGHTED pool: cloths & dirty dishes headline the kitchen-mess story; plants season it
+    const weights = { cloth: 3, bowl: 3, fork: 1, spoon: 1, plant: 1, plant_02: 1, bottle: 1, salt: 1 };
+    const pool = [];
+    for (const [n, w] of Object.entries(weights)) if (byName[n]) for (let i = 0; i < w; i++) pool.push(byName[n]);
+    if (!pool.length) return;
     function addFgPlane(x, layer) {
-      const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+      const tex = pool[Math.floor(Math.random() * pool.length)];
       const aspect = tex.image.width / tex.image.height;
       const near = layer === 'near';
       const h = near ? 1.4 + Math.random() * 1.0 : 1.7 + Math.random() * 1.2;   // shorter: only peek from the bottom
@@ -1258,8 +1265,8 @@ async function initGame() {
       scene.add(plane);
       fgPlanes.push(plane);
     }
-    for (let x = -10; x < 260; x += 52 + Math.random() * 30) addFgPlane(x, 'near');
-    for (let x = -20; x < 260; x += 42 + Math.random() * 24) addFgPlane(x, 'mid');
+    for (let x = -10; x < 260; x += 34 + Math.random() * 18) addFgPlane(x, 'near');   // denser dressing — still only
+    for (let x = -20; x < 260; x += 26 + Math.random() * 14) addFgPlane(x, 'mid');    // peeking from the bottom edge
   });
 
   // Await the prop models before the start gate: if the player could start without them,
@@ -2512,6 +2519,7 @@ function startDiveTransition() {
   // held inside a steel sink — walls above the surface, rim, faucet — never a bare sheet.
   buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
+  buildSeabed();                                     // dirty-dish heaps drifting low in the foreground of the swim
   buildSinkEnv(state.rampLipX - 2, state.sinkEndX);
   if (sinkEnv) sinkEnv.visible = true;
   buildUnderwaterFX(); showUnderwaterFX(false);
@@ -2800,15 +2808,27 @@ function buildAimArrow() {
   base.position.y = -0.26;                           // the pedestal stays planted while the barrel swings
   g.add(base);
   const pivot = new THREE.Group();                   // inner group: this is what the aim rotates
-  const hinge = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 12), green);
-  pivot.add(hinge);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.20, 1.7, 14, 1, true), chrome);
-  barrel.position.y = 0.85;
-  pivot.add(barrel);
-  const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.07, 10, 20), green);
-  muzzle.rotation.x = Math.PI / 2;
-  muzzle.position.y = 1.7;                           // the loaded drop sits right here, in the mouth
-  pivot.add(muzzle);
+  if (models.fairy) {
+    // THE FAIRY BOTTLE is the launcher — nozzle up, label to the camera; each drop
+    // fires straight out of its push-pull cap as Nimble tilts the whole bottle.
+    const b = models.fairy.clone();
+    const bx = new THREE.Box3().setFromObject(b);
+    const bs = new THREE.Vector3(); bx.getSize(bs);
+    const s = 2.05 / Math.max(0.001, bs.y);
+    b.scale.setScalar(s);
+    b.position.y = -0.35 - bx.min.y * s;             // base near the counter → nozzle lands at ~1.7, exactly where the drop loads
+    pivot.add(b);
+  } else {                                           // fallback if the bottle GLB is missing: the soap cannon
+    const hinge = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 12), green);
+    pivot.add(hinge);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.20, 1.7, 14, 1, true), chrome);
+    barrel.position.y = 0.85;
+    pivot.add(barrel);
+    const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.07, 10, 20), green);
+    muzzle.rotation.x = Math.PI / 2;
+    muzzle.position.y = 1.7;                         // the loaded drop sits right here, in the mouth
+    pivot.add(muzzle);
+  }
   const sight = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 6),   // slim sight line — aim still reads at a glance
     new THREE.MeshBasicMaterial({ color: 0xeaffff, transparent: true, opacity: 0.45, depthWrite: false }));
   sight.position.y = 2.7;
@@ -3706,9 +3726,9 @@ function gameLoop() {
     for (const m of seabed) {
       m.rotation.y += dt * 0.15;
       if (m.position.x < camera.position.x - 26) {
-        m.position.x += 90 + Math.random() * 40;
+        m.position.x += 110 + Math.random() * 40;
         m.position.z = 8.5 + Math.random() * 3.0;
-        m.position.y = -8.9 + Math.random() * 1.1;
+        m.position.y = -7.7 + Math.random() * 1.2;
       }
     }
   }
