@@ -982,9 +982,12 @@ function updateUnderwaterFX(dt) {
     }
     p.needsUpdate = true;
   }
-  if (sinkEnv && sinkEnv.visible && sinkEnv.userData.streamFoam) {   // the faucet's landing foam churns gently
+  if (sinkEnv && sinkEnv.visible && sinkEnv.userData.streamFoams) {   // the faucets' landing foam churns gently
     const pf = 1 + Math.sin(uwT * 7) * 0.12;
-    sinkEnv.userData.streamFoam.scale.set(1.6 * pf, 0.9 * (2 - pf), 1);
+    for (const sf2 of sinkEnv.userData.streamFoams) {
+      const bs = sf2.userData.baseScale;
+      sf2.scale.set(bs.x * pf, bs.y * (2 - pf), 1);
+    }
   }
   if (splashCrown && splashCrownLife > 0) {
     splashCrownLife -= dt;
@@ -2453,73 +2456,91 @@ function buildSinkEnv(x0, x1) {
   tex.repeat.set(Math.max(8, Math.round(LEN / 13.5)), 2);
   const wallMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x86b4cc, metalness: 0.6, roughness: 0.42, envMapIntensity: 1.25 });
   const zL = SURF_Z_MIN - 3.0, zR = SURF_Z_MAX + 3.0;
-  // BACK wall — tall, rising ABOVE the waterline (top at +1.1), so the basin reads as a
-  // real steel container from the counter view too, not just from underwater
-  const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 11, 0.6), wallMat);
-  w.position.set(cx, -4.4, zL);
+  // BACK wall — TALL and THICK: these are sink walls, not pool edges. Top rides +2.1 above
+  // the water so the basin visibly contains it from the counter view.
+  const w = new THREE.Mesh(new THREE.BoxGeometry(LEN, 12, 1.1), wallMat);
+  w.position.set(cx, -3.9, zL);
   sinkEnv.add(w);
-  // NEAR rim — a shallow steel band along the camera side, floating just above the water.
-  // It closes the composition ("water held inside steel") without ever blocking the swim:
-  // the underwater camera stays below y=-0.55, safely under the band's bottom edge (-0.37).
-  const rim = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.9, 0.6), wallMat);
-  rim.position.set(cx, 0.08, zR);
+  // NEAR rim — same low profile (the swim camera must see over it), just chunkier
+  const rim = new THREE.Mesh(new THREE.BoxGeometry(LEN, 1.1, 1.1), wallMat);
+  rim.position.set(cx, 0.1, zR);
   sinkEnv.add(rim);
   const floorMat = new THREE.MeshStandardMaterial({ map: tex, color: 0x5f889f, metalness: 0.5, roughness: 0.6 });
-  const f = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.5, zR - zL + 0.6), floorMat);
+  const f = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.5, zR - zL + 1.1), floorMat);
   f.position.set(cx, -9.0, (zL + zR) / 2);
   sinkEnv.add(f);
   // the basin's END wall — you SEE the sink finishing ahead; he must leap out over this rim
-  const end = new THREE.Mesh(new THREE.BoxGeometry(0.8, 11.2, zR - zL + 0.6), wallMat);
+  const end = new THREE.Mesh(new THREE.BoxGeometry(1.4, 11.2, zR - zL + 1.1), wallMat);
   end.position.set(x1, -4.35, (zL + zR) / 2);
   sinkEnv.add(end);
-  // POLISHED ROLLED EDGES — a bright chrome lip caps every rim. This one detail is what
-  // makes the basin read as a finished steel sink instead of raw boxes.
+  // POLISHED ROLLED EDGES — chunky chrome lips at sink scale
   const lipMat = new THREE.MeshStandardMaterial({ color: 0xdfe9f2, metalness: 0.95, roughness: 0.22, envMapIntensity: 1.4 });
-  const backLip = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.2, 0.9), lipMat);
-  backLip.position.set(cx, 1.18, zL);
+  const backLip = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.34, 1.5), lipMat);
+  backLip.position.set(cx, 2.22, zL);
   sinkEnv.add(backLip);
-  const nearLip = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.2, 0.9), lipMat);
-  nearLip.position.set(cx, 0.6, zR);
+  const nearLip = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.34, 1.5), lipMat);
+  nearLip.position.set(cx, 0.72, zR);
   sinkEnv.add(nearLip);
-  const endLip = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.2, zR - zL + 0.9), lipMat);
-  endLip.position.set(x1, 1.33, (zL + zR) / 2);
+  const endLip = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.34, zR - zL + 1.5), lipMat);
+  endLip.position.set(x1, 1.36, (zL + zR) / 2);
   sinkEnv.add(endLip);
-  // FAUCET planted on the back wall near the exit end — the one prop that says "sink" at a
-  // glance, from the ramp approach AND framing the jump-out. Simple chrome primitives.
-  const chrome = new THREE.MeshStandardMaterial({ color: 0xe9eff5, metalness: 0.95, roughness: 0.18 });
-  const fc = new THREE.Group();
-  const fBase = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.66, 0.5, 16), chrome);
-  fBase.position.y = 1.3;                            // seated on the back wall's top edge (+1.1)
-  const fCol = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 3.4, 14), chrome);
-  fCol.position.y = 3.0;
-  const fNeck = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.26, 12, 28, Math.PI), chrome);
-  fNeck.position.set(-1.35, 4.7, 0);                 // gooseneck: half-torus capping the column
-  const fSpout = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.9, 12), chrome);
-  fSpout.position.set(-2.7, 4.35, 0);
-  for (const s of [-1, 1]) {                         // hot / cold handles flanking the column
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 10), chrome);
-    stem.position.set(s * 1.05, 1.55, 0);
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10),
-      new THREE.MeshStandardMaterial({ color: s < 0 ? 0xd94f3d : 0x3d7dd9, metalness: 0.55, roughness: 0.3 }));
-    knob.position.set(s * 1.05, 1.85, 0);
-    fc.add(stem); fc.add(knob);
+  // the DRAIN on the basin floor right past the dive-in — nothing says "sink" louder from above
+  const drainG = new THREE.Group();
+  const drainMat = new THREE.MeshStandardMaterial({ color: 0x18242e, metalness: 0.7, roughness: 0.4 });
+  const dWell = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.2, 0.3, 28), drainMat);
+  const dRing = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.22, 12, 36), lipMat);
+  dRing.rotation.x = Math.PI / 2; dRing.position.y = 0.12;
+  drainG.add(dWell); drainG.add(dRing);
+  for (let i = 0; i < 3; i++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.16, 0.34), lipMat);
+    bar.rotation.y = i * Math.PI / 3; bar.position.y = 0.1;
+    drainG.add(bar);
   }
-  fc.add(fBase); fc.add(fCol); fc.add(fNeck); fc.add(fSpout);
-  fc.position.set(x1 - 24, 0, -2.35);
-  fc.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  sinkEnv.add(fc);
-  // a soft running stream from the spout down into the water — the sink is ALIVE, and the
-  // water visibly belongs to it (this is what justifies the surface being there at all)
-  const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 3.9, 10, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xcdeeff, transparent: true, opacity: 0.4, depthWrite: false }));
-  stream.position.set(x1 - 24 - 2.7, 1.95, -2.35);
-  sinkEnv.add(stream);
-  // a churning foam patch where the stream lands (gently pulsed in updateUnderwaterFX)
-  const streamFoam = new THREE.Sprite(new THREE.SpriteMaterial({ map: blobTex, transparent: true, opacity: 0.55, color: 0xffffff, depthWrite: false }));
-  streamFoam.scale.set(1.6, 0.9, 1);
-  streamFoam.position.set(x1 - 24 - 2.7, 0.14, -2.35);
-  sinkEnv.add(streamFoam);
-  sinkEnv.userData = { side: w, base: f, end, rim, faucet: fc, streamFoam };
+  drainG.position.set(x0 + 46, -8.7, (zL + zR) / 2);
+  sinkEnv.add(drainG);
+  // FAUCETS at SINK scale — the big tap right where he dives in is the scale anchor that
+  // makes the whole basin read as a sink; a second one frames the jump-out at the far end.
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xe9eff5, metalness: 0.95, roughness: 0.18 });
+  const streamFoams = [];
+  const addFaucet = (fx, F) => {
+    const fc = new THREE.Group();
+    const fBase = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.66, 0.5, 16), chrome);
+    fBase.position.y = 1.3;
+    const fCol = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 3.4, 14), chrome);
+    fCol.position.y = 3.0;
+    const fNeck = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.26, 12, 28, Math.PI), chrome);
+    fNeck.position.set(-1.35, 4.7, 0);
+    const fSpout = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.3, 0.9, 12), chrome);
+    fSpout.position.set(-2.7, 4.35, 0);
+    for (const s of [-1, 1]) {
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 10), chrome);
+      stem.position.set(s * 1.05, 1.55, 0);
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10),
+        new THREE.MeshStandardMaterial({ color: s < 0 ? 0xd94f3d : 0x3d7dd9, metalness: 0.55, roughness: 0.3 }));
+      knob.position.set(s * 1.05, 1.85, 0);
+      fc.add(stem); fc.add(knob);
+    }
+    fc.add(fBase); fc.add(fCol); fc.add(fNeck); fc.add(fSpout);
+    fc.scale.setScalar(F);
+    fc.position.set(fx, 2.1 - 1.05 * F, zL + 0.4);   // base seated on the back wall's top edge
+    fc.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    sinkEnv.add(fc);
+    // running stream from the spout down into the water — the sink is ALIVE
+    const sTop = fc.position.y + 3.9 * F;
+    const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.09 * F, 0.15 * F, sTop, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xcdeeff, transparent: true, opacity: 0.4, depthWrite: false }));
+    stream.position.set(fx - 2.7 * F, sTop / 2, zL + 0.4);
+    sinkEnv.add(stream);
+    const foam = new THREE.Sprite(new THREE.SpriteMaterial({ map: blobTex, transparent: true, opacity: 0.55, color: 0xffffff, depthWrite: false }));
+    foam.userData.baseScale = { x: 1.5 * F, y: 0.85 * F };
+    foam.scale.set(foam.userData.baseScale.x, foam.userData.baseScale.y, 1);
+    foam.position.set(fx - 2.7 * F, 0.14, zL + 0.4);
+    sinkEnv.add(foam);
+    streamFoams.push(foam);
+  };
+  addFaucet(x0 + 30, 1.9);                           // the BIG one he dives past
+  addFaucet(x1 - 26, 1.55);                          // the one framing the leap out
+  sinkEnv.userData = { side: w, base: f, end, rim, streamFoams };
   sinkEnv.visible = false;
   scene.add(sinkEnv);
 }
@@ -2767,20 +2788,24 @@ function getBubbleMats() {
   // SAME quality glass as the L1-3 emerald droplets (they set the bar) — full physical
   // transmission, clearcoat and iridescence — just tinted per colour for the match-3 read.
   if (bubbleMats) return bubbleMats;
+  // COLOR IS GAMEPLAY here: pure transmission glass shifts hue with view angle and goes pale
+  // where the mesh is thin (that's why drops looked indistinguishable / seemed to change).
+  // Solid tint + emissive core LOCK the hue from every angle; the glass layer only adds shine.
   bubbleMats = BUBBLE_COLORS.map(hex => {
     const m = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff, metalness: 0, roughness: P.roughness, transmission: P.transmission, ior: P.ior,
-      thickness: P.thickness, attenuationColor: new THREE.Color(hex), attenuationDistance: 0.55,
-      clearcoat: P.clearcoat, clearcoatRoughness: 0.06,
-      iridescence: 0.18, iridescenceIOR: 1.3,
-      envMapIntensity: 1.5, specularIntensity: 1.0, transparent: true
+      color: hex, metalness: 0, roughness: 0.06,
+      transmission: 0.45, ior: 1.4, thickness: 0.35,
+      attenuationColor: new THREE.Color(hex), attenuationDistance: 0.5,
+      emissive: new THREE.Color(hex), emissiveIntensity: 0.38,
+      clearcoat: 1.0, clearcoatRoughness: 0.06,
+      envMapIntensity: 1.2, specularIntensity: 1.0, transparent: true
     });
-    addRim(m, new THREE.Color(hex).lerp(new THREE.Color(0xffffff), 0.45).getHex(), 0.3);
+    addRim(m, new THREE.Color(hex).lerp(new THREE.Color(0xffffff), 0.4).getHex(), 0.28);
     return m;
   });
   return bubbleMats;
 }
-const PZ = { cols: 9, rows0: 4, bd: 1.05, ceilY: 8.6, shootY: 0.45, boardX: 0, midY: 4.6,   // smaller drops, wider board → more rows, better game
+const PZ = { cols: 9, rows0: 4, bd: 1.05, ceilY: 8.6, shootY: 0.45, boardX: 0, midY: 4.6, deadRow: 6,   // smaller drops, wider board; stack past deadRow = you LOSE
              grid: new Map(), types: [], aim: 0, fly: null, nextTi: 0, curTi: 0, guide: null, holder: null,
              nextMesh: null, tank: null, falling: [], ready: false, revealT: 0 };
 function pzKey(r, c) { return r + ',' + c; }
@@ -2830,7 +2855,7 @@ function buildPuzzleTank() {
   const c = document.createElement('canvas'); c.width = c.height = 128;   // the classic checkered interior
   const cg = c.getContext('2d');
   for (let yy = 0; yy < 8; yy++) for (let xx = 0; xx < 8; xx++) {
-    cg.fillStyle = (xx + yy) % 2 ? '#3d2a55' : '#4a3366';
+    cg.fillStyle = (xx + yy) % 2 ? '#2e3640' : '#394552';   // neutral slate — every drop colour pops against it
     cg.fillRect(xx * 16, yy * 16, 16, 16);
   }
   const ct = new THREE.CanvasTexture(c);
@@ -2840,6 +2865,11 @@ function buildPuzzleTank() {
     new THREE.MeshBasicMaterial({ map: ct, transparent: true, opacity: 0.85 }));
   back.position.set(PZ.boardX, topY / 2, LANE_Z - 1.15);
   g.add(back);
+  // the DEADLINE — stack drops below this red line and the match is LOST (classic Puzzle-Bobble pressure)
+  const dead = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2, 0.07, 1.45),
+    new THREE.MeshBasicMaterial({ color: 0xff5544, transparent: true, opacity: 0.55, depthWrite: false }));
+  dead.position.set(PZ.boardX, PZ.ceilY - (PZ.deadRow - 0.5) * PZ.bd, LANE_Z);
+  g.add(dead);
   scene.add(g);
   PZ.tank = g;
 }
@@ -2943,7 +2973,7 @@ function enterPuzzle() {                           // he's at the launcher — t
   buildAimArrow();
   PZ.guide.visible = false;                        // shown once the board is ready
   const help = document.getElementById('controls-help');
-  if (help) help.innerHTML = '<span class="key">&larr; &rarr;</span> Aim &nbsp;|&nbsp; <span class="key">Space</span> Shoot &nbsp;|&nbsp; match 3 of the same to clear them all!';
+  if (help) help.innerHTML = '<span class="key">&larr; &rarr;</span> Aim &nbsp;|&nbsp; <span class="key">Space</span> Shoot &nbsp;|&nbsp; match 3 to clear all &mdash; never stack past the red line!';
   showBanner('MATCH 3 TO POP!');
   updateHUD();
 }
@@ -3137,9 +3167,19 @@ function pzUpdate(dt) {
       PZ.fly = null;
       if (pzMatch(r, c)) pzDropFloating();
       if (PZ.grid.size === 0) { winGame(); return; }  // the win means the board is TRULY clear — no early call while bubbles remain
+      for (const gb of PZ.grid.values()) if (gb.r >= PZ.deadRow) { loseGame(); return; }   // stacked below the red line → lost
       pzNewBubble();
     }
   }
+}
+function loseGame() {                                // the pile crossed the deadline — match over
+  if (PZ.guide) PZ.guide.visible = false;
+  if (PZ.jet) PZ.jet.visible = false;
+  if (PZ.holder) { scene.remove(PZ.holder); PZ.holder = null; }
+  if (PZ.nextMesh) { scene.remove(PZ.nextMesh); PZ.nextMesh = null; }
+  showBanner('THE DROPS PILED TOO LOW!');
+  sfx.hit();
+  gameOver();
 }
 function winGame() {
   state.mode = 'won';
