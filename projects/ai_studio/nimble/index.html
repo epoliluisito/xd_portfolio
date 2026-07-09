@@ -414,7 +414,8 @@ const typeCfg = {
   salt:    { type:'hazard', subType:'slow',   size:0.8, ground:true, roll:true },
   fork:    { type:'cleanable', size:1.1, ground:true, bounce:true },
   plates:  { type:'cleanable', size:1.3, ground:true, bounce:true },
-  pin:     { type:'hazard', subType:'duck', size:2.4 }   // rolling pin — slide under it!
+  pin:     { type:'hazard', subType:'duck', size:2.4 },  // rolling pin — slide under it!
+  fairy:   { type:'prop', size:2.0 }                     // the Fairy bottle — the L4 launcher, never spawned as a pickup
 };
 
 // ----------------------------------------------------
@@ -599,6 +600,47 @@ function getFoamMat() {
   addRim(mat, '#dff3ff', 0.6);
   return mat;
 }
+// ---- custom GLSL "liquid glass" — view-angle transparency (fresnel): see-through face-on,
+// solid at the silhouette, with a soft rim and a hot specular. Used by the Fairy bottle and
+// every droplet. Much cheaper than physical transmission (no separate render pass). ----
+function makeGlassShader(opts = {}) {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: opts.depthWrite !== false, side: THREE.FrontSide,
+    uniforms: {
+      uMap: { value: opts.map || null },
+      uUseMap: { value: opts.map ? 1 : 0 },
+      uColor: { value: new THREE.Color(opts.color !== undefined ? opts.color : 0xffffff) },
+      uRim: { value: new THREE.Color(opts.rimColor !== undefined ? opts.rimColor : 0xffffff) },
+      uAlphaMin: { value: opts.alphaMin !== undefined ? opts.alphaMin : 0.3 },
+      uAlphaGain: { value: opts.alphaGain !== undefined ? opts.alphaGain : 0.6 },
+      uLightDir: { value: new THREE.Vector3(0.5, 0.8, 0.6).normalize() }
+    },
+    vertexShader: `
+      varying vec3 vN; varying vec3 vV; varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        vN = normalize(normalMatrix * normal);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vV = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D uMap; uniform int uUseMap;
+      uniform vec3 uColor, uRim; uniform float uAlphaMin, uAlphaGain; uniform vec3 uLightDir;
+      varying vec3 vN; varying vec3 vV; varying vec2 vUv;
+      void main() {
+        vec3 N = normalize(vN), V = normalize(vV);
+        float fres = pow(1.0 - clamp(abs(dot(N, V)), 0.0, 1.0), 2.0);
+        vec3 base = uUseMap == 1 ? texture2D(uMap, vUv).rgb * uColor : uColor;
+        vec3 H = normalize(V + uLightDir);
+        float spec = pow(max(dot(N, H), 0.0), 90.0);
+        vec3 col = base * (0.72 + 0.55 * fres) + uRim * fres * 0.35 + vec3(1.0) * spec * 0.9;
+        float a = clamp(uAlphaMin + fres * uAlphaGain + spec * 0.5, 0.0, 1.0);
+        gl_FragColor = vec4(col, a);
+      }`
+  });
+}
+
 // Clean procedural teal scrub texture — replaces the sponge's baked teal+yellow patchwork
 // (whose seams read as gold "cracks" across the scrub top). Cached; matte scrub-pad look.
 let _cleanSpongeTex = null;
@@ -738,7 +780,7 @@ function buildSeabed() {                             // FOREGROUND band: dirty-d
     const m = models.plates.clone();
     m.scale.setScalar(cfg.scaleFactor * (1.8 + Math.random() * 1.4));
     m.rotation.set(Math.random() * 0.3, Math.random() * 6.28, Math.random() * 0.3);
-    m.position.set(playerGroup.position.x + i * 10 - 10, -8.9 + Math.random() * 1.1, 8.5 + Math.random() * 3.0);
+    m.position.set(playerGroup.position.x + i * 12 - 10, -7.7 + Math.random() * 1.2, 8.5 + Math.random() * 3.0);   // raised so the heaps just peek into the lower frame
     scene.add(m);
     seabed.push(m);
   }
@@ -1184,7 +1226,8 @@ async function initGame() {
     emerald:'./3d_elements/emerald_droplets.glb', star:'./3d_elements/golden_star.glb',
     slime:'./3d_elements/grumpy_slime.glb', oil:'./3d_elements/oil_slick.glb',
     plant:'./3d_elements/plant.glb', salt:'./3d_elements/salt.glb',
-    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb'
+    fork:'./3d_elements/fork.glb', plates:'./3d_elements/dirty_plates.glb',
+    fairy:'./3d_elements/fairy_bottle.glb'
   };
   // Small optimised .jpg assets with a .png fallback (works whether or not the
   // optimised files are present). Only the character, the Level-1 backdrop and the
@@ -1238,10 +1281,15 @@ async function initGame() {
   bg2P.then(t => { bgTexL2 = prepBg(t); });   // Level 2 steel backdrop
 
   Promise.all(fgPs).then(list => {
-    const fgTextures = list.filter(Boolean);
-    if (!fgTextures.length) return;
+    const byName = {};
+    list.forEach((t, i) => { if (t) byName[fgNames[i].replace('.png', '')] = t; });
+    // WEIGHTED pool: cloths & dirty dishes headline the kitchen-mess story; plants season it
+    const weights = { cloth: 3, bowl: 3, fork: 1, spoon: 1, plant: 1, plant_02: 1, bottle: 1, salt: 1 };
+    const pool = [];
+    for (const [n, w] of Object.entries(weights)) if (byName[n]) for (let i = 0; i < w; i++) pool.push(byName[n]);
+    if (!pool.length) return;
     function addFgPlane(x, layer) {
-      const tex = fgTextures[Math.floor(Math.random() * fgTextures.length)];
+      const tex = pool[Math.floor(Math.random() * pool.length)];
       const aspect = tex.image.width / tex.image.height;
       const near = layer === 'near';
       const h = near ? 1.4 + Math.random() * 1.0 : 1.7 + Math.random() * 1.2;   // shorter: only peek from the bottom
@@ -1258,8 +1306,8 @@ async function initGame() {
       scene.add(plane);
       fgPlanes.push(plane);
     }
-    for (let x = -10; x < 260; x += 52 + Math.random() * 30) addFgPlane(x, 'near');
-    for (let x = -20; x < 260; x += 42 + Math.random() * 24) addFgPlane(x, 'mid');
+    for (let x = -10; x < 260; x += 34 + Math.random() * 18) addFgPlane(x, 'near');   // denser dressing — still only
+    for (let x = -20; x < 260; x += 26 + Math.random() * 14) addFgPlane(x, 'mid');    // peeking from the bottom edge
   });
 
   // Await the prop models before the start gate: if the player could start without them,
@@ -1276,7 +1324,13 @@ async function initGame() {
       cfg.groundOffset = -box.min.y * cfg.scaleFactor;
       cfg.heightScaled = Math.max(0.2, size.y * cfg.scaleFactor);
       obj.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-      if (key === 'emerald') obj.traverse(c => { if (c.isMesh) c.material = getGlassMat(c.material, false); });   // emerald drops are little Nimbles
+      if (key === 'emerald') obj.traverse(c => {     // emerald drops are little Nimbles — same liquid-glass shader as the bottle
+        if (c.isMesh) {
+          const map = c.material && c.material.map || null;
+          if (map) map.colorSpace = THREE.SRGBColorSpace;
+          c.material = makeGlassShader({ map, color: 0xbfffd4, alphaMin: 0.34, alphaGain: 0.60, rimColor: 0xc8ffdc, depthWrite: true });
+        }
+      });
       models[key] = obj;
   }
 
@@ -2512,6 +2566,7 @@ function startDiveTransition() {
   // held inside a steel sink — walls above the surface, rim, faucet — never a bare sheet.
   buildWaterSurface(); if (waterSurface) waterSurface.visible = true;
   buildBubbles();
+  buildSeabed();                                     // dirty-dish heaps drifting low in the foreground of the swim
   buildSinkEnv(state.rampLipX - 2, state.sinkEndX);
   if (sinkEnv) sinkEnv.visible = true;
   buildUnderwaterFX(); showUnderwaterFX(false);
@@ -2714,19 +2769,11 @@ function scriptJumpOut(dt) {
 // --- Level 4: "the teca" — a Puzzle-Bobble style tank of coloured drops on the counter ---
 const BUBBLE_COLORS = [0x2ecc4e, 0x1e6dff, 0xff3b30, 0xffc400, 0x9b30ff];   // green, blue, red, gold, violet — max separation
 let bubbleMats = null;
-function getBubbleMats() {                           // one glossy candy material per colour (cheap — no transmission)
+function getBubbleMats() {                           // one liquid-glass shader per colour — truly transparent drops
   if (bubbleMats) return bubbleMats;
   bubbleMats = BUBBLE_COLORS.map(hex => {
-    const m = new THREE.MeshPhysicalMaterial({          // tinted glass — properly TRANSPARENT drops:
-      color: hex, metalness: 0, roughness: 0.05,        // the hue reads the SAME from any angle
-      transmission: 0.93, ior: 1.4, thickness: 0.5,
-      attenuationColor: new THREE.Color(hex), attenuationDistance: 0.9,
-      emissive: new THREE.Color(hex), emissiveIntensity: 0.1,
-      clearcoat: 1.0, clearcoatRoughness: 0.05,
-      envMapIntensity: 1.4, specularIntensity: 1.0, transparent: true
-    });
-    addRim(m, hex, 0.25);
-    return m;
+    const rim = new THREE.Color(hex).lerp(new THREE.Color(0xffffff), 0.55);
+    return makeGlassShader({ color: hex, rimColor: rim.getHex(), alphaMin: 0.26, alphaGain: 0.62, depthWrite: false });
   });
   return bubbleMats;
 }
@@ -2800,15 +2847,37 @@ function buildAimArrow() {
   base.position.y = -0.26;                           // the pedestal stays planted while the barrel swings
   g.add(base);
   const pivot = new THREE.Group();                   // inner group: this is what the aim rotates
-  const hinge = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 12), green);
-  pivot.add(hinge);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.20, 1.7, 14, 1, true), chrome);
-  barrel.position.y = 0.85;
-  pivot.add(barrel);
-  const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.07, 10, 20), green);
-  muzzle.rotation.x = Math.PI / 2;
-  muzzle.position.y = 1.7;                           // the loaded drop sits right here, in the mouth
-  pivot.add(muzzle);
+  if (models.fairy) {
+    // THE FAIRY BOTTLE is the launcher — nozzle up, label to the camera; each drop
+    // fires straight out of its push-pull cap as Nimble tilts the whole bottle.
+    const b = models.fairy.clone();
+    // LIQUID-GLASS shader: the baked colour map through the fresnel glass — properly
+    // transparent face-on, solid green at the silhouette, hot rim + specular.
+    b.traverse(ch => {
+      if (ch.isMesh && ch.material) {
+        const map = ch.material.map || null;
+        if (map) map.colorSpace = THREE.SRGBColorSpace;
+        ch.material = makeGlassShader({ map, alphaMin: 0.30, alphaGain: 0.58, rimColor: 0xcfffe0, depthWrite: true });
+      }
+    });
+    b.rotation.y = Math.PI;                          // FAIRY label OUT, toward the player
+    const bx = new THREE.Box3().setFromObject(b);
+    const bs = new THREE.Vector3(); bx.getSize(bs);
+    const s = 2.05 / Math.max(0.001, bs.y);
+    b.scale.setScalar(s);
+    b.position.y = -0.35 - bx.min.y * s;             // base near the counter → nozzle lands at ~1.7, exactly where the drop loads
+    pivot.add(b);
+  } else {                                           // fallback if the bottle GLB is missing: the soap cannon
+    const hinge = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 12), green);
+    pivot.add(hinge);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.20, 1.7, 14, 1, true), chrome);
+    barrel.position.y = 0.85;
+    pivot.add(barrel);
+    const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.07, 10, 20), green);
+    muzzle.rotation.x = Math.PI / 2;
+    muzzle.position.y = 1.7;                         // the loaded drop sits right here, in the mouth
+    pivot.add(muzzle);
+  }
   const sight = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 6),   // slim sight line — aim still reads at a glance
     new THREE.MeshBasicMaterial({ color: 0xeaffff, transparent: true, opacity: 0.45, depthWrite: false }));
   sight.position.y = 2.7;
@@ -2898,11 +2967,27 @@ function pzNewBubble() {
   PZ.nextMesh.position.set(PZ.boardX + 3.4, 0.75, LANE_Z + 0.4);
   scene.add(PZ.nextMesh);
 }
+// a short tinted LIQUID JET out of the bottle's nozzle — the squirt the drop is born from
+function fireJet(ti) {
+  if (!PZ.jet) {
+    PZ.jet = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.16, 1, 10, 1, true),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending }));
+    PZ.jet.renderOrder = 4;
+    scene.add(PZ.jet);
+  }
+  PZ.jet.material.color.copy(new THREE.Color(BUBBLE_COLORS[PZ.types[ti]] || 0x39d24e).lerp(new THREE.Color(0xffffff), 0.45));
+  PZ.jetT = 0;
+  PZ.jet.visible = true;
+}
 function pzShoot() {
   if (PZ.fly || !PZ.holder || !PZ.ready || state.mode !== 'puzzle') return;
   const sp = 17;
-  PZ.fly = { mesh: PZ.holder, ti: PZ.curTi, vx: Math.sin(PZ.aim) * sp, vy: Math.cos(PZ.aim) * sp };
+  PZ.fly = { mesh: PZ.holder, ti: PZ.curTi, vx: Math.sin(PZ.aim) * sp, vy: Math.cos(PZ.aim) * sp, t: 0, full: PZ.holder.scale.x };
   PZ.holder = null;
+  PZ.squeezeT = 0.22;                                // the bottle SQUEEZES as it fires
+  fireJet(PZ.fly.ti);                                // …and squirts a tinted jet from the nozzle
+  const nx = PZ.boardX + Math.sin(PZ.aim) * 1.7, ny = PZ.shootY + Math.cos(PZ.aim) * 1.7;
+  burst(new THREE.Vector3(nx, ny, LANE_Z), 0xffffff, 7, 2.2, 2.0, 0.13, 2.0);   // fine spray at the mouth
   sfx.fire();
 }
 function pzSnap(pos) {
@@ -2991,8 +3076,38 @@ function pzUpdate(dt) {
     PZ.holder.rotation.y += dt * 1.2;
   }
   if (PZ.nextMesh) PZ.nextMesh.rotation.y += dt * 0.8;
+  // the liquid jet: extends fast out of the nozzle, then evaporates
+  if (PZ.jet && PZ.jet.visible) {
+    PZ.jetT += dt;
+    const jf = PZ.jetT / 0.26;
+    if (jf >= 1) PZ.jet.visible = false;
+    else {
+      const len = 0.4 + 2.0 * Math.min(1, jf * 2.2);
+      const dx = Math.sin(PZ.aim), dy = Math.cos(PZ.aim);
+      PZ.jet.scale.set(1, len, 1);
+      PZ.jet.rotation.z = -PZ.aim;
+      PZ.jet.position.set(PZ.boardX + dx * (1.7 + len / 2), PZ.shootY + dy * (1.7 + len / 2), LANE_Z + 0.1);
+      PZ.jet.material.opacity = 0.75 * (1 - jf * jf);
+    }
+  }
+  // the bottle's squeeze pop (bulges out sideways as it compresses)
+  if (PZ.squeezeT > 0 && PZ.guide && PZ.guide.userData.pivot) {
+    PZ.squeezeT = Math.max(0, PZ.squeezeT - dt);
+    const pk = Math.sin((PZ.squeezeT / 0.22) * Math.PI);
+    PZ.guide.userData.pivot.scale.set(1 + 0.09 * pk, 1 - 0.11 * pk, 1 + 0.09 * pk);
+  }
   if (PZ.fly) {
     const f = PZ.fly, p = f.mesh.position;
+    // LIQUID → DROP: it leaves the nozzle as a stretched squirt, sheds tiny tinted droplets,
+    // and "gels" into the round emerald drop over its first beat of flight
+    f.t += dt;
+    const gel = Math.min(1, f.t / 0.32), ge = gel * gel * (3 - 2 * gel);
+    const gs = f.full * (0.42 + 0.58 * ge);
+    f.mesh.scale.set(gs * (0.62 + 0.38 * ge), gs * (1.85 - 0.85 * ge), gs * (0.62 + 0.38 * ge));
+    if (gel < 1) {
+      f.mesh.rotation.set(0, 0, -Math.atan2(f.vx, f.vy));       // streamlined along its arc while still liquid
+      if (Math.random() < 0.5) burst(p, BUBBLE_COLORS[PZ.types[f.ti]] || 0x39d24e, 1, 0.7, 0.3, 0.07, 2.5);
+    } else f.mesh.rotation.y += dt * 2.0;
     p.x += f.vx * dt; p.y += f.vy * dt;
     p.z += (LANE_Z - p.z) * Math.min(1, 10 * dt);       // ease from in-front-of-Nimble back into the board plane
     const xMin = PZ.boardX - (PZ.cols / 2) * PZ.bd, xMax = PZ.boardX + (PZ.cols / 2) * PZ.bd;
@@ -3003,7 +3118,9 @@ function pzUpdate(dt) {
     if (hit) {
       const [r, c] = pzSnap(p);
       f.mesh.position.copy(pzPos(r, c));
-      PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ti: f.ti, r, c, targetScale: f.mesh.scale.x });
+      f.mesh.scale.setScalar(f.full);                 // fully gelled the instant it seats in the grid
+      f.mesh.rotation.set(0, Math.random() * 6.28, 0);
+      PZ.grid.set(pzKey(r, c), { mesh: f.mesh, ti: f.ti, r, c, targetScale: f.full });
       PZ.fly = null;
       if (pzMatch(r, c)) pzDropFloating();
       if (PZ.grid.size === 0) { winGame(); return; }  // the win means the board is TRULY clear — no early call while bubbles remain
@@ -3014,6 +3131,7 @@ function pzUpdate(dt) {
 function winGame() {
   state.mode = 'won';
   if (PZ.guide) PZ.guide.visible = false;
+  if (PZ.jet) PZ.jet.visible = false;
   if (PZ.holder) { scene.remove(PZ.holder); PZ.holder = null; }
   if (PZ.nextMesh) { scene.remove(PZ.nextMesh); PZ.nextMesh = null; }
   setPlayerPitch(0);
@@ -3431,7 +3549,9 @@ function gameLoop() {
       // Old bug: the pull (6/s) was slower than his run speed, so a drop could stabilise
       // ~1.3u behind his back — inside magnet range, outside collect radius — forever.
       if ((ent.type === 'ammo' || ent.type === 'score') &&
-          (ent.magnet || (Math.abs(dx) < 1.5 && m.position.y <= playerReachTop + 0.4))) {
+          (ent.magnet || (Math.abs(dx) < 1.5 && m.position.y <= playerReachTop + 0.4 && m.position.y >= py - 0.6))) {
+        // ^ the magnet only reaches from his feet UP — jumping OVER a rolling pin no longer
+        //   vacuums up the low drops beneath it (those are the slide-under reward)
         ent.magnet = true;
         const k = Math.min(1, Math.max(10, state.speed * 2.2) * dt);   // always outruns him → guaranteed catch
         m.position.x += (px - m.position.x) * k;
@@ -3501,9 +3621,7 @@ function gameLoop() {
           } else if (ent.type === 'hazard' && ent.subType === 'slow') {
             if (!ent.crossed) {
               ent.crossed = true;
-              state.brake = true;                                // salt grit slows him briefly
-              popup(m.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 'SLOWED', '#ffb84e');
-              setTimeout(() => { state.brake = false; }, 1500);
+              takeDamage();                                      // salt bites like every other hazard — jump it or lose a life
             }
           }
         }
@@ -3706,9 +3824,9 @@ function gameLoop() {
     for (const m of seabed) {
       m.rotation.y += dt * 0.15;
       if (m.position.x < camera.position.x - 26) {
-        m.position.x += 90 + Math.random() * 40;
+        m.position.x += 110 + Math.random() * 40;
         m.position.z = 8.5 + Math.random() * 3.0;
-        m.position.y = -8.9 + Math.random() * 1.1;
+        m.position.y = -7.7 + Math.random() * 1.2;
       }
     }
   }
