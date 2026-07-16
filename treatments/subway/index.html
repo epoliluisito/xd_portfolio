@@ -46,9 +46,9 @@ img{display:block;max-width:100%}
 /* left rail: chapters */
 .rnav{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;padding:14px 6px;transition:opacity .5s ease}
 .rnav.veiled{opacity:0;pointer-events:none}
-.rnlist{display:flex;flex-direction:column;gap:1px;width:100%;align-items:flex-start;padding-left:18px;padding-right:12px}
+.rnlist{display:flex;flex-direction:column;gap:0;width:100%;align-items:flex-start;padding-left:18px;padding-right:12px}
 .rnlist .ch{font-size:8.5px;letter-spacing:.24em;text-transform:uppercase;color:#bdbdbd;font-weight:800;margin-bottom:8px}
-.rn{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;cursor:pointer;padding:3px 0;text-align:left;font:inherit;overflow:hidden}
+.rn{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;cursor:pointer;padding:3px 0;text-align:left;font:inherit;overflow:hidden;max-height:46px;transition:max-height .3s ease,opacity .26s ease,padding .26s ease}
 .rn .k{width:10px;height:2px;border-radius:2px;background:#d8d8d8;transition:.22s;flex:0 0 auto}
 .rn .t{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink);white-space:normal;overflow-wrap:break-word;line-height:1.2;opacity:.3;transition:.22s;min-width:0}
 .rn.on .t{opacity:1}
@@ -65,6 +65,11 @@ img{display:block;max-width:100%}
 .rn:hover .t{opacity:1}
 .rn:hover .k{background:#8a8a8a;width:15px}
 .rn.on:hover .k{background:var(--grn)}
+.rn.hide{max-height:0;opacity:0;padding-top:0;padding-bottom:0;pointer-events:none}
+.rn .cr{margin-left:auto;margin-right:2px;width:0;height:0;border-left:4px solid #c9c9c9;border-top:3px solid transparent;border-bottom:3px solid transparent;transition:transform .28s ease;flex:0 0 auto}
+.rn.open .cr{transform:rotate(90deg)}
+.rn.on .cr{border-left-color:var(--grn)}
+.rn:hover .cr{border-left-color:#8a8a8a}
 @media(max-height:800px){.rn{padding:2px 0}.rn .t{font-size:8.5px}.rnav .ch{margin-bottom:5px}}
 
 /* ---------- BLOCKS: centered, one viewport ---------- */
@@ -665,13 +670,23 @@ var TESTGROUPS=[
  var rnav=document.getElementById('rnav'), dots=document.getElementById('dots');
  var brandrail=document.querySelector('.brandrail'), chevnav=document.querySelector('.chevnav');
  var up=document.getElementById('up'), dn=document.getElementById('dn');
+ var levels=secs.map(function(s){return parseInt(s.dataset.level||'1',10);});
+ var ancestry=[]; var curL1=0, curL2=-1;
+ secs.forEach(function(s,i){
+   var lvl=levels[i];
+   if(lvl===1){ curL1=i; curL2=-1; ancestry[i]={l1:i,l2:-1,lvl:1}; }
+   else if(lvl===2){ curL2=i; ancestry[i]={l1:curL1,l2:i,lvl:2}; }
+   else { ancestry[i]={l1:curL1,l2:curL2,lvl:3}; }
+ });
+ function hasKids(i){ return i+1<secs.length && levels[i+1]>levels[i]; }
  secs.forEach(function(s,i){
    var name=s.getAttribute('data-nav')||('Section '+i);
    var b=document.createElement('button'); b.className='rn'; b.dataset.i=i;
-   var lvl=s.dataset.level||'1';
-   if(lvl==='2') b.className+=' sub';
-   else if(lvl==='3') b.className+=' sub subsub';
-   b.innerHTML='<span class="k"></span><span class="t">'+name+'</span>';
+   var lvl=levels[i];
+   if(lvl===2) b.className+=' sub';
+   else if(lvl===3) b.className+=' sub subsub';
+   if(hasKids(i)) b.className+=' par';
+   b.innerHTML='<span class="k"></span><span class="t">'+name+'</span>'+(hasKids(i)?'<span class="cr"></span>':'');
    b.onclick=function(){s.scrollIntoView({behavior:'smooth'});};
    rnav.appendChild(b);
    var d=document.createElement('i'); d.dataset.i=i;
@@ -689,8 +704,25 @@ var TESTGROUPS=[
  secs.forEach(function(s){io.observe(s);});
 
  var cur=0;
+ function updateRail(i){
+   var a=ancestry[i], oL1=a.l1, oL2=a.l2;
+   rns.forEach(function(b,j){
+     var aj=ancestry[j], vis;
+     if(aj.lvl===1) vis=true;
+     else if(aj.lvl===2) vis=(aj.l1===oL1);
+     else vis=(aj.l2===oL2);
+     b.classList.toggle('hide',!vis);
+     var isOpen=false;
+     if(b.classList.contains('par')){
+       if(levels[j]===1) isOpen=(j===oL1);
+       else if(levels[j]===2) isOpen=(j===oL2);
+     }
+     b.classList.toggle('open',isOpen);
+   });
+ }
  function setActive(i){
    cur=i;
+   updateRail(i);
    rns.forEach(function(b,k){b.classList.toggle('on',k===i);});
    dis.forEach(function(d,k){d.classList.toggle('on',k===i);});
    var s=secs[i], cover=s.classList.contains('cover'), oncolor=s.hasAttribute('data-oncolor');
