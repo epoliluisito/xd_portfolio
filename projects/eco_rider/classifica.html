@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BEBIKES · Classifica Top 10</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root{ --eco:#3ddc6f; --cyan:#1ce0c4; --gold:#ffd23f; --turbo:#ff5a4d;
+         --panel:#142019; --line:#2f5c3f; --pix:'Press Start 2P','Courier New',monospace; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 30%,#11271b,#060c09);
+    color:#eafff2;font-family:var(--pix);overflow:hidden;}
+  #wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3vmin;gap:2.4vmin;}
+  .logo{font-size:clamp(22px,5.4vmin,58px);color:var(--eco);text-shadow:.35vmin .35vmin 0 #0a3a1d;letter-spacing:2px;}
+  .logo span{color:var(--cyan);text-shadow:.35vmin .35vmin 0 #073f39;}
+  .sub{font-size:clamp(9px,1.8vmin,18px);color:var(--gold);letter-spacing:3px;}
+  .date{font-size:clamp(8px,1.4vmin,14px);color:#7fb89a;}
+  #board{width:min(92vw,900px);background:var(--panel);border:.45vmin solid var(--line);
+    box-shadow:0 0 0 .6vmin rgba(61,220,111,.15);padding:2.6vmin 3vmin;}
+  .row{display:flex;align-items:center;gap:2vmin;padding:1.05vmin .6vmin;
+    font-size:clamp(10px,2.35vmin,25px);line-height:1.4;border-bottom:1px solid #1d2e24;}
+  .row:last-child{border-bottom:none;}
+  .pos{width:8%;text-align:right;color:var(--gold);flex:none;}
+  .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#eafff2;}
+  .sc{flex:none;color:var(--cyan);}
+  .row.r1 .pos,.row.r1 .nm{color:var(--gold);} .row.r1 .sc{color:var(--gold);}
+  .row.r1{font-size:clamp(12px,3vmin,32px);}
+  .row.r1 .nm::before{content:'👑 ';}
+  .empty{font-size:clamp(10px,2vmin,20px);color:#7fb89a;text-align:center;line-height:2.2;padding:4vmin 0;}
+  .cta{font-size:clamp(9px,1.7vmin,17px);color:#cdeede;line-height:2;text-align:center;}
+  .cta b{color:var(--gold);}
+  .err{font-size:clamp(8px,1.5vmin,14px);color:var(--turbo);min-height:2vmin;}
+  .blink{animation:bl 1.4s steps(2) infinite;} @keyframes bl{50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="logo">Be<span>Bikes</span></div>
+  <div class="sub">E-BIKE CHALLENGE · TOP 10 DI OGGI</div>
+  <div class="date" id="today"></div>
+  <div id="board"><div class="empty blink">IN ATTESA DEI PRIMI PUNTEGGI…</div></div>
+  <div class="cta">Gioca, entra in <b>TOP 10</b> e ritira il tuo premio allo stand <b>BeBikes</b>!</div>
+  <div class="err" id="err"></div>
+</div>
+<script>
+"use strict";
+/* Stessa config del gioco: URL + anon key del progetto Supabase */
+const LB_CONFIG={
+  URL:'',   // es. 'https://abcdefghijk.supabase.co'
+  KEY:''
+};
+const REFRESH_MS=8000;
+document.getElementById('today').textContent=
+  new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',year:'numeric',timeZone:'Europe/Rome'}).toUpperCase();
+async function load(){
+  const err=document.getElementById('err'), board=document.getElementById('board');
+  if(!/^https:\/\/.+supabase\.co$/.test(LB_CONFIG.URL)||LB_CONFIG.KEY.length<20){
+    err.textContent='CONFIGURA URL E CHIAVE SUPABASE IN QUESTO FILE'; return;
+  }
+  try{
+    const r=await fetch(LB_CONFIG.URL+'/rest/v1/rpc/get_leaderboard',{
+      method:'POST',
+      headers:{'apikey':LB_CONFIG.KEY,'Authorization':'Bearer '+LB_CONFIG.KEY,'Content-Type':'application/json'},
+      body:'{}'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const rows=await r.json();
+    err.textContent='';
+    if(!rows.length){ board.innerHTML='<div class="empty blink">IN ATTESA DEI PRIMI PUNTEGGI…</div>'; return; }
+    board.innerHTML='';
+    rows.forEach(x=>{
+      const d=document.createElement('div'); d.className='row'+(x.pos===1?' r1':'');
+      d.innerHTML='<span class="pos">'+x.pos+'.</span><span class="nm"></span><span class="sc">'+x.score+' g</span>';
+      d.querySelector('.nm').textContent=x.display;
+      board.appendChild(d);
+    });
+  }catch(e){ err.textContent='AGGIORNAMENTO NON RIUSCITO — RIPROVO…'; }
+}
+load(); setInterval(load,REFRESH_MS);
+</script>
+</body>
+</html>
