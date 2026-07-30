@@ -1,0 +1,2246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#1b120a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Kakaja — dice</title>
+
+<!--
+  ============================================================================
+  KAKAJA — dice game prototype  (iteration 001)
+  ----------------------------------------------------------------------------
+  Everything is procedural: wood grain, dice, pips, environment light, audio.
+  No image, font or model assets. The only external files are the two vendored
+  libraries in assets/lib/ (three.js + cannon-es).
+
+  ARCHITECTURE MAP (search these tags)
+    [TEX]    procedural texture generation (wood, normal maps, env)
+    [SCENE]  renderer / camera / lights / table / tray
+    [DICE]   dice geometry, pips, physics bodies, throwing, face reading
+    [AUDIO]  procedural impact sounds
+    [RULES]  >>> PLACEHOLDER RULESET — swap this out when real rules land <<<
+    [GAME]   state machine, players, turn manager, AI hook
+    [UI]     DOM overlay screens, HUD, input
+  ============================================================================
+-->
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./assets/lib/three.module.min.js",
+    "three/addons/geometries/RoundedBoxGeometry.js": "./assets/lib/RoundedBoxGeometry.js",
+    "cannon-es": "./assets/lib/cannon-es.js"
+  }
+}
+</script>
+
+<style>
+  :root{
+    --cream:#f6ead3;
+    --amber:#e8a94d;
+    --amber-dim:#a9762f;
+    --ink:#1b120a;
+    --ink-soft:#2a1c10;
+    --line:rgba(246,234,211,.16);
+    --ui-pad: max(14px, env(safe-area-inset-left));
+    --ui-top: max(12px, env(safe-area-inset-top));
+    --ui-bot: max(16px, env(safe-area-inset-bottom));
+    --display: "Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --ui: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; margin:0; overflow:hidden; background:var(--ink); }
+  body{
+    font-family:var(--ui); color:var(--cream);
+    -webkit-user-select:none; user-select:none;
+    touch-action:none; overscroll-behavior:none;
+  }
+  #stage{ position:fixed; inset:0; }
+  #stage canvas{ display:block; width:100%; height:100%; }
+
+  /* soft lamp vignette over the render, sells the tavern light */
+  #vignette{
+    position:fixed; inset:0; pointer-events:none; z-index:2;
+    background:
+      radial-gradient(120% 78% at 50% 34%, rgba(255,214,150,.10) 0%, rgba(0,0,0,0) 46%),
+      radial-gradient(105% 68% at 50% 44%, rgba(0,0,0,0) 42%, rgba(10,5,2,.30) 74%, rgba(6,3,1,.66) 100%);
+    mix-blend-mode:normal;
+  }
+  /* very faint film grain, kills gradient banding on wood */
+  #grain{
+    position:fixed; inset:0; pointer-events:none; z-index:3; opacity:.05;
+    background-repeat:repeat; background-size:180px 180px;
+  }
+
+  /* ---------------------------------------------------------------- UI base */
+  .layer{
+    position:fixed; inset:0; z-index:10;
+    display:flex; flex-direction:column;
+    padding:var(--ui-top) var(--ui-pad) var(--ui-bot);
+    opacity:0; visibility:hidden; transition:opacity .32s ease, visibility .32s;
+  }
+  .layer.on{ opacity:1; visibility:visible; }
+  .layer.pass{ pointer-events:none; }
+  .layer.pass > *{ pointer-events:auto; }
+
+  .center{ margin:auto; text-align:center; width:100%; max-width:420px; }
+
+  .brand{
+    font-family:var(--display);
+    font-size:clamp(44px,15vw,86px);
+    letter-spacing:.16em; margin:0 0 .1em; font-weight:500;
+    color:var(--cream);
+    text-shadow:0 2px 0 rgba(0,0,0,.5), 0 0 44px rgba(232,169,77,.28);
+  }
+  .brand .k2{ color:var(--amber); }
+  .tag{
+    font-size:11.5px; letter-spacing:.34em; text-transform:uppercase;
+    color:rgba(246,234,211,.5); margin:0 0 clamp(28px,7vh,54px);
+  }
+  .rule{ height:1px; background:linear-gradient(90deg,transparent,var(--line),transparent); margin:26px 0; }
+
+  h2.q{
+    font-family:var(--display); font-weight:500;
+    font-size:clamp(20px,5.6vw,28px); margin:0 0 6px; letter-spacing:.01em;
+  }
+  .sub{ font-size:13px; line-height:1.5; color:rgba(246,234,211,.55); margin:0 0 26px; }
+
+  /* buttons — wooden inlay feel */
+  .btn{
+    -webkit-appearance:none; appearance:none; border:0; cursor:pointer;
+    display:block; width:100%; padding:17px 22px; margin:0 0 11px;
+    font-family:var(--ui); font-size:15px; font-weight:600; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink);
+    background:linear-gradient(180deg,#f0c987,var(--amber) 55%,#c9883a);
+    border-radius:13px;
+    box-shadow:0 1px 0 rgba(255,255,255,.45) inset, 0 -2px 0 rgba(0,0,0,.22) inset,
+               0 8px 20px rgba(0,0,0,.45);
+    transition:transform .08s ease, filter .18s ease;
+  }
+  .btn:active{ transform:translateY(2px) scale(.994); filter:brightness(.95); }
+  .btn.ghost{
+    color:var(--cream); background:rgba(246,234,211,.055);
+    box-shadow:0 0 0 1px var(--line) inset;
+    font-weight:500;
+  }
+  .btn.sm{ padding:12px 16px; font-size:13px; }
+
+  .seats{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:22px; }
+  .seat{
+    -webkit-appearance:none; appearance:none; cursor:pointer;
+    background:rgba(246,234,211,.05); color:var(--cream);
+    border:0; box-shadow:0 0 0 1px var(--line) inset;
+    border-radius:14px; padding:18px 6px 14px;
+    transition:background .18s, box-shadow .18s, transform .1s;
+  }
+  .seat .n{ font-family:var(--display); font-size:32px; line-height:1; display:block; }
+  .seat .l{ font-size:10px; letter-spacing:.16em; text-transform:uppercase; opacity:.55; margin-top:7px; display:block; }
+  .seat[aria-checked="true"]{
+    background:rgba(232,169,77,.16);
+    box-shadow:0 0 0 1px rgba(232,169,77,.75) inset, 0 6px 18px rgba(0,0,0,.35);
+  }
+  .seat:active{ transform:translateY(1px); }
+
+  /* ------------------------------------------------------------------- HUD */
+  #hud{ z-index:9; justify-content:space-between; }
+  /* One flex row, so the score chips and the icon buttons can never overlap —
+     which they did at four players when the buttons were position:fixed. */
+  #topbar{ display:flex; align-items:flex-start; gap:10px; }
+  #chips{ display:flex; gap:6px; justify-content:center; flex-wrap:wrap; flex:1 1 auto; }
+  /* Past two seats there isn't room for names next to the icon buttons on a
+     narrow phone, and the turn bar already names whoever is rolling — so the
+     chips fall back to colour + score and stay on one line. */
+  #chips.many .chip:not(.me) .nm{ display:none; }
+  .chip{
+    display:flex; align-items:center; gap:6px;
+    padding:7px 11px 7px 9px; border-radius:999px;
+    background:rgba(12,7,3,.55); backdrop-filter:blur(8px);
+    box-shadow:0 0 0 1px rgba(246,234,211,.09) inset;
+    font-size:12px; transition:box-shadow .25s, background .25s, transform .25s;
+  }
+  .chip .dot{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; box-shadow:0 0 0 2px rgba(0,0,0,.35); }
+  .chip .nm{ opacity:.72; letter-spacing:.02em; }
+  .chip .sc{ font-family:var(--display); font-size:16px; line-height:1; margin-left:2px; }
+  .chip.active{
+    background:rgba(232,169,77,.17); transform:translateY(1px) scale(1.04);
+    box-shadow:0 0 0 1px rgba(232,169,77,.6) inset, 0 5px 16px rgba(0,0,0,.4);
+  }
+  .chip.active .nm{ opacity:1; }
+
+  #bottom{ display:flex; flex-direction:column; align-items:center; gap:9px; }
+  #status{ margin-top:14px; text-align:center; }
+  #turnbar{
+    font-family:var(--display); font-size:18px; letter-spacing:.04em;
+    text-align:center; min-height:24px;
+    text-shadow:0 2px 10px rgba(0,0,0,.85), 0 0 22px rgba(0,0,0,.5);
+    transition:opacity .25s;
+  }
+  #hint{
+    font-size:11px; letter-spacing:.2em; text-transform:uppercase;
+    color:rgba(246,234,211,.5); min-height:14px; text-align:center; margin-top:3px;
+    text-shadow:0 2px 8px rgba(0,0,0,.8);
+  }
+  /* running tally for the turn: what's safe if you bank, and what the current
+     selection would add */
+  #ledger{
+    display:flex; gap:10px; align-items:baseline; justify-content:center;
+    font-family:var(--display); min-height:28px;
+    padding:2px 16px; border-radius:999px;
+    background:rgba(12,7,3,.5); backdrop-filter:blur(8px);
+    box-shadow:0 0 0 1px rgba(246,234,211,.08) inset;
+  }
+  #l-saved{ font-size:21px; color:var(--cream); }
+  #l-sel{ font-size:17px; color:var(--amber); }
+  #l-sel.bad{ color:#e08a72; }
+
+  #actions{ display:flex; gap:9px; width:100%; max-width:340px; }
+  #actions .btn{ margin:0; flex:1 1 0; padding:16px 10px; font-size:14px; }
+  #actions .btn[disabled]{ opacity:.28; pointer-events:none; }
+  #actions .btn[hidden]{ display:none; }
+
+  /* big transient callout over the table — Kakaja, Tutto, banked totals */
+  #flash{
+    position:fixed; left:0; right:0; top:38%; z-index:8; text-align:center;
+    pointer-events:none; opacity:0; transition:opacity .25s ease;
+  }
+  #flash.on{ opacity:1; }
+  #flash .fl-word{
+    font-family:var(--display); font-size:clamp(34px,11vw,60px); letter-spacing:.1em;
+    text-shadow:0 4px 26px rgba(0,0,0,.85);
+  }
+  #flash .fl-num{
+    font-family:var(--display); font-size:clamp(22px,7vw,34px); margin-top:2px;
+    text-shadow:0 3px 18px rgba(0,0,0,.85);
+  }
+  #flash.good .fl-word{ color:var(--amber); }
+  #flash.good .fl-num{ color:var(--cream); }
+  #flash.bad .fl-word,#flash.bad .fl-num{ color:#e8836a; }
+
+  /* how-to-play is long enough to need scrolling on a phone */
+  .layer.scroll{ overflow-y:auto; -webkit-overflow-scrolling:touch; touch-action:pan-y; }
+  .layer.scroll .center{ margin:0 auto; padding:8px 0 20px; }
+  .center.wide{ max-width:460px; }
+  .h3{
+    font-family:var(--display); font-weight:500; font-size:16px;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--amber);
+    margin:0 0 8px;
+  }
+  table.score{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  table.score td{ padding:5px 0; border-bottom:1px solid rgba(246,234,211,.08); }
+  table.score td:last-child{
+    text-align:right; font-family:var(--display); font-size:15px; color:var(--cream);
+  }
+  table.score td:first-child{ color:rgba(246,234,211,.7); }
+
+  /* the "must beat" marker on a chip once someone has passed the target */
+  .chip .need{
+    font-size:9.5px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--amber); opacity:.85;
+  }
+  .chip.done{ box-shadow:0 0 0 1px rgba(232,169,77,.5) inset; }
+
+  #toast{
+    position:fixed; left:50%; z-index:11; transform:translateX(-50%);
+    padding:10px 18px; border-radius:999px; font-size:12.5px; letter-spacing:.04em;
+    background:rgba(12,7,3,.8); backdrop-filter:blur(10px);
+    box-shadow:0 0 0 1px rgba(246,234,211,.12) inset;
+    opacity:0; transition:opacity .3s, transform .3s; white-space:nowrap;
+  }
+  #toast.on{ opacity:1; }
+
+  #corner{ display:flex; gap:8px; flex:0 0 auto; }
+  .icon{
+    -webkit-appearance:none; appearance:none; border:0; cursor:pointer;
+    width:34px; height:34px; border-radius:50%; color:var(--cream);
+    background:rgba(12,7,3,.5); backdrop-filter:blur(8px);
+    box-shadow:0 0 0 1px rgba(246,234,211,.1) inset;
+    font-size:14px; line-height:34px; text-align:center; padding:0;
+  }
+  .icon.off{ opacity:.4; }
+
+  #scrim{
+    position:fixed; inset:0; z-index:8; background:rgba(14,8,3,.5);
+    backdrop-filter:blur(2px);
+    opacity:0; visibility:hidden; transition:opacity .32s, visibility .32s;
+  }
+  #scrim.on{ opacity:1; visibility:visible; }
+
+  /* dev overlay: mid-left, clear of both the status text and the buttons */
+  #dbg{
+    position:fixed; left:var(--ui-pad); top:42%; z-index:20;
+    font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:rgba(246,234,211,.6); white-space:pre; pointer-events:none; display:none;
+  }
+  #boot{
+    position:fixed; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
+    background:var(--ink); color:rgba(246,234,211,.5);
+    font-size:12px; letter-spacing:.28em; text-transform:uppercase;
+    transition:opacity .5s;
+  }
+  #boot.gone{ opacity:0; pointer-events:none; }
+  #boot.err{ color:#ff9d7a; letter-spacing:0; text-transform:none; font-size:13px; padding:24px; text-align:center; line-height:1.6; }
+
+  @media (min-aspect-ratio: 1/1){
+    .center{ max-width:460px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div id="vignette"></div>
+<div id="grain"></div>
+
+<div id="flash"><div class="fl-word"></div><div class="fl-num"></div></div>
+<div id="scrim"></div>
+
+<!-- ============================================================ [UI] screens -->
+<div class="layer on" id="scr-title">
+  <div class="center">
+    <h1 class="brand">KA<span class="k2">KA</span>JA</h1>
+    <p class="tag">a game of dice</p>
+    <button class="btn" data-go="setup">Play</button>
+    <button class="btn ghost" data-go="how">How to play</button>
+  </div>
+</div>
+
+<div class="layer" id="scr-setup">
+  <div class="center">
+    <h2 class="q">Who is at the table?</h2>
+    <p class="sub">You, plus one to three opponents.</p>
+    <div class="seats" id="seats"></div>
+    <div id="seatnote" class="sub" style="margin:-14px 0 24px"></div>
+    <h2 class="q">Playing to</h2>
+    <p class="sub">11,000 is the usual game.</p>
+    <div class="seats" id="targets"></div>
+    <button class="btn" data-go="start">Take a seat</button>
+    <button class="btn ghost" data-go="title">Back</button>
+  </div>
+</div>
+
+<div class="layer scroll" id="scr-how">
+  <div class="center wide" style="text-align:left">
+    <h2 class="q" style="text-align:center">How to play</h2>
+    <p class="sub" style="text-align:center">Six dice. First to <b id="how-target">11,000</b>.</p>
+
+    <div class="rule"></div>
+    <h3 class="h3">Your turn</h3>
+    <p class="sub">
+      Throw all six. <b>Set aside</b> the dice that score by tapping them, then
+      either throw what's left or <b>bank</b> everything you've set aside.
+      You must set aside at least one scoring die to carry on.
+    </p>
+    <p class="sub">
+      Throw nothing scoring and it's <b>Tutto</b> — every point from this turn
+      is gone and play passes on. Get all six dice to score and the whole set
+      comes back, points intact.
+    </p>
+
+    <div class="rule"></div>
+    <h3 class="h3">Scoring</h3>
+    <table class="score">
+      <tr><td>Single 1</td><td id="sc-one">100</td></tr>
+      <tr><td>Single 5</td><td>50</td></tr>
+      <tr><td>Three 1s</td><td>1,000</td></tr>
+      <tr><td>Three 2s</td><td>200</td></tr>
+      <tr><td>Three 3s</td><td>300</td></tr>
+      <tr><td>Three 4s</td><td>400</td></tr>
+      <tr><td>Three 5s</td><td>500</td></tr>
+      <tr><td>Three 6s</td><td>600</td></tr>
+      <tr><td>1-2-3-4-5-6 &mdash; <b>Kakaja</b></td><td>1,650</td></tr>
+    </table>
+    <p class="sub" style="margin-top:14px">
+      In the same throw, a fourth matching die <b>doubles</b> the three-of-a-kind,
+      a fifth <b>triples</b> it and a sixth <b>quadruples</b> it — so six 1s are
+      4,000.
+    </p>
+
+    <div class="rule"></div>
+    <h3 class="h3">Winning</h3>
+    <p class="sub">
+      The round always finishes. Once someone passes the target, everyone left in
+      that round must pass it <i>and</i> beat their total to take it — so
+      reaching 11,000 first only wins if nobody after you gets to 11,001.
+    </p>
+    <div class="rule"></div>
+    <button class="btn ghost" data-go="title">Back</button>
+  </div>
+</div>
+
+<div class="layer pass" id="hud">
+  <div id="top">
+    <div id="topbar">
+      <div id="chips"></div>
+      <div id="corner">
+        <button class="icon" id="btn-sound" title="Sound">♪</button>
+        <button class="icon" id="btn-menu" title="Menu">☰</button>
+      </div>
+    </div>
+    <!-- Status lives at the top: the near edge of the table is where set-aside
+         dice pile up, so the bottom is reserved for the tally and the buttons. -->
+    <div id="status">
+      <div id="turnbar"></div>
+      <div id="hint"></div>
+    </div>
+  </div>
+  <div id="bottom">
+    <div id="ledger">
+      <span id="l-saved">Turn 0</span><span id="l-sel"></span>
+    </div>
+    <div id="actions">
+      <button class="btn" id="roll">Roll</button>
+      <button class="btn ghost" id="bank">Bank</button>
+    </div>
+  </div>
+</div>
+
+<div class="layer" id="scr-over">
+  <div class="center">
+    <p class="tag" style="margin-bottom:8px">round over</p>
+    <h1 class="brand" id="over-who" style="font-size:clamp(30px,9vw,52px);letter-spacing:.06em">—</h1>
+    <p class="sub" id="over-line"></p>
+    <div class="rule"></div>
+    <button class="btn" data-go="start">Play again</button>
+    <button class="btn ghost" data-go="setup">Change table</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="dbg"></div>
+<div id="boot">loading</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import * as CANNON from 'cannon-es';
+
+const boot = document.getElementById('boot');
+window.addEventListener('error', e => {
+  boot.className = 'err';
+  boot.textContent = 'Could not start.\n\n' + (e.message || e) +
+    '\n\nIf you opened this file directly, serve the folder instead:\n' +
+    'python3 -m http.server 8080  →  http://localhost:8080';
+});
+
+/* ==========================================================================
+   [CFG] tuning knobs — one place for everything you might want to feel out
+   ========================================================================== */
+const CFG = {
+  // `saved` is a strip along the near edge, walled off from the physics, where
+  // dice you set aside are parked. The playable area is the rest.
+  // Depth is chosen so that on a 16:9-or-taller phone the camera is still
+  // width-bound — the dice stay the same on-screen size and the extra depth is
+  // free table.
+  tray:   { w: 10.9, d: 24.0, rim: 1.05, wall: 0.62, saved: 2.9 },
+  // Sized so a die reads ~55px on a 390pt phone. Smaller than this and the
+  // pips stop being legible at a glance, which is the whole point of a top view.
+  die:    { size: 1.55, round: 0.22, mass: 1.0, stowScale: 0.78 },
+  physics:{
+    // Physically consistent scale, chosen for watchability: 1 unit ≈ 3cm, so
+    // these are chunky 4cm casino dice on a ~35cm tray and g works out near
+    // -330. Cranking g higher is "more realistic" for 16mm dice but the throw
+    // becomes a slam you can't read on a phone.
+    gravity: -330,
+    step: 1/180, subSteps: 8,
+    restitution: 0.30, friction: 0.34,
+    linDamp: 0.02, angDamp: 0.06,
+    sleepSpeed: 0.85, sleepTime: 0.10,
+  },
+  // Tuned headlessly over ~2500 simulated rolls: median settle 0.9s, p90 1.2s,
+  // zero strays, zero wall penetration, face distribution statistically fair.
+  throw:  {
+    // Chosen so dice come to rest in the upper-middle of the tray (median
+    // z ≈ -3.5 of ±9.7) rather than piling against the far rim under the HUD.
+    // Wider lateral spread than feels necessary: it fans six dice out on the
+    // way down the tray instead of letting them arrive in formation and bunch
+    // against the far rim, which is where cocked dice come from.
+    speed: 21, spread: 0.55, spin: 38,
+    apex: 3.0,            // how high the throw arcs, in units (g-independent)
+    // Entry point, kept strictly INSIDE the tray footprint — spawning a body
+    // overlapping a static wall makes cannon eject it across the table.
+    fromY: 6.4, inset: 2.2,
+  },
+  nudge:  { hop: 1.4, spin: 18, lateral: 5 },
+  stow:   { time: 0.34 },        // seconds for a die to slide into the saved row
+  cam:    { fov: 34, elev: 0.905, back: 0.425, pad: 1.05 },
+  ai:     { think: 620, showPick: 780, betweenRolls: 300 },
+  // Mesh colours stay near white on purpose: the wood colour lives in the
+  // generated texture. Tinting a brown material with a brown map multiplies the
+  // two and the oak turns to dark mahogany.
+  colors: {
+    plank: 0xf2ece4,
+    rim:   0xd8c9b4,
+    ivory: 0xf5ecd9,
+    pip:   0x241610,
+  },
+  // `bold` scales the AI's willingness to keep rolling: 1.0 is the exact
+  // optimal policy from the solver, below is cautious, above is reckless.
+  players:[
+    { name:'You',   color:0xe8a94d, bold: 1.00 },
+    { name:'Bram',  color:0x7fb7a3, bold: 0.90 },
+    { name:'Odile', color:0xd2776b, bold: 1.00 },
+    { name:'Kes',   color:0x9d8fc4, bold: 1.14 },
+  ],
+};
+// Geometry of the playable area, once the saved strip is carved off the near end.
+const PLAY = {
+  get zNear(){ return CFG.tray.d / 2 - CFG.tray.saved; },
+  get zFar(){ return -CFG.tray.d / 2; },
+  get halfW(){ return CFG.tray.w / 2; },
+};
+const DEBUG = new URLSearchParams(location.search).has('debug');
+
+/* ==========================================================================
+   [TEX] procedural textures — deterministic PRNG so a plank looks the same
+         every reload, and a 2-pass canvas → colour map + normal map.
+   ========================================================================== */
+function rng(seed){
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Draws one plank of oak: broad tonal bands, warped grain lines, a knot or
+// two, then speckle. Canvas primitives only — far cheaper than per-pixel fbm,
+// and the warped strokes read as real grain from a top view.
+function drawOak(w, h, seed, tone){
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  const R = rng(seed);
+  const base = tone || { l: 46, s: 38, hu: 27 };
+
+  g.fillStyle = `hsl(${base.hu} ${base.s}% ${base.l}%)`;
+  g.fillRect(0, 0, w, h);
+
+  // broad tonal bands along the plank length
+  for (let i = 0; i < 9; i++){
+    const x = R() * w, bw = w * (0.10 + R() * 0.26);
+    const d = (R() - 0.5) * 9;
+    const grad = g.createLinearGradient(x - bw, 0, x + bw, 0);
+    grad.addColorStop(0, `hsl(${base.hu + d * .5} ${base.s}% ${base.l + d}% / 0)`);
+    grad.addColorStop(.5, `hsl(${base.hu + d * .5} ${base.s}% ${base.l + d}% / .5)`);
+    grad.addColorStop(1, `hsl(${base.hu + d * .5} ${base.s}% ${base.l + d}% / 0)`);
+    g.fillStyle = grad; g.fillRect(x - bw, 0, bw * 2, h);
+  }
+
+  // grain lines: each is a vertical path warped by two sines
+  const lines = Math.round(w * 0.40);
+  for (let i = 0; i < lines; i++){
+    const x0 = R() * w;
+    const amp = 1.5 + R() * 7, amp2 = R() * 3.5;
+    const f1 = 0.6 + R() * 2.0, f2 = 3 + R() * 5;
+    const ph = R() * 6.283;
+    const dark = R() < .22;
+    const a = dark ? .12 + R() * .20 : .04 + R() * .09;
+    g.strokeStyle = dark
+      ? `hsl(${base.hu - 5} ${base.s + 8}% ${Math.max(8, base.l - 26)}% / ${a})`
+      : `hsl(${base.hu + 8} ${base.s - 6}% ${base.l + 16}% / ${a})`;
+    g.lineWidth = dark ? (.6 + R() * 1.7) : (.5 + R() * 1.1);
+    g.beginPath();
+    const steps = 22;
+    for (let s = 0; s <= steps; s++){
+      const t = s / steps, y = t * h;
+      const x = x0 + Math.sin(t * f1 * 6.283 + ph) * amp + Math.sin(t * f2 * 6.283 + ph * 2) * amp2;
+      s ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+  }
+
+  // Cathedral figure — the nested arch shapes you get from flat-sawn oak. This
+  // is the single feature that separates "oak" from "generic wood veneer".
+  const figures = 4 + (R() * 4 | 0);
+  for (let f = 0; f < figures; f++){
+    const cx = R() * w, cy = h * (R() * 1.1 - .05);
+    const w0 = 1.6 + R() * 3.4, h0 = h * (0.025 + R() * 0.07);
+    const nested = 8 + (R() * 10 | 0);
+    for (let r = 0; r < nested; r++){
+      const sw = w0 * (1 + r * 0.26), sh = h0 * (1 + r * 0.17);
+      const dark = r % 2 === 0;
+      g.strokeStyle = dark
+        ? `hsl(${base.hu - 6} ${base.s + 12}% ${Math.max(9, base.l - 24)}% / ${.30 - r * .012})`
+        : `hsl(${base.hu + 10} ${base.s - 4}% ${base.l + 20}% / ${.20 - r * .008})`;
+      g.lineWidth = .7 + R() * 1.5;
+      g.beginPath();
+      g.moveTo(cx - sw, cy + sh);
+      g.quadraticCurveTo(cx, cy - sh * 0.75, cx + sw, cy + sh);
+      g.stroke();
+    }
+  }
+
+  // knots — concentric warped rings, grain bending around them
+  const knots = R() < .55 ? 1 : (R() < .3 ? 2 : 0);
+  for (let k = 0; k < knots; k++){
+    const kx = w * (.15 + R() * .7), ky = h * (.1 + R() * .8);
+    const rx = 2.5 + R() * 5, ry = rx * (2.0 + R() * 2.4), rot = (R() - .5) * .5;
+    for (let r = 1; r <= 9; r++){
+      g.strokeStyle = `hsl(${base.hu - 8} ${base.s + 6}% ${Math.max(7, base.l - 30 + r)}% / ${.30 - r * .026})`;
+      g.lineWidth = .8 + R() * 1.1;
+      g.beginPath(); g.ellipse(kx, ky, rx * r * .55, ry * r * .55, rot, 0, 6.283); g.stroke();
+    }
+    g.fillStyle = `hsl(${base.hu - 10} ${base.s + 10}% ${Math.max(6, base.l - 32)}% / .55)`;
+    g.beginPath(); g.ellipse(kx, ky, rx * .5, ry * .5, rot, 0, 6.283); g.fill();
+  }
+
+  // speckle / pore noise
+  for (let i = 0, n = (w * h) / 26 | 0; i < n; i++){
+    const v = R();
+    g.fillStyle = v < .5 ? `rgba(30,16,6,${R() * .15})` : `rgba(255,225,180,${R() * .08})`;
+    g.fillRect(R() * w | 0, R() * h | 0, 1, 1 + (R() * 2 | 0));
+  }
+
+  // Board edges: a dark rolled-over shoulder each side. Without this the seams
+  // between planks read as drawn lines rather than as two separate boards.
+  const edge = Math.max(3, w * 0.055);
+  [[0, 1], [w, -1]].forEach(([x0, dir]) => {
+    const gr = g.createLinearGradient(x0, 0, x0 + dir * edge, 0);
+    gr.addColorStop(0, 'rgba(18,9,3,.62)');
+    gr.addColorStop(0.45, 'rgba(18,9,3,.16)');
+    gr.addColorStop(1, 'rgba(18,9,3,0)');
+    g.fillStyle = gr;
+    g.fillRect(Math.min(x0, x0 + dir * edge), 0, edge, h);
+  });
+  return c;
+}
+
+// Height→normal from a canvas' luminance. Gives the grain real relief under
+// the lamp, which is what stops a top view from looking like flat paper.
+function normalFrom(canvas, strength = 1.6){
+  const w = canvas.width, h = canvas.height;
+  const src = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const H = new Float32Array(w * h);
+  for (let i = 0, n = w * h; i < n; i++){
+    H[i] = (src[i * 4] * .299 + src[i * 4 + 1] * .587 + src[i * 4 + 2] * .114) / 255;
+  }
+  const out = new Uint8ClampedArray(w * h * 4);
+  const at = (x, y) => H[((y + h) % h) * w + ((x + w) % w)];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+    const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+    let nx = -dx, ny = -dy, nz = 1;
+    const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+    const i = (y * w + x) * 4;
+    out[i]     = (nx * .5 + .5) * 255;
+    out[i + 1] = (ny * .5 + .5) * 255;
+    out[i + 2] = (nz * .5 + .5) * 255;
+    out[i + 3] = 255;
+  }
+  const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat);
+  t.needsUpdate = true; t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+// Roughness from luminance: dark late-growth grain is rougher than the pale
+// bands, which is subtle but makes the lamp highlight crawl believably.
+function roughFrom(canvas, lo = 0.52, hi = 0.9){
+  const w = canvas.width, h = canvas.height;
+  const src = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0, n = w * h; i < n; i++){
+    const L = (src[i * 4] * .299 + src[i * 4 + 1] * .587 + src[i * 4 + 2] * .114) / 255;
+    const r = (hi - (hi - lo) * L) * 255;
+    out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = r; out[i * 4 + 3] = 255;
+  }
+  const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat);
+  t.needsUpdate = true; t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+function oakMaterial(seed, tone, res){
+  const c = drawOak(res[0], res[1], seed, tone);
+  const map = new THREE.CanvasTexture(c);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.anisotropy = 4;
+  return new THREE.MeshStandardMaterial({
+    map, normalMap: normalFrom(c, 2.0), roughnessMap: roughFrom(c),
+    normalScale: new THREE.Vector2(.55, .55),
+    roughness: 1, metalness: 0,
+  });
+}
+
+// A tiny procedural "room": warm lamp above, dim floor below. Run through
+// PMREM it gives the dice and varnish something to reflect. No HDRI needed.
+function makeEnv(renderer){
+  const c = document.createElement('canvas'); c.width = 32; c.height = 16;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 16);
+  grad.addColorStop(0.00, '#ffe2b4');
+  grad.addColorStop(0.32, '#a8794a');
+  grad.addColorStop(0.62, '#3a2515');
+  grad.addColorStop(1.00, '#150c06');
+  g.fillStyle = grad; g.fillRect(0, 0, 32, 16);
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = pmrem.fromEquirectangular(tex).texture;
+  pmrem.dispose(); tex.dispose();
+  return env;
+}
+
+// CSS film grain, generated once
+(function grainCSS(){
+  const s = 96, c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d'), img = g.createImageData(s, s), R = rng(7);
+  for (let i = 0; i < s * s; i++){
+    const v = 128 + (R() - .5) * 255;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  document.getElementById('grain').style.backgroundImage = `url(${c.toDataURL()})`;
+})();
+
+/* ==========================================================================
+   [SCENE] renderer, camera, lights, table
+   ========================================================================== */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0805);
+scene.fog = new THREE.Fog(0x0d0805, 34, 62);
+scene.environment = makeEnv(renderer);
+
+const camera = new THREE.PerspectiveCamera(CFG.cam.fov, 1, 0.5, 200);
+const camTarget = new THREE.Vector3(0, 0, 0);
+
+// Fit the play area to whatever viewport we get, portrait or landscape, by
+// pushing the camera back along a fixed viewing direction until all four
+// corners of the tray are inside the frustum. A few iterations converge.
+const camDir = new THREE.Vector3(0, CFG.cam.elev, CFG.cam.back).normalize();
+function fitCamera(){
+  const { w, d } = CFG.tray, pad = CFG.cam.pad;
+  const corners = [
+    new THREE.Vector3(-w / 2 * pad, 0, -d / 2 * pad),
+    new THREE.Vector3( w / 2 * pad, 0, -d / 2 * pad),
+    new THREE.Vector3(-w / 2 * pad, 0,  d / 2 * pad),
+    new THREE.Vector3( w / 2 * pad, 0,  d / 2 * pad),
+    new THREE.Vector3(0, CFG.tray.rim * 1.4, -d / 2 * pad),
+  ];
+  let dist = 30;
+  for (let it = 0; it < 24; it++){
+    camera.position.copy(camDir).multiplyScalar(dist).add(camTarget);
+    camera.lookAt(camTarget);
+    camera.updateMatrixWorld(true); camera.updateProjectionMatrix();
+    let m = 0;
+    for (const c of corners){
+      const p = c.clone().project(camera);
+      m = Math.max(m, Math.abs(p.x), Math.abs(p.y));
+    }
+    if (Math.abs(m - 1) < 0.004) break;
+    dist *= (0.5 + 0.5 * m);        // damped so it doesn't oscillate
+  }
+}
+
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  fitCamera();
+}
+addEventListener('resize', resize);
+addEventListener('orientationchange', () => setTimeout(resize, 250));
+
+// ---- lights: one warm overhead lamp doing the work, plus soft fill
+const lamp = new THREE.SpotLight(0xffd9a3, 2600, 0, 0.62, 0.72, 2);
+lamp.position.set(-1.6, 26, 7);
+lamp.target.position.set(0, 0, 1.2);
+lamp.castShadow = true;
+lamp.shadow.mapSize.set(1024, 1024);
+lamp.shadow.camera.near = 6; lamp.shadow.camera.far = 46;
+lamp.shadow.bias = -0.0012; lamp.shadow.radius = 3.2;
+scene.add(lamp, lamp.target);
+
+const fill = new THREE.DirectionalLight(0xbcd0e6, 0.24);
+fill.position.set(7, 11, -9);
+scene.add(fill);
+scene.add(new THREE.HemisphereLight(0xffe6c2, 0x1a0f07, 0.34));
+
+// ---- table: individual planks, each with its own grain, tiny height jitter
+const table = new THREE.Group(); scene.add(table);
+// Warm tavern oak: hue in the 30s and modest saturation. Push saturation past
+// ~30% and it reads as mahogany rather than oak.
+const PLANK_MATS = [
+  oakMaterial(1013, { hu: 32, s: 27, l: 45 }, [320, 640]),
+  oakMaterial(9241, { hu: 36, s: 22, l: 52 }, [320, 640]),
+  oakMaterial(4477, { hu: 28, s: 30, l: 40 }, [320, 640]),
+  oakMaterial(2185, { hu: 33, s: 25, l: 48 }, [320, 640]),
+  oakMaterial(7702, { hu: 30, s: 28, l: 43 }, [320, 640]),
+];
+const RIM_MAT = oakMaterial(6631, { hu: 28, s: 30, l: 34 }, [256, 256]);
+RIM_MAT.normalScale.set(.4, .4);
+
+(function buildTable(){
+  const R = rng(31);
+  const surfaceW = CFG.tray.w + CFG.tray.rim * 2 + 5.0;
+  const surfaceD = CFG.tray.d + CFG.tray.rim * 2 + 7.0;
+  const n = 5, gap = 0.09;      // fewer, wider boards — tavern table, not decking
+  const pw = (surfaceW - gap * (n - 1)) / n;
+
+  for (let i = 0; i < n; i++){
+    const geo = new THREE.BoxGeometry(pw, 0.9, surfaceD, 1, 1, 1);
+    const mat = PLANK_MATS[i % PLANK_MATS.length].clone();
+    mat.color = new THREE.Color(CFG.colors.plank).offsetHSL(
+      (R() - .5) * .03, (R() - .5) * .08, (R() - .5) * .13);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(-surfaceW / 2 + pw / 2 + i * (pw + gap), -0.45 + (R() - .5) * 0.012, 0);
+    m.rotation.z = (R() - .5) * 0.0016;
+    m.receiveShadow = true; m.castShadow = false;
+    table.add(m);
+  }
+  // dark seam under the gaps so they read as depth, not as lines
+  const seam = new THREE.Mesh(
+    new THREE.BoxGeometry(surfaceW, 0.4, surfaceD),
+    new THREE.MeshStandardMaterial({ color: 0x160c05, roughness: .95 }));
+  seam.position.y = -0.72; table.add(seam);
+
+  // ---- raised rim around the play area (this is what the dice bounce off)
+  const { w, d, rim, wall } = CFG.tray;
+  const H = rim;
+  const bar = (sx, sz, x, z) => {
+    const g = new THREE.Mesh(new THREE.BoxGeometry(sx, H, sz), RIM_MAT.clone());
+    g.material.color = new THREE.Color(CFG.colors.rim);
+    g.position.set(x, H / 2, z);
+    g.castShadow = true; g.receiveShadow = true;
+    table.add(g);
+    return g;
+  };
+  const outW = w + wall * 2, outD = d + wall * 2;
+  bar(outW, wall, 0, -d / 2 - wall / 2);   // top
+  bar(outW, wall, 0,  d / 2 + wall / 2);   // bottom
+  bar(wall, outD, -w / 2 - wall / 2, 0);   // left
+  bar(wall, outD,  w / 2 + wall / 2, 0);   // right
+
+  // Inlaid divider marking off the saved strip along the near edge, so dice you
+  // have set aside read as parked rather than still in play.
+  const div = new THREE.Mesh(
+    new THREE.BoxGeometry(w, 0.16, 0.30),
+    new THREE.MeshStandardMaterial({ color: 0x33200f, roughness: 0.55, metalness: 0.05 }));
+  div.position.set(0, 0.02, PLAY.zNear);
+  div.receiveShadow = true;
+  table.add(div);
+  // two hairlines either side of it, the way a real inlay would be banded
+  for (const off of [-0.28, 0.28]){
+    const line = new THREE.Mesh(
+      new THREE.BoxGeometry(w, 0.14, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0x6d4a24, roughness: 0.45 }));
+    line.position.set(0, 0.03, PLAY.zNear + off);
+    table.add(line);
+  }
+})();
+
+// The main lamp is aimed at the play area, which leaves the saved strip in the
+// dark — and those dice are the record of your turn, so they have to stay
+// readable. One dim warm spot covers it.
+const savedLamp = new THREE.SpotLight(0xffd9a3, 260, 0, 0.5, 0.9, 2);
+savedLamp.position.set(0, 11, CFG.tray.d / 2 + 3);
+savedLamp.target.position.set(0, 0, CFG.tray.d / 2 - CFG.tray.saved / 2);
+savedLamp.castShadow = false;
+scene.add(savedLamp, savedLamp.target);
+
+/* ==========================================================================
+   [AUDIO] procedural impact sounds. No files: a filtered noise burst plus a
+   short pitched body, so wood-on-wood clacks have some weight.
+   ========================================================================== */
+const Audio = {
+  ctx: null, on: true, last: 0,
+  init(){
+    if (this.ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    this.ctx = new AC();
+    this.bus = this.ctx.createGain(); this.bus.gain.value = 0.5;
+    this.bus.connect(this.ctx.destination);
+    // one shared noise buffer
+    const n = this.ctx.sampleRate * 0.25;
+    this.noise = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+    const ch = this.noise.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 2;
+  },
+  clack(strength){
+    if (!this.on || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (t - this.last < 0.022) return;
+    this.last = t;
+    const v = Math.min(1, Math.max(0.06, strength));
+
+    const src = this.ctx.createBufferSource(); src.buffer = this.noise;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 900 + Math.random() * 1600; bp.Q.value = 1.1;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.30 * v, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06 + 0.05 * v);
+    src.connect(bp).connect(g).connect(this.bus);
+    src.start(t); src.stop(t + 0.2);
+
+    const o = this.ctx.createOscillator(); o.type = 'triangle';
+    o.frequency.setValueAtTime(180 + Math.random() * 120, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + 0.09);
+    const og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.16 * v, t + 0.006);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    o.connect(og).connect(this.bus);
+    o.start(t); o.stop(t + 0.16);
+  },
+  // A short melodic figure. `notes` are frequencies, `gap` the spacing.
+  tune(notes, gap = 0.09, vol = 0.10, type = 'sine', dur = 0.5){
+    if (!this.on || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    notes.forEach((f, i) => {
+      const d = i * gap;
+      const o = this.ctx.createOscillator(); o.type = type;
+      o.frequency.value = f;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.exponentialRampToValueAtTime(vol, t + d + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + dur);
+      o.connect(g).connect(this.bus); o.start(t + d); o.stop(t + d + dur + 0.1);
+    });
+  },
+  chime(up){ this.tune(up ? [523.25, 783.99] : [392, 293.66]); },
+  // Kakaja deserves more than a chime: a rising arpeggio.
+  fanfare(){ this.tune([523.25, 659.25, 783.99, 1046.5], 0.085, 0.11, 'triangle', 0.7); },
+  bust(){ this.tune([311.13, 261.63, 196], 0.13, 0.11, 'sawtooth', 0.42); },
+  // Soft wooden knock for setting a die aside.
+  stow(){ this.clack(0.35); },
+  // Tiny UI tick for selecting a die.
+  tick(){
+    if (!this.on || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator(); o.type = 'square';
+    o.frequency.setValueAtTime(1150, t);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.035, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+    o.connect(g).connect(this.bus); o.start(t); o.stop(t + 0.08);
+  },
+};
+
+/* ==========================================================================
+   [DICE] geometry, pips, bodies, throwing, face reading
+   ========================================================================== */
+
+// Minimal geometry merge (position + normal + index) so a full set of pips is
+// a single draw call per die instead of 21.
+function mergeGeoms(geoms){
+  let vc = 0, ic = 0;
+  for (const g of geoms){ vc += g.attributes.position.count; ic += g.index.count; }
+  const pos = new Float32Array(vc * 3), nor = new Float32Array(vc * 3);
+  const idx = vc > 65535 ? new Uint32Array(ic) : new Uint16Array(ic);
+  let vo = 0, io = 0;
+  for (const g of geoms){
+    pos.set(g.attributes.position.array, vo * 3);
+    nor.set(g.attributes.normal.array, vo * 3);
+    const gi = g.index.array;
+    for (let i = 0; i < gi.length; i++) idx[io + i] = gi[i] + vo;
+    io += gi.length; vo += g.attributes.position.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  return out;
+}
+
+// Standard western die: opposite faces sum to 7.
+// Only the normal and one in-plane axis are declared; the second axis is
+// derived as t = u × n. Hand-writing t is a trap — two of the six frames come
+// out left-handed, which mirrors the pip geometry and makes computeVertexNormals
+// point the normals inward, so those pips render inside-out and invisible.
+const FACES = [
+  { n: new THREE.Vector3( 1, 0, 0), v: 3, u: new THREE.Vector3( 0, 0,-1) },
+  { n: new THREE.Vector3(-1, 0, 0), v: 4, u: new THREE.Vector3( 0, 0, 1) },
+  { n: new THREE.Vector3( 0, 1, 0), v: 1, u: new THREE.Vector3( 1, 0, 0) },
+  { n: new THREE.Vector3( 0,-1, 0), v: 6, u: new THREE.Vector3( 1, 0, 0) },
+  { n: new THREE.Vector3( 0, 0, 1), v: 2, u: new THREE.Vector3( 1, 0, 0) },
+  { n: new THREE.Vector3( 0, 0,-1), v: 5, u: new THREE.Vector3(-1, 0, 0) },
+];
+for (const f of FACES){
+  f.t = f.u.clone().cross(f.n);        // guarantees makeBasis(u, n, t) is right-handed
+  if (f.u.dot(new THREE.Vector3().crossVectors(f.n, f.t)) < 0.999)
+    console.warn('KAKAJA: face frame is left-handed', f.v);
+}
+const PIPS = {
+  1: [[0,0]],
+  2: [[-1,-1],[1,1]],
+  3: [[-1,-1],[0,0],[1,1]],
+  4: [[-1,-1],[-1,1],[1,-1],[1,1]],
+  5: [[-1,-1],[-1,1],[0,0],[1,-1],[1,1]],
+  6: [[-1,-1],[-1,0],[-1,1],[1,-1],[1,0],[1,1]],
+};
+
+const DIE_GEO = new RoundedBoxGeometry(CFG.die.size, CFG.die.size, CFG.die.size, 4, CFG.die.round);
+const PIP_GEO = (() => {
+  const s = CFG.die.size, half = s / 2;
+  const pr = s * 0.108, spacing = s * 0.245, sink = s * 0.006;
+  const unit = new THREE.SphereGeometry(pr, 14, 9);
+  const parts = [];
+  for (const f of FACES){
+    for (const [a, b] of PIPS[f.v]){
+      const p = f.n.clone().multiplyScalar(half - sink)
+        .add(f.u.clone().multiplyScalar(a * spacing))
+        .add(f.t.clone().multiplyScalar(b * spacing));
+      // Squash hard along the face normal. A rounder pip behaves like a convex
+      // mirror and catches the overhead lamp, which reads as a pale ring
+      // instead of a dark dot — fatal in a top-view game.
+      const m = new THREE.Matrix4()
+        .makeBasis(f.u, f.n, f.t)
+        .scale(new THREE.Vector3(1, 0.26, 1))
+        .setPosition(p);
+      const g = unit.clone(); g.applyMatrix4(m);
+      g.computeVertexNormals();
+      parts.push(g);
+    }
+  }
+  unit.dispose();
+  const merged = mergeGeoms(parts);
+  parts.forEach(g => g.dispose());
+  return merged;
+})();
+
+const BODY_MAT = new THREE.MeshPhysicalMaterial({
+  color: CFG.colors.ivory, roughness: 0.38, metalness: 0,
+  clearcoat: 0.35, clearcoatRoughness: 0.26,
+  sheen: 0.25, sheenColor: new THREE.Color(0xfff3de),
+});
+// Deliberately matte and nearly unlit by the environment: the pips have to be
+// unambiguously dark from every angle the die can come to rest in.
+const PIP_MAT = new THREE.MeshStandardMaterial({
+  color: CFG.colors.pip, roughness: 0.88, metalness: 0, envMapIntensity: 0.2,
+});
+
+// ---- physics world
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, CFG.physics.gravity, 0) });
+// Naive (O(n²)) on purpose: there are ~11 bodies total, so the sweep-and-prune
+// broadphase buys nothing and was intermittently missing die↔wall pairs, which
+// showed up as dice escaping the tray.
+world.broadphase = new CANNON.NaiveBroadphase();
+world.allowSleep = true;
+world.solver.iterations = 20;
+// Scaled-up gravity needs stiffer contacts or fast dice sink into the rim
+// before the solver catches them.
+world.defaultContactMaterial.contactEquationStiffness = 1e9;
+world.defaultContactMaterial.contactEquationRelaxation = 3;
+world.defaultContactMaterial.frictionEquationStiffness = 1e9;
+world.defaultContactMaterial.frictionEquationRelaxation = 3;
+
+const matDie = new CANNON.Material('die');
+const matTable = new CANNON.Material('table');
+const stiff = { contactEquationStiffness: 1e9, contactEquationRelaxation: 3,
+                frictionEquationStiffness: 1e9, frictionEquationRelaxation: 3 };
+world.addContactMaterial(new CANNON.ContactMaterial(matDie, matTable, {
+  friction: CFG.physics.friction, restitution: CFG.physics.restitution, ...stiff,
+}));
+world.addContactMaterial(new CANNON.ContactMaterial(matDie, matDie, {
+  friction: 0.06, restitution: 0.42, ...stiff,
+}));
+
+(function buildBounds(){
+  const { w, d, rim, wall } = CFG.tray;
+  const floor = new CANNON.Body({ mass: 0, material: matTable, shape: new CANNON.Plane() });
+  floor.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+  world.addBody(floor);
+
+  const th = 4, H = 14;                       // thick + tall so nothing escapes
+  const add = (hx, hy, hz, x, y, z) => {
+    const b = new CANNON.Body({ mass: 0, material: matTable,
+      shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)) });
+    b.position.set(x, y, z); world.addBody(b);
+  };
+  add(w / 2 + th, H / 2, th / 2, 0, H / 2 - rim * .1, -d / 2 - th / 2);   // far
+  add(th / 2, H / 2, d / 2 + th, -w / 2 - th / 2, H / 2 - rim * .1, 0);   // left
+  add(th / 2, H / 2, d / 2 + th,  w / 2 + th / 2, H / 2 - rim * .1, 0);   // right
+  add(w / 2 + th, th / 2, d / 2 + th, 0, H + th / 2, 0);                  // ceiling
+  // Near wall sits at the edge of the saved strip, not at the rim, so a thrown
+  // die can never barge into the dice you've already set aside.
+  add(w / 2 + th, H / 2, th / 2, 0, H / 2 - rim * .1, PLAY.zNear + th / 2);
+})();
+
+// A flat amber ring drawn on the table under a die, used to mark selection.
+// Reads far better at a glance than an emissive change alone, especially on the
+// pale wood where a glow has little to contrast against.
+const RING_GEO = new THREE.RingGeometry(CFG.die.size * 0.80, CFG.die.size * 0.95, 40);
+const RING_MAT = new THREE.MeshBasicMaterial({
+  color: 0xffb454, transparent: true, opacity: 0.85,
+  side: THREE.DoubleSide, depthWrite: false,
+});
+
+class Die {
+  constructor(){
+    this.group = new THREE.Group();
+    // Own material per die: highlight states are per-die, so a shared material
+    // can't express them.
+    this.mat = BODY_MAT.clone();
+    this.body3 = new THREE.Mesh(DIE_GEO, this.mat);
+    this.pips = new THREE.Mesh(PIP_GEO, PIP_MAT);
+    this.body3.castShadow = true; this.body3.receiveShadow = true;
+    this.pips.castShadow = false;
+    this.group.add(this.body3, this.pips);
+    this.group.visible = false;
+    scene.add(this.group);
+
+    this.ring = new THREE.Mesh(RING_GEO, RING_MAT.clone());
+    this.ring.rotation.x = -Math.PI / 2;
+    this.ring.position.y = 0.035;
+    this.ring.visible = false;
+    scene.add(this.ring);
+
+    this.stowed = false;
+    this.selected = false;
+    this.dead = false;          // in play but can't be part of any scoring keep
+    this.tween = null;
+
+    const h = CFG.die.size / 2 * 0.97;
+    this.body = new CANNON.Body({
+      mass: CFG.die.mass, material: matDie,
+      shape: new CANNON.Box(new CANNON.Vec3(h, h, h)),
+      linearDamping: CFG.physics.linDamp, angularDamping: CFG.physics.angDamp,
+      sleepSpeedLimit: CFG.physics.sleepSpeed, sleepTimeLimit: CFG.physics.sleepTime,
+      allowSleep: true,
+    });
+    // cannon-es has no CCD, so tunnelling is handled by a small fixed step,
+    // thick static walls, and rescueStrays() as a last resort.
+    this.body.sleep();
+    world.addBody(this.body);
+
+    this.body.addEventListener('collide', (e) => {
+      const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
+      if (v > 1.2) Audio.clack(Math.min(1, (v - 1.2) / 26) * 0.9);
+    });
+
+    this.still = 0;
+    this.value = null;
+  }
+  // Which value is pointing at the ceiling, and how convincingly.
+  read(){
+    let best = -2, val = 1;
+    const q = this.group.quaternion;
+    for (const f of FACES){
+      const d = f.n.clone().applyQuaternion(q).y;
+      if (d > best){ best = d; val = f.v; }
+    }
+    return { value: val, confidence: best };
+  }
+  sync(){
+    this.group.position.copy(this.body.position);
+    this.group.quaternion.copy(this.body.quaternion);
+  }
+  get speed(){ return this.body.velocity.length() + this.body.angularVelocity.length() * 0.55; }
+
+  // ---- presentation states -------------------------------------------------
+  setLook({ selected = false, dead = false } = {}){
+    this.selected = selected; this.dead = dead;
+    const m = this.mat;
+    if (selected){
+      m.color.setHex(0xfff6e2);
+      m.emissive.setHex(0x4a2e06);
+      m.envMapIntensity = 1.2;
+    } else if (dead){
+      // Pulled well down in brightness rather than tinted grey — a grey die
+      // reads as a different kind of die, a dim one reads as "out of play".
+      // This needs to be a big step: under the lamp a subtle change is
+      // invisible, and telling live dice from dead ones is the whole hint.
+      m.color.setHex(0x7d7466);
+      m.emissive.setHex(0x000000);
+      m.envMapIntensity = 0.25;
+    } else {
+      m.color.setHex(CFG.colors.ivory);
+      m.emissive.setHex(0x1a1004);
+      m.envMapIntensity = 1.0;
+    }
+    this.ring.visible = selected && !this.stowed;
+  }
+
+  // Slide out of play into a slot in the saved row, landing with the scoring
+  // face up and axis-aligned so the row can be read at a glance.
+  stow(slot){
+    this.stowed = true;
+    this.selected = false;
+    this.ring.visible = false;
+    this.body.type = CANNON.Body.STATIC;
+    this.body.collisionResponse = false;
+    this.body.velocity.setZero(); this.body.angularVelocity.setZero();
+    this.body.sleep();
+
+    const face = FACES.find(f => f.v === this.value) || FACES[2];
+    const toQ = new THREE.Quaternion().setFromUnitVectors(face.n.clone(), UP);
+    this.tween = {
+      t: 0, dur: CFG.stow.time,
+      fromP: this.group.position.clone(), toP: stowSlot(slot),
+      fromQ: this.group.quaternion.clone(), toQ,
+      fromS: this.group.scale.x, toS: CFG.die.stowScale,
+    };
+    this.setLook();
+  }
+
+  unstow(){
+    this.stowed = false; this.tween = null;
+    this.group.scale.setScalar(1);
+    this.body.type = CANNON.Body.DYNAMIC;
+    this.body.collisionResponse = true;
+    this.setLook();
+  }
+
+  stepTween(dt){
+    const tw = this.tween;
+    if (!tw) return;
+    tw.t = Math.min(1, tw.t + dt / tw.dur);
+    const e = 1 - Math.pow(1 - tw.t, 3);              // ease-out cubic
+    this.group.position.lerpVectors(tw.fromP, tw.toP, e);
+    // small hop so the die visibly lifts off the table rather than sliding
+    this.group.position.y += Math.sin(Math.PI * tw.t) * 0.75;
+    this.group.quaternion.slerpQuaternions(tw.fromQ, tw.toQ, e);
+    this.group.scale.setScalar(tw.fromS + (tw.toS - tw.fromS) * e);
+    if (tw.t >= 1){
+      this.group.position.copy(tw.toP);
+      this.body.position.copy(tw.toP);
+      this.body.quaternion.copy(tw.toQ);
+      this.tween = null;
+    }
+  }
+}
+
+const UP = new THREE.Vector3(0, 1, 0);
+
+// Where the i-th set-aside die parks, in the strip along the near edge.
+function stowSlot(i){
+  const n = 6, s = CFG.die.stowScale;
+  const span = CFG.tray.w - CFG.die.size * s - 0.7;
+  const x = -span / 2 + (span / (n - 1)) * i;
+  // Hard against the near edge. Any further back and the tilted camera makes
+  // the dice appear to straddle the inlaid divider rather than sit behind it.
+  return new THREE.Vector3(x, CFG.die.size * s / 2, CFG.tray.d / 2 - 1.0);
+}
+
+const dice = [];
+function ensureDice(n){
+  while (dice.length < n) dice.push(new Die());
+  dice.forEach((d, i) => {
+    d.group.visible = i < n;
+    if (i >= n){ d.body.sleep(); d.body.position.set(0, -60, 0); }
+  });
+  return dice.slice(0, n);
+}
+
+// Park every die out of sight and out of the simulation. Used between turns.
+function clearTable(){
+  for (const d of dice){
+    d.unstow();
+    d.body.sleep();
+    d.body.position.set(0, -60, 0);
+    d.body.velocity.setZero(); d.body.angularVelocity.setZero();
+    d.group.visible = false;
+    d.ring.visible = false;
+    d.value = null;
+  }
+}
+
+// Throw: dice enter from beyond the top rim, fanned out, spinning hard. A
+// swipe scales speed and skews direction so the throw feels like yours.
+// Upward speed needed to arc to a given height. Expressing impulses as
+// heights instead of velocities means gravity stays a free tuning knob.
+const vForApex = h => Math.sqrt(2 * Math.abs(CFG.physics.gravity) * h);
+
+// Uniform random rotation (Shoemake). Sampling Euler angles uniformly is the
+// obvious thing and it is WRONG — it clusters orientations near the poles, and
+// that bias survives the tumble and shows up as a skewed face distribution.
+function randomQuat(out){
+  const u1 = Math.random(), u2 = Math.random() * 6.283185307, u3 = Math.random() * 6.283185307;
+  const a = Math.sqrt(1 - u1), b = Math.sqrt(u1);
+  out.set(a * Math.sin(u2), a * Math.cos(u2), b * Math.sin(u3), b * Math.cos(u3));
+  return out;
+}
+
+function throwDice(n, swipe){ return throwSet(ensureDice(n), swipe); }
+
+// Throws exactly the dice handed to it, leaving any set-aside dice untouched.
+function throwSet(set, swipe){
+  const n = set.length;
+  const T = CFG.throw;
+  const power = swipe ? THREE.MathUtils.clamp(swipe.power, 0.65, 1.5) : 1;
+  const skew = swipe ? THREE.MathUtils.clamp(swipe.dx, -0.55, 0.55) : (Math.random() - .5) * .3;
+
+  const halfW = CFG.tray.w / 2 - CFG.die.size * 0.75;
+  // Spawn on a grid, at most 3 across, so neighbouring lanes are always wider
+  // than a die. The previous version fanned all n dice across a fixed span, so
+  // at six dice the lanes were narrower than the dice themselves and a third of
+  // throws landed one die on top of another.
+  const cols = Math.min(3, n), rows = Math.ceil(n / cols);
+  const laneX = cols > 1 ? (halfW * 2) / (cols - 1) : 0;
+  // Interleave so consecutive dice are never released side by side.
+  const order = [];
+  for (let k = 0; k < n; k += 2) order.push(k);
+  for (let k = 1; k < n; k += 2) order.push(k);
+
+  set.forEach((d, i) => {
+    const slot = order[i];
+    const col = slot % cols, row = (slot / cols) | 0;
+    const x = (cols > 1 ? -halfW + col * laneX : 0) + (Math.random() - .5) * 0.45;
+    d.unstow();
+    d.body.wakeUp();
+    d.body.position.set(
+      THREE.MathUtils.clamp(x, -halfW, halfW),
+      // Stack in height so they arrive a beat apart instead of all at once.
+      T.fromY + i * 0.95 + Math.random() * 0.8,
+      // Dice enter at the near edge and travel AWAY from the player, matching
+      // the upward swipe, and settle in the upper half clear of the buttons.
+      PLAY.zNear - T.inset - row * (CFG.die.size + 0.5) - Math.random() * 0.4
+    );
+    randomQuat(d.body.quaternion);
+    const s = T.speed * power;
+    d.body.velocity.set(
+      (skew * 2.2 + (Math.random() - .5) * T.spread * 2) * s * 0.5,
+      vForApex(T.apex) * (0.55 + Math.random() * 0.75),
+      -s * (0.85 + Math.random() * 0.3)
+    );
+    d.body.angularVelocity.set(
+      (Math.random() - .5) * T.spin * 2,
+      (Math.random() - .5) * T.spin,
+      (Math.random() - .5) * T.spin * 2
+    );
+    d.still = 0; d.value = null;
+    d.group.visible = true;
+    d.setLook();
+    d.sync();
+  });
+  return set;
+}
+
+// Safety net: a die should never be outside the tray, but if the solver ever
+// squeezes one through, drop it back in from above rather than losing a turn.
+function rescueStrays(set){
+  const halfW = CFG.tray.w / 2;
+  let did = false;
+  for (const d of set){
+    if (d.stowed) continue;
+    const p = d.body.position;
+    if (Math.abs(p.x) > halfW + 0.3 || p.z > PLAY.zNear + 0.3 || p.z < PLAY.zFar - 0.3
+        || p.y < -1.5 || p.y > 18){
+      d.body.wakeUp();
+      d.body.position.set((Math.random() - .5) * CFG.tray.w * 0.5, 5,
+                          PLAY.zNear - 4 - Math.random() * 4);
+      d.body.velocity.set(0, -2, 0);
+      d.body.angularVelocity.set((Math.random() - .5) * 12, (Math.random() - .5) * 12, (Math.random() - .5) * 12);
+      d.still = 0; did = true;
+    }
+  }
+  return did;
+}
+
+// Cocked die (leaning on another, or on the rim): give it a small kick rather
+// than silently reporting a wrong face.
+function nudge(d){
+  const N = CFG.nudge;
+  d.body.wakeUp();
+  d.body.velocity.set((Math.random() - .5) * N.lateral, vForApex(N.hop), (Math.random() - .5) * N.lateral);
+  d.body.angularVelocity.set((Math.random() - .5) * N.spin, (Math.random() - .5) * N.spin, (Math.random() - .5) * N.spin);
+  d.still = 0;
+}
+
+/* ==========================================================================
+   [RULES] Kakaja scoring.
+
+   All of it is pure functions over a count vector: counts[v] = how many dice
+   show v. Nothing here touches the scene, the DOM or the turn state, which is
+   what makes it testable and what lets the AI solver reuse it directly.
+   ========================================================================== */
+const RULES = {
+  id: 'kakaja',
+  name: 'Kakaja',
+  diceCount: 6,
+
+  // --- the one number that is still an open question -----------------------
+  // A single 1. The rules as written said 10; every other single/triple pair in
+  // the game is a 10x ratio (5 -> 50, three 5s -> 500) which makes 100 the
+  // consistent reading, and solving the game exactly showed 10 pushes the share
+  // of turns that end in Tutto from 21% to 32% because banking a 10 is never
+  // worth it. Set this back to 10 to play it as first written.
+  ONE: 100,
+
+  FIVE: 50,                              // a single 5
+  TRIPLE: [0, 1000, 200, 300, 400, 500, 600],
+  KAKAJA: 1650,                          // 1-2-3-4-5-6 in a single throw of six
+  targets: [3000, 6000, 11000],
+  target: 11000,
+
+  // 4th / 5th / 6th die matching a three-of-a-kind doubles / triples / quadruples
+  mult(k){ return k <= 3 ? 1 : k - 2; },
+  single(v){ return v === 1 ? this.ONE : v === 5 ? this.FIVE : 0; },
+
+  isStraight(counts){
+    for (let v = 1; v <= 6; v++) if (counts[v] !== 1) return false;
+    return true;
+  },
+
+  // Best score that uses EVERY die in `counts`, with the partition that got
+  // there. null when some die cannot be placed, which is what makes a selection
+  // illegal — you may not set aside a lone 3.
+  solve(counts){
+    if (this.isStraight(counts))
+      return { score: this.KAKAJA, parts: [{ kind: 'kakaja', pts: this.KAKAJA }] };
+    return this._rec(counts, 1);
+  },
+  _rec(counts, v){
+    if (v > 6) return { score: 0, parts: [] };
+    const rest = this._rec(counts, v + 1);
+    if (!rest) return null;
+    const c = counts[v], sg = this.single(v);
+    let best = null;
+    const take = (score, parts) => {
+      if (!best || score > best.score) best = { score, parts };
+    };
+    // no set of this value: leftovers are only allowed if they score as singles
+    if (sg > 0 || c === 0){
+      const parts = c > 0 ? [{ kind: 'single', v, k: c, pts: c * sg }] : [];
+      take(c * sg + rest.score, [...parts, ...rest.parts]);
+    }
+    for (let k = 3; k <= c; k++){
+      const rem = c - k;
+      if (rem > 0 && sg === 0) continue;          // stranded dice: illegal
+      const setPts = this.TRIPLE[v] * this.mult(k);
+      const parts = [{ kind: 'set', v, k, pts: setPts, mult: this.mult(k) }];
+      if (rem > 0) parts.push({ kind: 'single', v, k: rem, pts: rem * sg });
+      take(setPts + rem * sg + rest.score, [...parts, ...rest.parts]);
+    }
+    return best;
+  },
+
+  // Convenience: score of a selection, or -1 if the selection is illegal.
+  score(counts){ const s = this.solve(counts); return s ? s.score : -1; },
+
+  // Best score per subset size. Keeping FEWER dice for fewer points is often
+  // right, because it leaves more dice to re-roll — so every size is kept, not
+  // just the highest-scoring one.
+  keepOptions(counts){
+    const bySize = new Map();
+    const sub = [0, 0, 0, 0, 0, 0, 0];
+    const go = (v) => {
+      if (v > 6){
+        let n = 0;
+        for (let i = 1; i <= 6; i++) n += sub[i];
+        if (n === 0) return;
+        const s = this.solve(sub);
+        if (s && (!bySize.has(n) || bySize.get(n).score < s.score))
+          bySize.set(n, { n, score: s.score, counts: sub.slice() });
+        return;
+      }
+      for (let k = 0; k <= counts[v]; k++){ sub[v] = k; go(v + 1); }
+      sub[v] = 0;
+    };
+    go(1);
+    return [...bySize.values()];
+  },
+
+  // Is there anything at all to set aside? If not, the turn is a Tutto.
+  anyScore(counts){
+    if (this.isStraight(counts)) return true;
+    for (let v = 1; v <= 6; v++)
+      if ((this.single(v) > 0 && counts[v] > 0) || counts[v] >= 3) return true;
+    return false;
+  },
+
+  // Which values could be part of some legal keep — drives the dimming of dead
+  // dice on the table.
+  liveValues(counts){
+    const out = new Set();
+    if (this.isStraight(counts)){ for (let v = 1; v <= 6; v++) out.add(v); return out; }
+    for (let v = 1; v <= 6; v++)
+      if ((this.single(v) > 0 && counts[v] > 0) || counts[v] >= 3) out.add(v);
+    return out;
+  },
+
+  // Highest-scoring legal keep, for the "best" hint and as an AI fallback.
+  bestKeep(counts){
+    let best = null;
+    for (const o of this.keepOptions(counts))
+      if (!best || o.score > best.score) best = o;
+    return best;
+  },
+
+  // Plain-language description of a partition, e.g. "three 6s x2 + 5".
+  describe(counts){
+    const s = this.solve(counts);
+    if (!s) return null;
+    if (s.parts.some(p => p.kind === 'kakaja')) return 'Kakaja!';
+    const bits = [];
+    for (const p of s.parts){
+      if (p.kind === 'set'){
+        const names = ['', 'three', 'four', 'five', 'six'];
+        bits.push(`${names[p.k - 2]} ${p.v}s${p.mult > 1 ? ` ×${p.mult}` : ''}`);
+      } else if (p.kind === 'single'){
+        bits.push(p.k > 1 ? `${p.k}× ${p.v}` : `${p.v}`);
+      }
+    }
+    return bits.join(' + ');
+  },
+};
+const fmt = n => n.toLocaleString('en-US');
+
+/* ==========================================================================
+   [AI] Exact solution of a turn, computed at runtime.
+
+   A turn is a Markov decision process (roll n dice -> pick a legal keep ->
+   bank or roll on), and with at most six dice it is small enough to solve
+   exactly by value iteration instead of guessing at heuristics. f[n][s] is the
+   expected banked points from being about to roll n dice with s accumulated
+   but not yet safe. Building it costs well under a second and it is rebuilt if
+   the scoring changes, so the opponents can't silently go stale.
+   ========================================================================== */
+const AI = {
+  ready: false, f: null, STEP: 50, CAP: 6000, NS: 0, OUT: null,
+
+  gcdStep(){
+    const g = (a, b) => b ? g(b, a % b) : a;
+    let s = RULES.KAKAJA;
+    s = g(s, RULES.ONE); s = g(s, RULES.FIVE);
+    for (let v = 1; v <= 6; v++)
+      for (let k = 3; k <= 6; k++) s = g(s, RULES.TRIPLE[v] * RULES.mult(k));
+    return Math.max(10, s);
+  },
+
+  // Every distinct outcome of n dice, with multinomial weights summing to 6^n.
+  outcomes(n){
+    const F = [1, 1, 2, 6, 24, 120, 720];
+    const res = [], c = [0, 0, 0, 0, 0, 0, 0];
+    const go = (v, left) => {
+      if (v === 6){
+        c[6] = left;
+        let w = F[n];
+        for (let i = 1; i <= 6; i++) w /= F[c[i]];
+        res.push({ w, opts: RULES.keepOptions(c) });
+        return;
+      }
+      for (let k = 0; k <= left; k++){ c[v] = k; go(v + 1, left - k); }
+      c[v] = 0;
+    };
+    go(1, n);
+    return res;
+  },
+
+  build(){
+    const t0 = performance.now();
+    this.STEP = this.gcdStep();
+    this.NS = Math.floor(this.CAP / this.STEP) + 1;
+    this.OUT = [null];
+    for (let n = 1; n <= 6; n++) this.OUT[n] = this.outcomes(n);
+
+    const f = [];
+    for (let n = 0; n <= 6; n++) f[n] = new Float64Array(this.NS);
+    for (let it = 0; it < 80; it++){
+      let delta = 0;
+      for (let n = 1; n <= 6; n++){
+        const pow = 6 ** n;
+        for (let si = 0; si < this.NS; si++){
+          const s = si * this.STEP;
+          let acc = 0;
+          for (const o of this.OUT[n]){
+            let best = 0;                                  // no legal keep = Tutto = 0
+            for (const opt of o.opts){
+              const ns = s + opt.score;
+              const rollN = (n - opt.n) === 0 ? 6 : n - opt.n;   // all six used = hot dice
+              const v = Math.max(ns, f[rollN][Math.min(this.NS - 1, Math.round(ns / this.STEP))]);
+              if (v > best) best = v;
+            }
+            acc += o.w * best;
+          }
+          const nv = acc / pow;
+          const dd = Math.abs(nv - f[n][si]);
+          if (dd > delta) delta = dd;
+          f[n][si] = nv;
+        }
+      }
+      if (delta < 0.01) break;
+    }
+    this.f = f;
+    this.ready = true;
+    this.buildMs = performance.now() - t0;
+    if (DEBUG) console.log(`[KAKAJA] AI solved in ${this.buildMs.toFixed(0)}ms, step ${this.STEP}, E[turn] = ${f[6][0].toFixed(0)}`);
+  },
+
+  val(n, s){
+    if (!this.ready) this.build();
+    return this.f[n][Math.min(this.NS - 1, Math.round(s / this.STEP))];
+  },
+
+  // What should this player do with this throw?
+  //   need  — points still required to win outright, or null if not in the endgame
+  //   bold  — 1.0 is optimal; lower banks sooner, higher pushes harder
+  decide(counts, nInHand, accumulated, { need = null, bold = 1 } = {}){
+    if (!this.ready) this.build();
+    const opts = RULES.keepOptions(counts);
+    if (!opts.length) return null;                          // Tutto
+
+    let pick = null, bestV = -Infinity;
+    for (const o of opts){
+      const ns = accumulated + o.score;
+      const rollN = (nInHand - o.n) === 0 ? 6 : nInHand - o.n;
+      const v = Math.max(ns, this.val(rollN, ns));
+      if (v > bestV){ bestV = v; pick = o; }
+    }
+    const ns = accumulated + pick.score;
+    const rollN = (nInHand - pick.n) === 0 ? 6 : nInHand - pick.n;
+
+    let roll = this.val(rollN, ns) * bold > ns;
+    // Endgame override: banking a total that still can't win is pointless, so
+    // keep throwing while short of what it takes.
+    if (need != null && ns < need) roll = true;
+    if (need != null && ns >= need) roll = false;
+    return { keep: pick, roll, hot: (nInHand - pick.n) === 0 };
+  },
+};
+
+/* ==========================================================================
+   [GAME] state machine + turn manager. Rule-agnostic on purpose.
+   ========================================================================== */
+const Game = {
+  state: 'TITLE',        // TITLE | PLAY | OVER | PAUSE
+  phase: 'IDLE',         // IDLE (awaiting throw) | ROLL | SELECT | TUTTO | SETTLE
+  players: [],
+  current: 0,
+  seats: 2,              // total at the table, 2..4
+  round: 0,
+  rolling: false,
+  busy: false,
+
+  // turn-local state
+  saved: 0,              // points set aside so far this turn, lost on a Tutto
+  inHand: [],            // dice on the table and in play
+  stowed: [],            // dice set aside this turn, in the order they were stowed
+
+  seat(total){
+    this.seats = total;
+    this.players = CFG.players.slice(0, total).map((cfg, i) => ({
+      id: i, name: cfg.name, color: cfg.color, bold: cfg.bold,
+      isAI: i > 0, score: 0,
+    }));
+    this.current = 0;
+    this.round = 1;
+    this.state = 'PLAY';
+    clearTable();
+    UI.buildChips();
+    UI.show('hud');
+    // Solving the turn takes a moment; do it off the critical path so the first
+    // paint isn't held up, but before anyone actually needs it.
+    if (!AI.ready) setTimeout(() => { if (!AI.ready) AI.build(); }, 40);
+    this.beginTurn();
+  },
+
+  get player(){ return this.players[this.current]; },
+
+  // Score a player must reach to win outright: the target, or one more than the
+  // best total already at or past the target this round.
+  get needToWin(){
+    let need = RULES.target;
+    for (const p of this.players)
+      if (p.score >= RULES.target && p.score + 1 > need) need = p.score + 1;
+    return need;
+  },
+  get leader(){
+    let best = null;
+    for (const p of this.players)
+      if (p.score >= RULES.target && (!best || p.score > best.score)) best = p;
+    return best;
+  },
+
+  beginTurn(){
+    const p = this.player;
+    this.saved = 0;
+    this.stowed = [];
+    this.phase = 'IDLE';
+    clearTable();
+    this.inHand = ensureDice(RULES.diceCount).slice();
+    UI.buildChips();
+    UI.syncBar();
+    UI.turn(p.isAI ? `${p.name} to throw` : 'Your throw');
+    UI.hint(p.isAI ? '' : 'swipe up  ·  or tap roll');
+    if (p.isAI) setTimeout(() => this.roll(), CFG.ai.think + Math.random() * 350);
+  },
+
+  // Throw the dice not yet set aside. Called for the first throw of a turn and
+  // after every set-aside.
+  roll(swipe){
+    if (this.state !== 'PLAY' || this.rolling || this.busy) return;
+    if (this.phase !== 'IDLE') return;
+    Audio.init();
+    this.rolling = true;
+    this.phase = 'ROLL';
+    this.active = throwSet(this.inHand, swipe);
+    this.settleFrames = 0;
+    this.simTime = 0;              // simulated, not wall-clock — see tickRoll
+    this.nudges = 0;
+    UI.syncBar();
+  },
+
+  // called from the render loop while dice are in flight
+  tickRoll(){
+    if (!this.rolling) return;
+    const set = this.active;
+    // Simulated time, deliberately not wall-clock. On a slow device the fixed
+    // step falls behind real time; timing the roll by the wall clock would fire
+    // the failsafe on dice that are still visibly tumbling.
+    const elapsed = this.simTime;
+
+    if (rescueStrays(set)){ this.settleFrames = 0; return; }
+
+    // hard failsafe — a turn must never hang on the physics
+    if (elapsed > 10){
+      set.forEach(d => { d.body.velocity.setZero(); d.body.angularVelocity.setZero(); });
+      this.settleFrames = 99;
+    }
+
+    if (this.settleFrames < 99 && set.some(d => d.speed > CFG.physics.sleepSpeed)){ this.settleFrames = 0; return; }
+    if (++this.settleFrames < 10) return;
+
+    // All quiet. A reading only counts if the die is flat (a face genuinely
+    // up) AND sitting on the table rather than perched on another die.
+    const flat = CFG.die.size * 1.15;
+    const reads = set.map(d => d.read());
+    const bad = reads.findIndex((r, i) =>
+      r.confidence < 0.94 || set[i].body.position.y > flat);
+
+    if (bad >= 0 && this.nudges < 8 && elapsed < 8){
+      this.nudges++; nudge(set[bad]); this.settleFrames = 0; return;
+    }
+
+    this.rolling = false;
+    set.forEach((d, i) => d.value = reads[i].value);
+    if (DEBUG) DBG.lastRoll = elapsed.toFixed(2) + 's';
+    this.onSettled();
+  },
+
+  // --- counts helpers -------------------------------------------------------
+  countsOf(list){
+    const c = [0, 0, 0, 0, 0, 0, 0];
+    for (const d of list) if (d.value) c[d.value]++;
+    return c;
+  },
+  get selection(){ return this.inHand.filter(d => d.selected); },
+
+  onSettled(){
+    const counts = this.countsOf(this.inHand);
+    const p = this.player;
+
+    if (!RULES.anyScore(counts)){
+      this.tutto();
+      return;
+    }
+
+    this.phase = 'SELECT';
+    // Dim the dice that cannot take part in anything.
+    const live = RULES.liveValues(counts);
+    for (const d of this.inHand) d.setLook({ dead: !live.has(d.value) });
+
+    const straight = RULES.isStraight(counts);
+    if (straight){
+      for (const d of this.inHand) d.setLook({ selected: true });
+      UI.flash('KAKAJA', RULES.KAKAJA);
+      Audio.fanfare();
+      if (navigator.vibrate) navigator.vibrate([18, 50, 18, 50, 30]);
+    }
+
+    UI.syncBar();
+    if (p.isAI) this.aiPlay();
+    else {
+      UI.turn(straight ? 'Kakaja — all six!' : 'Set aside what you want');
+      UI.hint(straight ? 'tap roll to take it' : 'tap the dice you keep');
+    }
+  },
+
+  // --- player actions -------------------------------------------------------
+  toggle(die){
+    if (this.phase !== 'SELECT' || this.player.isAI || this.busy) return;
+    if (die.stowed || die.dead) return;
+    die.setLook({ selected: !die.selected, dead: false });
+    Audio.tick();
+    UI.syncBar();
+  },
+
+  // Value of the current selection, or -1 when the selection is not a legal
+  // set-aside (a lone 3, two 2s, and so on).
+  get selValue(){
+    const sel = this.selection;
+    if (!sel.length) return 0;
+    return RULES.score(this.countsOf(sel));
+  },
+
+  // Set aside the selection and throw whatever is left.
+  keepAndRoll(swipe){
+    if (this.phase !== 'SELECT' || this.busy) return;
+    const sel = this.selection;
+    const val = this.selValue;
+    if (!sel.length || val <= 0) return;
+
+    this.saved += val;
+    for (const d of sel){
+      this.stowed.push(d);
+      d.stow(this.stowed.length - 1);
+      this.inHand.splice(this.inHand.indexOf(d), 1);
+    }
+    Audio.stow();
+    UI.syncBar();
+
+    if (this.inHand.length === 0){
+      // Every die has scored: the whole set comes back and the turn continues.
+      UI.flash('ALL SIX', this.saved);
+      UI.turn('All six scored — throw again');
+      Audio.chime(true);
+      this.busy = true;
+      setTimeout(() => {
+        this.busy = false;
+        for (const d of this.stowed) d.unstow();
+        this.stowed = [];
+        this.inHand = ensureDice(RULES.diceCount).slice();
+        this.phase = 'IDLE';
+        UI.syncBar();
+        if (this.player.isAI) setTimeout(() => this.roll(), CFG.ai.betweenRolls);
+        else { UI.turn('Your throw'); UI.hint('swipe up  ·  or tap roll'); }
+      }, 1150);
+      return;
+    }
+
+    this.phase = 'IDLE';
+    UI.syncBar();
+    if (this.player.isAI){ setTimeout(() => this.roll(), CFG.ai.betweenRolls); return; }
+
+    UI.turn(`${fmt(this.saved)} set aside`);
+    UI.hint(`throw the last ${this.inHand.length}  ·  or bank`);
+    // A flick means "keep these and throw on" in one gesture, so carry the
+    // flick's power straight into the next throw.
+    if (swipe) setTimeout(() => this.roll(swipe), 220);
+  },
+
+  // Stop, take the points set aside plus whatever is currently selected.
+  bank(){
+    if (this.busy) return;
+    if (this.phase !== 'SELECT' && this.phase !== 'IDLE') return;
+    const sel = this.selection;
+    const val = sel.length ? this.selValue : 0;
+    if (val < 0) return;
+    const total = this.saved + val;
+    if (total <= 0) return;
+
+    this.busy = true;
+    const p = this.player;
+    for (const d of sel){
+      this.stowed.push(d);
+      d.stow(this.stowed.length - 1);
+      this.inHand.splice(this.inHand.indexOf(d), 1);
+    }
+    p.score += total;
+    this.saved = total;
+    Audio.chime(true);
+    if (navigator.vibrate) navigator.vibrate(18);
+    UI.buildChips(); UI.syncBar();
+    UI.flash('BANKED', total);
+    UI.turn(`${p.isAI ? p.name : 'You'} banked ${fmt(total)}`);
+    UI.hint('');
+    setTimeout(() => { this.busy = false; this.endTurn(); }, 1500);
+  },
+
+  tutto(){
+    this.phase = 'TUTTO';
+    this.busy = true;
+    const p = this.player;
+    const lost = this.saved;
+    this.saved = 0;
+    // Dim every die: on a Tutto nothing on the table scores, and showing that
+    // is the difference between "I got unlucky" and "why did that not count?".
+    for (const d of this.inHand) d.setLook({ dead: true });
+    Audio.bust();
+    if (navigator.vibrate) navigator.vibrate([26, 50, 26, 50, 60]);
+    UI.flash('TUTTO', lost ? -lost : 0);
+    UI.turn(lost ? `${p.isAI ? p.name : 'You'} lost ${fmt(lost)}` : `${p.isAI ? p.name : 'You'} — nothing`);
+    UI.hint('');
+    UI.syncBar();
+    setTimeout(() => { this.busy = false; this.endTurn(); }, 1750);
+  },
+
+  // --- turn / round / match flow -------------------------------------------
+  endTurn(){
+    UI.flash(null);
+    const last = this.players.length - 1;
+    const wasLast = this.current === last;
+    this.current = (this.current + 1) % this.players.length;
+
+    if (wasLast){
+      // A round has completed. If anyone is at or past the target, the highest
+      // total wins — later players in the round had their chance to overtake.
+      const champ = this.leader;
+      if (champ){ this.finish(champ); return; }
+      this.round++;
+    }
+    this.beginTurn();
+  },
+
+  finish(w){
+    this.state = 'OVER';
+    this.phase = 'IDLE';
+    this.busy = false;
+    UI.flash(null);
+    const order = this.players.slice().sort((a, b) => b.score - a.score);
+    document.getElementById('over-who').textContent = w.isAI ? `${w.name} wins` : 'You win';
+    document.getElementById('over-line').innerHTML =
+      order.map(p => `${p.name} <b>${fmt(p.score)}</b>`).join(' &nbsp;·&nbsp; ') +
+      `<br><span style="opacity:.6">after ${this.round} round${this.round > 1 ? 's' : ''}</span>`;
+    UI.show('over');
+  },
+
+  // --- opponents ------------------------------------------------------------
+  aiPlay(){
+    const p = this.player;
+    const counts = this.countsOf(this.inHand);
+    // Only chase the overtake number once someone has actually got there.
+    const need = this.leader ? this.needToWin - p.score : null;
+    const d = AI.decide(counts, this.inHand.length, this.saved, { need, bold: p.bold });
+    if (!d){ this.tutto(); return; }
+
+    // Show the pick before acting on it, so the throw is followable.
+    const want = d.keep.counts.slice();
+    for (const die of this.inHand){
+      if (want[die.value] > 0){ want[die.value]--; die.setLook({ selected: true }); }
+    }
+    UI.turn(`${p.name} takes ${RULES.describe(d.keep.counts)}`);
+    UI.syncBar();
+    setTimeout(() => {
+      if (this.state !== 'PLAY') return;
+      if (d.roll) this.keepAndRoll();
+      else this.bank();
+    }, CFG.ai.showPick);
+  },
+};
+
+/* ==========================================================================
+   [UI] screens, HUD, input
+   ========================================================================== */
+const $ = s => document.querySelector(s);
+const UI = {
+  screens: {
+    title: $('#scr-title'), setup: $('#scr-setup'), how: $('#scr-how'),
+    hud: $('#hud'), over: $('#scr-over'),
+  },
+  show(name){
+    for (const [k, el] of Object.entries(this.screens)) el.classList.toggle('on', k === name);
+    $('#scrim').classList.toggle('on', name !== 'hud');
+    const dbg = $('#dbg');
+    if (dbg) dbg.style.display = (DEBUG && name === 'hud') ? 'block' : 'none';
+    this.currentScreen = name;
+  },
+  buildChips(){
+    const box = $('#chips'); box.innerHTML = '';
+    box.classList.toggle('many', Game.players.length > 2);
+    const leader = Game.leader;
+    const need = Game.needToWin;
+    for (const p of Game.players){
+      const c = document.createElement('div');
+      c.className = 'chip' + (p.score >= RULES.target ? ' done' : '') + (p.isAI ? '' : ' me');
+      c.dataset.id = p.id;
+      // Once someone is past the target, show the others what it now takes.
+      const tail = (leader && p !== leader && p.score < need)
+        ? `<span class="need">need ${fmt(need)}</span>` : '';
+      c.innerHTML = `<span class="dot" style="background:#${p.color.toString(16).padStart(6,'0')}"></span>` +
+                    `<span class="nm">${p.name}</span><span class="sc">${fmt(p.score)}</span>${tail}`;
+      box.appendChild(c);
+    }
+    this.chipsActive();
+  },
+  chipsActive(){
+    document.querySelectorAll('.chip').forEach(c =>
+      c.classList.toggle('active', +c.dataset.id === Game.current));
+  },
+  turn(t){ $('#turnbar').textContent = t; },
+  hint(t){ $('#hint').textContent = t; },
+
+  // Single place that decides what the bottom bar says and which buttons are
+  // live, driven off Game state rather than set ad hoc from each transition.
+  syncBar(){
+    const G = Game, human = G.players.length && !G.player.isAI;
+    const rollBtn = $('#roll'), bankBtn = $('#bank');
+    const sel = human || G.player.isAI ? G.selection : [];
+    const val = G.phase === 'SELECT' ? G.selValue : 0;
+
+    $('#l-saved').textContent = `Turn ${fmt(G.saved)}`;
+    const selEl = $('#l-sel');
+    if (G.phase === 'SELECT' && sel.length){
+      if (val > 0){ selEl.textContent = `+ ${fmt(val)}`; selEl.classList.remove('bad'); }
+      else { selEl.textContent = 'not a score'; selEl.classList.add('bad'); }
+    } else { selEl.textContent = ''; selEl.classList.remove('bad'); }
+
+    if (!human){
+      rollBtn.disabled = true; bankBtn.disabled = true;
+      rollBtn.textContent = 'Roll'; return;
+    }
+    if (G.phase === 'IDLE'){
+      rollBtn.hidden = false; bankBtn.hidden = false;
+      rollBtn.disabled = G.busy;
+      rollBtn.textContent = `Roll ${G.inHand.length}`;
+      bankBtn.disabled = G.busy || G.saved <= 0;
+      bankBtn.textContent = G.saved > 0 ? `Bank ${fmt(G.saved)}` : 'Bank';
+    } else if (G.phase === 'SELECT'){
+      const legal = sel.length > 0 && val > 0;
+      const left = G.inHand.length - sel.length;
+      rollBtn.disabled = G.busy || !legal;
+      // Kept short on purpose: at 14px uppercase, anything longer wraps and
+      // overflows the button on a 320pt phone.
+      rollBtn.textContent = left === 0 ? 'Keep all' : `Keep & roll`;
+      bankBtn.disabled = G.busy || (G.saved + Math.max(0, val)) <= 0 || (sel.length > 0 && val <= 0);
+      bankBtn.textContent = `Bank ${fmt(G.saved + Math.max(0, val))}`;
+    } else {
+      // Mid-throw, Tutto, or banking: no action available, and the labels are
+      // reset so a stale "Bank 1,800" can't linger after the points are gone.
+      rollBtn.disabled = true; bankBtn.disabled = true;
+      rollBtn.textContent = 'Roll';
+      bankBtn.textContent = G.saved > 0 ? `Bank ${fmt(G.saved)}` : 'Bank';
+    }
+  },
+
+  // Big transient callout in the middle of the table.
+  flash(word, num){
+    const el = $('#flash');
+    if (word == null){ el.classList.remove('on'); return; }
+    el.querySelector('.fl-word').textContent = word;
+    const n = el.querySelector('.fl-num');
+    n.textContent = num ? (num < 0 ? `−${fmt(-num)}` : fmt(num)) : '';
+    el.classList.remove('good', 'bad');
+    el.classList.add(num != null && num < 0 || word === 'TUTTO' ? 'bad' : 'good', 'on');
+    clearTimeout(this._ft);
+    this._ft = setTimeout(() => el.classList.remove('on'), 1500);
+  },
+
+  toast(t, ms = 1600){
+    const el = $('#toast');
+    el.textContent = t;
+    el.style.top = `calc(var(--ui-top) + 52px)`;
+    el.classList.add('on');
+    clearTimeout(this._tt);
+    this._tt = setTimeout(() => el.classList.remove('on'), ms);
+  },
+};
+
+// ---- seat + target pickers
+(function pickers(){
+  const seatBox = $('#seats'), note = $('#seatnote'), tBox = $('#targets');
+  [2, 3, 4].forEach(n => {
+    const b = document.createElement('button');
+    b.className = 'seat'; b.type = 'button'; b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', n === 2 ? 'true' : 'false');
+    b.dataset.n = n;
+    b.innerHTML = `<span class="n">${n}</span><span class="l">players</span>`;
+    b.addEventListener('click', () => {
+      seatBox.querySelectorAll('.seat').forEach(s => s.setAttribute('aria-checked', s === b));
+      Game.seats = n; paint();
+    });
+    seatBox.appendChild(b);
+  });
+  RULES.targets.forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'seat'; b.type = 'button'; b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', t === RULES.target ? 'true' : 'false');
+    b.innerHTML = `<span class="n" style="font-size:24px">${(t / 1000)}k</span>` +
+                  `<span class="l">${t === 3000 ? 'quick' : t === 6000 ? 'short' : 'full'}</span>`;
+    b.addEventListener('click', () => {
+      tBox.querySelectorAll('.seat').forEach(s => s.setAttribute('aria-checked', s === b));
+      RULES.target = t;
+      $('#how-target').textContent = fmt(t);
+    });
+    tBox.appendChild(b);
+  });
+  function paint(){
+    const o = Game.seats - 1;
+    note.textContent = `You against ${o} opponent${o > 1 ? 's' : ''} — ` +
+      CFG.players.slice(1, Game.seats).map(p => p.name).join(', ');
+  }
+  paint();
+  $('#how-target').textContent = fmt(RULES.target);
+  $('#sc-one').textContent = fmt(RULES.ONE);
+})();
+
+// ---- nav
+document.querySelectorAll('[data-go]').forEach(b => {
+  b.addEventListener('click', () => {
+    Audio.init();
+    const go = b.dataset.go;
+    if (go === 'start') Game.seat(Game.seats);
+    else UI.show(go);
+  });
+});
+$('#roll').addEventListener('click', () => {
+  if (Game.phase === 'SELECT') Game.keepAndRoll();
+  else Game.roll();
+});
+$('#bank').addEventListener('click', () => Game.bank());
+$('#btn-menu').addEventListener('click', () => { Game.state = 'PAUSE'; UI.show('title'); });
+$('#btn-sound').addEventListener('click', e => {
+  Audio.init(); Audio.on = !Audio.on;
+  e.currentTarget.classList.toggle('off', !Audio.on);
+  if (Audio.on) Audio.clack(.4);
+});
+// leaving the title screen back into a live game
+$('#scr-title').addEventListener('click', e => {
+  if (Game.state === 'PAUSE' && e.target === $('#scr-title')){ Game.state = 'PLAY'; UI.show('hud'); }
+});
+
+// ---- table input: a short press on a die selects it, an upward flick throws.
+// Both live on the same pointer stream, told apart by distance travelled.
+(function tableInput(){
+  const el = document.getElementById('stage');
+  const ray = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let start = null;
+
+  // Hit test against the die bodies. Generous: also accepts the nearest die
+  // within a small radius, because a 55px die is a small target for a thumb.
+  function pickDie(cx, cy){
+    ndc.set((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const meshes = Game.inHand.filter(d => d.group.visible).map(d => d.body3);
+    const hit = ray.intersectObjects(meshes, false)[0];
+    if (hit) return Game.inHand.find(d => d.body3 === hit.object);
+    // fallback: closest die centre in screen space, within ~34px
+    let best = null, bestD = 34;
+    for (const d of Game.inHand){
+      if (!d.group.visible) continue;
+      const p = d.group.position.clone().project(camera);
+      const sx = (p.x * .5 + .5) * innerWidth, sy = (-p.y * .5 + .5) * innerHeight;
+      const dist = Math.hypot(sx - cx, sy - cy);
+      if (dist < bestD){ bestD = dist; best = d; }
+    }
+    return best;
+  }
+
+  const down = e => {
+    if (Game.state !== 'PLAY' || Game.busy) return;
+    if (Game.player.isAI) return;
+    const t = e.touches ? e.touches[0] : e;
+    start = { x: t.clientX, y: t.clientY, t: performance.now() };
+  };
+  const up = e => {
+    if (!start) return;
+    const t = e.changedTouches ? e.changedTouches[0] : e;
+    const dy = start.y - t.clientY;
+    const moved = Math.hypot(t.clientX - start.x, t.clientY - start.y);
+    const dt = Math.max(60, performance.now() - start.t);
+    const s = start; start = null;
+    if (Game.state !== 'PLAY' || Game.busy || Game.player.isAI) return;
+
+    // a tap: barely moved
+    if (moved < 16){
+      if (Game.phase === 'SELECT'){
+        const d = pickDie(s.x, s.y);
+        if (d) Game.toggle(d);
+      }
+      return;
+    }
+    // an upward flick: throw. In SELECT that means "keep this and throw on".
+    if (dy < innerHeight * 0.07) return;
+    const v = (dy / innerHeight) / (dt / 1000);
+    const swipe = { power: 0.7 + Math.min(1.6, v * 0.45), dx: (t.clientX - s.x) / innerWidth };
+    if (Game.phase === 'SELECT'){
+      if (Game.selection.length && Game.selValue > 0) Game.keepAndRoll(swipe);
+    } else if (Game.phase === 'IDLE'){
+      Game.roll(swipe);
+    }
+    UI.hint('');
+  };
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', () => start = null);
+})();
+
+/* ==========================================================================
+   loop
+   ========================================================================== */
+const DBG = { lastRoll: '—' };
+const dbgEl = $('#dbg');
+if (DEBUG) dbgEl.style.display = 'block';
+
+let last = performance.now(), acc = 0, frames = 0, fpsT = 0, fps = 0;
+let visible = true;
+document.addEventListener('visibilitychange', () => {
+  visible = !document.hidden;
+  last = performance.now();
+});
+
+function loop(now){
+  requestAnimationFrame(loop);
+  if (!visible) return;
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+
+  // fixed-step physics with substeps: high gravity needs a small step or dice
+  // tunnel through the rim
+  acc += dt;
+  const S = CFG.physics.step;
+  const cap = CFG.physics.subSteps * 5;      // ~0.22s of sim per frame, so a
+  let steps = 0;                             // 30fps device still keeps up
+  while (acc >= S && steps < cap){ world.step(S); acc -= S; steps++; }
+  if (steps === cap) acc = 0;                // fell behind: drop the backlog
+  if (Game.rolling) Game.simTime += steps * S;
+
+  // Stowed dice are driven by their tween, not by the solver — their bodies are
+  // static and out of the simulation while they sit in the saved row.
+  for (const d of dice){
+    if (!d.group.visible) continue;
+    if (d.stowed) d.stepTween(dt);
+    else { d.sync(); d.ring.position.set(d.group.position.x, 0.035, d.group.position.z); }
+  }
+  Game.tickRoll();
+
+  renderer.render(scene, camera);
+
+  if (DEBUG){
+    frames++;
+    if (now - fpsT > 500){ fps = Math.round(frames * 1000 / (now - fpsT)); frames = 0; fpsT = now; }
+    dbgEl.textContent =
+      `fps ${fps}  draws ${renderer.info.render.calls}  tris ${renderer.info.render.triangles}\n` +
+      `settle ${DBG.lastRoll}  ${Game.state}/${Game.phase}${Game.rolling ? ' rolling' : ''}` +
+      `  saved ${Game.saved}  sel ${Game.phase === 'SELECT' ? Game.selValue : '-'}\n` +
+      `hand ${Game.inHand.map(d => d.value ?? '·').join('')}` +
+      `  aside ${Game.stowed.map(d => d.value).join('')}` +
+      `  ai ${AI.ready ? AI.buildMs.toFixed(0) + 'ms E' + AI.f[6][0].toFixed(0) : '…'}`;
+  }
+}
+
+// ---- go
+resize();
+// A few dice loose on the table behind the title, so it isn't an empty scene.
+(function idleDice(){
+  const set = ensureDice(3);
+  set.forEach((d, i) => {
+    d.body.wakeUp();
+    d.body.position.set(-2.2 + i * 2.2, 4 + i * 2, PLAY.zNear - 5 - i * 1.4);
+    randomQuat(d.body.quaternion);
+    d.body.angularVelocity.set((Math.random() - .5) * 12, (Math.random() - .5) * 12, (Math.random() - .5) * 12);
+    d.group.visible = true;
+    d.setLook();
+  });
+})();
+UI.show('title');
+requestAnimationFrame(loop);
+requestAnimationFrame(() => { boot.classList.add('gone'); setTimeout(() => boot.remove(), 600); });
+// Solve the turn MDP once the first frames are out, so opponents are ready
+// before anyone can reach them.
+setTimeout(() => { if (!AI.ready) AI.build(); }, 600);
+
+// expose a little of the internals for iterating from the console
+window.KAKAJA = { THREE, CANNON, scene, camera, renderer, world, dice, Game, RULES, CFG, UI, Audio, AI,
+                  fitCamera, vForApex, PLAY, stowSlot, fmt,
+                  __throw: throwDice, __throwSet: throwSet, __ensure: ensureDice,
+                  __clear: clearTable, __nudge: nudge, __rescue: rescueStrays, __faces: FACES };
+</script>
+</body>
+</html>
