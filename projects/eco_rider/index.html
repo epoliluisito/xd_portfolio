@@ -2436,9 +2436,13 @@ const LB={
                err.status=r.status; throw err; }
     const t=await r.text(); return t?JSON.parse(t):null;
   },
-  submitScore(g){ return this.req('/rest/v1/scores',{
+  // `qualified` e `cutoff` non servono al gioco: restano nel database come traccia della
+  // decisione presa a fine corsa, così se qualcuno segnala "ho fatto un gran punteggio ma
+  // non mi ha messo in classifica" si vede subito se il gioco riteneva di essere in Top 10.
+  submitScore(g,qualified,cutoff){ return this.req('/rest/v1/scores',{
       score:g.finalScore, bike:g.key, distance:Math.round(g.dist),
-      leaves:g.leaves, battery:Math.round(g.battery), duration:g.t
+      leaves:g.leaves, battery:Math.round(g.battery), duration:g.t,
+      qualified:!!qualified, cutoff:(cutoff==null?null:cutoff)
     },'return=representation').then(rows=>rows&&rows[0]&&rows[0].id); },
   top10(){ return this.req('/rest/v1/rpc/get_leaderboard',{}); },
   register(scoreId,d){
@@ -2529,18 +2533,24 @@ async function lbFlow(g){
   if(!LB.on()){ st.className='lbStatus'; st.textContent='CLASSIFICA NON ATTIVA (DEMO)'; return; }
   st.className='lbStatus'; st.textContent='SALVATAGGIO PUNTEGGIO\u2026';
   try{
-    _scoreId=await LB.submitScore(g);
+    // prima si legge la classifica, poi si salva il punteggio insieme alla decisione presa:
+    // cos\u00ec nel database resta scritto se il gioco riteneva di essere entrato in Top 10
     const rows=await LB.top10();
     lbRender(rows);
-    const qualifies=(rows.length<10)||(g.finalScore>rows[rows.length-1].score);
+    const cutoff=(rows.length>=10)?rows[rows.length-1].score:null;
+    const qualifies=(cutoff===null)||(g.finalScore>cutoff);
+    _scoreId=await LB.submitScore(g,qualifies,cutoff);
     if(qualifies){
       st.className='lbStatus win';
       st.innerHTML='\ud83c\udfc6 SEI NELLA TOP 10 DI OGGI!';
       $('toReg').classList.remove('hidden');
       showWinPopup(g.finalScore);                       // coriandoli + fanfara
     } else {
+      // dire di quanto si \u00e8 mancato il bersaglio: chiarisce e invoglia a riprovare
+      const manca=Math.max(1, rows[rows.length-1].score - g.finalScore + 1);
       st.className='lbStatus';
-      st.textContent='Niente Top 10 questa volta\u2026 riprova, il premio ti aspetta!';
+      st.innerHTML='Ti sono mancati <b style="color:var(--gold)">'+manca+' g</b> per entrare in TOP 10!'
+                 + '<br><span style="color:#7fb89a">Servono almeno '+(rows[rows.length-1].score+1)+' g \u00b7 riprova, il premio ti aspetta.</span>';
     }
   }catch(e){
     st.className='lbStatus err';
