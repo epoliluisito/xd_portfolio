@@ -6,7 +6,7 @@ import { createServer } from 'http';
 import { readFile, stat } from 'fs/promises';
 import { extname, join, normalize } from 'path';
 
-const ROOT = new URL('../', import.meta.url).pathname;
+const ROOT = new URL(process.env.KROOT || '../', import.meta.url).pathname;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript' };
 const server = createServer(async (req, res) => {
   try {
@@ -33,10 +33,19 @@ await page.waitForTimeout(2000);
 const boxes = await page.evaluate(() => {
   const K = window.KAKAJA, T = K.THREE;
   K.Game.seat(2); K.Game.state = 'IDLE'; K.UI.show('hud');
-  K.UI.roll(false); K.UI.turn(''); K.UI.hint('');
+  // Kill the layer transitions: at ~1fps in software rendering the fade-out of
+  // the title screen can still be in flight when the screenshot is taken, which
+  // silently measures the blurred title overlay instead of the table.
+  for (const el of document.querySelectorAll('.layer, #scrim')){
+    el.style.transition = 'none';
+    if (!el.classList.contains('on') && el.id !== 'hud') el.style.visibility = 'hidden';
+  }
+  document.getElementById('scrim').style.opacity = '0';
+  K.UI.turn(''); K.UI.hint(''); K.Game.busy = true;
   const set = K.__ensure(6);
   K.dice.forEach(d => { d.body.sleep(); });
-  const spots = [[-2.6,-6],[2.6,-6],[-2.6,-1],[2.6,-1],[-2.6,4],[2.6,4]];
+  const zc = K.camera ? 0 : 0;
+  const spots = [[-2.7,-5.5],[2.7,-5.5],[-2.7,-0.8],[2.7,-0.8],[-2.7,3.9],[2.7,3.9]];
   const out = [];
   for (let v = 1; v <= 6; v++){
     const d = set[v - 1];
@@ -50,12 +59,16 @@ const boxes = await page.evaluate(() => {
     d.body.sleep();
     d.group.visible = true;
     d.sync();
-    const p = new T.Vector3(x, K.CFG.die.size / 2, z).project(K.camera);
-    out.push({ v, cx: (p.x * .5 + .5) * innerWidth, cy: (-p.y * .5 + .5) * innerHeight });
+    const c = new T.Vector3(x, K.CFG.die.size / 2, z);
+    const p = c.clone().project(K.camera);
+    const e = c.clone(); e.x += K.CFG.die.size / 2;
+    const cx = (p.x * .5 + .5) * innerWidth;
+    const rad = Math.abs(((e.project(K.camera).x) * .5 + .5) * innerWidth - cx);
+    out.push({ v, cx, cy: (-p.y * .5 + .5) * innerHeight, rad });
   }
   return out;
 });
-await page.waitForTimeout(1200);
+await page.waitForTimeout(2500);
 await page.screenshot({ path: '../shots/08-faces.png' });
 
 await browser.close(); server.close();
@@ -65,12 +78,12 @@ await browser.close(); server.close();
 const { PNG } = await import('pngjs');
 const png = PNG.sync.read(await readFile('../shots/08-faces.png'));
 const dpr = png.width / 390;
-const unit = png.width / (11.13);                 // tray width * camera padding
-const s = Math.max(12, Math.round(1.65 * 0.60 * unit));
 
 console.log('pip legibility (luminance 0-255, sampled over each die top face):');
 let worst = 999;
 for (const b of boxes){
+  // sample a square inside the die's top face, sized from its real on-screen radius
+  const s = Math.max(10, Math.round(b.rad * 1.15 * dpr));
   const x0 = Math.max(0, Math.round(b.cx * dpr - s / 2));
   const y0 = Math.max(0, Math.round(b.cy * dpr - s / 2));
   const lum = [];
@@ -83,6 +96,6 @@ for (const b of boxes){
   const p5 = lum[Math.floor(lum.length * .05)], p50 = lum[Math.floor(lum.length * .5)],
         p95 = lum[Math.floor(lum.length * .95)];
   worst = Math.min(worst, p95 - p5);
-  console.log(`  face ${b.v}: dark ${p5.toFixed(0)}  mid ${p50.toFixed(0)}  light ${p95.toFixed(0)}  ->  contrast ${(p95-p5).toFixed(0)}`);
+  console.log(`  face ${b.v} (${(b.rad*2).toFixed(0)}px wide): dark ${p5.toFixed(0)}  mid ${p50.toFixed(0)}  light ${p95.toFixed(0)}  ->  contrast ${(p95-p5).toFixed(0)}`);
 }
 console.log(`worst-case pip contrast: ${worst.toFixed(0)} / 255  ${worst > 60 ? 'OK' : '** too low **'}`);

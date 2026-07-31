@@ -11,6 +11,7 @@ what ships.
     node faces.mjs             # all six values face-up, measures pip contrast
     node seats.mjs             # is the win condition fair by turn order?
     node balance.mjs           # solves the game for single-1 = 10 / 50 / 100
+    node diagnose.mjs          # UI footprint + whether dice can land under the HUD
 
 `balance.mjs` needs no browser — it is a standalone re-implementation used to
 cross-check the in-game solver (both give E[turn] = 513).

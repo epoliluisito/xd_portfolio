@@ -1,9 +1,29 @@
-# Kakaja — iteration 002
+# Kakaja — iteration 003
 
 A self-contained Three.js dice game: warm-oak table, top view, portrait-first,
 real rigid-body dice, **full Kakaja rules**. All graphics are procedural — the
 wood grain, the dice, the pips, the environment lighting and the sounds are all
 generated in code at load time. No image, font or model assets.
+
+## What changed in 003
+
+- **The table is fitted between the HUD bands, not to the screen.** The camera
+  measures the actual height of the score chips and the controls and frames the
+  tray into what's left, so four players shrink the table automatically and the
+  controls are never jammed against the screen edge.
+- **Dice can no longer come to rest under any UI.** Measured across five
+  viewports and 1,800 settled dice: 0% land where the HUD would swallow the tap,
+  with 80–180px of clearance to the bottom band.
+- **Result messages hold longer** (2.1–2.5s, up from 1.5–1.75s) and a tap
+  anywhere skips the wait, so reading them never costs pace.
+- **Fewer dice left leaning on each other** — they now bounce off one another
+  instead of nestling, cutting cocked dice at six dice from 25.5% to 22.7%.
+- **Brighter, warmer, more saturated**, and a genuine bug fixed with it: the fog
+  was authored at fixed distances for the old framing, so pulling the camera back
+  buried the whole table in haze. Pip contrast went from 103 to 167.
+- **A more playful UI** — chunky buttons that press in, a tilted ribbon that
+  springs in for Kakaja / Tutto / banked totals, score chips that pop when a
+  number changes, and a compact layout for short screens.
 
 ---
 
@@ -155,6 +175,19 @@ change is invisible, and live-vs-dead is the whole hint.
 **The saved strip is walled off in physics.** A thrown die can never barge into
 dice you've already set aside.
 
+**Fog distances are derived from the camera distance**, not fixed. They were
+authored for a framing where the camera sat ~36 units out; once the tray was
+fitted between the HUD bands the camera pulled back to ~52 and the fixed fog
+quietly buried the table in haze. It cost about 40% of the brightness, and no
+amount of extra lamp intensity could win it back — worth knowing before touching
+the framing again.
+
+**Settled dice are never moved.** It is tempting to nudge overlapping dice apart
+after they come to rest, and it is not safe: any push large enough to separate
+them can tip one, which would silently change the result of the throw. Crowding
+is dealt with at throw time instead — grid spawning, lateral spread, and dice
+that bounce off each other rather than nestle.
+
 ## Measured behaviour
 
 From `tools/`, over roughly 8,000 simulated rolls and 2,300 simulated matches:
@@ -163,15 +196,17 @@ From `tools/`, over roughly 8,000 simulated rolls and 2,300 simulated matches:
 |---|---|
 | scorer | 33 hand-computed cases + 4,000 randomised consistency checks, all passing |
 | interaction | 25 UI assertions passing (selection legality, stowing, Tutto, hot dice, Kakaja) |
-| settle time | median 1.06s at six dice, p90 1.63s |
+| settle time | median 1.02s at six dice, p90 1.69s |
 | dice escaping the tray | 0% |
 | dice resting inside a wall | 0% |
-| cocked dice needing a nudge | ~22% at six dice, ~12% at three |
-| face distribution | χ²=1.52, p=0.91 — indistinguishable from fair |
+| cocked dice needing a nudge | ~23% at six dice, ~12% at three, ~6% at one |
+| face distribution | χ²=3.24, p=0.66 — indistinguishable from fair |
 | expected points per turn | 513 (game solved exactly; the Node and in-browser solvers agree) |
 | turns ending in Tutto | 23.6% |
 | match length, 4 players to 11,000 | ~18 rounds, ~72 turns |
 | render budget | 25 draw calls, ~34k triangles |
+| dice resting under the UI | 0 of 1,800, across five viewports |
+| pip contrast, worst face | 167 / 255 (was 103) |
 | time to interactive | ~2.5s, plus 130ms to solve the turn (off the critical path) |
 
 Fairness was worth measuring rather than assuming — three separate real biases
