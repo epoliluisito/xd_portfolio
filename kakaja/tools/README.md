@@ -12,6 +12,7 @@ what ships.
     node seats.mjs             # is the win condition fair by turn order?
     node balance.mjs           # solves the game for single-1 = 10 / 50 / 100
     node diagnose.mjs          # UI footprint + whether dice can land under the HUD
+    node tremble.mjs 250 6     # settling tail, and why dice end up cocked
 
 `balance.mjs` needs no browser — it is a standalone re-implementation used to
 cross-check the in-game solver (both give E[turn] = 513).

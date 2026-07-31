@@ -1,9 +1,26 @@
-# Kakaja — iteration 003
+# Kakaja — iteration 004
 
 A self-contained Three.js dice game: warm-oak table, top view, portrait-first,
 real rigid-body dice, **full Kakaja rules**. All graphics are procedural — the
 wood grain, the dice, the pips, the environment lighting and the sounds are all
 generated in code at load time. No image, font or model assets.
+
+## What changed in 004
+
+- **Dice no longer tremble into place.** 85% of "cocked" dice were leaning
+  against a tray wall, held there by friction. The walls now have their own
+  near-frictionless material, so a leaning die slides back flat on its own:
+  cocked dice went from **25.5% of six-dice throws to 10–15%**, and from 6.4% to
+  0.6% on a single die. When one is still cocked it now gets thrown clear into
+  open table with a fresh orientation instead of being jiggled in place — one
+  decisive toss rather than the two-or-three small hops that read as trembling.
+  The settling tail is 0.09s at p90.
+- **Colour now has a job.** Amber is the risky push, jade is banking safely,
+  vermilion is Tutto, gold is Kakaja — and the player in play wears their own
+  colour on their chip, the turn line and the rings under selected dice. Each
+  chip carries a hairline of that colour filling toward the target.
+- Flaring the walls like a real dice tray was tried and **made it worse** (25% →
+  39%): a sloped wall gives a die a stable tilted surface to sit on.
 
 ## What changed in 003
 
@@ -182,6 +199,10 @@ quietly buried the table in haze. It cost about 40% of the brightness, and no
 amount of extra lamp intensity could win it back — worth knowing before touching
 the framing again.
 
+**Wall friction, not wall shape, is what holds a cocked die.** The walls carry
+their own near-frictionless material for exactly this reason. If you ever give
+them the floor's friction back, expect the cocked rate to roughly double.
+
 **Settled dice are never moved.** It is tempting to nudge overlapping dice apart
 after they come to rest, and it is not safe: any push large enough to separate
 them can tip one, which would silently change the result of the throw. Crowding
@@ -196,10 +217,10 @@ From `tools/`, over roughly 8,000 simulated rolls and 2,300 simulated matches:
 |---|---|
 | scorer | 33 hand-computed cases + 4,000 randomised consistency checks, all passing |
 | interaction | 25 UI assertions passing (selection legality, stowing, Tutto, hot dice, Kakaja) |
-| settle time | median 1.02s at six dice, p90 1.69s |
+| settle time | median 0.98s at six dice, p90 1.46s; settling tail 0.09s at p90 |
 | dice escaping the tray | 0% |
 | dice resting inside a wall | 0% |
-| cocked dice needing a nudge | ~23% at six dice, ~12% at three, ~6% at one |
+| cocked dice needing a nudge | ~12% at six dice, ~3% at three, ~0.6% at one |
 | face distribution | χ²=3.24, p=0.66 — indistinguishable from fair |
 | expected points per turn | 513 (game solved exactly; the Node and in-browser solvers agree) |
 | turns ending in Tutto | 23.6% |
