@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- il gioco cambia spesso: si evita che i telefoni si tengano una copia vecchia in cache -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>BEBIKES · E-Bike Challenge</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -149,7 +153,9 @@
   @keyframes rot{0%,20%{transform:rotate(0)}60%,100%{transform:rotate(90deg)}}
   #rotate .tt{font-size:10px;color:var(--gold);line-height:2;}
   #rotate .ss{font-size:7px;color:#7fb89a;}
-  @media (orientation:portrait) and (pointer:coarse){ #rotate{display:flex;} }
+  /* Il telefono va girato SOLO per giocare: regolamento e classifica si leggono
+     comodamente in verticale. L'avviso compare da quando si sceglie la bici in poi. */
+  @media (orientation:portrait) and (pointer:coarse){ body.needlandscape #rotate{display:flex;} }
 
   .endcard{background:var(--panel);border:3px solid var(--eco);padding:18px 20px;max-width:540px;box-shadow:0 0 0 4px rgba(61,220,111,.18);}
   .endttl{font-size:12px;color:var(--eco);line-height:1.6;}
@@ -175,6 +181,18 @@
   .rules .rt{font-family:var(--pix);font-size:8px;color:var(--gold);margin-bottom:8px;text-align:center;}
   .rules p{margin:0 0 9px;} .rules b{color:var(--cyan);}
   .wnote{font-size:6.5px;color:#7fb89a;margin-bottom:10px;}
+  /* --- schermata classifica pre-partita --- */
+  .prelbTtl{font-size:clamp(11px,2.6vw,17px);color:var(--gold);text-shadow:2px 2px 0 #7a5e00;line-height:1.6;}
+  .prelbSub{font-size:clamp(6.5px,1.35vw,9px);color:#cdeede;line-height:2.1;margin:10px 0 14px;}
+  .prelbSub b{color:var(--eco);}
+  .prelbLoad{font-size:7px;color:#7fb89a;margin:10px 0;animation:blink 1.2s steps(2) infinite;}
+  .lbList.pre{font-size:clamp(7.5px,1.7vw,11px);line-height:2.5;max-width:420px;margin:0 auto 14px;}
+  .lbList.pre .pos{width:26px;}
+  .lbList.pre .row:nth-child(1){color:var(--gold);}
+  .lbList.pre .row:nth-child(1) .pos::after{content:' 👑';}
+  .rotNote{font-size:6px;color:#7fb89a;line-height:2;margin-top:12px;}
+  body:not(.touch) .rotNote{display:none;}
+  @media (max-height:560px){ .prelbSub{margin:6px 0 8px;line-height:1.8;} .lbList.pre{line-height:2.1;margin-bottom:9px;} }
   /* firma discreta degli autori */
   .credits{margin-top:16px;padding-top:11px;border-top:1px solid rgba(47,92,63,.55);
     font-size:6px;line-height:2.3;color:#5f8d74;letter-spacing:.5px;}
@@ -315,6 +333,19 @@
         UN GIOCO DI <b>ENRICO POLI</b> &amp; <b>VALERIO FRATTINI</b>
         <span class="c2">codice e pixel art con <b>PEDRO</b></span>
       </div>
+    </div>
+  </div>
+
+  <!-- classifica PRIMA di giocare: si legge in verticale e invoglia a battere i punteggi -->
+  <div class="screen hidden" id="prelb">
+    <div class="wcard">
+      <div class="prelbTtl">CLASSIFICA DI OGGI</div>
+      <div class="prelbSub">Questi sono i punteggi da battere.<br>
+        Entra nella <b>TOP 10</b> e ritiri il premio allo stand!</div>
+      <div class="lbList pre" id="lbList0"></div>
+      <div class="prelbLoad" id="lbLoad">CARICAMENTO CLASSIFICA…</div>
+      <button class="btn cta" id="toMenuBtn">🚲&nbsp; SCEGLI LA BICI</button>
+      <div class="rotNote">📱 Per giocare dovrai girare il telefono in orizzontale</div>
     </div>
   </div>
 
@@ -2417,6 +2448,10 @@ function finishRace(g){
      diventa visibile in classifica col nome.
    Config: incolla URL e anon key del progetto Supabase qui sotto. Se restano vuoti
    il gioco funziona normalmente, senza classifica (modalit\u00e0 demo/offline). */
+/* Versione del gioco. Serve a capire in un attimo se un telefono si è tenuto in cache una
+   copia vecchia: compare in fondo alla schermata iniziale e viaggia insieme a ogni punteggio.
+   AGGIORNARLA a ogni pubblicazione. */
+const BUILD='v2026.07.31';
 const LB_CONFIG={
   URL:'https://bbeciqfzgnpylnfbakgb.supabase.co',
   KEY:'sb_publishable_xWNWQBQJWFf_UXw0NAAStg_0TzT8Guj',
@@ -2439,11 +2474,21 @@ const LB={
   // `qualified` e `cutoff` non servono al gioco: restano nel database come traccia della
   // decisione presa a fine corsa, così se qualcuno segnala "ho fatto un gran punteggio ma
   // non mi ha messo in classifica" si vede subito se il gioco riteneva di essere in Top 10.
-  submitScore(g,qualified,cutoff){ return this.req('/rest/v1/scores',{
-      score:g.finalScore, bike:g.key, distance:Math.round(g.dist),
-      leaves:g.leaves, battery:Math.round(g.battery), duration:g.t,
-      qualified:!!qualified, cutoff:(cutoff==null?null:cutoff)
-    },'return=representation').then(rows=>rows&&rows[0]&&rows[0].id); },
+  async submitScore(g,qualified,cutoff){
+    const base={ score:g.finalScore, bike:g.key, distance:Math.round(g.dist),
+                 leaves:g.leaves, battery:Math.round(g.battery), duration:g.t };
+    const extra={ ...base, qualified:!!qualified, cutoff:(cutoff==null?null:cutoff), build:BUILD };
+    // I campi diagnostici sono un di più: se le colonne non esistono ancora nel database
+    // il punteggio DEVE essere salvato lo stesso. Mai perdere una corsa per un dettaglio.
+    try{
+      const rows=await this.req('/rest/v1/scores',extra,'return=representation');
+      return rows&&rows[0]&&rows[0].id;
+    }catch(e){
+      if(!e||e.status!==400) throw e;
+      const rows=await this.req('/rest/v1/scores',base,'return=representation');
+      return rows&&rows[0]&&rows[0].id;
+    }
+  },
   top10(){ return this.req('/rest/v1/rpc/get_leaderboard',{}); },
   register(scoreId,d){
     const body={ score_id:scoreId, first_name:d.nome, last_name:d.cognome,
@@ -2457,7 +2502,7 @@ const $=id=>document.getElementById(id);
 let _scoreId=null, _regDone=false, _myScore=0;
 function lbRender(rows,highlight){
   $('lbTtl').style.display=rows&&rows.length?'block':'none';
-  for(const id of ['lbList','lbList2']){
+  for(const id of ['lbList','lbList2','lbList0']){
     const list=$(id); if(!list) continue;
     list.innerHTML='';
     (rows||[]).forEach(r=>{
@@ -2673,7 +2718,9 @@ function buildCards(){
 /* ============ Flow ============ */
 const isTouch=('ontouchstart'in window)||navigator.maxTouchPoints>0;
 if(isTouch) document.body.classList.add('touch');
-function show(id){ ['menu','end','regscreen'].forEach(s=>document.getElementById(s).classList.toggle('hidden',s!==id)); }
+function show(id){ ['menu','end','regscreen','prelb'].forEach(s=>document.getElementById(s).classList.toggle('hidden',s!==id));
+  // il telefono va girato solo da quando si sceglie la bici: prima si legge in verticale
+  document.body.classList.toggle('needlandscape', id==='menu'); }
 let pendingBike=null;
 function startGame(k){
   pendingBike=k;
@@ -2737,9 +2784,22 @@ document.getElementById('pmResume').addEventListener('click',resumeGame);
 document.getElementById('pmRestart').addEventListener('click',()=>{ const k=G&&G.key; if(k){ beginRun(k); musicPlay(); } });
 document.getElementById('pmChange').addEventListener('click',toMenu);
 document.getElementById('pmQuit').addEventListener('click',quitGame);
+/* Dalla schermata del regolamento si passa alla CLASSIFICA (ancora in verticale),
+   e solo dopo alla scelta della bici, che richiede il telefono in orizzontale. */
 document.getElementById('startBtn').addEventListener('click',()=>{
   document.getElementById('welcome').classList.add('hidden');
-  document.getElementById('menu').classList.remove('hidden'); });
+  show('prelb'); loadPreBoard(); });
+document.getElementById('toMenuBtn').addEventListener('click',()=>show('menu'));
+async function loadPreBoard(){
+  const ld=$('lbLoad'); lbRender([]);
+  if(!LB.on()||location.protocol==='file:'){ ld.style.display='block'; ld.style.animation='none';
+    ld.textContent='Classifica non disponibile in questa modalità.'; return; }
+  ld.style.display='block'; ld.style.animation=''; ld.textContent='CARICAMENTO CLASSIFICA…';
+  try{ const rows=await LB.top10(); lbRender(rows);
+       ld.style.display=rows&&rows.length?'none':'block';
+       if(!rows||!rows.length){ ld.style.animation='none'; ld.textContent='Nessun punteggio ancora: il primo posto è tuo!'; }
+  }catch(e){ ld.style.animation='none'; ld.textContent='Classifica non raggiungibile in questo momento.'; }
+}
 
 /* ============ Loop (fixed timestep) ============
    The whole simulation is tuned in per-frame units. Driving it straight off
