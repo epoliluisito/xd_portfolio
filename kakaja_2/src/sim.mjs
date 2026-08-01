@@ -200,8 +200,28 @@ const speedOf = b => b.velocity.length() + b.angularVelocity.length() * 0.55;
 const vForApex = (CFG, h) => Math.sqrt(2 * Math.abs(CFG.physics.gravity) * h);
 
 /* --------------------------------------------------------------- a throw */
-export function beginThrow(sim, { seed, n, power = 1, skew = 0 }){
+/**
+ * Start a throw.
+ *
+ * `indices` says WHICH bodies to throw, and defaults to the first n. It matters
+ * because after a set-aside the dice still in hand are an arbitrary subset —
+ * dice 1, 3, 4 and 5, say — and throwing bodies 0..3 instead would fling two
+ * dice that are sitting safely in the saved row back across the table while two
+ * dice that are still in play get parked under the floor. That is not
+ * hypothetical; it shipped, and it is what `tools/truth.mjs` now guards.
+ *
+ * Every per-die parameter is derived from the loop counter k, never from the
+ * body index, so the k-th die of a throw gets the same treatment no matter
+ * which body it happens to be. That is what lets the preview reproduce the
+ * visible throw exactly.
+ *
+ * Bodies not being thrown are LEFT ALONE. The caller owns them (they are the
+ * dice you set aside), and moving them here is how the above happened.
+ */
+export function beginThrow(sim, { seed, n, power = 1, skew = 0, indices = null }){
   const { bodies, CFG, PLAY } = sim;
+  const idx = indices || Array.from({ length: n }, (_, k) => k);
+  if (idx.length !== n) throw new Error(`beginThrow: ${idx.length} indices for n=${n}`);
   const r = rng(seed);
   const T = CFG.throw;
   const halfW = CFG.tray.w / 2 - CFG.die.size * 0.75;
@@ -213,18 +233,22 @@ export function beginThrow(sim, { seed, n, power = 1, skew = 0 }){
   for (let k = 0; k < n; k += 2) order.push(k);
   for (let k = 1; k < n; k += 2) order.push(k);
 
-  for (let i = 0; i < bodies.length; i++){
-    const b = bodies[i];
+  const thrown = [];
+  for (let k = 0; k < n; k++){
+    const b = bodies[idx[k]];
+    // A die that was set aside is a STATIC body with collisions off; it has to
+    // come back to life before it can be thrown.
+    b.type = CANNON.Body.DYNAMIC;
+    b.collisionResponse = true;
     b.velocity.setZero(); b.angularVelocity.setZero();
     b.force.setZero(); b.torque.setZero();
-    if (i >= n){ b.sleep(); b.position.set(0, -60, 0); continue; }
 
-    const slot = order[i], col = slot % cols, row = (slot / cols) | 0;
+    const slot = order[k], col = slot % cols, row = (slot / cols) | 0;
     const x = (cols > 1 ? -halfW + col * laneX : 0) + spread(r, 0.225);
     b.wakeUp();
     b.position.set(
       Math.max(-halfW, Math.min(halfW, x)),
-      T.fromY + i * 0.95 + r() * 0.8,          // stack in height so they arrive apart
+      T.fromY + k * 0.95 + r() * 0.8,          // stack in height so they arrive apart
       PLAY.zNear - T.inset - row * (CFG.die.size + 0.5) - r() * 0.4
     );
     randomQuat(r, b.quaternion);
@@ -235,11 +259,9 @@ export function beginThrow(sim, { seed, n, power = 1, skew = 0 }){
       -s * (0.85 + r() * 0.3)                  // away from the player
     );
     b.angularVelocity.set(spread(r, T.spin), spread(r, T.spin * 0.5), spread(r, T.spin));
+    thrown.push(b);
   }
-  return {
-    r, n, step: 0, quiet: 0, nudges: 0, done: false,
-    bodies: bodies.slice(0, n),
-  };
+  return { r, n, step: 0, quiet: 0, nudges: 0, done: false, bodies: thrown, indices: idx };
 }
 
 /** Which face points up, and how convincingly (1 = perfectly flat). */
@@ -347,6 +369,23 @@ function nudgeBody(sim, t, i){
  * work: simulate first, see where the dice land, then decide what is printed.
  */
 export function previewThrow(sim, opts){
+  // Put every body that is NOT being thrown into the same inert state the real
+  // world's set-aside dice are in — static, no collision response, out of the
+  // way. The two worlds then contain the same active bodies at the same
+  // indices, which is what makes the preview an exact rehearsal rather than a
+  // near-miss. (Same indices matters: the solver visits contacts in body-index
+  // order, so a different index set is a different rounding path.)
+  const idx = opts.indices || Array.from({ length: opts.n }, (_, k) => k);
+  const active = new Set(idx);
+  for (let i = 0; i < sim.bodies.length; i++){
+    if (active.has(i)) continue;
+    const b = sim.bodies[i];
+    b.type = CANNON.Body.STATIC;
+    b.collisionResponse = false;
+    b.velocity.setZero(); b.angularVelocity.setZero();
+    b.position.set(0, -60, 0);
+    b.sleep();
+  }
   const t = beginThrow(sim, opts);
   let guard = 0;
   while (!t.done && guard++ < 4000) stepThrow(sim, t);

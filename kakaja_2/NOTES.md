@@ -1,9 +1,92 @@
-# Kakaja — iteration 005
+# Kakaja — iteration 006
 
 A self-contained Three.js dice game: warm-oak table, top view, portrait-first,
 real rigid-body dice, **full Kakaja rules**. All graphics are procedural — the
 wood grain, the dice, the pips, the environment lighting and the sounds are all
 generated in code at load time. No image, font or model assets.
+
+## What changed in 006 — the 005 regressions
+
+Iteration 005 shipped broken. Everything below was caused by the refactor in
+005, and the honest lesson is at the bottom.
+
+### The bug behind almost all of it
+
+`beginThrow` threw *the first n bodies*. That is correct only for the first
+throw of a turn. After a set-aside the dice still in hand are an arbitrary
+subset — dice 1, 3, 4 and 5, say — so throwing bodies 0 to 3 meant:
+
+- two dice sitting safely in the saved row were teleported into the air and
+  frozen there, because a set-aside die is a static body,
+- two dice that were still in play were parked under the floor, out of sight,
+- and the value each die was *printed* with no longer matched the face it
+  landed on, because the printing was chosen from a preview of a different die.
+
+That last one is what produced "it says I have two 2s and there's only one":
+the game was counting dice the player could not see, with values that were
+never on the table. Measured before the fix, over 804 dice: **32% read wrong,
+113 dice fell out of the world, 144 set-aside dice were disturbed.** After:
+zero on all three, over 1,231 dice.
+
+### The score can no longer disagree with the pips
+
+Beyond fixing the cause, the game now **reads the value off the die at settle**
+rather than trusting what it planned to print. If the preview and the visible
+throw ever diverge again for any reason, the player still sees a coherent game —
+the score always matches what is showing — and the divergence becomes a
+separate, visible bug rather than a scoring one. In `?debug=1` it logs.
+
+### Sound
+
+The dice clacks came from cannon `collide` listeners on the dice bodies. When
+body creation moved into `src/sim.mjs` in 005, nothing re-attached them, and the
+game shipped silent. The listeners now live in the `Die` class — sound is a
+client concern and `src/` has to stay runnable on a server.
+
+Also fixed while in there: on iOS the audio context is handed back *suspended*
+when created outside a user gesture, and 005 only ever called `init()` once. It
+now resumes on every init, and unlocks on the first touch anywhere rather than
+on the first roll — by the time the dice are in the air it is too late for that
+roll's sounds.
+
+### Lag
+
+I could not reproduce a frame-rate problem in the container — it renders in
+software at 1–2fps, so it cannot measure this at all, and I stopped pretending
+otherwise. What I did find and fix:
+
+- **The visible symptom.** Dice frozen in mid-air that never come down, and
+  dice missing from the table, are what the bug above produced. That reads as
+  "stuck" long before it reads as "wrong".
+- **The watchdog was measuring the wrong number.** It sampled the *clamped*
+  frame delta, so every frame slower than 20fps looked identical to exactly
+  20fps and it could not see how bad things were. It now judges the raw frame
+  time.
+- **The watchdog was far too slow.** It needed 90 frames of tumbling dice before
+  reacting — but a throw only lasts about a second, so that was four or five
+  separate bad rolls. Now 36 frames, which fills inside a single bad roll.
+- **Phones no longer boot into `high`.** `high` means DPR 2 and a 1024 shadow
+  map, and a phone reporting eight cores may still be a mid-range Android
+  throttling in a warm hand. On a phone screen `mid` is very hard to tell apart
+  — the dice are ~45px either way — and costs about 40% less. `high` is now
+  desktop-only.
+
+### The real lesson
+
+Every suite passed on the broken build. `simtest.mjs` proved the physics module
+could do the trick *in isolation*; `test.mjs` staged dice by hand and never
+threw one. Neither one ever played a turn and then asked the only question a
+player cares about:
+
+> is the number the game is counting the number that is actually showing?
+
+`tools/truth.mjs` now asks exactly that, over a thousand dice per run, through
+the real game — real throws, real set-asides, real physics — along with: did any
+die leave the table, did a set-aside die move, did the preview predict the
+landing, and is every dead die dimmed. It would have caught this in seconds.
+
+The gap was not a missing test case. It was a missing *seam*: two things were
+each tested alone and the handoff between them was tested by nobody.
 
 ## What changed in 005
 
@@ -333,6 +416,8 @@ From `tools/`, over roughly 10,000 simulated rolls and 2,300 simulated matches:
 |---|---|
 | scorer | 33 hand-computed cases + 4,000 randomised consistency checks, all passing |
 | interaction | 25 UI assertions passing (selection legality, stowing, Tutto, hot dice, Kakaja) |
+| end-to-end truth | 1,231 dice over 245 real throws: score matches the pips, nothing lost, nothing disturbed, dimming correct — all 0 failures |
+| sound | 4 assertions: context running, ~85 clacks per six-dice throw at varying strength, event sounds fire |
 | quality tiers | 19 assertions passing (settings reach the renderer, step-down fires, one-way, `?q=` pins) |
 | throw determinism | 60/60 identical replays from the same seed |
 | server-chosen values shown | 500/500 throws displayed exactly the requested dice |

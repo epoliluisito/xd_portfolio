@@ -24,6 +24,14 @@ solver (both give E[turn] = 513).
 
 ## Drive the real page in headless Chromium
 
+    node truth.mjs 120         # START HERE. Plays real turns and checks that the
+                               # number the game counts is the number showing on
+                               # the die. This is the one that would have caught
+                               # the 005 regressions.
+    node sound.mjs             # are the dice actually making a noise?
+    node lagcheck.mjs 150      # steps-to-settle by hand size; catches throws
+                               # that run to the 10s failsafe
+    node frames.mjs            # frame times under CPU throttling (see caveat)
     node rules.mjs             # scorer unit tests + full-match simulation
     node test.mjs              # UI/interaction assertions, writes shots/*.png
     node quality.mjs           # quality tiers and the adaptive step-down
@@ -33,7 +41,12 @@ solver (both give E[turn] = 513).
     node diagnose.mjs          # UI footprint + whether dice can land under the HUD
     node tiershots.mjs         # screenshots of the table at high vs low
 
-Set `KROOT` to point them at a different copy of the game.
+Set `KROOT` to point them at a different copy of the game — useful for
+measuring a change against the previous build rather than arguing about it.
+
+`frames.mjs` caveat: this container renders in software at 1-2fps, so it cannot
+measure frame rate. It is kept because it still shows whether the quality
+watchdog reacts, and because it runs correctly on a real machine.
 
 Note: these expect a Chromium binary. If Playwright's bundled one isn't where the
 scripts point, drop the `executablePath` line and run `npx playwright install`.

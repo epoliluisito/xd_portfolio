@@ -87,6 +87,26 @@ console.log(`  plank map: high ${texW.high}px -> low ${texW.low}px  (${((texW.lo
   await page.close();
 }
 
+// a phone must never boot straight into `high`
+{
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, deviceScaleFactor: 3,
+    hasTouch: true, isMobile: true,
+  });
+  const page = await ctx.newPage();
+  await page.goto(`http://localhost:${PORT}/?debug=1`, { waitUntil: 'load' });
+  await page.waitForFunction(() => !!window.KAKAJA, { timeout: 40000 });
+  const t = await page.evaluate(() => ({
+    tier: window.KAKAJA.QUALITY.name,
+    coarse: matchMedia('(pointer: coarse)').matches,
+    touchPoints: navigator.maxTouchPoints,
+    cores: navigator.hardwareConcurrency,
+  }));
+  console.log(`  touch device (coarse ${t.coarse}, ${t.touchPoints} touch points, ${t.cores} cores) -> ${t.tier}`);
+  check('a touch device never boots into high', t.tier !== 'high', t);
+  await ctx.close();
+}
+
 // adaptive step-down
 console.log('\nadaptive step-down:');
 {

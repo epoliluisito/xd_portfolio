@@ -872,12 +872,23 @@ const QUALITY = (() => {
       soft = /swiftshader|llvmpipe|software|basic render/i.test(r);
     } catch { /* treat as unknown, fall through to the counts */ }
     if (soft || maxTex < 4096) return 'low';
+
     const cores = navigator.hardwareConcurrency || 4;
-    const mem = navigator.deviceMemory || 0;          // absent on iOS
-    // A device that reports little memory or few cores is the clearest signal
-    // we get. iOS reports neither, but every iPhone that runs WebGL2 at all is
-    // comfortably a `mid` device, so the default lands correctly there.
-    if (cores <= 4 && mem && mem <= 3) return 'low';
+    const mem = navigator.deviceMemory || 0;          // absent on iOS/Safari
+    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
+
+    // Phones cap at `mid`, and it is a deliberate choice rather than a
+    // measurement. `high` means DPR 2 on a screen that is often DPR 3 already,
+    // plus a 1024 shadow map, and a phone that reports eight cores may still be
+    // a mid-range Android throttling in someone's warm hand. `mid` on a phone
+    // screen is very hard to tell apart from `high` — the dice are ~45px either
+    // way — and it costs about 40% less. The watchdog can still drop to `low`.
+    // Reserving `high` for desktop, where there is headroom and a large window
+    // to fill, is the safer default in the direction that actually hurts.
+    if (touch){
+      if (cores <= 4 || (mem && mem <= 3)) return 'low';
+      return 'mid';
+    }
     if (cores <= 4 || (mem && mem <= 4)) return 'mid';
     return cores >= 8 ? 'high' : 'mid';
   };
@@ -1126,7 +1137,10 @@ scene.add(savedLamp, savedLamp.target);
 const Audio = {
   ctx: null, on: true, last: 0,
   init(){
-    if (this.ctx) return;
+    // Safari/iOS hands back a SUSPENDED context when it is created outside a
+    // gesture, and it stays suspended until something resumes it inside one.
+    // So resume on every init call, not just the first.
+    if (this.ctx){ if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC();
@@ -1328,6 +1342,7 @@ const RING_MAT = new THREE.MeshBasicMaterial({
 
 class Die {
   constructor(i){
+    this.index = i;                  // which body in the simulation this is
     this.body = sim.bodies[i];
     this.group = new THREE.Group();
     // Own material per die: highlight states are per-die.
@@ -1356,6 +1371,19 @@ class Die {
 
     this.stowed = false; this.selected = false; this.dead = false;
     this.tween = null; this.value = null; this.label = null;
+
+    // Wood-on-wood. These listeners live here rather than in src/sim.mjs
+    // because sound is a client concern and the simulation must stay runnable
+    // on a server. Losing them is how iteration 005 shipped silent: the bodies
+    // moved into sim.mjs and nothing re-attached the listener.
+    this.body.addEventListener('collide', e => {
+      if (this.stowed) return;
+      const v = Math.abs(e.contact.getImpactVelocityAlongNormal());
+      // Below this a die is settling, not landing. Without the gate the tail of
+      // a roll turns into a buzz as micro-contacts fire every step.
+      if (v < 3.5) return;
+      Audio.clack(Math.min(1, v / 42));
+    });
   }
 
   /** Print this die so the given local face reads `value`. Invisible: a blank
@@ -1487,7 +1515,10 @@ function throwValues(set, values, swipe){
   const power = swipe ? THREE.MathUtils.clamp(swipe.power, 0.65, 1.5) : 1;
   const skew = swipe ? THREE.MathUtils.clamp(swipe.dx, -0.55, 0.55) : (Math.random() - .5) * .3;
   const seed = randomSeed();
-  const opts = { seed, n, power, skew };
+  // Which BODIES to throw — not "the first n". After a set-aside the dice in
+  // hand are an arbitrary subset, and getting this wrong throws the dice you
+  // set aside back onto the table.
+  const opts = { seed, n, power, skew, indices: set.map(d => d.index) };
 
   // simulate it first, with nothing drawn, to learn where each die will land
   const pre = previewThrow(preview, opts);
@@ -1620,6 +1651,17 @@ const Game = {
   // same sequence of events. The game only reacts to the outcome.
   onThrowSettled(){
     this.rolling = false;
+    // Trust the table, not the plan. The preview decides what to PRINT on each
+    // die before the throw; what the die is WORTH is read from the face that
+    // actually finished upward. If those two ever disagree the player still
+    // sees a consistent game — the score always matches the pips — and the
+    // disagreement is a bug in the preview, which is a separate problem.
+    for (const d of this.inHand){
+      const real = valueOnAxis(d.upAxis(), d.label);
+      if (DEBUG && real !== d.value)
+        console.warn(`[KAKAJA] die ${d.index} shows ${real}, preview said ${d.value}`);
+      d.value = real;
+    }
     this.onSettled();
   },
 
@@ -2011,6 +2053,11 @@ $('#roll').addEventListener('click', () => {
 });
 $('#bank').addEventListener('click', () => Game.bank());
 $('#btn-menu').addEventListener('click', () => { Game.state = 'PAUSE'; UI.show('title'); });
+// Unlock audio on the very first touch anywhere, not on the first roll: on iOS
+// the context must be resumed inside a gesture, and by the time the dice are in
+// the air it is too late for that roll's sounds.
+addEventListener('pointerdown', () => Audio.init(), { once: true, capture: true });
+
 $('#btn-sound').addEventListener('click', e => {
   Audio.init(); Audio.on = !Audio.on;
   e.currentTarget.classList.toggle('off', !Audio.on);
@@ -2118,8 +2165,12 @@ const PERF = {
     if (QUALITY.forced || QUALITY.name === 'low') return;
     if (this.cooldown > 0){ this.cooldown--; return; }
     this.window.push(ms);
-    if (this.window.length < 90) return;                 // ~2s of rolling
-    const med = this.window.slice().sort((a, b) => a - b)[45];
+    // 36 frames, not 90. A throw only lasts about a second, so a 90-frame
+    // window spanned four or five separate throws before it would react — the
+    // player sat through the whole stutter several times over. 36 fills inside
+    // a single bad roll.
+    if (this.window.length < 36) return;
+    const med = this.window.slice().sort((a, b) => a - b)[18];
     this.window.length = 0;
     if (med <= this.budget) return;
     this.drop(med);
@@ -2137,7 +2188,7 @@ const PERF = {
     lamp.shadow.map?.dispose(); lamp.shadow.map = null;
     renderer.shadowMap.needsUpdate = true;
     resize();
-    this.cooldown = 120;                                 // let it settle first
+    this.cooldown = 45;                                  // let it settle first
     if (DEBUG) console.log(`[KAKAJA] frame ${med.toFixed(1)}ms > budget — quality → ${next}`);
   },
 };
@@ -2152,7 +2203,13 @@ document.addEventListener('visibilitychange', () => {
 function loop(now){
   requestAnimationFrame(loop);
   if (!visible) return;
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  // Two different numbers on purpose. `raw` is how long the frame really took
+  // and is what the quality watchdog judges; `dt` is clamped so that one long
+  // frame can't inject a huge jump into the physics. Judging quality on the
+  // clamped value was a bug: every frame slower than 20fps looked identical to
+  // exactly 20fps, so the watchdog could not see how bad things really were.
+  const raw = now - last;
+  const dt = Math.min(0.05, raw / 1000); last = now;
 
   // fixed-step physics with substeps: high gravity needs a small step or dice
   // tunnel through the rim
@@ -2201,7 +2258,7 @@ function loop(now){
 
   // Only judge frames where the dice are tumbling: that is the heaviest thing
   // the game ever draws, and a slow frame on the title screen means nothing.
-  if (activeThrow && !activeThrow.done) PERF.sample(dt * 1000);
+  if (activeThrow && !activeThrow.done) PERF.sample(raw);
 
   if (DEBUG){
     frames++;
@@ -2249,6 +2306,7 @@ window.KAKAJA = {
   localValues,
   __ensure: ensureDice, __clear: clearTable, __faces: FACE_AXES,
   __sim: { beginThrow, stepThrow, previewThrow, labelFor, valueOnAxis },
+  __throwValues: throwValues,
   get __throwState(){ return activeThrow; },
 };
 </script>
