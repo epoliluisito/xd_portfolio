@@ -1,9 +1,33 @@
-# Kakaja — iteration 006
+# Kakaja — iteration 007
 
 A self-contained Three.js dice game: warm-oak table, top view, portrait-first,
 real rigid-body dice, **full Kakaja rules**. All graphics are procedural — the
 wood grain, the dice, the pips, the environment lighting and the sounds are all
 generated in code at load time. No image, font or model assets.
+
+## What changed in 007
+
+**The black disc on the board at start-up.** Two bugs, one visible symptom.
+
+Dice waiting to be thrown are parked below the table at y=-60, where the table
+hides them. The low tier's fake contact shadow, though, is drawn *on* the table
+— so six parked dice each painted a near-opaque blob at the origin, stacked.
+The real shadow map never had this problem, because nothing below the floor can
+be lit from above; the stand-in had no such rule until now. A die only casts a
+contact shadow if it is actually above the table.
+
+Underneath that: **starting a game did not cancel the title screen's idle
+throw.** Those three dice kept tumbling into the new game, and because the game
+had already parked them below the floor, the simulation's stray-rescue kept
+hauling them back onto the table. `clearTable()` now cancels any throw in
+flight.
+
+A resting die's blob was also nearly opaque (0.95). Fine while hidden under a
+die, far too heavy anywhere it isn't — now 0.78, falling off with height.
+
+`tools/quality.mjs` grew a check that walks the title screen, a started game, a
+throw in flight and a settled throw, and fails if any shadow belongs to a die
+that is not on the table.
 
 ## What changed in 006 — the 005 regressions
 

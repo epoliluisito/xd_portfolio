@@ -1492,6 +1492,10 @@ function ensureDice(n){
 
 // Park every die out of sight and out of the simulation. Used between turns.
 function clearTable(){
+  // Cancel any throw in flight. The title screen has its own idle throw, and
+  // without this it kept stepping into the new game — its dice were rescued
+  // back onto the table while the game had already parked them.
+  activeThrow = null;
   for (const d of dice){
     d.unstow();
     d.body.sleep();
@@ -2234,7 +2238,13 @@ function loop(now){
     if (!d.group.visible) continue;
     if (d.stowed) d.stepTween(dt);
     else { d.sync(); d.ring.position.set(d.group.position.x, 0.035, d.group.position.z); }
-    if (!renderer.shadowMap.enabled){
+    // A die parked below the table is not in play — it is waiting to be
+    // thrown. It is invisible (the table hides it), but its fake contact
+    // shadow is drawn ON the table and would show. Six of them stacked at the
+    // origin is a solid black disc in the middle of the board, which is
+    // exactly what shipped in 006. The real shadow map never had this problem
+    // because nothing below the floor can be lit from above.
+    if (!renderer.shadowMap.enabled && d.body.position.y > 0){
       // Project the die from the lamp onto the table, exactly as the real
       // shadow map would: a point light at L casts a point P onto y=0 at
       // P + (P - L) * P.y / (L.y - P.y). Guessing a fixed offset instead puts
@@ -2249,7 +2259,7 @@ function loop(now){
       d.shade.visible = true;
       d.shade.position.set(p.x + (p.x - L.x) * t, 0.012, p.z + (p.z - L.z) * t);
       d.shade.scale.set(k, k, 1);
-      d.shade.material.opacity = Math.max(0.10, 0.95 - h * 0.13);
+      d.shade.material.opacity = Math.max(0.10, 0.78 - h * 0.11);
     }
   }
   if (settled && Game.rolling) Game.onThrowSettled();
