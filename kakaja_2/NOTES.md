@@ -1,9 +1,48 @@
-# Kakaja — iteration 007
+# Kakaja — iteration 008
 
 A self-contained Three.js dice game: warm-oak table, top view, portrait-first,
 real rigid-body dice, **full Kakaja rules**. All graphics are procedural — the
 wood grain, the dice, the pips, the environment lighting and the sounds are all
 generated in code at load time. No image, font or model assets.
+
+## What changed in 008
+
+**Hold the roll button to shake, release to throw.** Purely perceptual: the hold
+length is not measured and never reaches the physics — a throw from a 40ms tap
+and one from a two-second hold are byte-for-byte identical. What changes is that
+letting go feels like letting go of something.
+
+Deliberately **no charging bar**. A filling bar is a promise that holding longer
+does something, and here it doesn't. The feedback is that something is being
+wound up, not how far:
+
+- the button sits down, warms at the rim, and shakes very slightly (about 1.4px,
+  disabled under `prefers-reduced-motion`)
+- the dice rattle — the same clack synth fired at jittered 55-115ms intervals.
+  Even spacing sounds like a machine; the jitter is what makes it read as
+  several loose objects in a closed hand
+- one short haptic tick where the device supports it (Android honours it, iOS
+  ignores it, and the sound carries the moment there)
+
+A quick tap still throws — it is simply a very short hold. Sliding your thumb off
+the button and releasing cancels, as any other button on a phone would.
+
+Two implementation notes worth keeping:
+
+Touch browsers *implicitly capture* the pointer to whatever received the
+`pointerdown`, so `pointerleave` never fires for a finger. Sliding off has to be
+detected by testing the release point against the button's box; without that,
+sliding away and letting go still threw.
+
+A `pointerdown`/`pointerup` pair also emits a `click`, so the click fallback that
+keyboard and scripted activation need would fire a second throw. The
+discriminator is `event.detail` — a pointer-generated click carries the click
+count, keyboard and scripted clicks report 0. A "did we just fire?" timer was not
+enough, because a *cancelled* hold also emits a click.
+
+`tools/hold.mjs` covers all of it: 13 checks including that a long hold and a
+quick tap produce identical throws, that holding alone never throws, that sliding
+off cancels, that one release is one throw, and that the rattle always stops.
 
 ## What changed in 007
 

@@ -158,6 +158,26 @@
     box-shadow:0 1px 0 rgba(255,255,255,.45) inset, 0 -2px 0 rgba(0,0,0,.18) inset,
                0 1px 0 #8f5f22, 0 4px 12px rgba(0,0,0,.4);
   }
+  /* Held, not tapped. The dice are being shaken: the button stays pressed and
+     breathes slightly, and the rim warms. Deliberately NO progress bar — hold
+     length does not affect the throw, and a filling bar would promise that it
+     does. The feedback is that something is being wound up, not how far. */
+  .btn.holding{
+    transform:translateY(4px);
+    box-shadow:0 1px 0 rgba(255,255,255,.45) inset, 0 -2px 0 rgba(0,0,0,.18) inset,
+               0 1px 0 #8f5f22, 0 4px 12px rgba(0,0,0,.4),
+               0 0 0 2px rgba(255,224,160,.5), 0 0 22px rgba(255,190,90,.4);
+    animation:shake .19s ease-in-out infinite alternate;
+    filter:brightness(1.06);
+  }
+  @keyframes shake{
+    from{ transform:translateY(4px) translateX(-0.7px) rotate(-0.25deg); }
+    to  { transform:translateY(4px) translateX(0.7px)  rotate(0.25deg); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .btn.holding{ animation:none; }
+  }
+
   .btn.ghost{
     color:var(--cream); background:rgba(246,234,211,.06);
     box-shadow:0 0 0 1.5px var(--line) inset, 0 4px 0 rgba(0,0,0,.28), 0 8px 18px rgba(0,0,0,.35);
@@ -1198,6 +1218,25 @@ const Audio = {
   // Kakaja deserves more than a chime: a rising arpeggio.
   fanfare(){ this.tune([523.25, 659.25, 783.99, 1046.5], 0.085, 0.11, 'triangle', 0.7); },
   bust(){ this.tune([311.13, 261.63, 196], 0.13, 0.11, 'sawtooth', 0.42); },
+  /* Dice being shaken in a cupped hand, for the hold-before-throw. Not a loop
+     of a sample — the same clack synth fired at jittered intervals, which is
+     what makes it read as several loose objects rather than a rhythm. Quiet on
+     purpose: it sits under the moment rather than announcing it. */
+  rattle(on){
+    if (!on){
+      if (this.rattleT) clearTimeout(this.rattleT);
+      this.rattleT = null;
+      return;
+    }
+    if (!this.on || !this.ctx || this.rattleT) return;
+    const tick = () => {
+      this.clack(0.10 + Math.random() * 0.13);
+      // 55-115ms apart. Regular spacing sounds like a machine; this doesn't.
+      this.rattleT = setTimeout(tick, 55 + Math.random() * 60);
+    };
+    tick();
+  },
+
   // Soft wooden knock for setting a die aside.
   stow(){ this.clack(0.35); },
   // Tiny UI tick for selecting a die.
@@ -1629,7 +1668,7 @@ const Game = {
     UI.buildChips();
     UI.syncBar();
     UI.turn(p.isAI ? `${p.name} to throw` : 'Your throw');
-    UI.hint(p.isAI ? '' : 'swipe up  ·  or tap roll');
+    UI.hint(p.isAI ? '' : 'swipe up  ·  or hold roll');
     if (p.isAI) setTimeout(() => this.roll(), CFG.ai.think + Math.random() * 350);
   },
 
@@ -1754,7 +1793,7 @@ const Game = {
         this.phase = 'IDLE';
         UI.syncBar();
         if (this.player.isAI) setTimeout(() => this.roll(), CFG.ai.betweenRolls);
-        else { UI.turn('Your throw'); UI.hint('swipe up  ·  or tap roll'); }
+        else { UI.turn('Your throw'); UI.hint('swipe up  ·  or hold roll'); }
       });
       return;
     }
@@ -2051,10 +2090,69 @@ document.querySelectorAll('[data-go]').forEach(b => {
     else UI.show(go);
   });
 });
-$('#roll').addEventListener('click', () => {
-  if (Game.phase === 'SELECT') Game.keepAndRoll();
-  else Game.roll();
-});
+/* Hold the roll button to shake, release to throw.
+   Purely perceptual: hold LENGTH is not measured and does not reach the physics
+   — a throw from a 40ms tap and a two-second hold are identical. What changes
+   is that letting go feels like letting go of something.
+   A quick tap still works: it is simply a very short hold. */
+(function holdToThrow(){
+  const btn = $('#roll');
+  let holding = false;
+
+  const doRoll = () => {
+    if (Game.phase === 'SELECT') Game.keepAndRoll();
+    else Game.roll();
+  };
+  const begin = () => {
+    if (holding || btn.disabled) return;
+    holding = true;
+    btn.classList.add('holding');
+    Audio.init(); Audio.rattle(true);
+    // A single short tick, where it exists. Android honours this; iOS ignores
+    // it, which is fine — the sound carries the moment there.
+    navigator.vibrate?.(8);
+  };
+  const end = (fire) => {
+    if (!holding) return;
+    holding = false;
+    btn.classList.remove('holding');
+    Audio.rattle(false);
+    if (fire) doRoll();
+  };
+
+  // Is the pointer still over the button? Touch browsers implicitly capture the
+  // pointer to whatever received the pointerdown, so `pointerleave` never fires
+  // on a finger — the release has to be checked against the button's box
+  // instead. Without this, sliding your thumb away and letting go still threw.
+  const inside = (e) => {
+    const r = btn.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right
+        && e.clientY >= r.top  && e.clientY <= r.bottom;
+  };
+
+  btn.addEventListener('pointerdown', begin);
+  btn.addEventListener('pointerup', e => end(inside(e)));
+  // Mouse only, and only cosmetic: it drops the held look the moment the cursor
+  // leaves, rather than waiting for the release.
+  btn.addEventListener('pointerleave', () => end(false));
+  btn.addEventListener('pointercancel', () => end(false));
+  // Losing the pointer entirely (window blur, a system gesture) must not leave
+  // the button shaking and rattling forever.
+  addEventListener('pointerup', () => end(false));
+  addEventListener('blur', () => end(false));
+  // Keyboard activation and programmatic .click() produce no pointer events, so
+  // they still need this path. Everything pointer-driven is already handled
+  // above and must be ignored here — including the click that follows a
+  // CANCELLED hold, which is why a simple "did we just fire?" guard was not
+  // enough. `detail` is the discriminator: a click generated by a pointer
+  // carries the click count (>= 1); keyboard and scripted clicks report 0.
+  // (Belt and braces: Game.roll and Game.keepAndRoll are both no-ops once a
+  // throw is under way, so a stray extra call could not throw twice anyway.)
+  btn.addEventListener('click', e => {
+    if (e.detail !== 0) return;
+    doRoll();
+  });
+})();
 $('#bank').addEventListener('click', () => Game.bank());
 $('#btn-menu').addEventListener('click', () => { Game.state = 'PAUSE'; UI.show('title'); });
 // Unlock audio on the very first touch anywhere, not on the first roll: on iOS
