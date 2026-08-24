@@ -477,6 +477,12 @@ let DPR=1, _skiesBaked=false;
 // pixels (~4x less fill) and skips the two most expensive full-screen passes. Gameplay is
 // untouched — same speed, same layout, same difficulty — only the polish scales to the hardware.
 let LOWPERF=false, _vigCv=null, _scanPat=null, _ema=0, _emaN=0;
+// Rider's resting X. NOT a fixed pixel value: the buffer width tracks the screen aspect, so a
+// constant would place the rider further left the wider the phone. Keeping it a FRACTION of W
+// puts him in the same spot on every device. PVX (the dolly-zoom pivot) is tied to it so the
+// camera framing follows automatically. Both are refreshed by sizeDisplay().
+const HOME_F=0.29;                 // 0.29 = comfortably off-centre; past ~0.33 he crowds the ECO/TURBO badge
+let HOME_X=Math.round(960*HOME_F), PVX=HOME_X;
 function sizeDisplay(){
   DPR=LOWPERF?1:Math.max(1,Math.min(window.devicePixelRatio||1,2));
   const r=scv.getBoundingClientRect();
@@ -490,17 +496,18 @@ function sizeDisplay(){
     ctx.imageSmoothingEnabled=false;                       // a canvas resize resets its context
     if(_skiesBaked) ART.skies=BIOMES.map(renderSky);       // re-bake the only width-baked asset
   }
+  HOME_X=Math.round(W*HOME_F); PVX=HOME_X;   // rider + camera pivot scale with the buffer width
   sctx.imageSmoothingEnabled=false;
 }
 sizeDisplay(); addEventListener('resize',sizeDisplay); setTimeout(sizeDisplay,0);
 let TXT=[];
 
 /* ============ Tunables ============ */
-const BASE_GROUND=448, FINISH_M=9100, M_PER_PX=0.16, GRAV=0.62, HOME_X=220, LUNGE=58, GROUND_STICK=22;
+const BASE_GROUND=448, FINISH_M=9100, M_PER_PX=0.16, GRAV=0.62, LUNGE=58, GROUND_STICK=22;   // HOME_X: vedi sopra, ora proporzionale a W
 const RIDER_DREF=29;   // rider body sized to ONE fixed reference on every bike (looks bigger on the small Mini)
 // ---- camera: dolly-in. Gameplay magnified more than the (distant) skyline; both pivot the ground
 // line so the horizon stays glued. Tune ZG (gameplay) / ZB (background) to taste. ----
-const ZG=1.5, ZB=1.30, PVX=HOME_X, PVY=BASE_GROUND;
+const ZG=1.5, ZB=1.30, PVY=BASE_GROUND;   // PVX e HOME_X sono dichiarati sopra (dipendono da W)
 const BIKE_DETAIL=4;             // bake the bike sprite this many x its game size -> crisp menu-grade detail
 function camFull(){ ctx.setTransform(1/PIX,0,0,1/PIX,jx/PIX,jy/PIX); }
 function camZ(Z){ const sc=Z/PIX; ctx.setTransform(sc,0,0,sc,(PVX*(1-Z)+jx)/PIX,(PVY*(1-Z)+jy)/PIX); }
