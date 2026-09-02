@@ -218,16 +218,37 @@ body.reeling{overflow:hidden}
 /* ══ READ PANEL ══ */
 .read{position:absolute;top:0;right:0;bottom:0;width:min(520px,88vw);z-index:6;
   background:rgba(9,9,11,.8);backdrop-filter:blur(16px);border-left:1px solid var(--line2);
+  box-shadow:-24px 0 60px rgba(0,0,0,.45);
   padding:calc(var(--nav) + clamp(10px,1.8vh,20px)) clamp(22px,2.6vw,38px) clamp(16px,2.4vh,28px);
   display:flex;flex-direction:column;overflow:hidden;
   transform:translateX(101%);transition:transform .7s var(--e)}
 .readinner{transform-origin:top left;transform:scale(var(--k,1));width:calc(100% / var(--k,1));
   display:flex;flex-direction:column}
 .film.reading .read,.sec.reading .pread{transform:none}
+/* while the player is over it, the panel behind needs no live blur — it is under a
+   66% scrim and nobody can see it, but compositing it every frame costs real fps */
+body.overlaid .read,body.overlaid .pread{-webkit-backdrop-filter:none;backdrop-filter:none;
+  background:rgba(9,9,11,.94)}
+/* the panel's contents settle in just behind the panel itself */
+.read .readinner>*{opacity:0;transform:translateY(12px);
+  transition:opacity .45s var(--e2) 0s,transform .55s var(--e) 0s}
+.film.reading .read .readinner>*{opacity:1;transform:none}
+.film.reading .read .readinner>*:nth-child(1){transition-delay:.14s}
+.film.reading .read .readinner>*:nth-child(2){transition-delay:.18s}
+.film.reading .read .readinner>*:nth-child(3){transition-delay:.22s}
+.film.reading .read .readinner>*:nth-child(4){transition-delay:.26s}
+.film.reading .read .readinner>*:nth-child(5){transition-delay:.30s}
+.film.reading .read .readinner>*:nth-child(6){transition-delay:.34s}
+.film.reading .read .readinner>*:nth-child(n+7){transition-delay:.38s}
+/* leaving, everything goes at once — delays only apply on the way in */
+.film:not(.reading) .read .readinner>*{transition-delay:0s}
 .read .close{align-self:flex-end;display:inline-flex;align-items:center;gap:8px;background:none;
   border:1px solid var(--line);border-radius:100px;padding:7px 14px;color:var(--ink3);cursor:pointer;
   font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;margin-bottom:18px;
-  transition:border-color .4s var(--e2),color .4s var(--e2)}
+  /* opacity/transform must be listed here too — this rule follows the stagger rule
+     and a bare `transition` shorthand would otherwise drop them */
+  transition:border-color .4s var(--e2),color .4s var(--e2),
+             opacity .45s var(--e2),transform .55s var(--e)}
 .read .close:hover{border-color:var(--line2);color:var(--ink)}
 .read h3{font-size:clamp(23px,2vw,29px);line-height:1.02;letter-spacing:-.04em;margin-bottom:11px}
 .read .sub{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:9.5px;
@@ -322,19 +343,71 @@ body.reeling{overflow:hidden}
 .cbxCell:hover .cbxCap{color:var(--ink2)}
 .cbxWide{outline:1px solid var(--line2);outline-offset:-1px}
 
+/* ══ STILLS GRID — static campaigns ══ */
+.stlGrid{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;max-width:100%}
+.stl{position:relative;background:var(--surface2);border:1px solid var(--line);border-radius:5px;
+  overflow:hidden;cursor:pointer;padding:0;flex:0 1 auto;height:auto;max-width:100%;
+  transition:border-color .35s var(--e2),transform .5s var(--e)}
+.stl:hover{border-color:var(--accent);transform:translateY(-3px)}
+.stl img{display:block;width:100%;height:100%;object-fit:cover;
+  filter:saturate(.32) brightness(.7);transition:filter .4s var(--e2),transform .7s var(--e)}
+.stl:hover img{filter:saturate(1) brightness(1.02);transform:scale(1.04)}
+.stl .cp{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;
+  font-size:10px;opacity:0;transition:opacity .3s;text-shadow:0 2px 8px #000}
+.stl:hover .cp{opacity:1}
+.stlCell{display:flex;flex-direction:column;align-items:center}
+.stlCap{font-family:var(--mono);font-size:7.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink3);margin-top:6px;text-align:center;max-width:150px;line-height:1.4;
+  min-height:2.8em}  /* two-line allowance keeps every row aligned */
+.stlCell:hover .stlCap{color:var(--ink2)}
+
 /* ══ PLAYER ══ */
-#player{position:fixed;inset:0;z-index:900;background:#000;display:flex;align-items:center;
-  justify-content:center;opacity:0;visibility:hidden;transition:opacity .45s var(--e),visibility .45s}
+/* the overlay sits inset, so the page stays visible behind it and the way out is obvious */
+#player{position:fixed;inset:0;z-index:900;display:flex;align-items:center;justify-content:center;
+  padding:clamp(46px,7.5vh,86px) clamp(28px,5.5vw,96px);
+  /* no backdrop-filter here: re-blurring the whole viewport every frame while the
+     scrim fades costs ~40fps, and the dark scrim alone reads the layering fine */
+  background:rgba(5,5,7,.66);
+  opacity:0;visibility:hidden;
+  transition:opacity .5s var(--e2),visibility .5s}
 #player.on{opacity:1;visibility:visible}
-#player video{width:100%;height:100%;object-fit:contain;background:#000}
-#player .x{position:absolute;top:18px;right:20px;z-index:2;width:40px;height:40px;
-  border:1px solid var(--line2);background:rgba(0,0,0,.5);backdrop-filter:blur(10px);color:var(--ink);
-  cursor:pointer;font-size:13px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  transition:background .4s var(--e2),color .4s var(--e2),transform .5s var(--e)}
-#player .x:hover{background:var(--ink);color:#000;transform:rotate(90deg)}
-#player .ptitle{position:absolute;left:22px;top:22px;z-index:2;display:flex;align-items:center;gap:10px;
-  font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink2)}
+#player .pstage{position:relative;background:#000;border:1px solid var(--line2);border-radius:9px;
+  overflow:hidden;box-shadow:0 34px 90px rgba(0,0,0,.62),0 2px 10px rgba(0,0,0,.5);
+  width:100%;height:100%;
+  transform:scale(.965) translateY(12px);opacity:0;
+  transition:transform .66s var(--e),opacity .4s var(--e2),width .45s var(--e),height .45s var(--e)}
+#player.on .pstage{transform:none;opacity:1}
+#player video,#player img,#player iframe{display:block;width:100%;height:100%;object-fit:contain;background:#000}
+#player .x{position:absolute;top:14px;right:14px;z-index:3;width:38px;height:38px;
+  border:1px solid var(--line2);background:rgba(0,0,0,.55);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  color:var(--ink);cursor:pointer;font-size:13px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  opacity:0;transform:scale(.8);
+  transition:background .35s var(--e2),color .35s var(--e2),transform .5s var(--e),opacity .35s var(--e2),border-color .35s var(--e2)}
+#player.on .x{opacity:1;transform:none;transition-delay:.22s}
+#player .x:hover{background:var(--ink);color:#000;border-color:var(--ink);transform:rotate(90deg)}
+#player .x:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(224,178,82,.25)}
+#player .ptitle{position:absolute;left:18px;top:20px;z-index:3;display:flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--ink2);
+  padding-right:60px;text-shadow:0 1px 8px rgba(0,0,0,.85);
+  opacity:0;transform:translateY(-6px);
+  transition:opacity .4s var(--e2),transform .5s var(--e)}
+#player.on .ptitle{opacity:1;transform:none;transition-delay:.2s}
 #player .ptitle b{color:var(--ink);font-weight:400}
+/* keeps the title and the close button legible over a bright frame */
+#player .pstage:before{content:'';position:absolute;left:0;right:0;top:0;height:96px;z-index:2;
+  background:linear-gradient(rgba(0,0,0,.62),rgba(0,0,0,.28) 52%,transparent);pointer-events:none;
+  opacity:0;transition:opacity .5s var(--e2)}
+#player.on .pstage:before{opacity:1;transition-delay:.14s}
+/* a quiet hint that clicking outside gets you out */
+#player .phint{position:absolute;left:50%;bottom:clamp(13px,2.2vh,24px);transform:translateX(-50%) translateY(6px);
+  font-family:var(--mono);font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink3);
+  white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .5s var(--e2),transform .5s var(--e)}
+#player.on .phint{opacity:1;transform:translateX(-50%);transition-delay:.55s}
+@media(max-width:700px){
+  #player{padding:clamp(30px,5vh,44px) clamp(14px,4vw,22px)}
+  #player .phint{display:none}
+}
 
 /* ══ SECTIONS ══ */
 .sec{min-height:calc(100vh - var(--nav));padding:clamp(48px,8vh,96px) var(--pad);
@@ -683,7 +756,7 @@ footer a:hover{color:var(--ink)}
   <button class="navtoggle" aria-label="Menu">Menu</button>
   <ul>
     <li class="hasMenu" id="filmsNav">
-      <a href="#films" class="on"><i class="dot"></i>Films <span class="caret" aria-hidden="true">&#9662;</span></a>
+      <a href="#films" class="on"><i class="dot"></i>Films &amp; Stills <span class="caret" aria-hidden="true">&#9662;</span></a>
       <div class="drop" id="filmsDrop" role="menu"></div>
     </li>
     <li><a href="#rnd"><i class="dot"></i>R&amp;D</a></li>
@@ -1007,10 +1080,14 @@ footer a:hover{color:var(--ink)}
 </button>
 
 <div id="player" role="dialog" aria-modal="true" aria-label="Film player">
-  <div class="ptitle"><i class="dot"></i><span id="pt"></span></div>
-  <button class="x" aria-label="Close">&#10005;</button>
-  <video id="pv" controls playsinline></video>
-  <iframe id="pf" allow="autoplay; fullscreen" allowfullscreen style="display:none;width:100%;height:100%;border:0;background:#000"></iframe>
+  <div class="pstage" id="pstage">
+    <div class="ptitle"><i class="dot"></i><span id="pt"></span></div>
+    <button class="x" aria-label="Close">&#10005;</button>
+    <video id="pv" controls playsinline></video>
+    <iframe id="pf" allow="autoplay; fullscreen" allowfullscreen style="display:none;border:0"></iframe>
+    <img id="pi" alt="" style="display:none">
+  </div>
+  <span class="phint">Click outside or press Esc to close</span>
 </div>
 
 <script>
@@ -1034,6 +1111,16 @@ const FILMS=[
    image:'Cebion/cover.webp',studio:'Publicis Production',agency:'WPP Italia',
    cebion:true,
    body:['Thirteen films, built vertical-first.'],
+   related:[]},
+  {id:'vodafone',title:'Super Mobile Plan',client:'Vodafone',type:'AI Stills',
+   image:'Vodafone/cover.webp',studio:'Publicis Production',
+   stills:{base:'Vodafone/',format:'Out of home & poster',
+     note:'Click either frame to view it full size.',
+     shots:[
+       {file:'out-of-home.webp',thumb:'out-of-home-thumb.webp',label:'Out of Home',a:2.4218},
+       {file:'poster.webp',thumb:'poster-thumb.webp',label:'Poster',a:0.7538}
+     ]},
+   body:['One key visual, built out for every placement.'],
    related:[]},
   {id:'nivea-fathers-cauc',title:'Father’s Day',client:'Nivea',type:'Cinematic',
    file:'nivea_fathers_day_caucasian.mp4',studio:'Publicis Production',
@@ -1202,7 +1289,10 @@ document.addEventListener('click',e=>{
     dlvRender(t.dataset.dlvfilm); return; }
   const c=e.target.closest('[data-dclip]');
   if(c){ e.preventDefault();
-    playMedia({kind:'video',url:c.dataset.dclip},'<b>'+(c.dataset.dbrand||'')+'</b> &nbsp; '+c.dataset.dt); }
+    playMedia({kind:'video',url:c.dataset.dclip},'<b>'+(c.dataset.dbrand||'')+'</b> &nbsp; '+c.dataset.dt); return; }
+  const s=e.target.closest('[data-dshot]');
+  if(s){ e.preventDefault();
+    playMedia({kind:'image',url:s.dataset.dshot},'<b>'+(s.dataset.dbrand||'')+'</b> &nbsp; '+s.dataset.dt); }
 });
 
 
@@ -1243,11 +1333,41 @@ function cbxRender(){
   g.querySelectorAll('video').forEach(v=>{v.src=v.dataset.src;v.play().catch(()=>{})});
 }
 
+/* ---------- stills: a static campaign laid out as a contact sheet ---------- */
+function stlMarkup(f){
+  const S=f.stills||{}, shots=S.shots||[];
+  /* a handful of key visuals should read large; a contact sheet of many should read small */
+  const few=shots.length<=3;
+  const H=few
+    ? Math.round(Math.max(132,Math.min(300,window.innerHeight*0.29)))
+    : Math.round(Math.max(96,Math.min(196,window.innerHeight*0.21)));
+  const head='<div class="dlvHead">'+
+    '<div><dt>Client</dt><dd>'+esc(f.client)+'</dd></div>'+
+    (f.agency?'<div><dt>Agency</dt><dd>'+esc(f.agency)+'</dd></div>':'')+
+    '<div><dt>Studio</dt><dd>'+esc(f.studio||'Publicis Production')+'</dd></div>'+
+    (S.format?'<div><dt>Format</dt><dd>'+esc(S.format)+'</dd></div>':'')+
+    '<div><dt>Key visuals</dt><dd>'+shots.length+'</dd></div>'+
+    '</div>';
+  const grid='<div class="stlGrid">'+shots.map(s=>{
+    const a=s.a||1; // width ÷ height
+    return '<span class="stlCell">'+
+      /* aspect-ratio (not a fixed height) so a very wide frame shrinks instead of overflowing */
+      '<button class="stl" style="width:'+Math.round(H*a)+'px;aspect-ratio:'+a.toFixed(4)+'" '+
+        'data-dshot="'+(S.base||'')+s.file+'" data-dbrand="'+esc(f.client)+'" data-dt="'+esc(s.label)+'">'+
+        '<img loading="lazy" decoding="async" src="'+(S.base||'')+(s.thumb||s.file)+'" alt="'+esc(s.label)+'">'+
+        '<span class="cp">&#9678;</span></button>'+
+      '<span class="stlCap">'+esc(s.label)+'</span></span>';
+  }).join('')+'</div>';
+  return head+grid+'<div class="dlvNote">'+esc(S.note||'Click any frame to view it full size.')+'</div>';
+}
+
 /* ---------- films ---------- */
 document.getElementById('films').innerHTML=FILMS.map((f,i)=>{
   const rel=(f.related||[]).map(r=>byId[r.id]).filter(Boolean);
+  const rich=!!(f.deliverables||f.cebion||f.stills);   // panels that carry their own grid
+  const wideP=!!(f.deliverables||f.cebion||f.stills);
   return `
-  <section class="film" id="${f.id}" data-i="${i}">
+  <section class="film${f.stills?' isStills':''}" id="${f.id}" data-i="${i}" data-kind="${f.stills?'stills':'film'}">
     ${f.image
       ? `<img class="still" src="${f.image}" alt="" decoding="async">`
       : `<video class="loop" muted loop playsinline preload="none" data-src="${url(f)}#t=0.1"></video>`}
@@ -1257,17 +1377,17 @@ document.getElementById('films').innerHTML=FILMS.map((f,i)=>{
       <div class="sub"><span class="client">${esc(f.client)}</span><i class="dot"></i><span class="type">${esc(f.type)}</span></div>
       <div class="actions">
         ${f.file?`<button class="btn" data-play="${f.id}"><span class="tri">&#9654;</span> Play film</button>`:''}
-        <button class="btn${f.file?' ghost':''}" data-read="${f.id}">${f.file?'Read about the project':'See the films'}</button>
+        <button class="btn${f.file?' ghost':''}" data-read="${f.id}">${f.file?'Read about the project':(f.stills?'See the stills':'See the films')}</button>
       </div>
     </div>
-    <aside class="read${(f.deliverables||f.cebion)?' wide':''}" aria-hidden="true">
+    <aside class="read${wideP?' wide':''}" aria-hidden="true">
       <div class="readinner">
         <button class="close" data-back>&#10005; Close</button>
         <h3>${esc(f.title)}</h3>
         <div class="sub"><span class="client">${esc(f.client)}</span><i class="dot"></i><span class="type">${esc(f.type)}</span></div>
-        ${(f.deliverables||f.cebion)?'':`<div class="body">${f.body.map(p=>`<p>${p}</p>`).join('')}</div>`}
-        ${f.deliverables?dlvMarkup():''}${f.cebion?cbxMarkup():''}
-        ${(f.deliverables||f.cebion)?'':`<button class="btn playbig" data-play="${f.id}"><span class="tri">&#9654;</span> Play the film</button>`}
+        ${rich?'':`<div class="body">${f.body.map(p=>`<p>${p}</p>`).join('')}</div>`}
+        ${f.deliverables?dlvMarkup():''}${f.cebion?cbxMarkup():''}${f.stills?stlMarkup(f):''}
+        ${rich?'':`<button class="btn playbig" data-play="${f.id}"><span class="tri">&#9654;</span> Play the film</button>`}
         ${rel.length?`
         <div class="related">
           <span class="lbl">Also from this project</span>
@@ -1316,7 +1436,9 @@ function fitPanel(section){
   const cs=getComputedStyle(panel);
   const avail=panel.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
   const need=inner.scrollHeight;if(!need)return;
-  const FLOOR=panel.classList.contains('wide')?.62:.72;
+  /* panels carrying a media grid may scale further before we'd rather clip */
+  const grid=panel.classList.contains('wide')||inner.querySelector('.stlGrid,.cbxGrid,.dlvRows');
+  const FLOOR=grid?.62:.72;
   const k=need>avail?Math.max(FLOOR,avail/need):1;
   inner.style.setProperty('--k',k.toFixed(4));
   inner.style.height=(need*k)+'px';
@@ -1359,19 +1481,50 @@ function closeRead(s){
 }
 
 const player=document.getElementById('player'),pv=document.getElementById('pv'),pt=document.getElementById('pt');
-let lastFocus=null;
-const pf=document.getElementById('pf');
+let lastFocus=null,blurT=0;
+const pf=document.getElementById('pf'),pi=document.getElementById('pi');
+const pstage=document.getElementById('pstage');
+
+/* the stage hugs the media, so the card is the frame — no black letterbox bars
+   bleeding into the scrim, and the page stays visible all the way around it */
+let stageAR=16/9;
+function sizeStage(ar){
+  if(ar&&isFinite(ar)&&ar>0) stageAR=ar;
+  const cs=getComputedStyle(player);
+  const availW=player.clientWidth -parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+  const availH=player.clientHeight-parseFloat(cs.paddingTop) -parseFloat(cs.paddingBottom);
+  if(availW<=0||availH<=0) return;
+  let w=availW,h=w/stageAR;
+  if(h>availH){h=availH;w=h*stageAR;}
+  pstage.style.width =Math.round(w)+'px';
+  pstage.style.height=Math.round(h)+'px';
+}
+pv.addEventListener('loadedmetadata',()=>{ if(pv.videoWidth) sizeStage(pv.videoWidth/pv.videoHeight); });
+pi.addEventListener('load',()=>{ if(pi.naturalWidth) sizeStage(pi.naturalWidth/pi.naturalHeight); });
+addEventListener('resize',()=>{ if(player.classList.contains('on')) sizeStage(); },{passive:true});
+
+function clearMedia(){
+  pv.pause();pv.removeAttribute('src');pv.load();pv.style.display='none';
+  pf.src='about:blank';pf.style.display='none';
+  pi.removeAttribute('src');pi.style.display='none';
+}
 function playMedia(src,label){
   lastFocus=document.activeElement;
   pt.innerHTML=label||'';
+  clearMedia();
   if(src.kind==='iframe'){
-    pv.style.display='none';pv.pause();pv.removeAttribute('src');pv.load();
     pf.style.display='block';pf.src=src.url;
+  }else if(src.kind==='image'){
+    pi.style.display='block';pi.src=src.url;pi.alt=String(label||'').replace(/<[^>]*>/g,'');
   }else{
-    pf.style.display='none';pf.src='about:blank';
     pv.style.display='block';pv.src=src.url;pv.currentTime=0;pv.play().catch(()=>{});
   }
-  player.classList.add('on');document.body.classList.add('locked');
+  /* open at the sensible default; loadedmetadata/load refines it a beat later */
+  sizeStage(src.ar||(src.kind==='iframe'?16/9:stageAR));
+  player.classList.add('on');document.body.classList.add('locked','overlaid');
+  clearTimeout(blurT);
+  /* wait for the visibility flip to land before moving focus, or the browser refuses it */
+  setTimeout(()=>{const x=player.querySelector('.x'); if(x&&player.classList.contains('on')) x.focus({preventScroll:true});},90);
 }
 function play(id){
   const f=byId[id];if(!f)return;
@@ -1381,9 +1534,15 @@ function play(id){
 }
 function stop(){
   player.classList.remove('on');
-  pv.pause();pv.removeAttribute('src');pv.load();pv.style.display='block';
-  pf.src='about:blank';pf.style.display='none';
-  document.body.classList.remove('locked');
+  pv.pause();                                   // audio stops on the instant
+  document.body.classList.remove('locked');     // and so does the scroll lock
+  /* the frame stays put until the card has faded, so you never watch the content
+     blink out from under the overlay; the panel's blur returns at the same moment */
+  clearTimeout(blurT);
+  blurT=setTimeout(()=>{
+    document.body.classList.remove('overlaid');
+    if(!player.classList.contains('on')){ clearMedia(); pv.style.display='block'; }
+  },560);
   if(lastFocus&&lastFocus.focus)lastFocus.focus();
 }
 player.querySelector('.x').addEventListener('click',stop);
@@ -1577,7 +1736,7 @@ document.addEventListener('click',e=>{
 (function(){
   // block = what you name when you cross into it; label = what you name inside it
   const SEQ=[{id:'cover',block:'Cover',label:'Cover'}]
-    .concat(FILMS.map(f=>({id:f.id,block:'Films',label:f.title})))
+    .concat(FILMS.map(f=>({id:f.id,block:'Films',label:f.title,kind:f.stills?'stills':'film'})))
     .concat([
       {id:'rnd',block:'R&D',label:'R&D'},
       {id:'team',block:'The Team',label:'The Team'},
@@ -1589,7 +1748,11 @@ document.addEventListener('click',e=>{
   const el=i=>document.getElementById(SEQ[i].id);
   function word(from,to,dir){
     if(to.block==='Cover') return 'Back to cover';
-    if(from.block===to.block&&to.block==='Films') return dir>0?'Go to next film':'Go to previous film';
+    if(from.block===to.block&&to.block==='Films'){
+      /* say "film" only when both ends are films — a stills block makes it a project */
+      const n=(from.kind==='stills'||to.kind==='stills')?'project':'film';
+      return dir>0?'Go to next '+n:'Go to previous '+n;
+    }
     return 'Go to '+to.block;
   }
 
