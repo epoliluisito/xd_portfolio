@@ -575,6 +575,19 @@ footer a:hover{color:var(--ink)}
   transition:background .4s var(--e2),color .4s var(--e2),transform .5s var(--e)}
 .rt.open .rtclose{display:flex}
 .rtclose:hover{background:var(--ink);color:#000;transform:rotate(90deg)}
+/* With one study open the others are squeezed to ~95px, where a horizontal name
+   wraps and runs under the + badge. Set the collapsed ribs upright instead: the
+   name reads bottom-to-top up the spine and never collides, whatever its length. */
+@media(min-width:901px){
+  .lab.any .rt:not(.open) .rtspine{
+    inset:0;writing-mode:vertical-rl;transform:rotate(180deg);
+    flex-direction:row;align-items:center;justify-content:flex-start;gap:13px}
+  .lab.any .rt:not(.open) .rtname{font-size:15px;white-space:nowrap;overflow:hidden}
+  .lab.any .rt:not(.open) .rtkind{display:none}
+  /* the spine is rotated 180°, so bottom-left here lands visually at the top-right */
+  .lab.any .rt:not(.open) .rtplus{
+    top:auto;right:auto;bottom:clamp(13px,1.3vw,20px);left:clamp(13px,1.3vw,20px)}
+}
 @media(max-width:900px){
   .lab{flex-direction:column;height:auto}
   .rt{min-height:190px}
@@ -927,6 +940,31 @@ footer a:hover{color:var(--ink)}
           <button class="rc" data-clip="RnD/interstellar_02.mp4" data-t="Interstellar — Replacement 02">
             <video muted loop playsinline preload="none" data-src="RnD/interstellar_02.mp4#t=0.6"></video>
             <span class="rcv"></span><span class="rcp">&#9654;</span><span class="rcn">Replacement 02</span></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="rt" data-lab="speech">
+      <video class="rtbg" muted loop playsinline preload="none" data-src="RnD/Jude_Speech_web.mp4#t=0.6"></video>
+      <span class="rtveil"></span>
+      <span class="rtspine">
+        <span class="rtno">05</span>
+        <span class="rtname">Performance</span>
+        <span class="rtkind">Scripted speech</span>
+        <span class="rtplus"><i></i><i></i></span>
+      </span>
+      <div class="rtbody">
+        <div class="rtcopy">
+          <div class="rtlab">Likeness &amp; lip-sync</div>
+          <p class="rtlead">A real face and an invented one, both delivering a written script.</p>
+        </div>
+        <div class="rtclips">
+          <button class="rc" data-clip="RnD/Jude_Speech_web.mp4" data-t="Performance — Jude">
+            <video muted loop playsinline preload="none" data-src="RnD/Jude_Speech_web.mp4#t=0.6"></video>
+            <span class="rcv"></span><span class="rcp">&#9654;</span><span class="rcn">Jude</span></button>
+          <button class="rc" data-clip="RnD/Mastrolindo_Speech_web.mp4" data-t="Performance — Mastrolindo">
+            <video muted loop playsinline preload="none" data-src="RnD/Mastrolindo_Speech_web.mp4#t=0.6"></video>
+            <span class="rcv"></span><span class="rcp">&#9654;</span><span class="rcn">Mastrolindo</span></button>
         </div>
       </div>
     </article>
@@ -1851,6 +1889,26 @@ document.querySelectorAll('.rv').forEach((el,i)=>{el.style.transitionDelay=(Math
   lab.addEventListener('pointerleave',syncBg);
   lab.addEventListener('click',()=>setTimeout(syncBg,50));
   window.__syncLabBg=syncBg;
+
+  /* A study can be published before every one of its clips has landed. Drop a clip
+     whose file is genuinely missing, so it appears by itself once the file shows up.
+     Ask the server rather than listening for a media error: a decode failure and a
+     404 are indistinguishable on the element, and we must never delete a clip that
+     exists just because this browser could not play it. */
+  (function(){
+    let checked=false;
+    function prune(){
+      if(checked)return; checked=true;
+      lab.querySelectorAll('.rc[data-clip]').forEach(rc=>{
+        fetch(rc.dataset.clip,{method:'HEAD'})
+          .then(r=>{ if(!r.ok) rc.remove(); })
+          .catch(()=>{});   // network hiccup: leave it alone
+      });
+    }
+    new IntersectionObserver((es,o)=>es.forEach(e=>{
+      if(e.isIntersecting){ prune(); o.disconnect(); }
+    }),{rootMargin:'200% 0px'}).observe(lab);
+  })();
 })();
 
 /* clips + the Subway treatment open in the player overlay */
