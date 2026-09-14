@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plusso — playground</title>
+<style>
+  :root{
+    --sky-top:#fdf3f7; --sky-bot:#e8eef8;
+    --ink:#5b2e38; --mag:#eb008c;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--sky-bot);
+    font-family:"Fredoka",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink)}
+  #app{position:fixed;inset:0}
+  .panel{
+    position:fixed;z-index:10;background:rgba(255,255,255,.72);backdrop-filter:blur(8px);
+    border:1px solid rgba(91,46,56,.10);border-radius:16px;padding:12px 14px;
+    box-shadow:0 6px 24px rgba(91,46,56,.08);font-size:13px;line-height:1.5
+  }
+  #help{left:16px;top:16px;max-width:260px}
+  #help h1{margin:0 0 6px;font-size:15px;letter-spacing:.02em;color:var(--mag)}
+  #help kbd{display:inline-block;min-width:20px;text-align:center;padding:1px 6px;margin:0 1px;
+    border-radius:6px;background:#fff;border:1px solid rgba(91,46,56,.18);font:inherit;font-size:12px}
+  #help p{margin:6px 0 0}
+  #faces{right:16px;top:16px;display:flex;flex-direction:column;gap:8px;max-width:190px}
+  #faces strong{font-size:13px;color:var(--mag);letter-spacing:.02em}
+  #faces .row{display:flex;flex-wrap:wrap;gap:6px}
+  #faces button{
+    font:inherit;font-size:12px;padding:5px 9px;border-radius:999px;cursor:pointer;
+    border:1px solid rgba(91,46,56,.16);background:#fff;color:var(--ink);transition:.15s
+  }
+  #faces button:hover{background:#ffe9f4;border-color:#f7b8d6}
+  #faces button.on{background:var(--mag);border-color:var(--mag);color:#fff}
+  #hud{left:16px;bottom:16px;font-variant-numeric:tabular-nums;opacity:.85}
+  #loading{position:fixed;inset:0;z-index:20;display:grid;place-items:center;
+    background:linear-gradient(180deg,var(--sky-top),var(--sky-bot));font-size:14px;letter-spacing:.04em}
+  #loading.gone{display:none}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#f4b9c4;margin-right:8px;
+    animation:p 1s ease-in-out infinite}
+  @keyframes p{0%,100%{transform:scale(.7);opacity:.6}50%{transform:scale(1.15);opacity:1}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="help" class="panel">
+  <h1>Plusso — playground</h1>
+  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows — walk<br>
+  <kbd>Shift</kbd> — run &nbsp; <kbd>Space</kbd> — jump<br>
+  drag — orbit &nbsp; wheel — zoom
+  <p>He is 1.46&nbsp;m. Blocks are 0.4, 0.8 and 1.2&nbsp;m high — the low ones are a single hop, the tall ones need a run-up.</p>
+</div>
+
+<div id="faces" class="panel">
+  <strong>Face</strong>
+  <div class="row" id="faceRow"></div>
+</div>
+
+<div id="hud" class="panel"></div>
+<div id="loading"><div><span class="dot"></span>loading Plusso…</div></div>
+
+<script src="assets/plusso-glb.js"></script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ---------------------------------------------------------------- palette */
+const C = {
+  ground:  0xf2e7ee,
+  grass:   0xdfeee4,
+  mint:    0xcfe9de,
+  blue:    0xd4e2f4,
+  lemon:   0xf7edc9,
+  peach:   0xfadfd2,
+  lilac:   0xe4dcf2,
+  pink:    0xf8d3e2,
+  white:   0xfbf7f9
+};
+
+/* ---------------------------------------------------------------- scene */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf6eef4);
+scene.fog = new THREE.Fog(0xf6eef4, 26, 68);
+
+const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 200);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0xe8d8e2, 1.05);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff4f0, 1.5);
+sun.position.set(-7, 12, 6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+const d = 22;
+sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
+sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
+sun.shadow.bias = -0.0009;
+scene.add(sun);
+scene.add(new THREE.DirectionalLight(0xf2e6ff, 0.35).translateX(8).translateY(6).translateZ(-9));
+
+/* ---------------------------------------------------------------- world */
+const colliders = [];                     // {min:Vector3, max:Vector3}
+const mat = (c, rough = 0.92) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: 0 });
+
+function box(x, y, z, w, h, dpt, color, round = true) {
+  const g = round ? new THREE.BoxGeometry(w, h, dpt, 2, 2, 2) : new THREE.BoxGeometry(w, h, dpt);
+  const m = new THREE.Mesh(g, mat(color));
+  m.position.set(x, y + h / 2, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  colliders.push({
+    min: new THREE.Vector3(x - w / 2, y, z - dpt / 2),
+    max: new THREE.Vector3(x + w / 2, y + h, z + dpt / 2)
+  });
+  return m;
+}
+function cyl(x, y, z, r, h, color) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 28), mat(color));
+  m.position.set(x, y + h / 2, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  colliders.push({
+    min: new THREE.Vector3(x - r, y, z - r),
+    max: new THREE.Vector3(x + r, y + h, z + r)
+  });
+  return m;
+}
+
+// ground
+const ground = new THREE.Mesh(new THREE.CircleGeometry(40, 64), mat(C.ground, 0.98));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const pad = new THREE.Mesh(new THREE.CircleGeometry(7.5, 48), mat(C.grass, 0.98));
+pad.rotation.x = -Math.PI / 2; pad.position.y = 0.002; pad.receiveShadow = true; scene.add(pad);
+
+// a course: low hops, a staircase, stepping stones, a couple of tall pillars, a ring of markers
+box(  3.2, 0,  1.0, 1.6, 0.40, 1.6, C.mint);
+box(  5.2, 0, -0.4, 1.4, 0.80, 1.4, C.blue);
+box(  7.0, 0, -2.0, 1.6, 1.20, 1.6, C.lemon);
+
+box( -3.0, 0,  2.4, 1.8, 0.40, 1.8, C.peach);
+box( -4.6, 0,  4.2, 1.8, 0.80, 1.8, C.lilac);
+box( -6.2, 0,  6.0, 1.8, 1.20, 1.8, C.pink);
+
+for (let i = 0; i < 5; i++) {              // stepping stones
+  const a = -0.5 + i * 0.42;
+  cyl(Math.cos(a) * 9.0, 0, Math.sin(a) * 9.0, 0.62, 0.35 + 0.16 * i, i % 2 ? C.mint : C.blue);
+}
+cyl(-8.5, 0, -3.0, 0.75, 2.1, C.lilac);
+cyl(-6.6, 0, -5.2, 0.75, 1.5, C.mint);
+cyl(-10.2, 0, -6.4, 0.75, 2.7, C.peach);
+
+box(0, 0, -6.6, 5.0, 0.40, 1.2, C.white);   // a long low bench
+box(0, 0.40, -6.6, 2.0, 0.40, 1.2, C.pink);
+
+for (let i = 0; i < 12; i++) {              // a ring of little markers to walk around
+  const a = i / 12 * Math.PI * 2;
+  cyl(Math.cos(a) * 14.5, 0, Math.sin(a) * 14.5, 0.32, 0.5 + (i % 3) * 0.25,
+      [C.mint, C.blue, C.lemon, C.peach, C.lilac][i % 5]);
+}
+// soft clouds, just for depth
+for (let i = 0; i < 9; i++) {
+  const g = new THREE.SphereGeometry(1.1 + Math.random() * 0.8, 16, 12);
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.7 }));
+  m.position.set((Math.random() - 0.5) * 50, 9 + Math.random() * 5, (Math.random() - 0.5) * 50);
+  m.scale.y = 0.55; scene.add(m);
+}
+
+/* ---------------------------------------------------------------- character */
+const HEIGHT = 1.46;                        // his real height, metres
+const RADIUS = 0.58;                        // he is wide — this is the collision radius
+const player = new THREE.Group(); scene.add(player);
+const vel = new THREE.Vector3();
+let grounded = false, mixer = null, clips = {}, current = null, model = null;
+let mouthTargets = null;                    // morph target dictionary on the mouth mesh
+
+const FACES = {                             // open / round / teeth / smile, straight from the rig's controls
+  smile:     { open: 0, round: 0, teeth: 0, smile: 1 },
+  neutral:   { open: 0, round: 0, teeth: 0, smile: 0.15 },
+  sad:       { open: 0, round: 0, teeth: 0, smile: -0.75 },
+  laugh:     { open: 0.85, round: 0, teeth: 1, smile: 0.6 },
+  surprised: { open: 0.55, round: 1, teeth: 0, smile: 0 },
+  scared:    { open: 0.75, round: 0.9, teeth: 0, smile: -0.3 }
+};
+let faceHold = null, faceHoldT = 0;
+
+function setFace(name) {
+  if (!mouthMeshes.length) return;
+  const f = FACES[name] || FACES.smile;
+  const vals = {
+    open:  f.open,
+    round: f.open * f.round,
+    smile: Math.max(0, f.smile) * (1 - f.open),
+    frown: Math.max(0, -f.smile) * (1 - f.open)
+  };
+  for (const mesh of mouthMeshes) {
+    for (const k in vals) {
+      const i = mesh.morphTargetDictionary[k];
+      if (i !== undefined) mesh.morphTargetInfluences[i] = vals[k];
+    }
+  }
+  document.querySelectorAll('#faceRow button').forEach(b => b.classList.toggle('on', b.dataset.f === name));
+}
+let mouthMeshes = [];
+
+const loader = new GLTFLoader();
+loader.parse(b64ToBuf(window.PLUSSO_GLB_B64), '', (gltf) => {
+  model = gltf.scene;
+  model.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true; o.receiveShadow = true;
+      o.frustumCulled = false;
+      if (Array.isArray(o.material)) o.material.forEach(m => { m.roughness = 0.85; m.metalness = 0; });
+      else if (o.material) { o.material.roughness = 0.85; o.material.metalness = 0; }
+      if (o.morphTargetDictionary && o.morphTargetDictionary.open !== undefined) {
+        mouthMeshes.push(o); mouthTargets = o.morphTargetDictionary;
+      }
+    }
+  });
+  // Blender front (-Y) becomes +Z after the Y-up conversion, so +Z is his forward
+  player.add(model);
+  mixer = new THREE.AnimationMixer(model);
+  gltf.animations.forEach(c => { clips[c.name] = mixer.clipAction(c); });
+  ['Idle', 'Walk', 'Run', 'Jump'].forEach(n => { if (clips[n]) { clips[n].enabled = true; clips[n].setEffectiveWeight(0); clips[n].play(); } });
+  if (clips.Jump) { clips.Jump.setLoop(THREE.LoopOnce, 1); clips.Jump.clampWhenFinished = true; }
+  play('Idle', 0);
+  setFace('smile');
+  document.getElementById('loading').classList.add('gone');
+}, (e) => { console.error(e); document.getElementById('loading').textContent = 'could not load the model'; });
+
+function b64ToBuf(b64) {
+  const bin = atob(b64); const len = bin.length; const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+function play(name, fade = 0.22) {
+  if (!clips[name] || current === name) return;
+  const next = clips[name];
+  next.reset(); next.setEffectiveTimeScale(1); next.setEffectiveWeight(1); next.fadeIn(fade); next.play();
+  if (current && clips[current]) clips[current].fadeOut(fade);
+  current = name;
+}
+
+/* ---------------------------------------------------------------- input */
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+});
+addEventListener('keyup', e => keys[e.code] = false);
+
+let camYaw = 0.6, camPitch = 0.30, camDist = 8.5, dragging = false, lx = 0, ly = 0;
+renderer.domElement.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY; });
+addEventListener('pointerup', () => dragging = false);
+addEventListener('pointermove', e => {
+  if (!dragging) return;
+  camYaw -= (e.clientX - lx) * 0.005;
+  camPitch = Math.max(0.02, Math.min(1.15, camPitch + (e.clientY - ly) * 0.004));
+  lx = e.clientX; ly = e.clientY;
+});
+addEventListener('wheel', e => { camDist = Math.max(3.5, Math.min(20, camDist + e.deltaY * 0.01)); }, { passive: true });
+
+/* ---------------------------------------------------------------- physics */
+const GRAV = -22, JUMP_V = 7.2, WALK = 2.0, RUN = 4.6, ACC = 18, TURN = 12;
+let facing = 0;
+
+function groundHeightAt(x, z, fromY) {
+  let best = 0;
+  for (const c of colliders) {
+    if (x + RADIUS * 0.55 < c.min.x || x - RADIUS * 0.55 > c.max.x) continue;
+    if (z + RADIUS * 0.55 < c.min.z || z - RADIUS * 0.55 > c.max.z) continue;
+    if (c.max.y <= fromY + 0.28 && c.max.y > best) best = c.max.y;
+  }
+  return best;
+}
+function resolveWalls(pos, prev) {
+  for (const c of colliders) {
+    const top = c.max.y;
+    if (pos.y + 0.05 >= top) continue;                 // standing on it, not into it
+    if (pos.y + HEIGHT <= c.min.y) continue;
+    const cx = Math.max(c.min.x, Math.min(pos.x, c.max.x));
+    const cz = Math.max(c.min.z, Math.min(pos.z, c.max.z));
+    const dx = pos.x - cx, dz = pos.z - cz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < RADIUS * RADIUS) {
+      const dist = Math.sqrt(d2) || 0.0001;
+      const push = (RADIUS - dist) / dist;
+      pos.x += dx * push; pos.z += dz * push;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- loop */
+const hud = document.getElementById('hud');
+const clock = new THREE.Clock();
+const tmp = new THREE.Vector3();
+let wasGrounded = true;
+
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // desired direction, camera relative
+  const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+  const s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  const running = keys.ShiftLeft || keys.ShiftRight;
+  const want = new THREE.Vector3(
+    Math.sin(camYaw) * f + Math.cos(camYaw) * s, 0,
+    Math.cos(camYaw) * f - Math.sin(camYaw) * s
+  );
+  const moving = want.lengthSq() > 0.001;
+  if (moving) want.normalize();
+  const target = moving ? want.multiplyScalar(running ? RUN : WALK) : new THREE.Vector3();
+  vel.x += (target.x - vel.x) * Math.min(1, ACC * dt);
+  vel.z += (target.z - vel.z) * Math.min(1, ACC * dt);
+
+  if (grounded && keys.Space) {
+    vel.y = JUMP_V; grounded = false;
+    current = null; play('Jump', 0.06);
+    setFace('surprised'); faceHold = 'smile'; faceHoldT = 1.1;
+  }
+  vel.y += GRAV * dt;
+
+  const prev = player.position.clone();
+  player.position.x += vel.x * dt;
+  player.position.z += vel.z * dt;
+  resolveWalls(player.position, prev);
+  player.position.y += vel.y * dt;
+
+  const gh = groundHeightAt(player.position.x, player.position.z, prev.y);
+  if (player.position.y <= gh + 0.001) {
+    if (!wasGrounded && vel.y < -3) { setFace('laugh'); faceHold = 'smile'; faceHoldT = 0.8; }
+    player.position.y = gh; vel.y = 0; grounded = true;
+  } else grounded = false;
+  wasGrounded = grounded;
+
+  // keep him on the island
+  const r = Math.hypot(player.position.x, player.position.z);
+  if (r > 38) { player.position.x *= 38 / r; player.position.z *= 38 / r; }
+
+  // face the way he is going — the cross turns as one piece
+  const speed = Math.hypot(vel.x, vel.z);
+  if (speed > 0.15) {
+    const want2 = Math.atan2(vel.x, vel.z);
+    let dth = ((want2 - facing + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    facing += dth * Math.min(1, TURN * dt);
+  }
+  player.rotation.y = facing;
+
+  // clip choice
+  if (!grounded) play('Jump', 0.1);
+  else if (speed > 3.0) play('Run', 0.18);
+  else if (speed > 0.25) play('Walk', 0.20);
+  else play('Idle', 0.25);
+  if (mixer) mixer.update(dt);
+
+  if (faceHold) { faceHoldT -= dt; if (faceHoldT <= 0) { setFace(faceHold); faceHold = null; } }
+
+  // camera
+  const look = tmp.set(player.position.x, player.position.y + HEIGHT * 0.62, player.position.z);
+  const cx = look.x - Math.sin(camYaw) * Math.cos(camPitch) * camDist;
+  const cz = look.z - Math.cos(camYaw) * Math.cos(camPitch) * camDist;
+  const cy = look.y + Math.sin(camPitch) * camDist;
+  camera.position.lerp(new THREE.Vector3(cx, cy, cz), Math.min(1, 9 * dt));
+  camera.lookAt(look);
+  sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
+  sun.position.set(player.position.x - 7, 12, player.position.z + 6);
+
+  hud.textContent = `${grounded ? 'on the ground' : 'in the air'} · ${speed.toFixed(1)} m/s · height ${player.position.y.toFixed(2)} m`;
+  renderer.render(scene, camera);
+}
+tick();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ---------------------------------------------------------------- face buttons */
+const row = document.getElementById('faceRow');
+Object.keys(FACES).forEach(n => {
+  const b = document.createElement('button'); b.textContent = n; b.dataset.f = n;
+  b.onclick = () => { faceHold = null; setFace(n); };
+  row.appendChild(b);
+});
+</script>
+</body>
+</html>
