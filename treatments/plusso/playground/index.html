@@ -110,7 +110,8 @@ const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 20
 const hemi = new THREE.HemisphereLight(0xffffff, 0xe8d8e2, 1.05);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4f0, 1.5);
-sun.position.set(-7, 12, 6);
+const SUN_OFF = new THREE.Vector3(-7, 12, 6);
+sun.position.copy(SUN_OFF);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
@@ -122,6 +123,24 @@ sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.035;
 scene.add(sun);
+
+/* The shadow camera follows him, so its depth texels slide over his body as he walks and the
+   shadow edge crawls — which is the shimmer you see on him from a distance. Snapping the camera's
+   centre to whole texels, measured in the light's own frame, pins the grid to the world. */
+const SHADOW_TEXEL = (d * 2) / 2048;
+const _lightBasis = new THREE.Quaternion().setFromRotationMatrix(
+  new THREE.Matrix4().lookAt(SUN_OFF, new THREE.Vector3(), new THREE.Vector3(0, 1, 0)));
+const _lightBasisInv = _lightBasis.clone().invert();
+const _snap = new THREE.Vector3();
+function sunFollow(p) {
+  _snap.copy(p).applyQuaternion(_lightBasisInv);
+  _snap.x = Math.round(_snap.x / SHADOW_TEXEL) * SHADOW_TEXEL;
+  _snap.y = Math.round(_snap.y / SHADOW_TEXEL) * SHADOW_TEXEL;
+  _snap.applyQuaternion(_lightBasis);
+  sun.target.position.copy(_snap); sun.target.updateMatrixWorld();
+  sun.position.copy(_snap).add(SUN_OFF);
+}
+scene.add(sun.target);
 scene.add(new THREE.DirectionalLight(0xf2e6ff, 0.35).translateX(8).translateY(6).translateZ(-9));
 
 /* ---------------------------------------------------------------- world */
@@ -317,8 +336,10 @@ loader.parse(b64ToBuf(window.PLUSSO_GLB_B64), '', (gltf) => {
       const isFur = tris > 40000;
       o.castShadow = !isFur; o.receiveShadow = !isFur;
       o.frustumCulled = false;
-      if (Array.isArray(o.material)) o.material.forEach(m => { m.roughness = 0.85; m.metalness = 0; });
-      else if (o.material) { o.material.roughness = 0.85; o.material.metalness = 0; }
+      // fully rough on the fur: a specular highlight on a sub-pixel strand twinkles as it moves
+      const rough = isFur ? 1.0 : 0.85;
+      if (Array.isArray(o.material)) o.material.forEach(m => { m.roughness = rough; m.metalness = 0; });
+      else if (o.material) { o.material.roughness = rough; o.material.metalness = 0; }
     }
   });
   // Blender front (-Y) becomes +Z after the Y-up conversion, so +Z is his forward
@@ -389,7 +410,12 @@ addEventListener('mousemove', e => {
 addEventListener('wheel', e => { camDist = Math.max(3.0, Math.min(20, camDist + e.deltaY * 0.01)); }, { passive: true });
 
 /* ---------------------------------------------------------------- physics */
-const GRAV = -22, JUMP_V = 7.2, WALK = 2.0, RUN = 4.6, ACC = 18, TURN = 12;
+/* His legs are 0.35 m on a 1.46 m body, so a long stride only reaches because the hips drop and
+   the legs stretch: the walk covers 0.92 m per cycle and the run 1.28 m. Those are the speeds the
+   clips were built at — CLIP_SPEED keeps playback tied to how fast he is actually travelling, so
+   his feet never skate. */
+const GRAV = -22, JUMP_V = 6.6, WALK = 1.10, RUN = 2.36, ACC = 15, TURN = 10;
+const CLIP_SPEED = { Walk: 1.10, Run: 2.36 };
 let facing = 0;
 
 function groundHeightAt(x, z, fromY) {
@@ -477,9 +503,14 @@ function tick() {
 
   // clip choice
   if (!grounded) play('Jump', 0.1);
-  else if (speed > 3.0) play('Run', 0.18);
-  else if (speed > 0.25) play('Walk', 0.20);
+  else if (speed > WALK * 1.35) play('Run', 0.18);
+  else if (speed > 0.12) play('Walk', 0.20);
   else play('Idle', 0.25);
+  // step to the ground he is actually covering
+  if (current && CLIP_SPEED[current]) {
+    clips[current].setEffectiveTimeScale(
+      Math.max(0.45, Math.min(1.9, speed / CLIP_SPEED[current])));
+  }
   if (mixer) mixer.update(dt);
   applyFace(FACES[faceName]);   // the body clips must not drag the calibrated face out of shape
 
@@ -490,8 +521,7 @@ function tick() {
   const cy = look.y + Math.sin(camPitch) * camDist;
   camera.position.lerp(new THREE.Vector3(cx, cy, cz), Math.min(1, 9 * dt));
   camera.lookAt(look);
-  sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
-  sun.position.set(player.position.x - 7, 12, player.position.z + 6);
+  sunFollow(player.position);
 
   hud.textContent = `${grounded ? 'on the ground' : 'in the air'} · ${speed.toFixed(1)} m/s · height ${player.position.y.toFixed(2)} m`;
   renderer.render(scene, camera);
