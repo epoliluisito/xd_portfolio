@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plusso — house camera</title>
+<style>
+  :root{ --ink:#5b2e38; --mag:#eb008c; --bg:#1a1418; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"Fredoka",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  .panel{position:fixed;z-index:10;background:rgba(255,255,255,.80);backdrop-filter:blur(10px);
+    border:1px solid rgba(91,46,56,.10);border-radius:14px;padding:11px 13px;
+    box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:12.5px;line-height:1.5}
+  .panel.hidden{display:none}
+  #help{left:16px;top:16px;width:292px}
+  #help h1{margin:0 0 6px;font-size:15px;letter-spacing:.02em;color:var(--mag)}
+  #help h2{margin:8px 0 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6}
+  kbd{display:inline-block;min-width:19px;text-align:center;padding:0 5px;margin:0 1px;border-radius:5px;
+    background:#fff;border:1px solid rgba(91,46,56,.20);font:inherit;font-size:11.5px;line-height:18px}
+  #right{right:16px;top:16px;width:236px;display:flex;flex-direction:column;gap:8px}
+  #right strong{font-size:12px;color:var(--mag);letter-spacing:.03em}
+  select,button{font:inherit;font-size:12.5px;width:100%;padding:6px 9px;border-radius:9px;cursor:pointer;
+    border:1px solid rgba(91,46,56,.18);background:#fff;color:var(--ink)}
+  select:focus,button:focus{outline:none;border-color:var(--mag)}
+  button.primary{background:var(--mag);color:#fff;border-color:var(--mag);font-weight:600;letter-spacing:.02em}
+  .row{display:flex;gap:6px}
+  .row>*{flex:1}
+  #hud{left:16px;bottom:16px;font-variant-numeric:tabular-nums;white-space:pre;line-height:1.45}
+  #mode{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:11;font-size:12px;letter-spacing:.14em;
+    text-transform:uppercase;background:var(--mag);color:#fff;padding:5px 14px;border-radius:999px;font-weight:600}
+  #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:12;font-size:12.5px;
+    background:rgba(255,255,255,.92);padding:6px 14px;border-radius:999px;opacity:0;transition:opacity .25s}
+  #toast.on{opacity:1}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:30;transition:opacity .35s}
+  #loading{position:fixed;inset:0;z-index:40;display:grid;place-items:center;background:#fdf3f7;font-size:14px;letter-spacing:.04em;color:var(--ink)}
+  #loading.gone{display:none}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#f4b9c4;margin-right:8px;animation:p 1s ease-in-out infinite}
+  @keyframes p{0%,100%{transform:scale(.7);opacity:.6}50%{transform:scale(1.15);opacity:1}}
+  /* frame guide: everything outside the picture is dimmed */
+  .bar{position:fixed;z-index:5;background:rgba(0,0,0,.72);pointer-events:none}
+  #reticle{position:fixed;z-index:6;pointer-events:none;border:1px solid rgba(255,255,255,.35)}
+  #reticle::before,#reticle::after{content:"";position:absolute;background:rgba(255,255,255,.14)}
+  #reticle::before{left:33.333%;right:33.333%;top:0;bottom:0;border-left:1px solid rgba(255,255,255,.14);border-right:1px solid rgba(255,255,255,.14);background:none}
+  #reticle::after{top:33.333%;bottom:33.333%;left:0;right:0;border-top:1px solid rgba(255,255,255,.14);border-bottom:1px solid rgba(255,255,255,.14);background:none}
+  #reticle.off::before,#reticle.off::after{display:none}
+  small{opacity:.65}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="bar" id="barT"></div><div class="bar" id="barB"></div><div class="bar" id="barL"></div><div class="bar" id="barR"></div>
+<div id="reticle"></div>
+<div id="mode">play</div>
+
+<div id="help" class="panel">
+  <h1>Plusso — house camera</h1>
+  <h2>modes · <kbd>Tab</kbd> cycles</h2>
+  <kbd>1</kbd> play &nbsp; <kbd>2</kbd> orbit &nbsp; <kbd>3</kbd> camera<br>
+  <h2>play — move him</h2>
+  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk, camera-relative · <kbd>Shift</kbd> run · <kbd>Space</kbd> jump<br>
+  click for mouse look · drag orbits · wheel zooms<br>
+  <h2>orbit — look at him</h2>
+  drag or mouse look swings round him · wheel zooms · <kbd>O</kbd> is a shortcut · <kbd>B</kbd> keeps the camera inside the room (off by default)<br>
+  <h2>camera — free, he stays put</h2>
+  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>E</kbd>/<kbd>Q</kbd> up/down · <kbd>Shift</kbd> fast · <kbd>Alt</kbd> fine · wheel dollies<br>
+  <kbd>[</kbd> <kbd>]</kbd> lens · <kbd>Y</kbd> snap to 1.60 m eye height · <kbd>T</kbd> top view · <kbd>H</kbd> ceilings<br>
+  <h2>place him</h2>
+  <kbd>G</kbd> grab: he follows the mouse on the floor, click drops · arrows nudge 5 cm (<kbd>Shift</kbd> 25) · <kbd>,</kbd> <kbd>.</kbd> turn<br>
+  <h2>picture</h2>
+  <kbd>P</kbd> saves a PNG at the size shown · <kbd>F</kbd> aspect · <kbd>N</kbd> size · <kbd>R</kbd> thirds · <kbd>?</kbd> hide this
+</div>
+
+<div id="right" class="panel">
+  <strong>Expression</strong>
+  <select id="faceSelect"></select>
+  <strong>Lens</strong>
+  <select id="lensSelect"></select>
+  <strong>Picture</strong>
+  <div class="row"><select id="aspectSelect"></select><select id="sizeSelect"></select></div>
+  <button id="shoot" class="primary">Take picture &nbsp;·&nbsp; P</button>
+  <small>Saves to your Downloads folder. The picture is exactly what is inside the frame.</small>
+</div>
+
+<div id="hud" class="panel"></div>
+<div id="toast"></div>
+<div id="flash"></div>
+<div id="loading"><div><span class="dot"></span>loading Plusso and the house…</div></div>
+
+<script src="assets/plusso-glb.js"></script>
+<script src="assets/house-glb.js"></script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+/* ================================================================ renderer / scene */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.setClearColor(0x000000, 1);
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xcfd8e6);      // an overcast London sky, through the windows
+
+// a camera with a real lens: 36 mm film gauge, focal length in millimetres
+const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 200);
+camera.filmGauge = 36;
+const LENSES = [18, 24, 28, 35, 50, 85];
+let lens = 35;
+function applyLens() { camera.setFocalLength(lens); camera.updateProjectionMatrix(); }
+
+/* ---------------------------------------------------------------- light */
+scene.add(new THREE.HemisphereLight(0xdfe6f2, 0xa08a90, 1.35));
+const sun = new THREE.DirectionalLight(0xfff1e0, 2.2);
+sun.position.set(6, 11, 9);                   // in through the bay
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 40;
+const sd = 22;
+sun.shadow.camera.left = -sd; sun.shadow.camera.right = sd; sun.shadow.camera.top = sd; sun.shadow.camera.bottom = -sd;
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
+scene.add(sun); scene.add(sun.target);
+// room lights, roughly where the pendants are
+function lamp(x, y, z, watts = 12, color = 0xfff0dc) {
+  const l = new THREE.PointLight(color, watts, 16, 1.4);
+  l.position.set(x, y, z); scene.add(l); return l;
+}
+
+/* ================================================================ the house */
+/* Blender (x, y, z) arrives as three.js (x, z, -y): the front of the house is +z here, depth runs to -z.
+   The living room centre in Blender is (1.89, 2.10) → (1.89, 0, -2.10). */
+const HOUSE = {            // V03 'stage' plan, from build_house.py, in three.js coordinates
+  roomW: 11.23, frontD: 12.80, ceil: 3.20, W: 12.40, depthMax: 24.38, front: -1.63,
+  living: new THREE.Vector3(5.62, 0, -4.60),      // in front of the rug, facing the bay
+  centre: new THREE.Vector3(6.20, 0, -11.38)
+};
+const colliders = [];      // {min, max, name, wall}
+const ceilings = [];
+let house = null;
+
+const NO_COLLIDE = /^(Floor_|Ceil_|Rug|Hearth|Handrail|Skirt_|PicRail_|Arch_|Switch_|Socket_|Pendant_|Picture|Lamp_|FrontDoor_fanlight|SideDoor_glass|KitWindow_glass|RearWindow_glass|Bay_glass|Bay_rail|Bay_mullion|Bay_windowboard)/;
+const IS_WALL = /^(FrontWall|RearWall|KitRearWall|HallWall|MidWall|Party_|Ext_kit|Bay_dwarf|Bay_head|Chimney_breast|Door_)/;
+const CAM_BLOCK = /^(FrontWall|RearWall|KitRearWall|HallWall|MidWall|Party_|Ext_kit|Bay_|Chimney_breast|Door_|Ceil_|Floor_|.*_glass|.*Door_leaf|Stair_landing)/;
+const camBlockers = [];   // AABBs the follow camera must stay inside of / not cross
+
+function objectName(o, root) {
+  let p = o;
+  while (p.parent && p.parent !== root) p = p.parent;
+  return p.name || o.name;
+}
+function addHouse(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = true;
+    const name = objectName(o, root);
+    if (o.material) {
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      ms.forEach(m => { m.metalness = 0; if (m.transparent) { m.depthWrite = false; } });
+    }
+    if (/^Ceil_/.test(name)) ceilings.push(o);
+    box.setFromObject(o);
+    if (box.isEmpty()) return;
+    if (CAM_BLOCK.test(name)) camBlockers.push({ min: box.min.clone(), max: box.max.clone(), name });
+    if (NO_COLLIDE.test(name)) return;
+    colliders.push({ min: box.min.clone(), max: box.max.clone(), name, wall: IS_WALL.test(name) });
+  });
+  scene.add(root); house = root;
+  window.__dbg = { colliders, camBlockers, player, groundHeightAt, resolveWalls, unblockedDistance, THREE, HEIGHT, orbit: () => ({ ...orbit, eff: camDistEff }) };
+  // pendants: living, rear room, hall, kitchen
+  lamp(5.62, HOUSE.ceil - 0.85, -2.56, 40);      // three pendants down the big room
+  lamp(5.62, HOUSE.ceil - 0.85, -6.40, 40);
+  lamp(5.62, HOUSE.ceil - 0.85, -10.24, 40);
+  lamp(5.17, HOUSE.ceil - 0.6, -15.92, 30);      // dining room
+  lamp(11.85, HOUSE.ceil - 0.4, -4.0, 8);        // hall
+  lamp(1.80, HOUSE.ceil - 0.75, -21.5, 20, 0xf4f6ff);   // kitchen
+  sun.target.position.copy(HOUSE.centre); sun.target.updateMatrixWorld();
+  sun.position.copy(HOUSE.centre).add(new THREE.Vector3(6, 11, 9));
+}
+let ceilingsOn = true;
+function setCeilings(on) { ceilingsOn = on; ceilings.forEach(m => m.visible = on); toast(on ? 'ceilings on' : 'ceilings hidden'); }
+
+/* ================================================================ Plusso */
+const HEIGHT = 1.46, RADIUS = 0.58;           // real height; collision radius is his half-width
+const player = new THREE.Group(); scene.add(player);
+const vel = new THREE.Vector3();
+let grounded = false, mixer = null, clips = {}, current = null, model = null;
+let facing = 0;
+
+const FACES = {"neutral":{"eye_L":{"sx":0.999,"sy":1.0,"closed":0.0,"lid":0.812,"lidtilt":0.0},"eye_R":{"sx":0.999,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.0},"brow_L":{"dx":0.0185,"dy":-0.0062,"tilt":8.7,"arch":0.012,"len":0.968,"th":1.1815},"brow_R":{"dx":0.0185,"dy":-0.0062,"tilt":8.7,"arch":0.012,"len":0.968,"th":1.1815},"mouth":{"smile":0.681,"open":0.0,"round":0.0,"teeth":0.0,"w":0.971,"dy":-0.0119}},"smile":{"eye_L":{"sx":0.988,"sy":1.016,"closed":0.0,"lid":0.03,"lidtilt":0.0},"eye_R":{"sx":0.988,"sy":1.016,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0169,"dy":-0.0113,"tilt":19.65,"arch":1.0955,"len":0.994,"th":0.851},"brow_R":{"dx":0.0169,"dy":-0.0113,"tilt":19.65,"arch":1.0955,"len":0.994,"th":0.851},"mouth":{"smile":0.923,"open":0.0,"round":0.0,"teeth":0.0,"w":0.768,"dy":-0.0194}},"happy":{"eye_L":{"sx":0.999,"sy":1.027,"closed":0.0,"lid":0.01,"lidtilt":0.0},"eye_R":{"sx":0.999,"sy":1.027,"closed":0.0,"lid":0.01,"lidtilt":0.0},"brow_L":{"dx":0.0215,"dy":-0.0063,"tilt":21.05,"arch":1.1765,"len":0.988,"th":1.05},"brow_R":{"dx":0.0215,"dy":-0.0063,"tilt":21.05,"arch":1.1765,"len":0.988,"th":1.05},"mouth":{"smile":0.729,"open":0.0,"round":0.0,"teeth":0.0,"w":0.939,"dy":-0.0188}},"beaming":{"eye_L":{"sx":1.019,"sy":1.062,"closed":0.0,"lid":0.024,"lidtilt":0.0},"eye_R":{"sx":1.019,"sy":1.062,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0253,"dy":-0.0032,"tilt":21.95,"arch":1.0335,"len":1.034,"th":1.0295},"brow_R":{"dx":0.0253,"dy":-0.0032,"tilt":21.95,"arch":1.0335,"len":1.034,"th":1.0295},"mouth":{"smile":1.101,"open":0.0,"round":0.0,"teeth":0.0,"w":0.829,"dy":-0.0236}},"grin":{"eye_L":{"sx":0.952,"sy":1.012,"closed":0.0,"lid":0.046,"lidtilt":0.0},"eye_R":{"sx":0.952,"sy":1.012,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0163,"dy":0.0095,"tilt":20.4,"arch":1.017,"len":1.007,"th":0.9355},"brow_R":{"dx":0.0163,"dy":0.0095,"tilt":20.4,"arch":1.017,"len":1.007,"th":0.9355},"mouth":{"smile":1.4,"open":0.0,"round":0.0,"teeth":0.0,"w":0.813,"dy":-0.0239}},"laugh":{"eye_L":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0224,"dy":0.018,"tilt":22.4,"arch":1.168,"len":0.9325,"th":0.809},"brow_R":{"dx":0.0224,"dy":0.018,"tilt":22.4,"arch":1.168,"len":0.9325,"th":0.809},"mouth":{"smile":0.0,"open":1.293,"round":0.0,"teeth":1.0,"w":1.076,"dy":0.0228}},"celebrate":{"eye_L":{"sx":0.973,"sy":1.04,"closed":0.0,"lid":0.024,"lidtilt":0.0},"eye_R":{"sx":0.973,"sy":1.04,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0174,"dy":0.0147,"tilt":24.5,"arch":1.214,"len":1.043,"th":0.975},"brow_R":{"dx":0.0174,"dy":0.0147,"tilt":24.5,"arch":1.214,"len":1.043,"th":0.975},"mouth":{"smile":0.0,"open":1.35,"round":0.0,"teeth":1.0,"w":1.226,"dy":-0.0356}},"amused":{"eye_L":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.0},"eye_R":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.0},"brow_L":{"dx":0.018,"dy":-0.0033,"tilt":7.1,"arch":0.478,"len":1.023,"th":1.1215},"brow_R":{"dx":0.018,"dy":-0.0033,"tilt":7.1,"arch":0.478,"len":1.023,"th":1.1215},"mouth":{"smile":-0.4,"open":0.0,"round":0.0,"teeth":0.0,"w":0.918,"dy":0.0025}},"content":{"eye_L":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.502,"lidtilt":0.0},"eye_R":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.486,"lidtilt":0.0},"brow_L":{"dx":0.0185,"dy":0.0002,"tilt":11.9,"arch":0.832,"len":0.913,"th":0.918},"brow_R":{"dx":0.0185,"dy":0.0002,"tilt":11.9,"arch":0.832,"len":0.913,"th":0.918},"mouth":{"smile":0.657,"open":0.0,"round":0.0,"teeth":0.0,"w":0.89,"dy":-0.0144}},"talking":{"eye_L":{"sx":0.961,"sy":1.0,"closed":0.0,"lid":0.038,"lidtilt":0.0},"eye_R":{"sx":0.961,"sy":1.0,"closed":0.0,"lid":0.038,"lidtilt":0.0},"brow_L":{"dx":0.0009,"dy":0.0003,"tilt":21.1,"arch":1.046,"len":0.9625,"th":0.9935},"brow_R":{"dx":0.0009,"dy":0.0003,"tilt":21.1,"arch":1.046,"len":0.9625,"th":0.9935},"mouth":{"smile":0.0,"open":0.722,"round":0.0,"teeth":1.0,"w":0.77,"dy":0.0}},"kind":{"eye_L":{"sx":0.977,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.77},"eye_R":{"sx":0.977,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.77},"brow_L":{"dx":0.0231,"dy":-0.026,"tilt":26.9,"arch":-1.2795,"len":1.081,"th":0.808},"brow_R":{"dx":0.0231,"dy":-0.026,"tilt":26.9,"arch":-1.2795,"len":1.081,"th":0.808},"mouth":{"smile":0.948,"open":0.0,"round":0.0,"teeth":0.0,"w":0.884,"dy":-0.0447}},"squint_happy":{"eye_L":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0198,"dy":0.0163,"tilt":22.15,"arch":1.1415,"len":0.994,"th":1.124},"brow_R":{"dx":0.0198,"dy":0.0163,"tilt":22.15,"arch":1.1415,"len":0.994,"th":1.124},"mouth":{"smile":1.4,"open":0.0,"round":0.0,"teeth":0.0,"w":1.447,"dy":-0.0062}},"sad":{"eye_L":{"sx":1.013,"sy":1.0,"closed":0.0,"lid":0.553,"lidtilt":0.74},"eye_R":{"sx":1.013,"sy":1.0,"closed":0.0,"lid":0.52,"lidtilt":0.74},"brow_L":{"dx":0.0181,"dy":-0.0088,"tilt":28.8,"arch":-1.2335,"len":1.073,"th":0.8615},"brow_R":{"dx":0.0181,"dy":-0.0088,"tilt":28.8,"arch":-1.2335,"len":1.073,"th":0.8615},"mouth":{"smile":-1.057,"open":0.0,"round":0.0,"teeth":0.0,"w":0.929,"dy":-0.0007}},"worried":{"eye_L":{"sx":1.0,"sy":1.0,"closed":0.0,"lid":0.049,"lidtilt":0.0},"eye_R":{"sx":1.0,"sy":1.0,"closed":0.0,"lid":0.049,"lidtilt":0.0},"brow_L":{"dx":0.0207,"dy":-0.0095,"tilt":22.3,"arch":0.988,"len":1.047,"th":1.206},"brow_R":{"dx":0.0207,"dy":-0.0095,"tilt":22.3,"arch":0.988,"len":1.047,"th":1.206},"mouth":{"smile":-1.345,"open":0.0,"round":0.0,"teeth":0.0,"w":0.864,"dy":-0.0005}},"stern":{"eye_L":{"sx":0.979,"sy":1.0,"closed":0.0,"lid":0.216,"lidtilt":0.0},"eye_R":{"sx":0.979,"sy":1.0,"closed":0.0,"lid":0.254,"lidtilt":0.0},"brow_L":{"dx":-0.0052,"dy":-0.045,"tilt":-24.6,"arch":-0.509,"len":1.077,"th":0.957},"brow_R":{"dx":-0.0052,"dy":-0.045,"tilt":-24.6,"arch":-0.509,"len":1.077,"th":0.957},"mouth":{"smile":-0.377,"open":0.0,"round":0.0,"teeth":0.0,"w":1.034,"dy":-0.0026}},"angry":{"eye_L":{"sx":1.03,"sy":1.034,"closed":0.0,"lid":0.214,"lidtilt":0.0},"eye_R":{"sx":1.03,"sy":1.034,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0008,"dy":-0.045,"tilt":-31.85,"arch":0.0125,"len":1.4045,"th":0.958},"brow_R":{"dx":0.0008,"dy":-0.045,"tilt":-31.85,"arch":0.0125,"len":1.4045,"th":0.958},"mouth":{"smile":0.0,"open":0.681,"round":0.0,"teeth":1.0,"w":0.975,"dy":-0.0004}},"scared":{"eye_L":{"sx":0.927,"sy":1.0,"closed":0.0,"lid":0.253,"lidtilt":0.338},"eye_R":{"sx":0.927,"sy":1.0,"closed":0.0,"lid":0.285,"lidtilt":0.338},"brow_L":{"dx":0.018,"dy":-0.0234,"tilt":28.5,"arch":-1.406,"len":1.0775,"th":1.2495},"brow_R":{"dx":0.018,"dy":-0.0234,"tilt":28.5,"arch":-1.406,"len":1.0775,"th":1.2495},"mouth":{"smile":0.0,"open":1.35,"round":0.678,"teeth":1.0,"w":1.054,"dy":-0.0191}},"startled":{"eye_L":{"sx":0.992,"sy":1.026,"closed":0.0,"lid":0.016,"lidtilt":0.0},"eye_R":{"sx":0.992,"sy":1.026,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0267,"dy":0.0085,"tilt":24.3,"arch":1.077,"len":1.0275,"th":0.987},"brow_R":{"dx":0.0267,"dy":0.0085,"tilt":24.3,"arch":1.077,"len":1.0275,"th":0.987},"mouth":{"smile":0.0,"open":0.672,"round":0.432,"teeth":1.0,"w":0.715,"dy":-0.0273}},"curious":{"eye_L":{"sx":0.995,"sy":1.005,"closed":0.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":0.995,"sy":1.005,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0183,"dy":-0.0089,"tilt":22.4,"arch":1.114,"len":1.021,"th":0.9605},"brow_R":{"dx":0.0183,"dy":-0.0089,"tilt":22.4,"arch":1.114,"len":1.021,"th":0.9605},"mouth":{"smile":0.709,"open":0.0,"round":0.0,"teeth":0.0,"w":0.903,"dy":-0.0143}},"confused":{"eye_L":{"sx":0.989,"sy":1.015,"closed":0.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":0.908,"sy":1.0,"closed":0.0,"lid":0.207,"lidtilt":0.251},"brow_L":{"dx":-0.0102,"dy":-0.0052,"tilt":-7.4,"arch":-0.419,"len":1.041,"th":1.16},"brow_R":{"dx":0.0203,"dy":-0.0206,"tilt":9.5,"arch":1.6,"len":0.885,"th":1.207},"mouth":{"smile":-0.155,"open":0.0,"round":0.0,"teeth":0.0,"w":0.745,"dy":-0.0169}}};
+const FACE_ORDER = Object.keys(FACES);
+const FACE_LABEL = { neutral:'Neutral', smile:'Smile', happy:'Happy', beaming:'Beaming', grin:'Grin', laugh:'Laugh',
+  celebrate:'Celebrate', amused:'Amused', content:'Content', talking:'Talking', kind:'Kind', squint_happy:'Squint · happy',
+  sad:'Sad', worried:'Worried', stern:'Stern', angry:'Angry', scared:'Scared', startled:'Startled', curious:'Curious', confused:'Confused' };
+let faceName = 'smile';
+
+const RIG = { bones: {}, rest: {}, mouths: [], brows: { L: [], R: [] }, eyes: { L: [], R: [] }, crescents: { L: [], R: [] } };
+function boneSide(o) { for (let p = o; p; p = p.parent) if (p.isBone) { const m = /_([LR])$/.exec(p.name); if (m) return m[1]; } return null; }
+function captureRig(root) {
+  root.traverse(o => {
+    if (o.isBone) {
+      if (/^(brow_[LR]|eye_[LR]|mouth)$/.test(o.name) && !RIG.bones[o.name]) {
+        RIG.bones[o.name] = o; RIG.rest[o.name] = { p: o.position.clone(), q: o.quaternion.clone(), s: o.scale.clone() };
+      }
+      return;
+    }
+    if (!o.isMesh || !o.morphTargetDictionary) return;
+    const d = o.morphTargetDictionary, side = boneSide(o);
+    if (d.open !== undefined) RIG.mouths.push(o);
+    if (d.up !== undefined && side) RIG.brows[side].push(o);
+    if (d.lid !== undefined && side) RIG.eyes[side].push(o);
+    if (d.hide !== undefined && side) RIG.crescents[side].push(o);
+  });
+}
+const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _z = new THREE.Vector3(0, 0, 1);
+function applyBone(name, loc, rotZ, scl) {
+  const b = RIG.bones[name], r = RIG.rest[name]; if (!b) return;
+  b.position.copy(r.p).add(_v.set(loc[0], loc[1], loc[2]).applyQuaternion(r.q));
+  b.quaternion.copy(r.q).multiply(_q.setFromAxisAngle(_z, rotZ));
+  b.scale.set(r.s.x * scl[0], r.s.y * scl[1], r.s.z * scl[2]);
+}
+function setMorph(meshes, name, v) { for (const m of meshes) { const i = m.morphTargetDictionary[name]; if (i !== undefined) m.morphTargetInfluences[i] = v; } }
+function setEye(side, amount, tilt, closed) {
+  setMorph(RIG.eyes[side], 'lid', amount * (1 - Math.abs(tilt)));
+  setMorph(RIG.eyes[side], 'lid_out', amount * Math.max(0, tilt));
+  setMorph(RIG.eyes[side], 'lid_in', amount * Math.max(0, -tilt));
+  setMorph(RIG.eyes[side], 'shut', closed);
+  setMorph(RIG.crescents[side], 'hide', 1 - closed);
+}
+function applyFace(f) {
+  if (!f) return;
+  for (const side of ['L', 'R']) {
+    const sg = side === 'L' ? -1 : 1, b = f['brow_' + side] || {};
+    applyBone('brow_' + side, [sg * (b.dx || 0), b.dy || 0, 0], -sg * (b.tilt || 0) * Math.PI / 180, [b.len || 1, b.th || 1, 1]);
+    const a = b.arch === undefined ? 1 : b.arch;
+    setMorph(RIG.brows[side], 'up', Math.max(0, a)); setMorph(RIG.brows[side], 'dn', Math.max(0, -a));
+    const e = f['eye_' + side] || {};
+    applyBone('eye_' + side, [0, 0, 0], 0, [e.sx || 1, e.sy || 1, 1]);
+    setEye(side, e.lid || 0, e.lidtilt || 0, e.closed || 0);
+  }
+  const m = f.mouth || {};
+  applyBone('mouth', [0, m.dy || 0, 0], 0, [m.w || 1, 1, 1]);
+  const op = m.open || 0, rd = m.round || 0, sm = m.smile || 0;
+  setMorph(RIG.mouths, 'open', op); setMorph(RIG.mouths, 'round', op * rd);
+  setMorph(RIG.mouths, 'smile', Math.max(0, sm) * (1 - op)); setMorph(RIG.mouths, 'frown', Math.max(0, -sm) * (1 - op));
+}
+function setFace(name) {
+  if (!FACES[name]) name = 'smile';
+  faceName = name; applyFace(FACES[name]);
+  const sel = document.getElementById('faceSelect'); if (sel && sel.value !== name) sel.value = name;
+}
+function b64ToBuf(b64) { const bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (let i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
+function play(name, fade = 0.22) {
+  if (!clips[name] || current === name) return;
+  const next = clips[name]; next.reset(); next.setEffectiveTimeScale(1); next.setEffectiveWeight(1); next.fadeIn(fade); next.play();
+  if (current && clips[current]) clips[current].fadeOut(fade);
+  current = name;
+}
+
+/* ---------------------------------------------------------------- load both */
+const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
+let loaded = 0;
+function oneLoaded() { if (++loaded === 2) { document.getElementById('loading').classList.add('gone'); setMode('play'); } }
+loader.parse(b64ToBuf(window.HOUSE_GLB_B64), '', gltf => { addHouse(gltf.scene); oneLoaded(); },
+  e => { console.error(e); document.getElementById('loading').textContent = 'could not load the house'; });
+loader.parse(b64ToBuf(window.PLUSSO_GLB_B64), '', gltf => {
+  model = gltf.scene;
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    const tris = o.geometry && o.geometry.index ? o.geometry.index.count / 3 : 0;
+    const isFur = tris > 40000;
+    o.castShadow = !isFur; o.receiveShadow = !isFur; o.frustumCulled = false;
+    const rough = isFur ? 1.0 : 0.85;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m) { m.roughness = rough; m.metalness = 0; } });
+  });
+  player.add(model);
+  mixer = new THREE.AnimationMixer(model);
+  gltf.animations.forEach(c => { clips[c.name] = mixer.clipAction(c); });
+  ['Idle', 'Walk', 'Run', 'Jump'].forEach(n => { if (clips[n]) { clips[n].enabled = true; clips[n].setEffectiveWeight(0); clips[n].play(); } });
+  if (clips.Jump) { clips.Jump.setLoop(THREE.LoopOnce, 1); clips.Jump.clampWhenFinished = true; }
+  captureRig(model); play('Idle', 0); setFace('smile');
+  player.position.copy(HOUSE.living); facing = 0; player.rotation.y = 0;
+  oneLoaded();
+}, e => { console.error(e); document.getElementById('loading').textContent = 'could not load the model'; });
+
+/* ================================================================ modes */
+const MODES = ['play', 'orbit', 'camera'];
+let mode = 'play';
+const modeTag = document.getElementById('mode');
+function setMode(m) {
+  mode = m; modeTag.textContent = m === 'camera' ? `camera · ${lens} mm` : m;
+  if (m === 'camera') {
+    // take over from wherever the follow camera was, without a jump
+    const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+    free.yaw = e.y; free.pitch = e.x; free.pos.copy(camera.position);
+  }
+  grabbing = false;
+  toast(m === 'play' ? 'play — move him with WASD' : m === 'orbit' ? 'orbit — swing round him' : `camera — free, ${lens} mm`);
+}
+
+/* ---------------------------------------------------------------- input */
+const keys = {};
+const canvas = renderer.domElement;
+let locked = false, dragging = false, lx = 0, ly = 0, grabbing = false;
+const mouse = new THREE.Vector2();
+let helpOn = true, thirdsOn = true;
+
+canvas.addEventListener('mousedown', e => { if (locked || e.button !== 0) return; dragging = true; lx = e.clientX; ly = e.clientY; });
+addEventListener('mouseup', () => dragging = false);
+canvas.addEventListener('click', () => {
+  if (grabbing) { grabbing = false; toast('placed'); return; }
+  if (!locked) canvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; if (locked) dragging = false; });
+addEventListener('mousemove', e => {
+  mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  const dx = locked ? e.movementX : (dragging ? e.clientX - lx : 0);
+  const dy = locked ? e.movementY : (dragging ? e.clientY - ly : 0);
+  lx = e.clientX; ly = e.clientY;
+  if (!dx && !dy) return;
+  const k = locked ? 0.0026 : 0.005;
+  if (mode === 'camera') { free.yaw -= dx * k; free.pitch = clamp(free.pitch - dy * k * 0.85, -1.55, 1.55); }
+  else { orbit.yaw -= dx * k; orbit.pitch = clamp(orbit.pitch + dy * k * 0.85, -0.45, 1.45); }
+});
+addEventListener('wheel', e => {
+  if (mode === 'camera') { const f = new THREE.Vector3(); camera.getWorldDirection(f); free.pos.addScaledVector(f, -e.deltaY * 0.006); }
+  else orbit.dist = clamp(orbit.dist + e.deltaY * 0.008, 1.0, 30);
+}, { passive: true });
+
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') {
+    // let the menu keep its own keys, hand everything else back to the scene
+    if (/^(Arrow|Enter|Space)/.test(e.code)) return;
+    e.target.blur();
+  }
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  switch (e.code) {
+    case 'Tab': e.preventDefault(); setMode(MODES[(MODES.indexOf(mode) + 1) % 3]); break;
+    case 'Digit1': setMode('play'); break;
+    case 'Digit2': setMode('orbit'); break;
+    case 'Digit3': setMode('camera'); break;
+    case 'KeyO': setMode(mode === 'orbit' ? 'play' : 'orbit'); break;
+    case 'KeyC': setMode('camera'); break;
+    case 'BracketLeft': setLens(LENSES[Math.max(0, LENSES.indexOf(lens) - 1)]); break;
+    case 'BracketRight': setLens(LENSES[Math.min(LENSES.length - 1, LENSES.indexOf(lens) + 1)]); break;
+    case 'KeyP': takePicture(); break;
+    case 'KeyF': setAspect((ASPECTS.findIndex(a => a.id === aspect.id) + 1) % ASPECTS.length); break;
+    case 'KeyN': setSize((sizeIdx + 1) % aspect.sizes.length); break;
+    case 'KeyR': thirdsOn = !thirdsOn; document.getElementById('reticle').classList.toggle('off', !thirdsOn); break;
+    case 'KeyH': setCeilings(!ceilingsOn); break;
+    case 'KeyB': wallAvoid = !wallAvoid; toast(wallAvoid ? 'camera stays inside the room' : 'camera roams freely through walls'); break;
+    case 'KeyT': topView(); break;
+    case 'KeyY': if (mode === 'camera') { free.pos.y = 1.60; toast('camera at 1.60 m — adult eye height'); } break;
+    case 'KeyG': if (mode !== 'play') { grabbing = !grabbing; toast(grabbing ? 'grab — move the mouse, click to drop' : 'placed'); } break;
+    case 'Comma': facing += Math.PI / 12; break;
+    case 'Period': facing -= Math.PI / 12; break;
+    case 'Slash': helpOn = !helpOn; document.getElementById('help').classList.toggle('hidden', !helpOn); break;
+  }
+  if (mode !== 'play' && /^Arrow/.test(e.code)) {
+    e.preventDefault();
+    const step = e.shiftKey ? 0.25 : 0.05;
+    // nudge relative to the camera's heading so the arrows mean what they look like they mean
+    const yaw = mode === 'camera' ? free.yaw : orbit.yaw;
+    const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)), right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    if (mode !== 'camera') { fwd.set(Math.sin(yaw), 0, Math.cos(yaw)); right.set(-Math.cos(yaw), 0, Math.sin(yaw)); }
+    if (e.code === 'ArrowUp') player.position.addScaledVector(fwd, step);
+    if (e.code === 'ArrowDown') player.position.addScaledVector(fwd, -step);
+    if (e.code === 'ArrowRight') player.position.addScaledVector(right, step);
+    if (e.code === 'ArrowLeft') player.position.addScaledVector(right, -step);
+  }
+});
+addEventListener('keyup', e => keys[e.code] = false);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------------------------------------------------------------- cameras */
+const orbit = { yaw: 0.6, pitch: 0.22, dist: 4.5 };
+let camDistEff = 4.5;
+let wallAvoid = false;     // B toggles: keep the follow camera inside the room, or let it roam      // the distance actually in use, eased toward what the walls allow
+const free = { pos: new THREE.Vector3(1.9, 1.6, 3.2), yaw: 0, pitch: 0 };
+function topView() {
+  setMode('camera');
+  free.pos.set(HOUSE.centre.x, 30, HOUSE.centre.z); free.yaw = 0; free.pitch = -Math.PI / 2 + 0.001;
+  if (ceilingsOn) setCeilings(false);
+  toast('top view — E/Q or the wheel to come down, H for ceilings');
+}
+function setLens(mm) { lens = mm; applyLens(); document.getElementById('lensSelect').value = String(mm); if (mode === 'camera') modeTag.textContent = `camera · ${lens} mm`; }
+
+/* walls between the follow camera and Plusso pull the camera in, so it never sits inside a wall */
+const CAM_MIN = 0.9;
+function unblockedDistance(look, dir, want) {
+  const p = new THREE.Vector3();
+  for (let t = 0.3; t < want; t += 0.05) {
+    p.copy(look).addScaledVector(dir, t);
+    for (const c of camBlockers) {
+      if (p.x > c.min.x - 0.12 && p.x < c.max.x + 0.12 && p.y > c.min.y - 0.12 && p.y < c.max.y + 0.12 && p.z > c.min.z - 0.12 && p.z < c.max.z + 0.12)
+        return Math.max(CAM_MIN, t - 0.15);
+    }
+  }
+  return want;
+}
+
+/* ---------------------------------------------------------------- physics */
+const GRAV = -22, JUMP_V = 6.6, WALK = 1.10, RUN = 2.36, ACC = 15, TURN = 10;
+const CLIP_SPEED = { Walk: 1.10, Run: 2.36 };
+function groundHeightAt(x, z, fromY) {
+  let best = 0;
+  for (const c of colliders) {
+    if (x + RADIUS * 0.55 < c.min.x || x - RADIUS * 0.55 > c.max.x) continue;
+    if (z + RADIUS * 0.55 < c.min.z || z - RADIUS * 0.55 > c.max.z) continue;
+    if (c.max.y <= fromY + 0.28 && c.max.y > best) best = c.max.y;
+  }
+  return best;
+}
+function resolveWalls(pos) {
+  for (const c of colliders) {
+    if (pos.y + 0.05 >= c.max.y) continue;
+    if (pos.y + HEIGHT <= c.min.y) continue;
+    const cx = clamp(pos.x, c.min.x, c.max.x), cz = clamp(pos.z, c.min.z, c.max.z);
+    const dx = pos.x - cx, dz = pos.z - cz, d2 = dx * dx + dz * dz;
+    if (d2 < RADIUS * RADIUS) {
+      const dist = Math.sqrt(d2) || 0.0001, push = (RADIUS - dist) / dist;
+      if (dist < 0.0005) { pos.z += RADIUS; } else { pos.x += dx * push; pos.z += dz * push; }
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- picture */
+const ASPECTS = [
+  { id: '16:9', r: 16 / 9, sizes: [[1920, 1080], [2560, 1440], [3840, 2160]] },
+  { id: '9:16', r: 9 / 16, sizes: [[1080, 1920], [1440, 2560], [2160, 3840]] },
+  { id: '4:5',  r: 4 / 5,  sizes: [[1600, 2000], [2000, 2500], [2400, 3000]] },
+  { id: '1:1',  r: 1,      sizes: [[1600, 1600], [2048, 2048], [3000, 3000]] },
+  { id: '3:2',  r: 3 / 2,  sizes: [[1800, 1200], [3000, 2000], [4500, 3000]] },
+];
+let aspect = ASPECTS[0], sizeIdx = 0;
+const frame = { x: 0, y: 0, w: 1, h: 1 };
+function layoutFrame() {
+  const W = innerWidth, H = innerHeight, pad = 0.0;
+  let w = W * (1 - pad), h = w / aspect.r;
+  if (h > H * (1 - pad)) { h = H * (1 - pad); w = h * aspect.r; }
+  frame.x = (W - w) / 2; frame.y = (H - h) / 2; frame.w = w; frame.h = h;
+  const s = (id, l, t, ww, hh) => { const el = document.getElementById(id); el.style.left = l + 'px'; el.style.top = t + 'px'; el.style.width = ww + 'px'; el.style.height = hh + 'px'; };
+  s('barT', 0, 0, W, frame.y); s('barB', 0, frame.y + frame.h, W, H - frame.y - frame.h);
+  s('barL', 0, frame.y, frame.x, frame.h); s('barR', frame.x + frame.w, frame.y, W - frame.x - frame.w, frame.h);
+  s('reticle', frame.x, frame.y, frame.w, frame.h);
+  camera.aspect = aspect.r; applyLens();
+}
+function setAspect(i) { aspect = ASPECTS[i]; sizeIdx = 0; document.getElementById('aspectSelect').value = aspect.id; fillSizes(); layoutFrame(); toast(`${aspect.id} · ${aspect.sizes[0].join('×')}`); }
+function setSize(i) { sizeIdx = i; document.getElementById('sizeSelect').value = String(i); toast(`${aspect.sizes[i].join('×')} px`); }
+function fillSizes() {
+  const sel = document.getElementById('sizeSelect'); sel.innerHTML = '';
+  aspect.sizes.forEach((s, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = s.join(' × '); sel.appendChild(o); });
+  sel.value = String(sizeIdx);
+}
+function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`; }
+function takePicture() {
+  const [w, h] = aspect.sizes[sizeIdx];
+  const prev = renderer.getSize(new THREE.Vector2()), pr = renderer.getPixelRatio();
+  const rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, colorSpace: THREE.SRGBColorSpace });
+  renderer.setPixelRatio(1); renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h);
+  camera.aspect = w / h; applyLens();
+  renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null);
+  // read it back and hand it to a 2D canvas, so the on-screen canvas is never resized
+  const px = new Uint8Array(w * h * 4); renderer.readRenderTargetPixels(rt, 0, 0, w, h, px); rt.dispose();
+  const c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
+  const ctx = c2.getContext('2d'), img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) img.data.set(px.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);   // GL rows are bottom-up
+  ctx.putImageData(img, 0, 0);
+  renderer.setPixelRatio(pr); renderer.setSize(prev.x, prev.y, false); layoutFrame();
+  const name = `plusso_house_${lens}mm_${aspect.id.replace(':', 'x')}_${w}x${h}_${stamp()}.png`;
+  c2.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, 'image/png');
+  const fl = document.getElementById('flash'); fl.style.opacity = 0.85; setTimeout(() => fl.style.opacity = 0, 60);
+  toast(`saved ${name}`);
+}
+document.getElementById('shoot').addEventListener('click', takePicture);
+
+/* ---------------------------------------------------------------- loop */
+const hud = document.getElementById('hud'), clock = new THREE.Clock();
+const tmp = new THREE.Vector3(), ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  let speed = 0;
+
+  if (mode === 'play') {
+    const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    const s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    const running = keys.ShiftLeft || keys.ShiftRight;
+    const want = new THREE.Vector3(Math.sin(orbit.yaw) * f - Math.cos(orbit.yaw) * s, 0, Math.cos(orbit.yaw) * f + Math.sin(orbit.yaw) * s);
+    const moving = want.lengthSq() > 0.001; if (moving) want.normalize();
+    const target = moving ? want.multiplyScalar(running ? RUN : WALK) : new THREE.Vector3();
+    vel.x += (target.x - vel.x) * Math.min(1, ACC * dt); vel.z += (target.z - vel.z) * Math.min(1, ACC * dt);
+    if (grounded && keys.Space) { vel.y = JUMP_V; grounded = false; current = null; play('Jump', 0.06); }
+  } else { vel.x *= Math.max(0, 1 - 12 * dt); vel.z *= Math.max(0, 1 - 12 * dt); }
+  vel.y += GRAV * dt;
+
+  const prevY = player.position.y;
+  player.position.x += vel.x * dt; player.position.z += vel.z * dt;
+  resolveWalls(player.position);
+  player.position.y += vel.y * dt;
+  const gh = groundHeightAt(player.position.x, player.position.z, prevY);
+  if (player.position.y <= gh + 0.001) { player.position.y = gh; vel.y = 0; grounded = true; } else grounded = false;
+
+  // grab: he follows the mouse across the floor he is standing on
+  if (grabbing) {
+    ray.setFromCamera(mouse, camera); plane.constant = -player.position.y;
+    const hit = ray.ray.intersectPlane(plane, tmp);
+    if (hit) { player.position.x += (hit.x - player.position.x) * Math.min(1, 14 * dt); player.position.z += (hit.z - player.position.z) * Math.min(1, 14 * dt); }
+  }
+
+  speed = Math.hypot(vel.x, vel.z);
+  if (mode === 'play' && speed > 0.15) {
+    const want2 = Math.atan2(vel.x, vel.z);
+    facing += (((want2 - facing + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, TURN * dt);
+  }
+  player.rotation.y = facing;
+  if (!grounded) play('Jump', 0.1); else if (speed > WALK * 1.35) play('Run', 0.18); else if (speed > 0.12) play('Walk', 0.20); else play('Idle', 0.25);
+  if (current && CLIP_SPEED[current]) clips[current].setEffectiveTimeScale(clamp(speed / CLIP_SPEED[current], 0.45, 1.9));
+  if (mixer) mixer.update(dt);
+  applyFace(FACES[faceName]);
+
+  // camera
+  if (mode === 'camera') {
+    const sp = (keys.ShiftLeft || keys.ShiftRight ? 8.0 : keys.AltLeft || keys.AltRight ? 0.5 : 3.0) * dt;
+    const fwd = new THREE.Vector3(-Math.sin(free.yaw), 0, -Math.cos(free.yaw)), right = new THREE.Vector3(Math.cos(free.yaw), 0, -Math.sin(free.yaw));
+    if (keys.KeyW) free.pos.addScaledVector(fwd, sp); if (keys.KeyS) free.pos.addScaledVector(fwd, -sp);
+    if (keys.KeyD) free.pos.addScaledVector(right, sp); if (keys.KeyA) free.pos.addScaledVector(right, -sp);
+    if (keys.KeyE || keys.Space) free.pos.y += sp; if (keys.KeyQ || keys.ControlLeft) free.pos.y -= sp;
+    camera.position.copy(free.pos);
+    camera.quaternion.setFromEuler(new THREE.Euler(free.pitch, free.yaw, 0, 'YXZ'));
+  } else {
+    const look = tmp.set(player.position.x, player.position.y + HEIGHT * 0.6, player.position.z);
+    const dir = new THREE.Vector3(-Math.sin(orbit.yaw) * Math.cos(orbit.pitch), Math.sin(orbit.pitch), -Math.cos(orbit.yaw) * Math.cos(orbit.pitch));
+    // pull in quickly when a wall gets in the way, let out slowly when it clears — no snapping either way
+    const allowed = wallAvoid ? unblockedDistance(look, dir, orbit.dist) : orbit.dist;
+    camDistEff += (allowed - camDistEff) * Math.min(1, (allowed < camDistEff ? 18 : 3.5) * dt);
+    const goal = look.clone().addScaledVector(dir, camDistEff);
+    camera.position.lerp(goal, Math.min(1, 12 * dt));
+    camera.lookAt(look);
+  }
+
+  // draw only inside the frame guide, so the picture is exactly what you see
+  // setViewport/setScissor take CSS pixels and apply the pixel ratio themselves — do NOT pre-multiply,
+  // or on a Retina screen the view lands at double size in one corner and he is never where the camera says
+  renderer.setScissorTest(true);
+  renderer.setViewport(frame.x, innerHeight - frame.y - frame.h, frame.w, frame.h);
+  renderer.setScissor(frame.x, innerHeight - frame.y - frame.h, frame.w, frame.h);
+  renderer.render(scene, camera);
+
+  const p = player.position, c = camera.position;
+  hud.textContent =
+    `${mode.toUpperCase()}   ${lens} mm   ${aspect.id} · ${aspect.sizes[sizeIdx].join('×')}\n` +
+    `camera  x ${c.x.toFixed(2)}  y ${c.y.toFixed(2)} m  z ${c.z.toFixed(2)}   ${(c.y - 1.60) > -0.03 && (c.y - 1.60) < 0.03 ? '← adult eye height' : ''}\n` +
+    `Plusso  x ${p.x.toFixed(2)}  y ${p.y.toFixed(2)}  z ${p.z.toFixed(2)}   facing ${((facing * 180 / Math.PI) % 360).toFixed(0)}°   ${grounded ? '' : 'in the air'}`;
+}
+tick();
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); layoutFrame(); });
+
+/* ---------------------------------------------------------------- menus */
+let toastT = 0;
+function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('on'), 1800); }
+const fsel = document.getElementById('faceSelect');
+FACE_ORDER.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = FACE_LABEL[n] || n; fsel.appendChild(o); });
+fsel.value = faceName; fsel.addEventListener('change', () => setFace(fsel.value));
+const lsel = document.getElementById('lensSelect');
+LENSES.forEach(mm => { const o = document.createElement('option'); o.value = String(mm); o.textContent = `${mm} mm${mm === 35 ? '  ·  standard' : mm === 24 ? '  ·  wide' : mm === 85 ? '  ·  portrait' : ''}`; lsel.appendChild(o); });
+lsel.value = String(lens); lsel.addEventListener('change', () => setLens(+lsel.value));
+const asel = document.getElementById('aspectSelect');
+ASPECTS.forEach((a, i) => { const o = document.createElement('option'); o.value = a.id; o.textContent = a.id; asel.appendChild(o); });
+asel.addEventListener('change', () => setAspect(ASPECTS.findIndex(a => a.id === asel.value)));
+document.getElementById('sizeSelect').addEventListener('change', e => setSize(+e.target.value));
+for (const s of document.querySelectorAll('select, button')) {
+  s.addEventListener('mousedown', () => { if (document.pointerLockElement) document.exitPointerLock(); });
+  s.addEventListener('change', e => e.target.blur());      // focus goes back to the scene, so WASD keeps working
+  s.addEventListener('click', e => { if (e.target.tagName === 'BUTTON') e.target.blur(); });
+}
+canvas.addEventListener('mousedown', () => { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); });
+fillSizes(); layoutFrame(); applyLens();
+</script>
+</body>
+</html>
