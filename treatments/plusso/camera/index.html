@@ -110,13 +110,13 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 0.9;
 renderer.setClearColor(0x000000, 1);
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xcfd8e6);      // an overcast London sky, through the windows
+scene.background = new THREE.Color(0xbfcbdc);      // an overcast London sky, through the windows
 
 // a camera with a real lens: 36 mm film gauge, focal length in millimetres
 const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 200);
@@ -126,8 +126,8 @@ let lens = 35;
 function applyLens() { camera.setFocalLength(lens); camera.updateProjectionMatrix(); }
 
 /* ---------------------------------------------------------------- light */
-scene.add(new THREE.HemisphereLight(0xdfe6f2, 0xa08a90, 1.35));
-const sun = new THREE.DirectionalLight(0xfff1e0, 2.2);
+scene.add(new THREE.HemisphereLight(0xd8e0ee, 0x8a7078, 0.55));
+const sun = new THREE.DirectionalLight(0xfff0dc, 2.6);
 sun.position.set(6, 11, 9);                   // in through the bay
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -138,7 +138,7 @@ sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
 scene.add(sun); scene.add(sun.target);
 // room lights, roughly where the pendants are
 function lamp(x, y, z, watts = 12, color = 0xfff0dc) {
-  const l = new THREE.PointLight(color, watts, 16, 1.4);
+  const l = new THREE.PointLight(color, watts, 18, 1.6);
   l.position.set(x, y, z); scene.add(l); return l;
 }
 
@@ -173,7 +173,11 @@ function addHouse(root) {
     const name = objectName(o, root);
     if (o.material) {
       const ms = Array.isArray(o.material) ? o.material : [o.material];
-      ms.forEach(m => { m.metalness = 0; if (m.transparent) { m.depthWrite = false; } });
+      ms.forEach(m => {
+        m.metalness = 0; m.roughness = Math.min(1, (m.roughness ?? 0.9) + 0.05);
+        if (m.transparent) { m.depthWrite = false; }
+        else if (m.color) { const hsl = {}; m.color.getHSL(hsl); m.color.setHSL(hsl.h, Math.min(1, hsl.s * 1.35), hsl.l * 0.92); }
+      });
     }
     if (/^Ceil_/.test(name)) ceilings.push(o);
     box.setFromObject(o);
@@ -185,12 +189,12 @@ function addHouse(root) {
   scene.add(root); house = root;
   window.__dbg = { colliders, camBlockers, player, groundHeightAt, resolveWalls, unblockedDistance, THREE, HEIGHT, orbit: () => ({ ...orbit, eff: camDistEff }) };
   // pendants: living, rear room, hall, kitchen
-  lamp(5.62, HOUSE.ceil - 0.85, -2.56, 40);      // three pendants down the big room
-  lamp(5.62, HOUSE.ceil - 0.85, -6.40, 40);
-  lamp(5.62, HOUSE.ceil - 0.85, -10.24, 40);
-  lamp(5.17, HOUSE.ceil - 0.6, -15.92, 30);      // dining room
-  lamp(11.85, HOUSE.ceil - 0.4, -4.0, 8);        // hall
-  lamp(1.80, HOUSE.ceil - 0.75, -21.5, 20, 0xf4f6ff);   // kitchen
+  lamp(5.62, HOUSE.ceil - 0.85, -2.56, 26);      // three pendants down the big room
+  lamp(5.62, HOUSE.ceil - 0.85, -6.40, 26);
+  lamp(5.62, HOUSE.ceil - 0.85, -10.24, 26);
+  lamp(5.17, HOUSE.ceil - 0.6, -15.92, 20);      // dining room
+  lamp(11.85, HOUSE.ceil - 0.4, -4.0, 6);        // hall
+  lamp(1.80, HOUSE.ceil - 0.75, -21.5, 14, 0xf4f6ff);   // kitchen
   sun.target.position.copy(HOUSE.centre); sun.target.updateMatrixWorld();
   sun.position.copy(HOUSE.centre).add(new THREE.Vector3(6, 11, 9));
 }
