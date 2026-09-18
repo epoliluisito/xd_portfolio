@@ -22,6 +22,7 @@
     background:#fff;border:1px solid rgba(91,46,56,.20);font:inherit;font-size:11.5px;line-height:18px}
   #right{right:16px;top:16px;width:236px;display:flex;flex-direction:column;gap:8px}
   #right strong{font-size:12px;color:var(--mag);letter-spacing:.03em}
+  input[type=range]{accent-color:var(--mag)}
   select,button{font:inherit;font-size:12.5px;width:100%;padding:6px 9px;border-radius:9px;cursor:pointer;
     border:1px solid rgba(91,46,56,.18);background:#fff;color:var(--ink)}
   select:focus,button:focus{outline:none;border-color:var(--mag)}
@@ -69,6 +70,8 @@
   <kbd>[</kbd> <kbd>]</kbd> lens · <kbd>Y</kbd> snap to 1.60 m eye height · <kbd>T</kbd> top view · <kbd>H</kbd> ceilings<br>
   <h2>place him</h2>
   <kbd>G</kbd> grab: he follows the mouse on the floor, click drops · arrows nudge 5 cm (<kbd>Shift</kbd> 25) · <kbd>,</kbd> <kbd>.</kbd> turn<br>
+  <h2>light</h2>
+  slider or <kbd>J</kbd> <kbd>K</kbd> — time of day, the sun comes through the windows · <kbd>L</kbd> work light<br>
   <h2>picture</h2>
   <kbd>P</kbd> saves a PNG at the size shown · <kbd>F</kbd> aspect · <kbd>N</kbd> size · <kbd>R</kbd> thirds · <kbd>?</kbd> hide this
 </div>
@@ -78,6 +81,9 @@
   <select id="faceSelect"></select>
   <strong>Lens</strong>
   <select id="lensSelect"></select>
+  <strong>Light &nbsp;<span id="timeLabel" style="font-weight:400;opacity:.7"></span></strong>
+  <input id="timeSlider" type="range" min="0" max="24" step="0.25" value="14" style="width:100%">
+  <label style="font-size:12px;display:flex;gap:6px;align-items:center;cursor:pointer"><input id="workLight" type="checkbox"> work light (flat, for when it's too dark) · <kbd>L</kbd></label>
   <strong>Picture</strong>
   <div class="row"><select id="aspectSelect"></select><select id="sizeSelect"></select></div>
   <button id="shoot" class="primary">Take picture &nbsp;·&nbsp; P</button>
@@ -126,21 +132,60 @@ let lens = 35;
 function applyLens() { camera.setFocalLength(lens); camera.updateProjectionMatrix(); }
 
 /* ---------------------------------------------------------------- light */
-scene.add(new THREE.HemisphereLight(0xd8e0ee, 0x8a7078, 0.55));
+const hemi = new THREE.HemisphereLight(0xd8e0ee, 0x8a7078, 0.55); scene.add(hemi);
+const work = new THREE.HemisphereLight(0xffffff, 0xd8ccd0, 0.0); scene.add(work);   // the flat work light, off by default
 const sun = new THREE.DirectionalLight(0xfff0dc, 2.6);
-sun.position.set(6, 11, 9);                   // in through the bay
+sun.position.set(6, 11, 9);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.near = 1; sun.shadow.camera.far = 40;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 90;
 const sd = 22;
 sun.shadow.camera.left = -sd; sun.shadow.camera.right = sd; sun.shadow.camera.top = sd; sun.shadow.camera.bottom = -sd;
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
 scene.add(sun); scene.add(sun.target);
 // room lights, roughly where the pendants are
+const lamps = [];
 function lamp(x, y, z, watts = 12, color = 0xfff0dc) {
   const l = new THREE.PointLight(color, watts, 18, 1.6);
-  l.position.set(x, y, z); scene.add(l); return l;
+  l.position.set(x, y, z); l.userData.watts = watts; scene.add(l); lamps.push(l); return l;
 }
+
+/* ---- time of day. The sun rises on +x, passes over the front of the house (+z, where the bay is)
+   at midday and sets on -x, so the bay gets the afternoon and the rear rooms the morning. */
+let hour = 14, workOn = false;
+const SKY = { night: new THREE.Color(0x0a0f1e), dawn: new THREE.Color(0xe9a878), day: new THREE.Color(0xbfcbdc) };
+const GROUND = { night: new THREE.Color(0x0b0a10), day: new THREE.Color(0x8a7078) };
+const SUNC = { low: new THREE.Color(0xffb070), high: new THREE.Color(0xfff2e0) };
+const _c1 = new THREE.Color(), _c2 = new THREE.Color();
+const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function setTime(h) {
+  hour = ((h % 24) + 24) % 24;
+  const az = Math.PI * (hour - 6) / 12;                       // 0 at 06:00 (east), pi/2 at noon (front), pi at 18:00 (west)
+  const el = Math.PI / 3 * Math.sin(Math.PI * (hour - 6) / 12); // up to 60 deg at midday, below the horizon at night
+  const up = Math.sin(el);                                    // -1 .. 1
+  const day = smooth(-0.04, 0.18, up);                        // 0 at night, 1 in full day, with a short dusk
+  const R = 40;
+  sun.position.copy(HOUSE.centre).add(new THREE.Vector3(Math.cos(az) * Math.cos(el) * R, Math.max(0.5, up * R), Math.sin(az) * Math.cos(el) * R));
+  sun.target.position.copy(HOUSE.centre); sun.target.updateMatrixWorld();
+  sun.intensity = 3.2 * smooth(0.0, 0.35, up);
+  sun.color.copy(_c1.copy(SUNC.low).lerp(SUNC.high, smooth(0.05, 0.6, up)));
+  sun.visible = sun.intensity > 0.01;
+  // sky: night -> dawn -> day, the dawn colour only near the horizon
+  const dawn = Math.max(0, 1 - Math.abs(up) / 0.16) * (up > -0.16 ? 1 : 0);
+  _c1.copy(SKY.night).lerp(SKY.day, day); _c1.lerp(SKY.dawn, dawn * 0.7);
+  scene.background.copy(_c1);
+  hemi.color.copy(_c1); hemi.groundColor.copy(_c2.copy(GROUND.night).lerp(GROUND.day, day));
+  hemi.intensity = 0.05 + 0.72 * day;
+  // the house lights come on as it gets dark
+  const lampsOn = 1 - smooth(0.02, 0.22, up);
+  for (const l of lamps) l.intensity = l.userData.watts * (0.04 + 0.96 * lampsOn) * 0.7;
+  work.intensity = workOn ? 1.3 : 0.0;
+  renderer.toneMappingExposure = workOn ? 1.0 : 0.9;
+  const hh = Math.floor(hour), mm = Math.round((hour - hh) * 60);
+  const lbl = document.getElementById('timeLabel'); if (lbl) lbl.textContent = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  const sl = document.getElementById('timeSlider'); if (sl && +sl.value !== hour) sl.value = hour;
+}
+function setWorkLight(on) { workOn = on; document.getElementById('workLight').checked = on; setTime(hour); toast(on ? 'work light on' : 'work light off'); }
 
 /* ================================================================ the house */
 /* Blender (x, y, z) arrives as three.js (x, z, -y): the front of the house is +z here, depth runs to -z.
@@ -175,7 +220,7 @@ function addHouse(root) {
       const ms = Array.isArray(o.material) ? o.material : [o.material];
       ms.forEach(m => {
         m.metalness = 0; m.roughness = Math.min(1, (m.roughness ?? 0.9) + 0.05);
-        if (m.transparent) { m.depthWrite = false; }
+        if (m.transparent) { m.depthWrite = false; o.castShadow = false; m.roughness = 0.4; m.opacity = 0.16; }   // glass lets the sun (and the sky) through
         else if (m.color) { const hsl = {}; m.color.getHSL(hsl); m.color.setHSL(hsl.h, Math.min(1, hsl.s * 1.35), hsl.l * 0.92); }
       });
     }
@@ -187,7 +232,7 @@ function addHouse(root) {
     colliders.push({ min: box.min.clone(), max: box.max.clone(), name, wall: IS_WALL.test(name) });
   });
   scene.add(root); house = root;
-  window.__dbg = { colliders, camBlockers, player, groundHeightAt, resolveWalls, unblockedDistance, THREE, HEIGHT, orbit: () => ({ ...orbit, eff: camDistEff }) };
+  window.__dbg = { colliders, camBlockers, player, groundHeightAt, resolveWalls, unblockedDistance, THREE, HEIGHT, renderer, camera, scene, sun, hemi, orbit: () => ({ ...orbit, eff: camDistEff }) };
   // pendants: living, rear room, hall, kitchen
   lamp(5.62, HOUSE.ceil - 0.85, -2.56, 26);      // three pendants down the big room
   lamp(5.62, HOUSE.ceil - 0.85, -6.40, 26);
@@ -195,8 +240,7 @@ function addHouse(root) {
   lamp(5.17, HOUSE.ceil - 0.6, -15.92, 20);      // dining room
   lamp(11.85, HOUSE.ceil - 0.4, -4.0, 6);        // hall
   lamp(1.80, HOUSE.ceil - 0.75, -21.5, 14, 0xf4f6ff);   // kitchen
-  sun.target.position.copy(HOUSE.centre); sun.target.updateMatrixWorld();
-  sun.position.copy(HOUSE.centre).add(new THREE.Vector3(6, 11, 9));
+  setTime(hour);
 }
 let ceilingsOn = true;
 function setCeilings(on) { ceilingsOn = on; ceilings.forEach(m => m.visible = on); toast(on ? 'ceilings on' : 'ceilings hidden'); }
@@ -349,7 +393,7 @@ addEventListener('wheel', e => {
 }, { passive: true });
 
 addEventListener('keydown', e => {
-  if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') {
     // let the menu keep its own keys, hand everything else back to the scene
     if (/^(Arrow|Enter|Space)/.test(e.code)) return;
     e.target.blur();
@@ -370,6 +414,9 @@ addEventListener('keydown', e => {
     case 'KeyN': setSize((sizeIdx + 1) % aspect.sizes.length); break;
     case 'KeyR': thirdsOn = !thirdsOn; document.getElementById('reticle').classList.toggle('off', !thirdsOn); break;
     case 'KeyH': setCeilings(!ceilingsOn); break;
+    case 'KeyJ': setTime(hour - 0.5); break;
+    case 'KeyK': setTime(hour + 0.5); break;
+    case 'KeyL': setWorkLight(!workOn); break;
     case 'KeyB': wallAvoid = !wallAvoid; toast(wallAvoid ? 'camera stays inside the room' : 'camera roams freely through walls'); break;
     case 'KeyT': topView(); break;
     case 'KeyY': if (mode === 'camera') { free.pos.y = 1.60; toast('camera at 1.60 m — adult eye height'); } break;
@@ -571,7 +618,7 @@ function tick() {
 
   const p = player.position, c = camera.position;
   hud.textContent =
-    `${mode.toUpperCase()}   ${lens} mm   ${aspect.id} · ${aspect.sizes[sizeIdx].join('×')}\n` +
+    `${mode.toUpperCase()}   ${lens} mm   ${aspect.id} · ${aspect.sizes[sizeIdx].join('×')}   ${document.getElementById('timeLabel').textContent}${workOn ? ' · work light' : ''}\n` +
     `camera  x ${c.x.toFixed(2)}  y ${c.y.toFixed(2)} m  z ${c.z.toFixed(2)}   ${(c.y - 1.60) > -0.03 && (c.y - 1.60) < 0.03 ? '← adult eye height' : ''}\n` +
     `Plusso  x ${p.x.toFixed(2)}  y ${p.y.toFixed(2)}  z ${p.z.toFixed(2)}   facing ${((facing * 180 / Math.PI) % 360).toFixed(0)}°   ${grounded ? '' : 'in the air'}`;
 }
@@ -597,7 +644,10 @@ for (const s of document.querySelectorAll('select, button')) {
   s.addEventListener('click', e => { if (e.target.tagName === 'BUTTON') e.target.blur(); });
 }
 canvas.addEventListener('mousedown', () => { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); });
-fillSizes(); layoutFrame(); applyLens();
+document.getElementById('timeSlider').addEventListener('input', e => setTime(+e.target.value));
+document.getElementById('workLight').addEventListener('change', e => setWorkLight(e.target.checked));
+for (const s of document.querySelectorAll('input')) { s.addEventListener('mousedown', () => { if (document.pointerLockElement) document.exitPointerLock(); }); s.addEventListener('change', e => e.target.blur()); }
+fillSizes(); layoutFrame(); applyLens(); setTime(hour);
 </script>
 </body>
 </html>

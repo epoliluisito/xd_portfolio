@@ -29,6 +29,14 @@ rather than fight you. B turns on wall-avoidance (it eases in, never closer than
 height, the project's rule for in-context shots. T jumps to a top view with the ceilings hidden;
 fly down from there. H toggles the ceilings. The free camera passes through walls on purpose.
 
+## Light
+
+The slider (or J / K, half an hour at a time) sets the time of day. The sun is real: it rises on the
+east side, passes over the front of the house at midday so the bay gets the afternoon, and sets in
+the west, casting shadows through the windows. The sky and ambient follow it, and the pendants come
+on as it gets dark. L (or the checkbox) adds a flat work light for when you just need to see.
+Pictures are taken with whatever light is set.
+
 ## Placing him
 
 In orbit or camera mode: G grabs him — he follows the mouse across the floor he is standing on,
