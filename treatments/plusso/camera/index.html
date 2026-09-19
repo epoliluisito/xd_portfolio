@@ -3,35 +3,51 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plusso — house camera</title>
+<title>Plusso — house &amp; street camera</title>
 <style>
-  :root{ --ink:#5b2e38; --mag:#eb008c; --bg:#1a1418; }
+  :root{ --ink:#5b2e38; --mag:#eb008c; --bg:#1a1418; --line:rgba(91,46,56,.14) }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);
     font-family:"Fredoka",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink)}
   #app{position:fixed;inset:0}
   canvas{display:block}
+  kbd{display:inline-block;min-width:19px;text-align:center;padding:0 5px;border-radius:5px;
+    background:#fff;border:1px solid rgba(91,46,56,.20);font:inherit;font-size:11px;line-height:17px;color:var(--ink)}
+  /* ---- the menu bar */
+  #bar{position:fixed;left:12px;top:12px;z-index:20;display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 24px)}
+  .menu{position:relative}
+  .mbtn,#shoot,#helpBtn{font:inherit;font-size:12.5px;padding:7px 12px;border-radius:999px;cursor:pointer;color:var(--ink);
+    background:rgba(255,255,255,.86);backdrop-filter:blur(10px);border:1px solid var(--line);box-shadow:0 4px 16px rgba(0,0,0,.16);white-space:nowrap}
+  .mbtn b{font-weight:600;color:var(--mag)}
+  .mbtn::after{content:" ▾";opacity:.55;font-size:10px}
+  .menu.open .mbtn{background:#fff;border-color:var(--mag)}
+  .drop{display:none;position:absolute;left:0;top:calc(100% + 6px);min-width:250px;background:rgba(255,255,255,.94);backdrop-filter:blur(12px);
+    border:1px solid var(--line);border-radius:14px;padding:8px;box-shadow:0 10px 30px rgba(0,0,0,.22);font-size:12.5px;line-height:1.45}
+  .menu.open .drop{display:block}
+  .drop button,.drop label.row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;
+    font:inherit;font-size:12.5px;padding:6px 8px;border-radius:9px;border:0;background:none;color:var(--ink);cursor:pointer}
+  .drop button:hover,.drop label.row:hover{background:rgba(235,0,140,.08)}
+  .drop button.on{color:var(--mag);font-weight:600}
+  .drop label.row select{flex:1;max-width:150px}
+  .drop select,.drop input[type=range]{font:inherit;font-size:12.5px;padding:4px 7px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink)}
+  .drop select:focus{outline:none;border-color:var(--mag)}
+  .drop .hint{font-size:11.5px;opacity:.68;padding:5px 8px 2px;line-height:1.4}
+  .drop .hint b{font-weight:600;opacity:1}
+  .drop hr{border:0;border-top:1px solid var(--line);margin:5px 0}
+  .drop .full{padding:4px 8px}
+  .drop input[type=range]{width:100%;accent-color:var(--mag);padding:0}
+  input[type=checkbox]{accent-color:var(--mag);margin:0 6px 0 0}
+  #shoot{background:var(--mag);color:#fff;border-color:var(--mag);font-weight:600}
+  #shoot kbd{background:rgba(255,255,255,.22);border-color:transparent;color:#fff}
+  #helpBtn{width:34px;padding:7px 0;text-align:center;font-weight:600}
+  /* ---- overlays */
   .panel{position:fixed;z-index:10;background:rgba(255,255,255,.80);backdrop-filter:blur(10px);
-    border:1px solid rgba(91,46,56,.10);border-radius:14px;padding:11px 13px;
-    box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:12.5px;line-height:1.5}
+    border:1px solid var(--line);border-radius:14px;padding:11px 13px;box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:12.5px;line-height:1.5}
   .panel.hidden{display:none}
-  #help{left:16px;top:16px;width:292px}
-  #help h1{margin:0 0 6px;font-size:15px;letter-spacing:.02em;color:var(--mag)}
+  #help{left:12px;top:56px;width:330px;z-index:19}
+  #help h1{margin:0 0 6px;font-size:14px;color:var(--mag)}
   #help h2{margin:8px 0 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.6}
-  kbd{display:inline-block;min-width:19px;text-align:center;padding:0 5px;margin:0 1px;border-radius:5px;
-    background:#fff;border:1px solid rgba(91,46,56,.20);font:inherit;font-size:11.5px;line-height:18px}
-  #right{right:16px;top:16px;width:236px;display:flex;flex-direction:column;gap:8px}
-  #right strong{font-size:12px;color:var(--mag);letter-spacing:.03em}
-  input[type=range]{accent-color:var(--mag)}
-  select,button{font:inherit;font-size:12.5px;width:100%;padding:6px 9px;border-radius:9px;cursor:pointer;
-    border:1px solid rgba(91,46,56,.18);background:#fff;color:var(--ink)}
-  select:focus,button:focus{outline:none;border-color:var(--mag)}
-  button.primary{background:var(--mag);color:#fff;border-color:var(--mag);font-weight:600;letter-spacing:.02em}
-  .row{display:flex;gap:6px}
-  .row>*{flex:1}
-  #hud{left:16px;bottom:16px;font-variant-numeric:tabular-nums;white-space:pre;line-height:1.45}
-  #mode{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:11;font-size:12px;letter-spacing:.14em;
-    text-transform:uppercase;background:var(--mag);color:#fff;padding:5px 14px;border-radius:999px;font-weight:600}
+  #hud{left:12px;bottom:12px;font-variant-numeric:tabular-nums;white-space:pre;line-height:1.45;padding:8px 11px;font-size:12px}
   #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:12;font-size:12.5px;
     background:rgba(255,255,255,.92);padding:6px 14px;border-radius:999px;opacity:0;transition:opacity .25s}
   #toast.on{opacity:1}
@@ -47,53 +63,79 @@
   #reticle::before{left:33.333%;right:33.333%;top:0;bottom:0;border-left:1px solid rgba(255,255,255,.14);border-right:1px solid rgba(255,255,255,.14);background:none}
   #reticle::after{top:33.333%;bottom:33.333%;left:0;right:0;border-top:1px solid rgba(255,255,255,.14);border-bottom:1px solid rgba(255,255,255,.14);background:none}
   #reticle.off::before,#reticle.off::after{display:none}
-  small{opacity:.65}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div class="bar" id="barT"></div><div class="bar" id="barB"></div><div class="bar" id="barL"></div><div class="bar" id="barR"></div>
 <div id="reticle"></div>
-<div id="mode">play</div>
 
-<div id="help" class="panel">
-  <h1>Plusso — house camera</h1>
-  <h2>modes · <kbd>Tab</kbd> cycles</h2>
-  <kbd>1</kbd> play &nbsp; <kbd>2</kbd> orbit &nbsp; <kbd>3</kbd> camera<br>
-  <h2>play — move him</h2>
-  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk, camera-relative · <kbd>Shift</kbd> run · <kbd>Space</kbd> jump<br>
-  click for mouse look · drag orbits · wheel zooms<br>
-  <h2>orbit — look at him</h2>
-  drag or mouse look swings round him · wheel zooms · <kbd>O</kbd> is a shortcut · <kbd>B</kbd> keeps the camera inside the room (off by default)<br>
-  <h2>camera — free, he stays put</h2>
-  <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>E</kbd>/<kbd>Q</kbd> up/down · <kbd>Shift</kbd> fast · <kbd>Alt</kbd> fine · wheel dollies<br>
-  <kbd>[</kbd> <kbd>]</kbd> lens · <kbd>Y</kbd> snap to 1.60 m eye height · <kbd>T</kbd> top view · <kbd>H</kbd> ceilings<br>
-  <h2>place him</h2>
-  <kbd>G</kbd> grab: he follows the mouse on the floor, click drops · arrows nudge 5 cm (<kbd>Shift</kbd> 25) · <kbd>,</kbd> <kbd>.</kbd> turn<br>
-  <h2>light</h2>
-  slider or <kbd>J</kbd> <kbd>K</kbd> — time of day, the sun comes through the windows · <kbd>L</kbd> work light<br>
-  <h2>picture</h2>
-  <kbd>P</kbd> saves a PNG at the size shown · <kbd>F</kbd> aspect · <kbd>N</kbd> size · <kbd>R</kbd> thirds · <kbd>?</kbd> hide this
+<div id="bar">
+  <div class="menu"><button class="mbtn">Mode · <b id="mode">play</b></button><div class="drop">
+    <button data-act="mode:play">Play — walk him with W A S D <kbd>1</kbd></button>
+    <button data-act="mode:orbit">Orbit — swing the camera round him <kbd>2</kbd></button>
+    <button data-act="mode:camera">Camera — free camera with a lens <kbd>3</kbd></button>
+    <div class="hint"><kbd>Tab</kbd> cycles. Play: <kbd>Shift</kbd> run, <kbd>Space</kbd> jump, click for mouse look, drag orbits, wheel zooms.</div>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Move him</button><div class="drop">
+    <div class="hint"><b>Double-click</b> the floor or street — he walks there.<br><b>Shift-click</b> — he is put there at once, anywhere.</div>
+    <hr>
+    <label class="row">Go to <select id="placeSelect"></select></label>
+    <button data-act="next">Next place <kbd>U</kbd></button>
+    <hr>
+    <button data-act="side">Walk sideways — through doors <span style="white-space:nowrap"><kbd>X</kbd> held</span></button>
+    <button data-act="grab">Grab him with the mouse <kbd>G</kbd></button>
+    <button data-act="turnL">Turn him left 15° <kbd>,</kbd></button>
+    <button data-act="turnR">Turn him right 15° <kbd>.</kbd></button>
+    <div class="hint">Arrows nudge 5 cm (<kbd>Shift</kbd> 25) · <kbd>Esc</kbd> stops a walk. He is 1.15 m across the arms: doors need sideways.</div>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Camera</button><div class="drop">
+    <label class="row">Lens <select id="lensSelect"></select></label>
+    <button data-act="eye">Camera to 1.60 m — adult eye height <kbd>Y</kbd></button>
+    <button data-act="top">Top view <kbd>T</kbd></button>
+    <button data-act="ceil" id="ceilBtn">Hide ceilings <kbd>H</kbd></button>
+    <button data-act="wall" id="wallBtn">Keep the follow camera inside the room <kbd>B</kbd></button>
+    <div class="hint"><kbd>[</kbd> <kbd>]</kbd> lens. Free camera: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly, <kbd>E</kbd>/<kbd>Q</kbd> up/down, <kbd>Shift</kbd> fast, wheel dollies. Orbit: drag, wheel zooms.</div>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Look</button><div class="drop">
+    <label class="row">Expression <select id="faceSelect"></select></label>
+    <label class="row"><span><input id="furBox" type="checkbox" checked>Fur — off shows the smooth body</span><kbd>V</kbd></label>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Light · <b id="timeLabel"></b></button><div class="drop">
+    <div class="full"><input id="timeSlider" type="range" min="0" max="24" step="0.25" value="14"></div>
+    <label class="row"><span><input id="workLight" type="checkbox">Work light — flat, for when it's too dark</span><kbd>L</kbd></label>
+    <div class="hint"><kbd>J</kbd> <kbd>K</kbd> step half an hour. The sun moves, the lamps come on at dusk.</div>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Picture</button><div class="drop">
+    <label class="row">Aspect <select id="aspectSelect"></select></label>
+    <label class="row">Size <select id="sizeSelect"></select></label>
+    <button data-act="thirds">Thirds grid <kbd>R</kbd></button>
+    <div class="hint"><kbd>F</kbd> aspect, <kbd>N</kbd> size. Saves a PNG to Downloads — exactly what is inside the frame.</div>
+  </div></div>
+
+  <button id="shoot">Take picture <kbd>P</kbd></button>
+  <button id="helpBtn" title="all the keys">?</button>
 </div>
 
-<div id="right" class="panel">
-  <strong>Expression</strong>
-  <select id="faceSelect"></select>
-  <strong>Lens</strong>
-  <select id="lensSelect"></select>
-  <strong>Light &nbsp;<span id="timeLabel" style="font-weight:400;opacity:.7"></span></strong>
-  <input id="timeSlider" type="range" min="0" max="24" step="0.25" value="14" style="width:100%">
-  <label style="font-size:12px;display:flex;gap:6px;align-items:center;cursor:pointer"><input id="workLight" type="checkbox"> work light (flat, for when it's too dark) · <kbd>L</kbd></label>
-  <strong>Picture</strong>
-  <div class="row"><select id="aspectSelect"></select><select id="sizeSelect"></select></div>
-  <button id="shoot" class="primary">Take picture &nbsp;·&nbsp; P</button>
-  <small>Saves to your Downloads folder. The picture is exactly what is inside the frame.</small>
+<div id="help" class="panel hidden">
+  <h1>All the keys</h1>
+  <h2>modes</h2><kbd>1</kbd> play · <kbd>2</kbd> orbit · <kbd>3</kbd> camera · <kbd>Tab</kbd> cycles · <kbd>O</kbd> orbit/play<br>
+  <h2>play</h2><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · <kbd>Shift</kbd> run · <kbd>Space</kbd> jump · <kbd>X</kbd> sideways · click = mouse look, <kbd>Esc</kbd> releases<br>
+  <h2>move him</h2>double-click floor = walk there · <kbd>Shift</kbd>-click = put him there · <kbd>U</kbd> / <kbd>Shift</kbd><kbd>U</kbd> places · <kbd>G</kbd> grab · arrows nudge · <kbd>,</kbd> <kbd>.</kbd> turn · <kbd>Esc</kbd> stop<br>
+  <h2>camera</h2><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>E</kbd> <kbd>Q</kbd> up/down · <kbd>Shift</kbd> fast · <kbd>Alt</kbd> fine · wheel dolly/zoom · <kbd>[</kbd> <kbd>]</kbd> lens · <kbd>Y</kbd> 1.60 m · <kbd>T</kbd> top · <kbd>H</kbd> ceilings · <kbd>B</kbd> stay in room<br>
+  <h2>look &amp; light</h2><kbd>V</kbd> fur · <kbd>J</kbd> <kbd>K</kbd> time · <kbd>L</kbd> work light<br>
+  <h2>picture</h2><kbd>P</kbd> take · <kbd>F</kbd> aspect · <kbd>N</kbd> size · <kbd>R</kbd> thirds · <kbd>?</kbd> this list
 </div>
 
 <div id="hud" class="panel"></div>
 <div id="toast"></div>
 <div id="flash"></div>
-<div id="loading"><div><span class="dot"></span>loading Plusso and the house…</div></div>
+<div id="loading"><div><span class="dot"></span>loading Plusso, the house and the street…</div></div>
 
 <script src="assets/plusso-glb.js"></script>
 <script src="assets/house-glb.js"></script>
@@ -106,7 +148,9 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+const DRACO_PATH = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/';   // the street glb is Draco-compressed
 
 /* ================================================================ renderer / scene */
 const app = document.getElementById('app');
@@ -123,12 +167,13 @@ app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xbfcbdc);      // an overcast London sky, through the windows
+scene.fog = new THREE.Fog(0xbfcbdc, 70, 260);      // the street fades into the sky instead of ending at the edge of the ground
 
 // a camera with a real lens: 36 mm film gauge, focal length in millimetres
 const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 200);
 camera.filmGauge = 36;
 const LENSES = [18, 24, 28, 35, 50, 85];
-let lens = 35;
+let lens = 28;
 function applyLens() { camera.setFocalLength(lens); camera.updateProjectionMatrix(); }
 
 /* ---------------------------------------------------------------- light */
@@ -137,9 +182,10 @@ const work = new THREE.HemisphereLight(0xffffff, 0xd8ccd0, 0.0); scene.add(work)
 const sun = new THREE.DirectionalLight(0xfff0dc, 2.6);
 sun.position.set(6, 11, 9);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.near = 1; sun.shadow.camera.far = 90;
-const sd = 22;
+const SHADOW_RES = +(new URLSearchParams(location.search).get('shadow')) || 4096;   // ?shadow=2048 for a slow machine
+sun.shadow.mapSize.set(SHADOW_RES, SHADOW_RES);
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 120;
+const sd = 34;                                  // the shadow box follows Plusso, so this covers the house or a good stretch of street
 sun.shadow.camera.left = -sd; sun.shadow.camera.right = sd; sun.shadow.camera.top = sd; sun.shadow.camera.bottom = -sd;
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.035;
 scene.add(sun); scene.add(sun.target);
@@ -153,6 +199,8 @@ function lamp(x, y, z, watts = 12, color = 0xfff0dc) {
 /* ---- time of day. The sun rises on +x, passes over the front of the house (+z, where the bay is)
    at midday and sets on -x, so the bay gets the afternoon and the rear rooms the morning. */
 let hour = 14, workOn = false;
+const sunDir = new THREE.Vector3(6, 11, 9);
+const streetLamps = [];
 const SKY = { night: new THREE.Color(0x0a0f1e), dawn: new THREE.Color(0xe9a878), day: new THREE.Color(0xbfcbdc) };
 const GROUND = { night: new THREE.Color(0x0b0a10), day: new THREE.Color(0x8a7078) };
 const SUNC = { low: new THREE.Color(0xffb070), high: new THREE.Color(0xfff2e0) };
@@ -164,16 +212,18 @@ function setTime(h) {
   const el = Math.PI / 3 * Math.sin(Math.PI * (hour - 6) / 12); // up to 60 deg at midday, below the horizon at night
   const up = Math.sin(el);                                    // -1 .. 1
   const day = smooth(-0.04, 0.18, up);                        // 0 at night, 1 in full day, with a short dusk
-  const R = 40;
-  sun.position.copy(HOUSE.centre).add(new THREE.Vector3(Math.cos(az) * Math.cos(el) * R, Math.max(0.5, up * R), Math.sin(az) * Math.cos(el) * R));
-  sun.target.position.copy(HOUSE.centre); sun.target.updateMatrixWorld();
+  const R = 60;
+  sunDir.set(Math.cos(az) * Math.cos(el) * R, Math.max(0.5, up * R), Math.sin(az) * Math.cos(el) * R);
+  sun.position.copy(player.position).add(sunDir);
+  sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
   sun.intensity = 3.2 * smooth(0.0, 0.35, up);
   sun.color.copy(_c1.copy(SUNC.low).lerp(SUNC.high, smooth(0.05, 0.6, up)));
   sun.visible = sun.intensity > 0.01;
   // sky: night -> dawn -> day, the dawn colour only near the horizon
   const dawn = Math.max(0, 1 - Math.abs(up) / 0.16) * (up > -0.16 ? 1 : 0);
   _c1.copy(SKY.night).lerp(SKY.day, day); _c1.lerp(SKY.dawn, dawn * 0.7);
-  scene.background.copy(_c1);
+  scene.background.copy(_c1); scene.fog.color.copy(_c1);
+  streetLamps.forEach(l => l.intensity = 40 * (1 - smooth(0.02, 0.22, up)));
   hemi.color.copy(_c1); hemi.groundColor.copy(_c2.copy(GROUND.night).lerp(GROUND.day, day));
   hemi.intensity = 0.05 + 0.72 * day;
   // the house lights come on as it gets dark
@@ -199,10 +249,37 @@ const colliders = [];      // {min, max, name, wall}
 const ceilings = [];
 let house = null;
 
+/* The street (Blender collection CITY) is built from the same house frame: front wall at z = +0.23, front garden 5.4 m,
+   pavement 2.0 m (z 5.63..7.63), 7.5 m carriageway (z 7.63..15.13, 125 mm below the pavement), far pavement, far terraces.
+   x runs -58..70 along the street; our house is x 0..12.4, the zebra is at x 26, the corner shop x 23..32, the pub x 42.6.. */
+const STREET = { kerb: 7.63, farKerb: 15.13, roadY: -0.125, xMin: -58, xMax: 70 };
+const PLACES = [
+  { id: 'living',  label: 'Living room',        pos: [5.62, 0, -4.60],  yaw: 0 },
+  { id: 'hall',    label: 'Hall, by the door',  pos: [11.88, 0, -2.9],  yaw: 0 },
+  { id: 'garden',  label: 'Front garden',       pos: [10.3, 0, 2.6],    yaw: Math.PI },
+  { id: 'gate',    label: 'Pavement, at the gate', pos: [11.9, 0, 6.6], yaw: Math.PI },
+  { id: 'road',    label: 'In the road',        pos: [12.0, -0.125, 11.4], yaw: Math.PI / 2 },
+  { id: 'busstop', label: 'Bus stop (west)',    pos: [-19.3, 0, 6.9],   yaw: Math.PI },
+  { id: 'zebra',   label: 'Zebra crossing',     pos: [26.0, -0.125, 11.4], yaw: 0 },
+  { id: 'shop',    label: 'Corner shop',        pos: [28.5, 0, 16.0],   yaw: 0 },
+  { id: 'flats',   label: 'Mansion block',      pos: [38.5, 0, 16.1],   yaw: 0 },
+];
+
+// house interior: everything is solid except trim, glass and things hung on walls
 const NO_COLLIDE = /^(Floor_|Ceil_|Rug|Hearth|Handrail|Skirt_|PicRail_|Arch_|Switch_|Socket_|Pendant_|Picture|Lamp_|FrontDoor_fanlight|SideDoor_glass|KitWindow_glass|RearWindow_glass|Bay_glass|Bay_rail|Bay_mullion|Bay_windowboard)/;
 const IS_WALL = /^(FrontWall|RearWall|KitRearWall|HallWall|MidWall|Party_|Ext_kit|Bay_dwarf|Bay_head|Chimney_breast|Door_)/;
-const CAM_BLOCK = /^(FrontWall|RearWall|KitRearWall|HallWall|MidWall|Party_|Ext_kit|Bay_|Chimney_breast|Door_|Ceil_|Floor_|.*_glass|.*Door_leaf|Stair_landing)/;
+const CAM_BLOCK = /^(FrontWall|RearWall|KitRearWall|HallWall|MidWall|Party_|Ext_kit|Bay_|Chimney_breast|Door_|Ceil_|Floor_|.*_glass|.*Door_leaf|Stair_landing|.*_body$|.*_plinth$|Shop_(stall|pier|glass|door)|Flats_(wall|gf))/;
+// street: only what you would actually walk into is solid; the road, kerbs, lines, roofs, canopies, arms and hats are not
+const CITY_ANY = /^(NearL|NearR|Far|Our_|Shop_|Pub_|Flats_|Car_|Van_|Bus_|Bike_|P_|Lamp\w*\d|Tree|BusStop|PillarBox|PhoneBox|Bollard|Bench|LitterBin|Sign30|Belisha|Zebra|RoadLine|BayLine|Kerb|G_)/;
+const CITY_GROUND = /^(G_|Kerb_|RoadLine|BayLine|Zebra|.*_pit$|.*_path$|.*_lawn$|.*_step$)/;                // walk over these; they set the ground height
+// (Our_gate is left open: he can walk from the front door to the pavement)
+const CITY_SOLID = /(_body$|_plinth$|_bars$|_gpost|_bayd\d$|_bayh\d$|_bayg\d$|_baym\d[ab]$|_gw_glass$|_door_leaf$|_pier_[ab]$|_stall$|Shop_glass$|Shop_door$|Flats_wall$|Flats_gf$|_trunk$|_post$|^Bollard|^PillarBox$|^PhoneBox$|^LitterBin$|^Bench_(seat|back|leg)|BusStop\w_(back|leg\w*|seat|pole)$|_wheel\d[ab]?$|_w\d$|_frame$|_torso$|_hips$|_leg\d$|^Our_bin$|_nose$|_cabin$|_lower$)/;
+const CITY_WALL = /(_body$|_plinth$|_bars$|_pier_[ab]$|_stall$|Flats_wall$|Flats_gf$)/;
 const camBlockers = [];   // AABBs the follow camera must stay inside of / not cross
+
+/* procedural Blender materials (brick, slate, paving, grass...) export as plain grey, so they get their colours back here */
+const MAT_COLOURS = { c_brick_london: 0x9b8664, c_brick_red: 0x8f4a3c, c_grass: 0x6f8f4e, c_paving: 0xb5b3ac, c_asphalt: 0x585a5e,
+  c_kerb: 0xa9a7a0, c_stone: 0xcfc9bb, c_slate: 0x4b4e54, c_stucco: 0xe4dfd3, c_trunk: 0x6b5a48, c_leaf: 0x5f8a4f, c_world_ground: 0x6b7060 };
 
 function objectName(o, root) {
   let p = o;
@@ -219,20 +296,43 @@ function addHouse(root) {
     if (o.material) {
       const ms = Array.isArray(o.material) ? o.material : [o.material];
       ms.forEach(m => {
-        m.metalness = 0; m.roughness = Math.min(1, (m.roughness ?? 0.9) + 0.05);
-        if (m.transparent) { m.depthWrite = false; o.castShadow = false; m.roughness = 0.4; m.opacity = 0.16; }   // glass lets the sun (and the sky) through
-        else if (m.color) { const hsl = {}; m.color.getHSL(hsl); m.color.setHSL(hsl.h, Math.min(1, hsl.s * 1.35), hsl.l * 0.92); }
+        if (m.userData.__done) return; m.userData.__done = true;
+        if (MAT_COLOURS[m.name] !== undefined) m.color.setHex(MAT_COLOURS[m.name]);
+        const shiny = /^c_(car_|van|bus_red|window)/.test(m.name);
+        m.metalness = shiny ? 0.15 : 0; m.roughness = shiny ? Math.max(0.2, m.roughness) : Math.min(1, (m.roughness ?? 0.9) + 0.05);
+        if (m.transparent) { m.depthWrite = false; m.roughness = 0.4; m.opacity = 0.16; }   // house glass lets the sun (and the sky) through
+        else if (m.color && !shiny) { const hsl = {}; m.color.getHSL(hsl); m.color.setHSL(hsl.h, Math.min(1, hsl.s * 1.35), hsl.l * 0.92); }
       });
+      if ((Array.isArray(o.material) ? o.material : [o.material]).some(m => m.transparent)) o.castShadow = false;
     }
     if (/^Ceil_/.test(name)) ceilings.push(o);
+    if (/^FrontDoor_(leaf|handle)$/.test(name)) {        // the front door stands open into the hall, so he can walk out to the street
+      if (o.userData.doorDone) return; o.userData.doorDone = true;
+      const hx = 12.29, hz = 0.13; o.updateMatrixWorld(true);
+      o.geometry = o.geometry.clone(); o.geometry.applyMatrix4(o.matrixWorld); o.geometry.translate(-hx, 0, -hz);
+      o.position.set(hx, 0, hz); o.quaternion.identity(); o.scale.set(1, 1, 1); o.rotation.y = -80 * Math.PI / 180;
+      if (o.parent !== root) { root.attach(o); o.position.set(hx, 0, hz); o.quaternion.identity(); o.scale.set(1, 1, 1); o.rotation.y = -80 * Math.PI / 180; }
+      return;
+    }
+    if (/^Lamp\w*\d_head$/.test(name)) { const p = new THREE.Vector3(); o.getWorldPosition(p); const l = new THREE.PointLight(0xffd9a0, 0, 22, 1.4); l.position.set(p.x, p.y - 0.25, p.z); scene.add(l); streetLamps.push(l); }
     box.setFromObject(o);
     if (box.isEmpty()) return;
     if (CAM_BLOCK.test(name)) camBlockers.push({ min: box.min.clone(), max: box.max.clone(), name });
+    if (CITY_ANY.test(name)) {
+      if (CITY_GROUND.test(name)) { colliders.push({ min: box.min.clone(), max: box.max.clone(), name, wall: false, ground: true }); return; }
+      if (!CITY_SOLID.test(name)) return;
+      colliders.push({ min: box.min.clone(), max: box.max.clone(), name, wall: CITY_WALL.test(name) });
+      return;
+    }
     if (NO_COLLIDE.test(name)) return;
     colliders.push({ min: box.min.clone(), max: box.max.clone(), name, wall: IS_WALL.test(name) });
   });
   scene.add(root); house = root;
-  window.__dbg = { colliders, camBlockers, player, groundHeightAt, resolveWalls, unblockedDistance, THREE, HEIGHT, renderer, camera, scene, sun, hemi, orbit: () => ({ ...orbit, eff: camDistEff }) };
+  // the ground beyond the street, so a level camera never sees the edge of the world
+  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), new THREE.MeshStandardMaterial({ color: 0x6b7060, roughness: 1 }));
+  gnd.rotation.x = -Math.PI / 2; gnd.position.set(6, -0.2, 10); gnd.receiveShadow = true; scene.add(gnd);
+  colliders.push({ min: new THREE.Vector3(-1500, -0.4, -1500), max: new THREE.Vector3(1500, -0.2, 1500), name: 'G_world', wall: false, ground: true });
+  window.__dbg = { colliders, camBlockers, player, groundHeightAt, resolveWalls, unblockedDistance, THREE, HEIGHT, renderer, camera, scene, sun, hemi, walkTo, groundPointUnderMouse, sendHim, orbit: () => ({ ...orbit, eff: camDistEff }) };
   // pendants: living, rear room, hall, kitchen
   lamp(5.62, HOUSE.ceil - 0.85, -2.56, 26);      // three pendants down the big room
   lamp(5.62, HOUSE.ceil - 0.85, -6.40, 26);
@@ -243,14 +343,40 @@ function addHouse(root) {
   setTime(hour);
 }
 let ceilingsOn = true;
-function setCeilings(on) { ceilingsOn = on; ceilings.forEach(m => m.visible = on); toast(on ? 'ceilings on' : 'ceilings hidden'); }
+function setCeilings(on) { ceilingsOn = on; ceilings.forEach(m => m.visible = on); const b = document.getElementById('ceilBtn'); if (b) b.firstChild.textContent = on ? 'Hide ceilings ' : 'Show ceilings '; toast(on ? 'ceilings on' : 'ceilings hidden'); }
 
 /* ================================================================ Plusso */
-const HEIGHT = 1.46, RADIUS = 0.58;           // real height; collision radius is his half-width
+const HEIGHT = 1.46, RADIUS = 0.30;           // real height; RADIUS is only used for finding the floor under him
+/* His footprint is his real plan: 1.153 m across the arms, 0.484 m deep. It is checked as three 0.24 m circles along his
+   width, so a 762 mm door stops him head-on (arms wider than the frame) and lets him through sideways — X does that. */
+const FOOT_R = 0.242, FOOT_OFFS = [-0.335, 0, 0.335];
+let sideways = false;                          // facing is turned 90° to the way he walks (X held, or automatic on a walk-to)
 const player = new THREE.Group(); scene.add(player);
 const vel = new THREE.Vector3();
 let grounded = false, mixer = null, clips = {}, current = null, model = null;
 let facing = 0;
+const furMeshes = []; let furOn = true;
+function setFur(on) { furOn = on; furMeshes.forEach(m => m.visible = on); const cb = document.getElementById('furBox'); if (cb) cb.checked = on; toast(on ? 'fur on' : 'fur off — just the body'); }
+/* walk-to: double-click the ground sends him there; Shift-click puts him there at once */
+const walkTo = { target: null, stuck: 0, autoSide: false, last: new THREE.Vector3() };
+function sendHim(target, instant) {
+  if (instant) {
+    player.position.set(target.x, target.y + 0.02, target.z); vel.set(0, 0, 0); walkTo.target = null;
+    player.position.y = groundHeightAt(target.x, target.z, target.y + 0.3) + 0.001; toast('placed'); return;
+  }
+  walkTo.target = target.clone(); walkTo.stuck = 0; walkTo.autoSide = false; walkTo.last.copy(player.position);
+  toast('walking there — Esc or any move key stops him');
+}
+const rayGround = new THREE.Raycaster();
+function groundPointUnderMouse(e) {
+  const m = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  rayGround.setFromCamera(m, camera);
+  const hits = rayGround.intersectObject(scene, true).filter(h => h.object.isMesh && !h.object.userData.isPlusso && h.face);
+  if (!hits.length) return null;
+  const h = hits[0];                                   // the first thing the ray meets — never a floor seen through a wall
+  const up = h.face.normal.clone().transformDirection(h.object.matrixWorld).y > 0.6;
+  return up && h.point.y < 4.0 ? h.point : null;
+}
 
 const FACES = {"neutral":{"eye_L":{"sx":0.999,"sy":1.0,"closed":0.0,"lid":0.812,"lidtilt":0.0},"eye_R":{"sx":0.999,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.0},"brow_L":{"dx":0.0185,"dy":-0.0062,"tilt":8.7,"arch":0.012,"len":0.968,"th":1.1815},"brow_R":{"dx":0.0185,"dy":-0.0062,"tilt":8.7,"arch":0.012,"len":0.968,"th":1.1815},"mouth":{"smile":0.681,"open":0.0,"round":0.0,"teeth":0.0,"w":0.971,"dy":-0.0119}},"smile":{"eye_L":{"sx":0.988,"sy":1.016,"closed":0.0,"lid":0.03,"lidtilt":0.0},"eye_R":{"sx":0.988,"sy":1.016,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0169,"dy":-0.0113,"tilt":19.65,"arch":1.0955,"len":0.994,"th":0.851},"brow_R":{"dx":0.0169,"dy":-0.0113,"tilt":19.65,"arch":1.0955,"len":0.994,"th":0.851},"mouth":{"smile":0.923,"open":0.0,"round":0.0,"teeth":0.0,"w":0.768,"dy":-0.0194}},"happy":{"eye_L":{"sx":0.999,"sy":1.027,"closed":0.0,"lid":0.01,"lidtilt":0.0},"eye_R":{"sx":0.999,"sy":1.027,"closed":0.0,"lid":0.01,"lidtilt":0.0},"brow_L":{"dx":0.0215,"dy":-0.0063,"tilt":21.05,"arch":1.1765,"len":0.988,"th":1.05},"brow_R":{"dx":0.0215,"dy":-0.0063,"tilt":21.05,"arch":1.1765,"len":0.988,"th":1.05},"mouth":{"smile":0.729,"open":0.0,"round":0.0,"teeth":0.0,"w":0.939,"dy":-0.0188}},"beaming":{"eye_L":{"sx":1.019,"sy":1.062,"closed":0.0,"lid":0.024,"lidtilt":0.0},"eye_R":{"sx":1.019,"sy":1.062,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0253,"dy":-0.0032,"tilt":21.95,"arch":1.0335,"len":1.034,"th":1.0295},"brow_R":{"dx":0.0253,"dy":-0.0032,"tilt":21.95,"arch":1.0335,"len":1.034,"th":1.0295},"mouth":{"smile":1.101,"open":0.0,"round":0.0,"teeth":0.0,"w":0.829,"dy":-0.0236}},"grin":{"eye_L":{"sx":0.952,"sy":1.012,"closed":0.0,"lid":0.046,"lidtilt":0.0},"eye_R":{"sx":0.952,"sy":1.012,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0163,"dy":0.0095,"tilt":20.4,"arch":1.017,"len":1.007,"th":0.9355},"brow_R":{"dx":0.0163,"dy":0.0095,"tilt":20.4,"arch":1.017,"len":1.007,"th":0.9355},"mouth":{"smile":1.4,"open":0.0,"round":0.0,"teeth":0.0,"w":0.813,"dy":-0.0239}},"laugh":{"eye_L":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0224,"dy":0.018,"tilt":22.4,"arch":1.168,"len":0.9325,"th":0.809},"brow_R":{"dx":0.0224,"dy":0.018,"tilt":22.4,"arch":1.168,"len":0.9325,"th":0.809},"mouth":{"smile":0.0,"open":1.293,"round":0.0,"teeth":1.0,"w":1.076,"dy":0.0228}},"celebrate":{"eye_L":{"sx":0.973,"sy":1.04,"closed":0.0,"lid":0.024,"lidtilt":0.0},"eye_R":{"sx":0.973,"sy":1.04,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0174,"dy":0.0147,"tilt":24.5,"arch":1.214,"len":1.043,"th":0.975},"brow_R":{"dx":0.0174,"dy":0.0147,"tilt":24.5,"arch":1.214,"len":1.043,"th":0.975},"mouth":{"smile":0.0,"open":1.35,"round":0.0,"teeth":1.0,"w":1.226,"dy":-0.0356}},"amused":{"eye_L":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.0},"eye_R":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.0},"brow_L":{"dx":0.018,"dy":-0.0033,"tilt":7.1,"arch":0.478,"len":1.023,"th":1.1215},"brow_R":{"dx":0.018,"dy":-0.0033,"tilt":7.1,"arch":0.478,"len":1.023,"th":1.1215},"mouth":{"smile":-0.4,"open":0.0,"round":0.0,"teeth":0.0,"w":0.918,"dy":0.0025}},"content":{"eye_L":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.502,"lidtilt":0.0},"eye_R":{"sx":0.992,"sy":1.0,"closed":0.0,"lid":0.486,"lidtilt":0.0},"brow_L":{"dx":0.0185,"dy":0.0002,"tilt":11.9,"arch":0.832,"len":0.913,"th":0.918},"brow_R":{"dx":0.0185,"dy":0.0002,"tilt":11.9,"arch":0.832,"len":0.913,"th":0.918},"mouth":{"smile":0.657,"open":0.0,"round":0.0,"teeth":0.0,"w":0.89,"dy":-0.0144}},"talking":{"eye_L":{"sx":0.961,"sy":1.0,"closed":0.0,"lid":0.038,"lidtilt":0.0},"eye_R":{"sx":0.961,"sy":1.0,"closed":0.0,"lid":0.038,"lidtilt":0.0},"brow_L":{"dx":0.0009,"dy":0.0003,"tilt":21.1,"arch":1.046,"len":0.9625,"th":0.9935},"brow_R":{"dx":0.0009,"dy":0.0003,"tilt":21.1,"arch":1.046,"len":0.9625,"th":0.9935},"mouth":{"smile":0.0,"open":0.722,"round":0.0,"teeth":1.0,"w":0.77,"dy":0.0}},"kind":{"eye_L":{"sx":0.977,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.77},"eye_R":{"sx":0.977,"sy":1.0,"closed":0.0,"lid":0.85,"lidtilt":0.77},"brow_L":{"dx":0.0231,"dy":-0.026,"tilt":26.9,"arch":-1.2795,"len":1.081,"th":0.808},"brow_R":{"dx":0.0231,"dy":-0.026,"tilt":26.9,"arch":-1.2795,"len":1.081,"th":0.808},"mouth":{"smile":0.948,"open":0.0,"round":0.0,"teeth":0.0,"w":0.884,"dy":-0.0447}},"squint_happy":{"eye_L":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":1.0,"sy":1.0,"closed":1.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0198,"dy":0.0163,"tilt":22.15,"arch":1.1415,"len":0.994,"th":1.124},"brow_R":{"dx":0.0198,"dy":0.0163,"tilt":22.15,"arch":1.1415,"len":0.994,"th":1.124},"mouth":{"smile":1.4,"open":0.0,"round":0.0,"teeth":0.0,"w":1.447,"dy":-0.0062}},"sad":{"eye_L":{"sx":1.013,"sy":1.0,"closed":0.0,"lid":0.553,"lidtilt":0.74},"eye_R":{"sx":1.013,"sy":1.0,"closed":0.0,"lid":0.52,"lidtilt":0.74},"brow_L":{"dx":0.0181,"dy":-0.0088,"tilt":28.8,"arch":-1.2335,"len":1.073,"th":0.8615},"brow_R":{"dx":0.0181,"dy":-0.0088,"tilt":28.8,"arch":-1.2335,"len":1.073,"th":0.8615},"mouth":{"smile":-1.057,"open":0.0,"round":0.0,"teeth":0.0,"w":0.929,"dy":-0.0007}},"worried":{"eye_L":{"sx":1.0,"sy":1.0,"closed":0.0,"lid":0.049,"lidtilt":0.0},"eye_R":{"sx":1.0,"sy":1.0,"closed":0.0,"lid":0.049,"lidtilt":0.0},"brow_L":{"dx":0.0207,"dy":-0.0095,"tilt":22.3,"arch":0.988,"len":1.047,"th":1.206},"brow_R":{"dx":0.0207,"dy":-0.0095,"tilt":22.3,"arch":0.988,"len":1.047,"th":1.206},"mouth":{"smile":-1.345,"open":0.0,"round":0.0,"teeth":0.0,"w":0.864,"dy":-0.0005}},"stern":{"eye_L":{"sx":0.979,"sy":1.0,"closed":0.0,"lid":0.216,"lidtilt":0.0},"eye_R":{"sx":0.979,"sy":1.0,"closed":0.0,"lid":0.254,"lidtilt":0.0},"brow_L":{"dx":-0.0052,"dy":-0.045,"tilt":-24.6,"arch":-0.509,"len":1.077,"th":0.957},"brow_R":{"dx":-0.0052,"dy":-0.045,"tilt":-24.6,"arch":-0.509,"len":1.077,"th":0.957},"mouth":{"smile":-0.377,"open":0.0,"round":0.0,"teeth":0.0,"w":1.034,"dy":-0.0026}},"angry":{"eye_L":{"sx":1.03,"sy":1.034,"closed":0.0,"lid":0.214,"lidtilt":0.0},"eye_R":{"sx":1.03,"sy":1.034,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0008,"dy":-0.045,"tilt":-31.85,"arch":0.0125,"len":1.4045,"th":0.958},"brow_R":{"dx":0.0008,"dy":-0.045,"tilt":-31.85,"arch":0.0125,"len":1.4045,"th":0.958},"mouth":{"smile":0.0,"open":0.681,"round":0.0,"teeth":1.0,"w":0.975,"dy":-0.0004}},"scared":{"eye_L":{"sx":0.927,"sy":1.0,"closed":0.0,"lid":0.253,"lidtilt":0.338},"eye_R":{"sx":0.927,"sy":1.0,"closed":0.0,"lid":0.285,"lidtilt":0.338},"brow_L":{"dx":0.018,"dy":-0.0234,"tilt":28.5,"arch":-1.406,"len":1.0775,"th":1.2495},"brow_R":{"dx":0.018,"dy":-0.0234,"tilt":28.5,"arch":-1.406,"len":1.0775,"th":1.2495},"mouth":{"smile":0.0,"open":1.35,"round":0.678,"teeth":1.0,"w":1.054,"dy":-0.0191}},"startled":{"eye_L":{"sx":0.992,"sy":1.026,"closed":0.0,"lid":0.016,"lidtilt":0.0},"eye_R":{"sx":0.992,"sy":1.026,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0267,"dy":0.0085,"tilt":24.3,"arch":1.077,"len":1.0275,"th":0.987},"brow_R":{"dx":0.0267,"dy":0.0085,"tilt":24.3,"arch":1.077,"len":1.0275,"th":0.987},"mouth":{"smile":0.0,"open":0.672,"round":0.432,"teeth":1.0,"w":0.715,"dy":-0.0273}},"curious":{"eye_L":{"sx":0.995,"sy":1.005,"closed":0.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":0.995,"sy":1.005,"closed":0.0,"lid":0.0,"lidtilt":0.0},"brow_L":{"dx":0.0183,"dy":-0.0089,"tilt":22.4,"arch":1.114,"len":1.021,"th":0.9605},"brow_R":{"dx":0.0183,"dy":-0.0089,"tilt":22.4,"arch":1.114,"len":1.021,"th":0.9605},"mouth":{"smile":0.709,"open":0.0,"round":0.0,"teeth":0.0,"w":0.903,"dy":-0.0143}},"confused":{"eye_L":{"sx":0.989,"sy":1.015,"closed":0.0,"lid":0.0,"lidtilt":0.0},"eye_R":{"sx":0.908,"sy":1.0,"closed":0.0,"lid":0.207,"lidtilt":0.251},"brow_L":{"dx":-0.0102,"dy":-0.0052,"tilt":-7.4,"arch":-0.419,"len":1.041,"th":1.16},"brow_R":{"dx":0.0203,"dy":-0.0206,"tilt":9.5,"arch":1.6,"len":0.885,"th":1.207},"mouth":{"smile":-0.155,"open":0.0,"round":0.0,"teeth":0.0,"w":0.745,"dy":-0.0169}}};
 const FACE_ORDER = Object.keys(FACES);
@@ -324,6 +450,7 @@ function play(name, fade = 0.22) {
 
 /* ---------------------------------------------------------------- load both */
 const loader = new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
+const draco = new DRACOLoader(); draco.setDecoderPath(DRACO_PATH); loader.setDRACOLoader(draco);
 let loaded = 0;
 function oneLoaded() { if (++loaded === 2) { document.getElementById('loading').classList.add('gone'); setMode('play'); } }
 loader.parse(b64ToBuf(window.HOUSE_GLB_B64), '', gltf => { addHouse(gltf.scene); oneLoaded(); },
@@ -334,10 +461,12 @@ loader.parse(b64ToBuf(window.PLUSSO_GLB_B64), '', gltf => {
     if (!o.isMesh) return;
     const tris = o.geometry && o.geometry.index ? o.geometry.index.count / 3 : 0;
     const isFur = tris > 40000;
+    if (tris > 100000) furMeshes.push(o);      // the fur cards; the smooth body sits underneath
     o.castShadow = !isFur; o.receiveShadow = !isFur; o.frustumCulled = false;
     const rough = isFur ? 1.0 : 0.85;
     (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (m) { m.roughness = rough; m.metalness = 0; } });
   });
+  model.traverse(o => { if (o.isMesh) o.userData.isPlusso = true; });
   player.add(model);
   mixer = new THREE.AnimationMixer(model);
   gltf.animations.forEach(c => { clips[c.name] = mixer.clipAction(c); });
@@ -353,7 +482,8 @@ const MODES = ['play', 'orbit', 'camera'];
 let mode = 'play';
 const modeTag = document.getElementById('mode');
 function setMode(m) {
-  mode = m; modeTag.textContent = m === 'camera' ? `camera · ${lens} mm` : m;
+  mode = m; modeTag.textContent = m === 'camera' ? `camera ${lens} mm` : m;
+  document.querySelectorAll('#bar [data-act^="mode:"]').forEach(b => b.classList.toggle('on', b.dataset.act === 'mode:' + m));
   if (m === 'camera') {
     // take over from wherever the follow camera was, without a jump
     const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
@@ -368,13 +498,21 @@ const keys = {};
 const canvas = renderer.domElement;
 let locked = false, dragging = false, lx = 0, ly = 0, grabbing = false;
 const mouse = new THREE.Vector2();
-let helpOn = true, thirdsOn = true;
+let helpOn = false, thirdsOn = true;
 
 canvas.addEventListener('mousedown', e => { if (locked || e.button !== 0) return; dragging = true; lx = e.clientX; ly = e.clientY; });
 addEventListener('mouseup', () => dragging = false);
-canvas.addEventListener('click', () => {
+let downX = 0, downY = 0;
+canvas.addEventListener('mousedown', e => { downX = e.clientX; downY = e.clientY; });
+canvas.addEventListener('click', e => {
   if (grabbing) { grabbing = false; toast('placed'); return; }
+  if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) return;      // that was a drag, not a click
+  if (e.shiftKey) { const pt = groundPointUnderMouse(e); if (pt) sendHim(pt, true); else toast('click on the ground to place him'); return; }
   if (!locked) canvas.requestPointerLock();
+});
+canvas.addEventListener('dblclick', e => {
+  const pt = groundPointUnderMouse(e);
+  if (pt) sendHim(pt, false); else toast('double-click on the ground to send him there');
 });
 document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; if (locked) dragging = false; });
 addEventListener('mousemove', e => {
@@ -388,8 +526,16 @@ addEventListener('mousemove', e => {
   else { orbit.yaw -= dx * k; orbit.pitch = clamp(orbit.pitch + dy * k * 0.85, -0.45, 1.45); }
 });
 addEventListener('wheel', e => {
-  if (mode === 'camera') { const f = new THREE.Vector3(); camera.getWorldDirection(f); free.pos.addScaledVector(f, -e.deltaY * 0.006); }
-  else orbit.dist = clamp(orbit.dist + e.deltaY * 0.008, 1.0, 30);
+  if (e.target.closest && e.target.closest('#bar, #help')) return;
+  const notch = Math.sign(e.deltaY) * Math.min(1, Math.abs(e.deltaY) / 100);   // one notch = one step, trackpads scale down
+  if (mode === 'camera') {
+    // dolly along the view, in steps that grow with the distance to him: fine when close, quick when far
+    const f = new THREE.Vector3(); camera.getWorldDirection(f);
+    const d = camera.position.distanceTo(player.position);
+    free.pos.addScaledVector(f, -notch * Math.max(0.35, d * 0.14) * (e.shiftKey ? 3 : 1));
+  } else {
+    orbit.dist = clamp(orbit.dist * Math.exp(notch * 0.18), 0.7, 80);           // 18 % per notch, so 1 m -> 30 m is ~19 notches
+  }
 }, { passive: true });
 
 addEventListener('keydown', e => {
@@ -417,13 +563,16 @@ addEventListener('keydown', e => {
     case 'KeyJ': setTime(hour - 0.5); break;
     case 'KeyK': setTime(hour + 0.5); break;
     case 'KeyL': setWorkLight(!workOn); break;
+    case 'KeyV': setFur(!furOn); break;
+    case 'Escape': if (walkTo.target) { walkTo.target = null; toast('stopped'); } break;
     case 'KeyB': wallAvoid = !wallAvoid; toast(wallAvoid ? 'camera stays inside the room' : 'camera roams freely through walls'); break;
     case 'KeyT': topView(); break;
+    case 'KeyU': goTo(placeIdx + (e.shiftKey ? -1 : 1)); break;
     case 'KeyY': if (mode === 'camera') { free.pos.y = 1.60; toast('camera at 1.60 m — adult eye height'); } break;
     case 'KeyG': if (mode !== 'play') { grabbing = !grabbing; toast(grabbing ? 'grab — move the mouse, click to drop' : 'placed'); } break;
     case 'Comma': facing += Math.PI / 12; break;
     case 'Period': facing -= Math.PI / 12; break;
-    case 'Slash': helpOn = !helpOn; document.getElementById('help').classList.toggle('hidden', !helpOn); break;
+    case 'Slash': setHelp(!helpOn); break;
   }
   if (mode !== 'play' && /^Arrow/.test(e.code)) {
     e.preventDefault();
@@ -448,11 +597,22 @@ let wallAvoid = false;     // B toggles: keep the follow camera inside the room,
 const free = { pos: new THREE.Vector3(1.9, 1.6, 3.2), yaw: 0, pitch: 0 };
 function topView() {
   setMode('camera');
-  free.pos.set(HOUSE.centre.x, 30, HOUSE.centre.z); free.yaw = 0; free.pitch = -Math.PI / 2 + 0.001;
+  const inHouse = player.position.x > -0.25 && player.position.x < 12.65 && player.position.z < 0.25;
+  if (inHouse) free.pos.set(HOUSE.centre.x, 30, HOUSE.centre.z); else free.pos.set(player.position.x, 45, player.position.z);
+  free.yaw = 0; free.pitch = -Math.PI / 2 + 0.001;
   if (ceilingsOn) setCeilings(false);
   toast('top view — E/Q or the wheel to come down, H for ceilings');
 }
-function setLens(mm) { lens = mm; applyLens(); document.getElementById('lensSelect').value = String(mm); if (mode === 'camera') modeTag.textContent = `camera · ${lens} mm`; }
+function setLens(mm) { lens = mm; applyLens(); document.getElementById('lensSelect').value = String(mm); if (mode === 'camera') modeTag.textContent = `camera ${lens} mm`; }
+let placeIdx = 0;
+function goTo(i) {
+  const pl = PLACES[((i % PLACES.length) + PLACES.length) % PLACES.length]; placeIdx = PLACES.indexOf(pl);
+  player.position.set(pl.pos[0], pl.pos[1] + 0.02, pl.pos[2]); vel.set(0, 0, 0); facing = pl.yaw; player.rotation.y = facing;
+  orbit.yaw = pl.yaw; orbit.pitch = 0.18; camDistEff = Math.min(camDistEff, 3.5);      // follow camera behind him, looking the way he faces
+  if (mode === 'camera') { free.pos.set(pl.pos[0] - Math.sin(pl.yaw) * 6, pl.pos[1] + 1.60, pl.pos[2] - Math.cos(pl.yaw) * 6); free.yaw = pl.yaw + Math.PI; free.pitch = 0; }
+  const sel = document.getElementById('placeSelect'); if (sel) sel.value = pl.id;
+  setTime(hour); toast(pl.label);
+}
 
 /* walls between the follow camera and Plusso pull the camera in, so it never sits inside a wall */
 const CAM_MIN = 0.9;
@@ -471,24 +631,35 @@ function unblockedDistance(look, dir, want) {
 /* ---------------------------------------------------------------- physics */
 const GRAV = -22, JUMP_V = 6.6, WALK = 1.10, RUN = 2.36, ACC = 15, TURN = 10;
 const CLIP_SPEED = { Walk: 1.10, Run: 2.36 };
+const STEP = 0.30;                                   // a kerb (0.125) or a stair tread (0.20) is a step, a coffee table is a wall
 function groundHeightAt(x, z, fromY) {
-  let best = 0;
+  let best = -0.4;                                   // nothing under him: the world ground plane at -0.2 catches him
+  const inHouse = x > -0.25 && x < 12.65 && z < 0.25 && z > -24.5;
+  if (inHouse) best = 0;                             // the house floors are not colliders; ground level inside is 0
   for (const c of colliders) {
     if (x + RADIUS * 0.55 < c.min.x || x - RADIUS * 0.55 > c.max.x) continue;
     if (z + RADIUS * 0.55 < c.min.z || z - RADIUS * 0.55 > c.max.z) continue;
-    if (c.max.y <= fromY + 0.28 && c.max.y > best) best = c.max.y;
+    if (c.max.y <= fromY + STEP - 0.02 && c.max.y > best) best = c.max.y;
   }
   return best;
 }
-function resolveWalls(pos) {
-  for (const c of colliders) {
-    if (pos.y + 0.05 >= c.max.y) continue;
-    if (pos.y + HEIGHT <= c.min.y) continue;
-    const cx = clamp(pos.x, c.min.x, c.max.x), cz = clamp(pos.z, c.min.z, c.max.z);
-    const dx = pos.x - cx, dz = pos.z - cz, d2 = dx * dx + dz * dz;
-    if (d2 < RADIUS * RADIUS) {
-      const dist = Math.sqrt(d2) || 0.0001, push = (RADIUS - dist) / dist;
-      if (dist < 0.0005) { pos.z += RADIUS; } else { pos.x += dx * push; pos.z += dz * push; }
+function resolveWalls(pos, yaw = facing) {
+  const wx = Math.cos(yaw), wz = -Math.sin(yaw);       // his width axis (he faces (sin yaw, cos yaw))
+  for (let pass = 0; pass < 2; pass++) {
+    for (const c of colliders) {
+      if (c.ground) continue;
+      if (pos.y + STEP >= c.max.y) continue;           // low enough to step onto: not a wall
+      if (pos.y + HEIGHT <= c.min.y) continue;
+      if (pos.x + 0.7 < c.min.x || pos.x - 0.7 > c.max.x || pos.z + 0.7 < c.min.z || pos.z - 0.7 > c.max.z) continue;
+      for (const off of FOOT_OFFS) {
+        const px = pos.x + wx * off, pz = pos.z + wz * off;
+        const cx = clamp(px, c.min.x, c.max.x), cz = clamp(pz, c.min.z, c.max.z);
+        const dx = px - cx, dz = pz - cz, d2 = dx * dx + dz * dz;
+        if (d2 < FOOT_R * FOOT_R) {
+          const dist = Math.sqrt(d2) || 0.0001, push = (FOOT_R - dist) / dist;
+          if (dist < 0.0005) { pos.z += FOOT_R; } else { pos.x += dx * push; pos.z += dz * push; }
+        }
+      }
     }
   }
 }
@@ -551,9 +722,23 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.05);
   let speed = 0;
 
-  if (mode === 'play') {
-    const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-    const s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  const f = mode === 'play' ? (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) : 0;
+  const s = mode === 'play' ? (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0) : 0;
+  if ((f || s) && walkTo.target) { walkTo.target = null; }                 // a move key takes over from a walk-to
+  sideways = !!keys.KeyX || (walkTo.target && walkTo.autoSide);
+  if (walkTo.target) {
+    // walk-to: straight at the target at walking pace; turn sideways if a doorway stops him, give up if still stuck
+    const d = new THREE.Vector3(walkTo.target.x - player.position.x, 0, walkTo.target.z - player.position.z), dist = d.length();
+    if (dist < 0.12) { walkTo.target = null; vel.x = vel.z = 0; toast('there'); }
+    else {
+      d.normalize(); const target = d.multiplyScalar(Math.min(WALK, dist * 2.5));
+      vel.x += (target.x - vel.x) * Math.min(1, ACC * dt); vel.z += (target.z - vel.z) * Math.min(1, ACC * dt);
+      const moved = Math.hypot(player.position.x - walkTo.last.x, player.position.z - walkTo.last.z); walkTo.last.copy(player.position);
+      walkTo.stuck = moved < WALK * dt * 0.25 ? walkTo.stuck + dt : Math.max(0, walkTo.stuck - dt * 2);
+      if (walkTo.stuck > 0.45 && !walkTo.autoSide) { walkTo.autoSide = true; walkTo.stuck = 0; toast('turning sideways to fit through'); }
+      else if (walkTo.stuck > 1.2) { walkTo.target = null; vel.x = vel.z = 0; toast("can't get there — Shift-click to place him, or U for a place"); }
+    }
+  } else if (mode === 'play') {
     const running = keys.ShiftLeft || keys.ShiftRight;
     const want = new THREE.Vector3(Math.sin(orbit.yaw) * f - Math.cos(orbit.yaw) * s, 0, Math.cos(orbit.yaw) * f + Math.sin(orbit.yaw) * s);
     const moving = want.lengthSq() > 0.001; if (moving) want.normalize();
@@ -578,15 +763,17 @@ function tick() {
   }
 
   speed = Math.hypot(vel.x, vel.z);
-  if (mode === 'play' && speed > 0.15) {
-    const want2 = Math.atan2(vel.x, vel.z);
-    facing += (((want2 - facing + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, TURN * dt);
+  if ((mode === 'play' || walkTo.target) && speed > 0.15) {
+    const want2 = Math.atan2(vel.x, vel.z) + (sideways ? Math.PI / 2 : 0);   // sideways: his shoulder leads, so he is 0.48 m wide to the door
+    facing += (((want2 - facing + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, TURN * 2 * dt);
   }
   player.rotation.y = facing;
   if (!grounded) play('Jump', 0.1); else if (speed > WALK * 1.35) play('Run', 0.18); else if (speed > 0.12) play('Walk', 0.20); else play('Idle', 0.25);
   if (current && CLIP_SPEED[current]) clips[current].setEffectiveTimeScale(clamp(speed / CLIP_SPEED[current], 0.45, 1.9));
   if (mixer) mixer.update(dt);
   applyFace(FACES[faceName]);
+  // the sun's shadow box travels with him, so shadows stay sharp in the house and anywhere down the street
+  sun.position.copy(player.position).add(sunDir); sun.target.position.copy(player.position); sun.target.updateMatrixWorld();
 
   // camera
   if (mode === 'camera') {
@@ -602,9 +789,9 @@ function tick() {
     const dir = new THREE.Vector3(-Math.sin(orbit.yaw) * Math.cos(orbit.pitch), Math.sin(orbit.pitch), -Math.cos(orbit.yaw) * Math.cos(orbit.pitch));
     // pull in quickly when a wall gets in the way, let out slowly when it clears — no snapping either way
     const allowed = wallAvoid ? unblockedDistance(look, dir, orbit.dist) : orbit.dist;
-    camDistEff += (allowed - camDistEff) * Math.min(1, (allowed < camDistEff ? 18 : 3.5) * dt);
+    camDistEff += (allowed - camDistEff) * Math.min(1, 16 * dt);            // quick both ways — the wheel should feel direct
     const goal = look.clone().addScaledVector(dir, camDistEff);
-    camera.position.lerp(goal, Math.min(1, 12 * dt));
+    camera.position.lerp(goal, Math.min(1, 18 * dt));
     camera.lookAt(look);
   }
 
@@ -620,19 +807,45 @@ function tick() {
   hud.textContent =
     `${mode.toUpperCase()}   ${lens} mm   ${aspect.id} · ${aspect.sizes[sizeIdx].join('×')}   ${document.getElementById('timeLabel').textContent}${workOn ? ' · work light' : ''}\n` +
     `camera  x ${c.x.toFixed(2)}  y ${c.y.toFixed(2)} m  z ${c.z.toFixed(2)}   ${(c.y - 1.60) > -0.03 && (c.y - 1.60) < 0.03 ? '← adult eye height' : ''}\n` +
-    `Plusso  x ${p.x.toFixed(2)}  y ${p.y.toFixed(2)}  z ${p.z.toFixed(2)}   facing ${((facing * 180 / Math.PI) % 360).toFixed(0)}°   ${grounded ? '' : 'in the air'}`;
+    `Plusso  x ${p.x.toFixed(2)}  y ${p.y.toFixed(2)}  z ${p.z.toFixed(2)}   facing ${((facing * 180 / Math.PI) % 360).toFixed(0)}°   ${sideways ? 'sideways · ' : ''}${walkTo.target ? 'walking there · ' : ''}${furOn ? '' : 'no fur · '}${grounded ? '' : 'in the air'}`;
 }
 tick();
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); layoutFrame(); });
 
 /* ---------------------------------------------------------------- menus */
+function setHelp(on) { helpOn = on; document.getElementById('help').classList.toggle('hidden', !on); }
+document.getElementById('helpBtn').addEventListener('click', () => setHelp(!helpOn));
+const menus = [...document.querySelectorAll('#bar .menu')];
+function closeMenus() { menus.forEach(m => m.classList.remove('open')); }
+menus.forEach(m => m.querySelector('.mbtn').addEventListener('click', e => { const was = m.classList.contains('open'); closeMenus(); if (!was) m.classList.add('open'); e.stopPropagation(); }));
+document.addEventListener('click', e => { if (!e.target.closest('#bar .menu')) closeMenus(); });
+document.addEventListener('keydown', e => { if (e.code === 'Escape') closeMenus(); });
+const ACTIONS = {
+  'mode:play': () => setMode('play'), 'mode:orbit': () => setMode('orbit'), 'mode:camera': () => setMode('camera'),
+  next: () => goTo(placeIdx + 1),
+  side: () => toast('hold X while he walks — he turns his shoulder to the door'),
+  grab: () => { if (mode === 'play') setMode('orbit'); grabbing = true; toast('grab — move the mouse, click to drop'); },
+  turnL: () => { facing += Math.PI / 12; }, turnR: () => { facing -= Math.PI / 12; },
+  eye: () => { if (mode !== 'camera') setMode('camera'); free.pos.y = 1.60; toast('camera at 1.60 m — adult eye height'); },
+  top: () => topView(),
+  ceil: () => setCeilings(!ceilingsOn),
+  wall: () => { wallAvoid = !wallAvoid; document.getElementById('wallBtn').classList.toggle('on', wallAvoid); toast(wallAvoid ? 'camera stays inside the room' : 'camera roams freely through walls'); },
+  thirds: () => { thirdsOn = !thirdsOn; document.getElementById('reticle').classList.toggle('off', !thirdsOn); },
+};
+document.querySelectorAll('#bar [data-act]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); ACTIONS[b.dataset.act](); if (!/^(turn|side)/.test(b.dataset.act)) closeMenus(); b.blur(); }));
+// stop menu clicks reaching the scene handlers
+document.getElementById('bar').addEventListener('dblclick', e => e.stopPropagation());
+document.getElementById('bar').addEventListener('mousedown', e => e.stopPropagation());
 let toastT = 0;
 function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('on'), 1800); }
+const psel = document.getElementById('placeSelect');
+PLACES.forEach(pl => { const o = document.createElement('option'); o.value = pl.id; o.textContent = pl.label; psel.appendChild(o); });
+psel.addEventListener('change', () => goTo(PLACES.findIndex(pl => pl.id === psel.value)));
 const fsel = document.getElementById('faceSelect');
 FACE_ORDER.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = FACE_LABEL[n] || n; fsel.appendChild(o); });
 fsel.value = faceName; fsel.addEventListener('change', () => setFace(fsel.value));
 const lsel = document.getElementById('lensSelect');
-LENSES.forEach(mm => { const o = document.createElement('option'); o.value = String(mm); o.textContent = `${mm} mm${mm === 35 ? '  ·  standard' : mm === 24 ? '  ·  wide' : mm === 85 ? '  ·  portrait' : ''}`; lsel.appendChild(o); });
+LENSES.forEach(mm => { const o = document.createElement('option'); o.value = String(mm); o.textContent = `${mm} mm${mm === 28 ? '  ·  default' : mm === 35 ? '  ·  standard' : mm === 24 ? '  ·  wide' : mm === 85 ? '  ·  portrait' : ''}`; lsel.appendChild(o); });
 lsel.value = String(lens); lsel.addEventListener('change', () => setLens(+lsel.value));
 const asel = document.getElementById('aspectSelect');
 ASPECTS.forEach((a, i) => { const o = document.createElement('option'); o.value = a.id; o.textContent = a.id; asel.appendChild(o); });
@@ -646,6 +859,7 @@ for (const s of document.querySelectorAll('select, button')) {
 canvas.addEventListener('mousedown', () => { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); });
 document.getElementById('timeSlider').addEventListener('input', e => setTime(+e.target.value));
 document.getElementById('workLight').addEventListener('change', e => setWorkLight(e.target.checked));
+document.getElementById('furBox').addEventListener('change', e => setFur(e.target.checked));
 for (const s of document.querySelectorAll('input')) { s.addEventListener('mousedown', () => { if (document.pointerLockElement) document.exitPointerLock(); }); s.addEventListener('change', e => e.target.blur()); }
 fillSizes(); layoutFrame(); applyLens(); setTime(hour);
 </script>
