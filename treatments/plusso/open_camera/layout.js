@@ -25,9 +25,17 @@ window.MASK_LAYOUT = {
      +y (away from camera 1).  He turns clockwise seen from above: 0 -> -180. */
   plusso: { x: 2.80, y: 8.00, yaw: 0 },
 
+  /* Camera 1 is a MOVE, not a position.  Every parameter has a start and an end
+     and they all run on the same eased ramp from pushStart to pushEnd, so the
+     shot can push in while it rises, levels its tilt, straightens the dutch or
+     ramps the lens.  Set start = end and that parameter simply holds. */
   cam1: {
-    x: 2.80, y0: 3.30, y1: 5.30, z: 0.45,
-    lens: 18, tilt: 7, dutch: 4,
+    x0: 2.80, x1: 2.80,
+    y0: 3.30, y1: 5.30,
+    z0: 0.45, z1: 0.45,
+    lens0: 18, lens1: 18,
+    tilt0: 7,  tilt1: 7,
+    dutch0: 4, dutch1: 4,
     pushStart: 1, pushEnd: 150,
   },
 
