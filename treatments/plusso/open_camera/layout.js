@@ -8,16 +8,27 @@
 window.MASK_LAYOUT = {
   meta: { name: "The Mask — shot 1", version: "V02", fps: 24, frames: 192 },
 
+  /* A knocked-through double reception in a Victorian terrace — which is the
+     only kind of room that is honestly 10 m deep.  That means a PERIOD ceiling:
+     3.05, not the 2.60 it was.  At 2.60 the room read like a warehouse, the
+     window head sat 15 cm under the ceiling, and the picture rail ran straight
+     through the window, which cannot happen in a real house. */
   room: {
-    w: 5.60, d: 10.00, h: 2.60, wall: 0.10,
-    // a tall Victorian sash with a very low sill: the low sill is what puts the
-    // glow behind his whole figure, remote included, and lets the moon lie a
-    // long blade of light across the floor toward the lens.
-    window: { x0: 1.70, x1: 3.90, sill: 0.20, head: 2.45 },
+    w: 5.60, d: 10.00, h: 3.05,
+    // A terrace has two thicknesses: 9 inch solid brick outside and at the party
+    // wall, a stud partition to the hall.  At 0.10 everywhere the openings had
+    // no reveal, which is the single biggest tell that a room is cardboard.
+    wall: 0.10, wallExt: 0.23,
+    /* French doors to the garden, not a sash.  The back reception of a terrace
+       opens to the garden through a glazed pair, and that is the honest way to
+       have glass at floor level — which is what lays the moon along the boards
+       and puts the glow behind his whole figure, remote included.  A sash would
+       start at waist height and cut him in half. */
+    window: { x0: 1.70, x1: 3.90, sill: 0.04, head: 2.30, side: 0.26, meet: 0.06 },
     // the curtains are heavy panels bunched either side; `open` is the clear gap
-    curtain: { open0: 1.90, open1: 3.70, bunch: 0.60, top: 2.55 },
-    door: { y0: 2.90, y1: 3.72, h: 2.03, swing: 28 },   // left wall, x 0
-    skirt: 0.14, rail: 2.10,
+    curtain: { open0: 1.90, open1: 3.70, bunch: 0.60, top: 2.40, pole: 2.46 },
+    door: { y0: 2.90, y1: 3.72, h: 2.05, swing: 28 },   // left wall, x 0
+    skirt: 0.20, rail: 2.68,        // deep Victorian skirting; rail ABOVE every head
     pendant: { x: 2.80, y: 5.00 },
   },
 
@@ -53,26 +64,26 @@ window.MASK_LAYOUT = {
      collide: true means Plusso cannot walk through it.                        */
   objects: [
     // ---- far zone -------------------------------------------------------
-    { id: "bookcaseA",  label: "Bookcase A",     type: "bookcase",  x: 0.27, y: 9.40, yaw: 0,   w: 0.34, d: 1.00, h: 1.95, zone: "far", collide: true },
-    { id: "armchair",   label: "Armchair",       type: "armchair",  x: 1.05, y: 9.00, yaw: 75,  w: 0.85, d: 0.85, h: 0.85, zone: "far", collide: true },
-    { id: "floorlamp",  label: "Floor lamp",     type: "floorlamp", x: 1.62, y: 9.12, yaw: 0,   w: 0.30, d: 0.30, h: 1.58, zone: "far", collide: true },
+    { id: "bookcaseA",  label: "Bookcase A",     type: "bookcase",  x: 0.19, y: 9.40, yaw: 90,  w: 1.00, d: 0.34, h: 1.95, zone: "far", collide: true },
+    { id: "armchair",   label: "Armchair",       type: "armchair",  x: 1.35, y: 8.80, yaw: -95, w: 0.85, d: 0.85, h: 0.85, zone: "far", collide: true },
+    { id: "floorlamp",  label: "Floor lamp",     type: "floorlamp", x: 2.10, y: 9.35, yaw: 0,   w: 0.30, d: 0.30, h: 1.58, zone: "far", collide: true },
     { id: "rugA",       label: "Rug A",          type: "rug",       x: 2.80, y: 8.45, yaw: 0,   w: 3.20, d: 2.30, h: 0.012, zone: "far", collide: false },
     { id: "bookstack",  label: "Books on floor", type: "bookstack", x: 1.60, y: 7.30, yaw: -12, w: 0.30, d: 0.24, h: 0.14, zone: "far", collide: false },
     { id: "plant",      label: "Corner plant",   type: "plant",     x: 5.15, y: 9.60, yaw: 0,   w: 0.55, d: 0.55, h: 1.10, zone: "far", collide: true },
-    { id: "radiator",   label: "Radiator",       type: "radiator",  x: 0.09, y: 7.35, yaw: 90,  w: 1.90, d: 0.08, h: 0.62, zone: "far", collide: true },
+    { id: "radiator",   label: "Radiator",       type: "radiator",  x: 0.09, y: 7.35, yaw: 90,  w: 1.90, d: 0.08, h: 0.62, z: 0.12, zone: "far", collide: true },
     { id: "shoes",      label: "Kicked-off shoes", type: "shoes",   x: 0.68, y: 4.12, yaw: 20,  w: 0.45, d: 0.30, h: 0.09, zone: "far", collide: false },
     { id: "pictureA",   label: "Picture (large)", type: "picture",  x: 5.57, y: 7.75, yaw: 0,   w: 0.42, d: 0.03, h: 0.52, z: 1.35, zone: "far", collide: false },
     { id: "pictureB",   label: "Picture (small)", type: "picture",  x: 5.57, y: 7.28, yaw: 0,   w: 0.34, d: 0.03, h: 0.44, z: 1.44, zone: "far", collide: false },
 
     // ---- near zone — every one of these sits at y < 3.30 ------------------
-    { id: "sofa",       label: "Sofa",           type: "sofa",      x: 2.85, y: 1.80, yaw: -90, w: 2.00, d: 0.90, h: 0.85, zone: "near", collide: true },
-    { id: "tv",         label: "TV (55\")",      type: "tv",        x: 0.09, y: 1.61, yaw: 90,  w: 1.22, d: 0.06, h: 0.69, z: 0.705, zone: "near", collide: false },
-    { id: "mediaunit",  label: "Media unit",     type: "cabinet",   x: 0.26, y: 1.625, yaw: 90, w: 1.55, d: 0.40, h: 0.45, zone: "near", collide: true },
+    { id: "sofa",       label: "Sofa",           type: "sofa",      x: 2.85, y: 1.70, yaw: 0,   w: 2.00, d: 0.90, h: 0.85, zone: "near", collide: true },
+    { id: "tv",         label: "TV (55\")",      type: "tv",        x: 0.09, y: 1.61, yaw: 0,   w: 1.22, d: 0.06, h: 0.69, z: 0.705, zone: "near", collide: false },
+    { id: "mediaunit",  label: "Media unit",     type: "cabinet",   x: 0.26, y: 1.625, yaw: 180, w: 1.55, d: 0.40, h: 0.45, zone: "near", collide: true },
     // a long low table, parallel to the sofa, sitting between the sofa and the telly
-    { id: "coffeetable",label: "Coffee table",   type: "coffee",    x: 1.68, y: 1.80, yaw: 0,   w: 0.55, d: 1.30, h: 0.42, zone: "near", collide: true },
+    { id: "coffeetable",label: "Coffee table",   type: "coffee",    x: 1.68, y: 1.70, yaw: 0,   w: 0.55, d: 1.30, h: 0.42, zone: "near", collide: true },
     { id: "routertable",label: "Router table",   type: "sidetable", x: 2.65, y: 3.02, yaw: 0,   w: 0.60, d: 0.45, h: 0.55, zone: "near", collide: true },
-    { id: "shelves",    label: "Shelves + candles", type: "shelves",x: 2.90, y: 0.13, yaw: 0,   w: 2.20, d: 0.22, h: 1.75, zone: "near", collide: false },
-    { id: "bookcaseB",  label: "Bookcase B",     type: "bookcase",  x: 1.00, y: 0.26, yaw: 0,   w: 1.20, d: 0.32, h: 1.95, zone: "near", collide: true },
+    { id: "shelves",    label: "Shelves + candles", type: "shelves",x: 2.90, y: 0.13, yaw: 180, w: 2.20, d: 0.22, h: 1.75, zone: "near", collide: false },
+    { id: "bookcaseB",  label: "Bookcase B",     type: "bookcase",  x: 1.00, y: 0.26, yaw: 180, w: 1.20, d: 0.32, h: 1.95, zone: "near", collide: true },
     { id: "trolley",    label: "Hostess trolley",type: "trolley",   x: 3.83, y: 0.83, yaw: 0,   w: 0.45, d: 0.45, h: 0.70, zone: "near", collide: true },
     { id: "rugB",       label: "Rug B",          type: "rug",       x: 2.25, y: 1.75, yaw: 0,   w: 2.70, d: 2.30, h: 0.012, zone: "near", collide: false },
   ],

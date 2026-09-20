@@ -169,6 +169,15 @@
     <div class="hint">Switch them <b>off</b> and the room goes flat and fully lit so you can see every corner while you move things. Switch them back <b>on</b> to see the effect. Nothing about the lighting changes — it is only hidden.</div>
   </div></div>
 
+  <div class="menu"><button class="mbtn">Measure</button><div class="drop">
+    <div class="hint">Everything is metres, and everything is checked against <b>Plusso at 1.46 m</b>. Select anything to measure it.</div>
+    <label class="row"><span><input id="rulerBox" type="checkbox">Height ruler on Plusso <kbd>M</kbd></span></label>
+    <label class="row"><span><input id="humanBox" type="checkbox">Put a 1.75 m person beside him</span></label>
+    <label class="row"><span><input id="gridBox" type="checkbox">One-metre floor grid</span></label>
+    <hr>
+    <div class="hint" id="archTable"></div>
+  </div></div>
+
   <div class="menu"><button class="mbtn">Plusso</button><div class="drop">
     <div class="hint">The acting never changes — it plays from wherever his mark is.</div>
     <label class="row">Mark x <input id="pxN" type="number" step="0.05"></label>
@@ -190,6 +199,7 @@
   <h2>views</h2><kbd>1</kbd> shot · <kbd>2</kbd> free · <kbd>3</kbd> plan · <kbd>Tab</kbd> cycles
   <h2>playback</h2><kbd>Space</kbd> play/pause · <kbd>,</kbd> <kbd>.</kbd> one frame · <kbd>Home</kbd>/<kbd>End</kbd> · drag the scrubber
   <h2>move things</h2>click to select · drag on the floor · arrows nudge (<kbd>Shift</kbd> ×5) · <kbd>[</kbd> <kbd>]</kbd> rotate · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> height · <kbd>0</kbd> selects Plusso · <kbd>Esc</kbd> deselects
+  <h2>measure</h2><kbd>M</kbd> height ruler · select anything to read its real size
   <h2>look</h2><kbd>L</kbd> set lights on/off · <kbd>G</kbd> frame guide · <kbd>C</kbd> collider boxes
   <h2>out</h2><kbd>P</kbd> saves a PNG · <kbd>X</kbd> exports the layout as JSON for Blender
   <h2>the rule</h2>Everything in the seating zone sits at y &lt; 3.30, behind camera 1. Move something past that line and the warning fires.
@@ -271,6 +281,7 @@ const W=new THREE.Group(); W.rotation.x=-Math.PI/2; scene.add(W);
 const camera=new THREE.PerspectiveCamera(50,16/9,0.03,120);
 camera.filmGauge=36; W.add(camera);
 const LENSES=[14,18,21,24,28,35,50,85];
+const PLUSSO_H=1.46;          // his body height — every other number is judged against this
 
 /* ================================================================ materials */
 const M={};
@@ -317,6 +328,7 @@ function sph(r,x,y,z,m,parent){
 /* ================================================================ the room */
 const ROOM=new THREE.Group(); W.add(ROOM);
 let curtainL=null,curtainR=null,outsideCard=null,shaft=null,winGroup=null;
+const CEIL_PARTS=[];        // the lid and its cornice — lifted off in plan view
 
 function foldPanel(x0,x1,yFront,z0,z1,m,amp=0.05,period=0.17){
   const nx=Math.max(10,Math.round((x1-x0)/0.025)), nz=24;
@@ -342,27 +354,53 @@ function foldPanel(x0,x1,yFront,z0,z1,m,amp=0.05,period=0.17){
 function buildRoom(){
   while(ROOM.children.length) ROOM.remove(ROOM.children[0]);
   const r=L.room, w=r.w, d=r.d, h=r.h, t=r.wall, win=r.window, cur=r.curtain, dr=r.door;
-  box(w+2*t, d+2*t, 0.05, w/2, d/2, -0.05, M.floor, ROOM);
-  box(w+2*t, d+2*t, 0.05, w/2, d/2, h, M.ceil, ROOM);
-  box(w+2*t, t, h, w/2, -t/2, 0, M.wall, ROOM);                                    // near wall
+  /* Two wall thicknesses, as a terrace really has: solid 9 inch brick outside
+     and at the party wall, a stud partition to the hall.  The thick wall is
+     what gives the openings a reveal — at 0.10 everywhere the room was a set
+     of cards. */
+  const te=r.wallExt??t;
+  box(w+2*te, d+2*te, 0.05, w/2, d/2, -0.05, M.floor, ROOM);
+  CEIL_PARTS.length=0;
+  CEIL_PARTS.push(box(w+2*te, d+2*te, 0.05, w/2, d/2, h, M.ceil, ROOM));
+  box(w+2*te, te, h, w/2, -te/2, 0, M.wall, ROOM);                                 // near wall (external)
   box(t, dr.y0+t, h, -t/2, (dr.y0-t)/2, 0, M.wall, ROOM);                          // left, before the door
   box(t, d+t-dr.y1, h, -t/2, (dr.y1+d+t)/2, 0, M.wall, ROOM);                      // left, after
   box(t, dr.y1-dr.y0, h-dr.h, -t/2, (dr.y0+dr.y1)/2, dr.h, M.wall, ROOM);          // over the door
-  box(t, d+2*t, h, w+t/2, d/2, 0, M.wall, ROOM);                                   // right
+  box(te, d+2*te, h, w+te/2, d/2, 0, M.wall, ROOM);                                // right (party wall)
   // far wall, around the window
-  box(win.x0+t, t, h, (win.x0-t)/2, d+t/2, 0, M.wall, ROOM);
-  box(w+t-win.x1, t, h, (win.x1+w+t)/2, d+t/2, 0, M.wall, ROOM);
-  box(win.x1-win.x0, t, win.sill, (win.x0+win.x1)/2, d+t/2, 0, M.wall, ROOM);
-  box(win.x1-win.x0, t, h-win.head, (win.x0+win.x1)/2, d+t/2, win.head, M.wall, ROOM);
+  box(win.x0+te, te, h, (win.x0-te)/2, d+te/2, 0, M.wall, ROOM);
+  box(w+te-win.x1, te, h, (win.x1+w+te)/2, d+te/2, 0, M.wall, ROOM);
+  box(win.x1-win.x0, te, win.sill, (win.x0+win.x1)/2, d+te/2, 0, M.wall, ROOM);
+  box(win.x1-win.x0, te, h-win.head, (win.x0+win.x1)/2, d+te/2, win.head, M.wall, ROOM);
   // the window itself
   winGroup=new THREE.Group(); ROOM.add(winGroup);
+  /* French doors to the garden, a narrow sidelight each end.  Glass at floor
+     level is what puts the glow behind his whole figure; a sash would start at
+     his waist and cut him in half. */
   const wc=(win.x0+win.x1)/2, ww=win.x1-win.x0, wh=win.head-win.sill;
-  box(ww-0.04, 0.012, wh-0.04, wc, d+0.06, win.sill+0.02, M.glass, winGroup);
-  for(const x of [win.x0+0.025, win.x1-0.025]) box(0.05,0.09,wh,x,d+0.05,win.sill,M.trim,winGroup);
-  box(ww,0.09,0.05,wc,d+0.05,win.head-0.05,M.trim,winGroup);
-  box(ww+0.16,0.20,0.04,wc,d-0.05,win.sill-0.04,M.trim,winGroup);
-  box(ww-0.04,0.05,0.05,wc,d+0.04,(win.sill+win.head)/2,M.trim,winGroup);
-  for(let k=1;k<=3;k++) box(0.03,0.03,wh,win.x0+ww*k/4,d+0.04,win.sill,M.trim,winGroup);
+  const SIDE=win.side??0.26, MEET=win.meet??0.06;
+  const yd=d+te*0.62;            // the plane of the doors, set back in the reveal
+  box(ww-0.08, 0.012, wh-0.10, wc, yd, win.sill+0.05, M.glass, winGroup);
+  for(const x of [win.x0+0.035, win.x1-0.035]) box(0.07,0.11,wh+0.10,x,yd-0.01,win.sill-0.05,M.trim,winGroup);
+  box(ww+0.14,0.13,0.10,wc,yd-0.01,win.head-0.02,M.trim,winGroup);
+  box(ww+0.18,te+0.16,Math.max(win.sill,0.02),wc,d+te/2-0.05,0,M.trim,winGroup);
+  for(const x of [win.x0+SIDE, wc-MEET/2, wc+MEET/2, win.x1-SIDE])
+    box(0.055,0.075,wh-0.02,x,yd-0.02,win.sill,M.trim,winGroup);
+  for(const [a,b2] of [[win.x0+SIDE, wc-MEET/2],[wc+MEET/2, win.x1-SIDE]]){
+    const cx2=(a+b2)/2, lw=b2-a;
+    box(lw,0.075,0.26,cx2,yd-0.02,win.sill,M.trim,winGroup);                 // bottom rail
+    box(lw-0.09,0.05,0.20,cx2,yd-0.005,win.sill+0.03,M.trim,winGroup);        // panel
+    box(lw,0.06,0.07,cx2,yd-0.02,0.92,M.trim,winGroup);                       // lock rail
+    for(const j of [1,2]) box(0.028,0.05,wh-0.30,a+lw*j/3,yd-0.015,win.sill+0.26,M.trim,winGroup);
+    // absolute bar heights: at 1.46 m he crosses the glass at chest height, so
+    // the bars sit above him and clear the lock rail
+    for(const z of [1.42,1.86]) box(lw,0.05,0.028,cx2,yd-0.015,z,M.trim,winGroup);
+  }
+  for(const x of [win.x0+SIDE/2, win.x1-SIDE/2]) box(SIDE-0.07,0.05,0.028,x,yd-0.015,1.42,M.trim,winGroup);
+  for(const sgn of [-1,1]){
+    const hd=cyl(0.012,0.13,wc+sgn*(MEET/2+0.05),yd-0.08,1.02,M.brass,winGroup);
+    hd.rotation.set(Math.PI/2,0,0); hd.position.set(wc+sgn*(MEET/2+0.05),yd-0.08,1.02);
+  }
   // the night outside — an emissive card, so the opening reads as a glowing panel
   outsideCard=new THREE.Mesh(new THREE.PlaneGeometry(14,9),M.night);
   outsideCard.rotation.x=Math.PI/2; outsideCard.position.set(wc,d+2.6,1.0); ROOM.add(outsideCard);
@@ -370,8 +408,9 @@ function buildRoom(){
   const yF=d-0.17, top=cur.top;
   curtainL=foldPanel(cur.open0-cur.bunch, cur.open0, yF, 0, top, M.curtain);
   curtainR=foldPanel(cur.open1, cur.open1+cur.bunch, yF, 0, top, M.curtain);
-  const pole=cyl(0.018, (cur.open1-cur.open0)+2*cur.bunch+0.5, wc, yF+0.01, top+0.06, M.brass, ROOM);
-  pole.rotation.set(0,0,Math.PI/2); pole.position.set(wc,yF+0.01,top+0.06);
+  const poleZ=cur.pole??(top+0.06);
+  const pole=cyl(0.018, (cur.open1-cur.open0)+2*cur.bunch+0.5, wc, yF+0.01, poleZ, M.brass, ROOM);
+  pole.rotation.set(0,0,Math.PI/2); pole.position.set(wc,yF+0.01,poleZ);
   for(const x of [cur.open0-cur.bunch-0.22, cur.open1+cur.bunch+0.22]) sph(0.035,x,yF+0.01,top+0.06,M.brass,ROOM);
   for(let i=0;i<9;i++){ const x=cur.open0-cur.bunch+0.05+i*(cur.bunch-0.1)/8;
     const rg=new THREE.Mesh(new THREE.TorusGeometry(0.026,0.004,6,14),M.brass); rg.rotation.y=Math.PI/2; rg.position.set(x,yF+0.01,top+0.06); ROOM.add(rg);
@@ -379,8 +418,10 @@ function buildRoom(){
   // skirting, picture rail
   for(const [sw,sd,sx,sy] of [[w,0.018,w/2,0.009],[w,0.018,w/2,d-0.009]]) box(sw,sd,r.skirt,sx,sy,0,M.trim,ROOM);
   for(const [sd2,sy2] of [[d,d/2]]) { box(0.018,sd2,r.skirt,0.009,sy2,0,M.trim,ROOM); box(0.018,sd2,r.skirt,w-0.009,sy2,0,M.trim,ROOM); }
-  box(w,0.03,0.04,w/2,0.015,r.rail,M.trim,ROOM); box(w,0.03,0.04,w/2,d-0.015,r.rail,M.trim,ROOM);
-  box(0.03,d,0.04,0.015,d/2,r.rail,M.trim,ROOM); box(0.03,d,0.04,w-0.015,d/2,r.rail,M.trim,ROOM);
+  box(w,0.035,0.055,w/2,0.0175,r.rail,M.trim,ROOM); box(w,0.035,0.055,w/2,d-0.0175,r.rail,M.trim,ROOM);
+  box(0.035,d,0.055,0.0175,d/2,r.rail,M.trim,ROOM); box(0.035,d,0.055,w-0.0175,d/2,r.rail,M.trim,ROOM);
+  CEIL_PARTS.push(box(w,0.07,0.09,w/2,0.035,h-0.09,M.ceil,ROOM), box(w,0.07,0.09,w/2,d-0.035,h-0.09,M.ceil,ROOM),
+                  box(0.07,d,0.09,0.035,d/2,h-0.09,M.ceil,ROOM), box(0.07,d,0.09,w-0.035,d/2,h-0.09,M.ceil,ROOM));
   // hall door, ajar, black beyond
   box(1.7,1.7,h,-0.95,(dr.y0+dr.y1)/2,0,new THREE.MeshBasicMaterial({color:0x000000}),ROOM);
   for(const y of [dr.y0,dr.y1]) box(t+0.02,0.05,dr.h,-t/2,y+(y<3?0.025:-0.025),0,M.trim,ROOM);
@@ -808,6 +849,73 @@ function updateMaskLights(){
   maskThrow.target.position.set(0,-3.0,0.60);
 }
 
+/* ============================================================== measuring
+   Three aids, and none of them renders in a picture: a ruler up Plusso, a
+   1.75 m person to stand beside him, and a one-metre floor grid.  They exist
+   so a wrong dimension is visible rather than argued about. */
+const MEAS=new THREE.Group(); W.add(MEAS);
+let ruler=null, human=null, mgrid=null;
+function tick3D(w,h,d,x,y,z,col){
+  const m=new THREE.MeshBasicMaterial({color:col});
+  const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m); o.position.set(x,y,z); return o;
+}
+function buildRuler(){
+  if(ruler){ MEAS.remove(ruler); ruler=null; }
+  ruler=new THREE.Group();
+  const x=L.plusso.x-0.95, y=L.plusso.y;
+  ruler.add(tick3D(0.012,0.012,PLUSSO_H,x,y,PLUSSO_H/2,0x00e0c0));      // the post
+  for(let i=0;i<=14;i++){                                                // 100 mm ticks
+    const z=i*0.1, big=(i%5===0);
+    ruler.add(tick3D(big?0.16:0.08,0.012,0.008,x+(big?0.08:0.04),y,z,big?0x00e0c0:0x1f8f80));
+  }
+  ruler.add(tick3D(0.30,0.012,0.014,x+0.15,y,PLUSSO_H,0xff3ba0));        // his crown at 1.46
+  MEAS.add(ruler);
+}
+/* A 1.75 m adult, blocked out at real proportions — head 1/7.5 of height,
+   shoulders 0.45, hips 0.36.  He is the reference the room is built for;
+   Plusso is a head and a half shorter than the people who live here. */
+function buildHuman(){
+  if(human){ MEAS.remove(human); human=null; }
+  human=new THREE.Group();
+  const H=1.75, m=new THREE.MeshStandardMaterial({color:0x7fd4c4,roughness:0.85,transparent:true,opacity:0.72});
+  const part=(w,d,h,z)=>{ const o=new THREE.Mesh(new THREE.BoxGeometry(w,d,h),m); o.position.set(0,0,z+h/2); human.add(o); };
+  part(0.36,0.22,0.86,0);            // legs
+  part(0.45,0.24,0.56,0.86);         // torso
+  part(0.20,0.22,0.23,1.42);         // head, crown at 1.65 + hair
+  part(0.10,0.10,0.06,1.69);
+  human.position.set(L.plusso.x+1.25, L.plusso.y, 0);
+  MEAS.add(human);
+}
+function buildGrid(){
+  if(mgrid){ MEAS.remove(mgrid); mgrid=null; }
+  const r=L.room, pts=[];
+  for(let x=0;x<=Math.round(r.w);x++){ pts.push(x,0,0.004, x,r.d,0.004); }
+  for(let y=0;y<=Math.round(r.d);y++){ pts.push(0,y,0.004, r.w,y,0.004); }
+  const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(pts,3));
+  mgrid=new THREE.LineSegments(g,new THREE.LineBasicMaterial({color:0x00e0c0,transparent:true,opacity:0.35}));
+  MEAS.add(mgrid);
+}
+function syncMeasure(){
+  const on=id=>document.getElementById(id).checked;
+  if(on('rulerBox')){ buildRuler(); } else if(ruler){ MEAS.remove(ruler); ruler=null; }
+  if(on('humanBox')){ buildHuman(); } else if(human){ MEAS.remove(human); human=null; }
+  if(on('gridBox')){ buildGrid(); } else if(mgrid){ MEAS.remove(mgrid); mgrid=null; }
+}
+/* the architecture table, straight from the layout — the same numbers the
+   Blender audit prints, so the two can never quietly disagree */
+function archTable(){
+  const r=L.room, w=r.window, rows=[
+    ['ceiling', r.h], ['external wall', r.wallExt??r.wall], ['internal wall', r.wall],
+    ['French door head', w.head], ['threshold', w.sill], ['door leaf width', (w.x1-w.x0-2*(w.side??0.26)-(w.meet??0.06))/2],
+    ['handle height', 1.02], ['hall door', r.door.h], ['skirting', r.skirt],
+    ['picture rail', r.rail], ['curtain pole', r.curtain.pole??r.curtain.top],
+  ];
+  document.getElementById('archTable').innerHTML =
+    '<b>The building</b><br>' + rows.map(([k,v])=>
+      `${k} <b>${v.toFixed(3)}</b> <span style="opacity:.55">${(100*v/PLUSSO_H).toFixed(0)}% of him</span>`
+    ).join('<br>');
+}
+
 /* ================================================================ cameras */
 let mode='shot';
 const free={pos:new THREE.Vector3(2.8,1.2,1.5), yaw:0, pitch:0};
@@ -849,6 +957,8 @@ function topCam(){
 }
 function setMode(m){
   mode=m; document.getElementById('modeTag').textContent=m;
+  // you cannot read a plan through the ceiling
+  for(const c of CEIL_PARTS) if(c) c.visible = (m!=='top');
   document.querySelectorAll('#bar [data-act^="m:"]').forEach(b=>b.classList.toggle('on',b.dataset.act==='m:'+m));
   if(m==='free'){ free.pos.copy(camera.position); }
   toast(m==='shot'?`shot camera — ${fmtLens()}`:m==='free'?'free camera — WASD to fly':'plan view');
@@ -888,11 +998,19 @@ function select(id){
   panel.classList.remove('hidden');
   const spec=id==='plusso'?null:L.objects.find(o=>o.id===id);
   document.getElementById('selName').textContent=id==='plusso'?'Plusso':spec.label;
-  document.getElementById('selDims').textContent=id==='plusso'
-    ? '1.46 m tall · 1.155 m across the lobes · 0.48 m deep'
-    : `${spec.w.toFixed(2)} × ${spec.d.toFixed(2)} × ${spec.h.toFixed(2)} m · ${spec.zone} zone${spec.collide?' · solid':''}`;
   const g=id==='plusso'?PL:OBJ[id].group;
   const bb=new THREE.Box3().setFromObject(g);
+  /* Measured, not declared.  The panel shows what the object actually is in
+     the scene and how tall it stands against Plusso, so a wrong dimension is
+     caught by looking rather than by trusting the table. */
+  const mw=bb.max.x-bb.min.x, mh=bb.max.y-bb.min.y, md=bb.max.z-bb.min.z, floor=bb.min.y;
+  document.getElementById('selDims').innerHTML = id==='plusso'
+    ? `<b>1.460</b> tall · <b>1.153</b> across · <b>0.595</b> deep<br><span style="opacity:.6">every dimension in this room is set against him</span>`
+    : `measured <b>${mw.toFixed(3)}</b> × <b>${md.toFixed(3)}</b> × <b>${mh.toFixed(3)}</b> m`
+      + `<br>stands <b>${(100*mh/PLUSSO_H).toFixed(0)}%</b> of Plusso`
+      + `<br>layout says ${spec.w.toFixed(2)} × ${spec.d.toFixed(2)} × ${spec.h.toFixed(2)}`
+      + (Math.abs(floor)>0.012 && spec.z===undefined ? `<br><b style="color:#d81b60">${floor>0?'floating':'sunk'} ${Math.abs(floor*1000).toFixed(0)} mm</b>` : '')
+      + `<br><span style="opacity:.6">${spec.zone} zone${spec.collide?' · solid':''}</span>`;
   const bx=new THREE.Mesh(new THREE.BoxGeometry(bb.max.x-bb.min.x, bb.max.y-bb.min.y, bb.max.z-bb.min.z), M.sel);
   bx.position.copy(bb.getCenter(new THREE.Vector3())); scene.add(bx); selBox=bx; selBox.userData.isSel=true;
   syncSelFields();
@@ -1014,6 +1132,7 @@ addEventListener('keydown',e=>{
     case 'Escape': select(null); break;
     case 'KeyL': setSetLights(!setLights); break;
     case 'KeyG': { const c=document.getElementById('guideBox'); c.checked=!c.checked; layoutGuide(); break; }
+    case 'KeyM': { const c=document.getElementById('rulerBox'); c.checked=!c.checked; syncMeasure(); toast(c.checked?'ruler on — ticks are 100 mm, the pink bar is his 1.46':'ruler off'); break; }
     case 'KeyC': { const c=document.getElementById('showCol'); c.checked=!c.checked; refreshColliders(); break; }
     case 'KeyP': takePicture(); break;
     case 'KeyX': exportLayout(); break;
@@ -1145,6 +1264,7 @@ const syncers=[
 for(const [id,fn] of [['shaftBox',()=>{shaft.visible=setLights&&document.getElementById('shaftBox').checked;}],
                       ['setBox',()=>setSetLights(document.getElementById('setBox').checked)],
                       ['guideBox',layoutGuide],
+                      ['rulerBox',syncMeasure],['humanBox',syncMeasure],['gridBox',syncMeasure],
                       ['showCol',refreshColliders],
                       ['colBox',()=>poseAt(frame)],
                       ['furBox',()=>{ if(furShell) furShell.visible=document.getElementById('furBox').checked; }],
@@ -1167,6 +1287,7 @@ function updateReadouts(){
   syncCamRows();
   document.getElementById('pxN').value=L.plusso.x.toFixed(2);
   document.getElementById('pyN').value=L.plusso.y.toFixed(2);
+  syncMeasure(); archTable();
 }
 
 /* ================================================================ loop */
