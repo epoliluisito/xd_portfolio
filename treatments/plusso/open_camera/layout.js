@@ -46,6 +46,7 @@ window.MASK_LAYOUT = {
     z0: 0.45, z1: 0.45,
     lens0: 18, lens1: 18,
     tilt0: 7,  tilt1: 7,
+    pan0: 0,   pan1: 0,          // swing about the room's vertical — the phone drives this
     dutch0: 4, dutch1: 4,
     pushStart: 1, pushEnd: 150,
   },

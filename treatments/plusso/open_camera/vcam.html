@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Plusso · virtual camera</title>
+<style>
+  :root{ --ink:#15161a; --mag:#eb008c; --line:#d8d6d2; --bg:#f4f2ef; }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overscroll-behavior:none;touch-action:manipulation}
+  body{font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+       background:var(--bg);color:var(--ink);display:flex;flex-direction:column;
+       padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom)}
+  h1{font-size:15px;margin:14px 0 2px;letter-spacing:.01em}
+  h1 b{color:var(--mag)}
+  .sub{font-size:12.5px;opacity:.6;margin-bottom:12px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px;margin-bottom:10px}
+  label{font-size:12px;opacity:.65;display:block;margin-bottom:5px}
+  input[type=text]{font:inherit;font-size:22px;letter-spacing:.24em;text-transform:uppercase;
+    width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);text-align:center}
+  button{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:12px;padding:12px;cursor:pointer}
+  button.primary{background:var(--mag);border-color:var(--mag);color:#fff;font-weight:600;width:100%}
+  button:active{transform:scale(.985)}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  .lenses{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  .lenses button{padding:11px 0;font-size:14px;font-variant-numeric:tabular-nums}
+  .lenses button.on{background:var(--mag);border-color:var(--mag);color:#fff;font-weight:600}
+  #clutch{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;
+    border-radius:20px;border:2px dashed var(--line);background:#fff;font-size:17px;font-weight:600;
+    color:#8b8a87;margin-bottom:10px;min-height:150px;user-select:none;-webkit-user-select:none}
+  #clutch.live{background:var(--mag);border:2px solid var(--mag);color:#fff}
+  #read{font-size:12.5px;opacity:.7;font-variant-numeric:tabular-nums;text-align:center;margin-bottom:8px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#c9c7c3;margin-right:6px}
+  .dot.on{background:#18b76b}
+  .hide{display:none}
+  .note{font-size:12px;opacity:.6;margin-top:8px}
+  code{background:#eceae6;padding:1px 5px;border-radius:5px;font-size:12px}
+</style>
+</head>
+<body>
+
+<h1>Plusso <b>virtual camera</b></h1>
+<div class="sub" id="status"><span class="dot" id="dot"></span><span id="statusText">not paired</span></div>
+
+<!-- ------------------------------------------------------------ pairing -->
+<div id="pair">
+  <div class="card">
+    <label>Pairing code — it is on the studio screen</label>
+    <input id="code" type="text" inputmode="latin" autocomplete="off" autocapitalize="characters"
+           spellcheck="false" maxlength="5" placeholder="····">
+  </div>
+  <button class="primary" id="go">Connect</button>
+  <div class="note">Both devices need to be online. The phone talks straight to the desktop once they have found each other, so the move stays smooth.</div>
+</div>
+
+<!-- ------------------------------------------------------------ operating -->
+<div id="op" class="hide" style="flex:1;display:flex;flex-direction:column">
+  <div id="clutch">hold to operate</div>
+  <div id="read">pan 0.0°&nbsp; tilt 0.0°&nbsp; dutch 0.0°</div>
+
+  <div class="card">
+    <label>Lens</label>
+    <div class="lenses" id="lenses"></div>
+  </div>
+
+  <div class="row" style="margin-bottom:8px">
+    <button id="zero">Zero here</button>
+    <button id="flip">Flip pan</button>
+  </div>
+  <div class="row" style="margin-bottom:10px">
+    <button id="setStart">Set as START</button>
+    <button id="setEnd">Set as END</button>
+  </div>
+  <div class="note">Hold the pad, aim the phone, let go to freeze. <b>Zero here</b> makes wherever you are pointing the straight-ahead. <b>Set as start / end</b> stamps the framing into the move.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const LENSES=[14,18,21,24,28,35,50,85];
+let conn=null, live=false, lens=18, flip=1;
+let q={x:0,y:0,z:0,w:1}, haveSensor=false;
+
+/* ---------------------------------------------------------------- sensors
+   iOS gives alpha/beta/gamma; the W3C conversion turns them into a quaternion.
+   We send the raw quaternion and let the desktop work out the framing relative
+   to whatever you zeroed on — that way the phone never has to know which way
+   the room faces, and a rotated phone is still a rotated camera. */
+const D2R=Math.PI/180;
+function quatFrom(alpha,beta,gamma){
+  const x=(beta||0)*D2R, y=(gamma||0)*D2R, z=(alpha||0)*D2R;
+  const cX=Math.cos(x/2), cY=Math.cos(y/2), cZ=Math.cos(z/2);
+  const sX=Math.sin(x/2), sY=Math.sin(y/2), sZ=Math.sin(z/2);
+  return { w: cX*cY*cZ - sX*sY*sZ,
+           x: sX*cY*cZ - cX*sY*sZ,
+           y: cX*sY*cZ + sX*cY*sZ,
+           z: cX*cY*sZ + sX*sY*cZ };
+}
+function onOrient(e){
+  if(e.alpha===null && e.beta===null && e.gamma===null) return;
+  haveSensor=true;
+  q=quatFrom(e.alpha,e.beta,e.gamma);
+}
+async function askSensor(){
+  // iOS 13+ will only hand over the sensor after a tap, and only on https
+  const DOE=window.DeviceOrientationEvent;
+  if(DOE && typeof DOE.requestPermission==='function'){
+    try{
+      const r=await DOE.requestPermission();
+      if(r!=='granted'){ say('motion access refused — tap Connect again'); return false; }
+    }catch(err){ say('motion needs https and a tap: '+(err.name||err)); return false; }
+  }
+  addEventListener('deviceorientation', onOrient, true);
+  return true;
+}
+
+/* ---------------------------------------------------------------- link */
+function say(t,ok){ $('statusText').textContent=t; $('dot').classList.toggle('on',!!ok); }
+function send(m){ if(conn&&conn.open) conn.send(m); }
+
+$('go').addEventListener('click',async()=>{
+  const code=($('code').value||'').trim().toUpperCase();
+  if(code.length<4){ say('type the four characters from the studio'); return; }
+  if(!await askSensor()) return;
+  say('finding the studio…');
+  const peer=new Peer({debug:1});
+  peer.on('open',()=>{
+    conn=peer.connect('plusso-vcam-'+code,{reliable:false});
+    conn.on('open',()=>{
+      say('connected',true);
+      $('pair').classList.add('hide'); $('op').classList.remove('hide');
+      buildLenses(); pump();
+    });
+    /* The readout shows what the STUDIO applied, not what the phone guessed —
+       gain, damping and clamps all live over there, so echoing our own numbers
+       back at ourselves would quietly lie. */
+    conn.on('data',m=>{
+      if(!m) return;
+      if(m.t==='read') $('read').innerHTML =
+        `pan <b>${m.pan.toFixed(1)}°</b>&nbsp; tilt <b>${m.tilt.toFixed(1)}°</b>&nbsp; dutch <b>${m.dutch.toFixed(1)}°</b>&nbsp; ${m.lens} mm`;
+      if(m.t==='ok'){ say(m.msg,true); if(navigator.vibrate) navigator.vibrate(12); }
+      if(m.t==='lens'){ lens=m.lens; [...$('lenses').children].forEach(c=>c.classList.toggle('on',+c.textContent===lens)); }
+    });
+    conn.on('close',()=>say('disconnected'));
+    conn.on('error',e=>say('link error: '+e.type));
+  });
+  peer.on('error',e=>{
+    say(e.type==='peer-unavailable' ? 'no studio with that code — check it is still showing'
+                                    : 'could not reach the pairing service ('+e.type+')');
+  });
+});
+
+/* ---------------------------------------------------------------- operating */
+const clutch=$('clutch');
+function setLive(on){
+  live=on; clutch.classList.toggle('live',on);
+  clutch.textContent = on ? 'operating' : 'hold to operate';
+  send({t:'clutch',on});
+  if(on && navigator.vibrate) navigator.vibrate(8);
+}
+for(const ev of ['pointerdown','touchstart']) clutch.addEventListener(ev,e=>{e.preventDefault();setLive(true);},{passive:false});
+for(const ev of ['pointerup','pointercancel','touchend','touchcancel']) addEventListener(ev,()=>{ if(live) setLive(false); });
+
+function pump(){
+  if(conn&&conn.open&&live&&haveSensor) send({t:'q',q:[q.x,q.y,q.z,q.w],flip});
+  requestAnimationFrame(pump);
+}
+function buildLenses(){
+  const box=$('lenses'); box.innerHTML='';
+  for(const mm of LENSES){
+    const b=document.createElement('button'); b.textContent=mm;
+    b.className = mm===lens ? 'on' : '';
+    b.addEventListener('click',()=>{
+      lens=mm; send({t:'lens',lens});
+      [...box.children].forEach(c=>c.classList.toggle('on',+c.textContent===lens));
+      if(navigator.vibrate) navigator.vibrate(5);
+    });
+    box.appendChild(b);
+  }
+}
+$('zero').addEventListener('click',()=>{ send({t:'zero'}); say('zeroed',true); if(navigator.vibrate) navigator.vibrate(12); });
+$('flip').addEventListener('click',()=>{ flip=-flip; say('pan '+(flip>0?'normal':'flipped'),true); });
+$('setStart').addEventListener('click',()=>{ send({t:'stamp',which:0}); say('stamped as START',true); if(navigator.vibrate) navigator.vibrate([8,40,8]); });
+$('setEnd').addEventListener('click',()=>{ send({t:'stamp',which:1}); say('stamped as END',true); if(navigator.vibrate) navigator.vibrate([8,40,8]); });
+
+</script>
+</body>
+</html>
