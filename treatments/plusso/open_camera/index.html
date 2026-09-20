@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Mask — shot studio</title>
+<style>
+  :root{ --ink:#5b2e38; --mag:#eb008c; --bg:#0d0a0c; --line:rgba(91,46,56,.14) }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"Fredoka",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  kbd{display:inline-block;min-width:18px;text-align:center;padding:0 5px;border-radius:5px;
+    background:#fff;border:1px solid rgba(91,46,56,.20);font:inherit;font-size:11px;line-height:17px;color:var(--ink)}
+  /* ---- menu bar */
+  #bar{position:fixed;left:12px;top:12px;z-index:20;display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 24px)}
+  .menu{position:relative}
+  .mbtn,.pill{font:inherit;font-size:12.5px;padding:7px 12px;border-radius:999px;cursor:pointer;color:var(--ink);
+    background:rgba(255,255,255,.87);backdrop-filter:blur(10px);border:1px solid var(--line);box-shadow:0 4px 16px rgba(0,0,0,.28);white-space:nowrap}
+  .mbtn b{font-weight:600;color:var(--mag)}
+  .mbtn::after{content:" ▾";opacity:.55;font-size:10px}
+  .menu.open .mbtn{background:#fff;border-color:var(--mag)}
+  .drop{display:none;position:absolute;left:0;top:calc(100% + 6px);min-width:264px;background:rgba(255,255,255,.95);backdrop-filter:blur(12px);
+    border:1px solid var(--line);border-radius:14px;padding:8px;box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:12.5px;line-height:1.45;max-height:74vh;overflow:auto}
+  .menu.open .drop{display:block}
+  .drop button,.drop label.row{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;
+    font:inherit;font-size:12.5px;padding:6px 8px;border-radius:9px;border:0;background:none;color:var(--ink);cursor:pointer}
+  .drop button:hover,.drop label.row:hover{background:rgba(235,0,140,.08)}
+  .drop button.on{color:var(--mag);font-weight:600}
+  .drop select,.drop input[type=number]{font:inherit;font-size:12.5px;padding:4px 7px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);max-width:132px;flex:1}
+  .drop input[type=range]{width:100%;accent-color:var(--mag)}
+  .drop .hint{font-size:11.5px;opacity:.68;padding:5px 8px 2px;line-height:1.4}
+  .drop .hint b{font-weight:600;opacity:1}
+  .drop hr{border:0;border-top:1px solid var(--line);margin:5px 0}
+  .drop .full{padding:4px 8px}
+  input[type=checkbox]{accent-color:var(--mag);margin:0 6px 0 0}
+  .pill.primary{background:var(--mag);color:#fff;border-color:var(--mag);font-weight:600}
+  .pill.primary kbd{background:rgba(255,255,255,.22);border-color:transparent;color:#fff}
+  /* ---- transport */
+  #transport{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:20;display:flex;align-items:center;gap:10px;
+    background:rgba(255,255,255,.90);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px;padding:8px 14px;
+    box-shadow:0 8px 28px rgba(0,0,0,.34);width:min(860px,calc(100vw - 32px))}
+  #transport button{font:inherit;font-size:13px;border:0;background:none;cursor:pointer;color:var(--ink);padding:2px 6px;border-radius:7px}
+  #transport button:hover{background:rgba(235,0,140,.10)}
+  #scrub{flex:1;accent-color:var(--mag)}
+  #fnum{font-variant-numeric:tabular-nums;font-size:12px;min-width:118px;text-align:right;opacity:.85}
+  #beat{font-size:12px;color:var(--mag);font-weight:600;min-width:120px}
+  /* ---- overlays */
+  .panel{position:fixed;z-index:10;background:rgba(255,255,255,.84);backdrop-filter:blur(10px);
+    border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,.28);font-size:12px;line-height:1.5}
+  .panel.hidden{display:none}
+  #hud{left:12px;bottom:78px;font-variant-numeric:tabular-nums;white-space:pre;line-height:1.45}
+  #sel{right:12px;top:58px;width:250px}
+  #sel h3{margin:0 0 6px;font-size:12px;color:var(--mag);letter-spacing:.02em}
+  #sel .g{display:flex;gap:6px;align-items:center;margin:3px 0}
+  #sel .g span{width:16px;opacity:.6}
+  #sel input{font:inherit;font-size:12px;width:100%;padding:3px 6px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--ink);font-variant-numeric:tabular-nums}
+  #help{left:12px;top:56px;width:344px;z-index:19}
+  #help h2{margin:8px 0 2px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;opacity:.6}
+  #help h2:first-child{margin-top:0}
+  #warn{left:50%;top:56px;transform:translateX(-50%);background:rgba(220,40,40,.92);color:#fff;border:0;font-weight:600;display:none}
+  #toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:12;font-size:12.5px;
+    background:rgba(255,255,255,.93);padding:6px 14px;border-radius:999px;opacity:0;transition:opacity .25s}
+  #toast.on{opacity:1}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:30;transition:opacity .35s}
+  #loading{position:fixed;inset:0;z-index:40;display:grid;place-items:center;background:#120d10;font-size:14px;letter-spacing:.04em;color:#f4b9c4}
+  #loading.gone{display:none}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#eb008c;margin-right:8px;animation:p 1s ease-in-out infinite}
+  @keyframes p{0%,100%{transform:scale(.7);opacity:.6}50%{transform:scale(1.15);opacity:1}}
+  .bar2{position:fixed;z-index:5;background:rgba(0,0,0,.76);pointer-events:none}
+  #reticle{position:fixed;z-index:6;pointer-events:none;border:1px solid rgba(255,255,255,.28)}
+  #reticle::before{content:"";position:absolute;left:34.2%;right:34.2%;top:0;bottom:0;border-left:1px dashed rgba(235,0,140,.55);border-right:1px dashed rgba(235,0,140,.55)}
+  #reticle.off::before{display:none}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="bar2" id="barT"></div><div class="bar2" id="barB"></div><div class="bar2" id="barL"></div><div class="bar2" id="barR"></div>
+<div id="reticle"></div>
+
+<div id="bar">
+  <div class="menu"><button class="mbtn">View · <b id="modeTag">shot</b></button><div class="drop">
+    <button data-act="m:shot">Shot camera — 18 mm, the push <kbd>1</kbd></button>
+    <button data-act="m:free">Free camera — fly around <kbd>2</kbd></button>
+    <button data-act="m:top">Plan view — from above <kbd>3</kbd></button>
+    <div class="hint">Free: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly, <kbd>E</kbd>/<kbd>Q</kbd> up·down, <kbd>Shift</kbd> fast, drag to look, wheel dollies. <kbd>Tab</kbd> cycles views.</div>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Move things</button><div class="drop">
+    <div class="hint"><b>Click</b> anything to select it. <b>Drag</b> it across the floor. Arrows nudge 5 cm (<kbd>Shift</kbd> 25 cm), <kbd>[</kbd> <kbd>]</kbd> rotate 5°, <kbd>PgUp/Dn</kbd> height.</div>
+    <hr>
+    <label class="row">Select <select id="pickSel"></select></label>
+    <button data-act="selPlusso">Select Plusso <kbd>0</kbd></button>
+    <button data-act="dropAll">Drop everything to the floor</button>
+    <button data-act="reset">Reset the layout</button>
+    <hr>
+    <label class="row"><span><input id="colBox" type="checkbox" checked>Colliders on — nothing overlaps</span></label>
+    <label class="row"><span><input id="showCol" type="checkbox">Show collider boxes</span></label>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Camera</button><div class="drop">
+    <label class="row">Lens <select id="lensSel"></select></label>
+    <div class="full"><label class="hint">Start y <b id="y0v"></b> — how far back the push begins</label><input id="y0r" type="range" min="1.6" max="6.5" step="0.05"></div>
+    <div class="full"><label class="hint">End y <b id="y1v"></b> — where it stops</label><input id="y1r" type="range" min="2.0" max="7.5" step="0.05"></div>
+    <div class="full"><label class="hint">Height <b id="czv"></b></label><input id="czr" type="range" min="0.12" max="1.70" step="0.01"></div>
+    <div class="full"><label class="hint">Tilt up <b id="ctv"></b></label><input id="ctr" type="range" min="-6" max="18" step="0.5"></div>
+    <div class="full"><label class="hint">Dutch <b id="cdv"></b></label><input id="cdr" type="range" min="-10" max="10" step="0.5"></div>
+    <label class="row"><span><input id="guideBox" type="checkbox" checked>Frame guide + 9:16 column</span></label>
+    <div class="hint">The seating zone must stay at y &lt; 3.30 — behind the lens. The bar turns red if the push start goes past it.</div>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Light</button><div class="drop">
+    <div class="full"><label class="hint">Moon <b id="mnv"></b></label><input id="mnr" type="range" min="0" max="8" step="0.1"></div>
+    <div class="full"><label class="hint">Moon elevation <b id="mev"></b> — sets how far the blade reaches</label><input id="mer" type="range" min="8" max="45" step="0.5"></div>
+    <div class="full"><label class="hint">Fill <b id="flv"></b></label><input id="flr" type="range" min="0" max="220" step="2"></div>
+    <div class="full"><label class="hint">Mask red <b id="mkv"></b></label><input id="mkr" type="range" min="0" max="30" step="0.5"></div>
+    <div class="full"><label class="hint">Curtain opening <b id="cov"></b></label><input id="cor" type="range" min="0.12" max="2.20" step="0.02"></div>
+    <label class="row"><span><input id="shaftBox" type="checkbox" checked>Moon shaft (volumetric)</span></label>
+    <label class="row"><span><input id="workBox" type="checkbox">Work light — flat, just to see <kbd>L</kbd></span></label>
+  </div></div>
+
+  <div class="menu"><button class="mbtn">Plusso</button><div class="drop">
+    <div class="hint">The acting never changes — it plays from wherever his mark is.</div>
+    <label class="row">Mark x <input id="pxN" type="number" step="0.05"></label>
+    <label class="row">Mark y <input id="pyN" type="number" step="0.05"></label>
+    <label class="row">Start facing <input id="pyawN" type="number" step="5"></label>
+    <label class="row"><span><input id="furBox" type="checkbox">Show the fur shell (slow)</span></label>
+    <label class="row"><span><input id="maskBox" type="checkbox" checked>Mask on</span></label>
+    <label class="row"><span><input id="remBox" type="checkbox" checked>Remote in hand</span></label>
+    <div class="hint">Distance to the glass: <b id="glassD"></b> · to the lens at the start: <b id="lensD"></b></div>
+  </div></div>
+
+  <button class="pill" id="exportBtn">Export layout <kbd>X</kbd></button>
+  <button class="pill primary" id="shotBtn">Picture <kbd>P</kbd></button>
+  <button class="pill" id="helpBtn">?</button>
+</div>
+
+<div id="help" class="panel hidden">
+  <h2>views</h2><kbd>1</kbd> shot · <kbd>2</kbd> free · <kbd>3</kbd> plan · <kbd>Tab</kbd> cycles
+  <h2>playback</h2><kbd>Space</kbd> play/pause · <kbd>,</kbd> <kbd>.</kbd> one frame · <kbd>Home</kbd>/<kbd>End</kbd> · drag the scrubber
+  <h2>move things</h2>click to select · drag on the floor · arrows nudge (<kbd>Shift</kbd> ×5) · <kbd>[</kbd> <kbd>]</kbd> rotate · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> height · <kbd>0</kbd> selects Plusso · <kbd>Esc</kbd> deselects
+  <h2>look</h2><kbd>L</kbd> work light · <kbd>G</kbd> frame guide · <kbd>C</kbd> collider boxes
+  <h2>out</h2><kbd>P</kbd> saves a PNG · <kbd>X</kbd> exports the layout as JSON for Blender
+  <h2>the rule</h2>Everything in the seating zone sits at y &lt; 3.30, behind camera 1. Move something past that line and the warning fires.
+</div>
+
+<div id="sel" class="panel hidden">
+  <h3 id="selName">—</h3>
+  <div class="g"><span>x</span><input id="selX" type="number" step="0.05"></div>
+  <div class="g"><span>y</span><input id="selY" type="number" step="0.05"></div>
+  <div class="g"><span>z</span><input id="selZ" type="number" step="0.05"></div>
+  <div class="g"><span>rot</span><input id="selR" type="number" step="5"></div>
+  <div class="hint" style="font-size:11px;opacity:.65;padding-top:4px" id="selDims"></div>
+</div>
+
+<div id="warn" class="panel"></div>
+<div id="hud" class="panel"></div>
+<div id="toast"></div>
+<div id="flash"></div>
+
+<div id="transport">
+  <button id="playBtn">▶</button>
+  <span id="beat">—</span>
+  <input id="scrub" type="range" min="1" max="192" step="1" value="1">
+  <span id="fnum">f001 / 192 · 0.00 s</span>
+</div>
+
+<div id="loading"><div><span class="dot"></span>building the room…</div></div>
+
+<script src="layout.js"></script>
+<script src="assets/plusso-glb.js"></script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+const L = window.MASK_LAYOUT;
+const DEF = JSON.parse(JSON.stringify(L));
+const R2D = 180/Math.PI, D2R = Math.PI/180;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const smooth=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1); return t*t*(3-2*t);};
+const smoother=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1); return t*t*t*(t*(t*6-15)+10);};
+
+/* ================================================================ renderer */
+const app=document.getElementById('app');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.AgXToneMapping; renderer.toneMappingExposure=1.0;
+app.appendChild(renderer.domElement);
+const canvas=renderer.domElement;
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x05070c);
+/* Everything below lives in BLENDER coordinates: x across, y depth, z up.
+   One rotation on the root does the conversion, so every number in the UI,
+   in layout.js and in the export is a number you can paste into Blender. */
+const W=new THREE.Group(); W.rotation.x=-Math.PI/2; scene.add(W);
+
+const camera=new THREE.PerspectiveCamera(50,16/9,0.03,120);
+camera.filmGauge=36; W.add(camera);
+const LENSES=[14,18,21,24,28,35,50,85];
+
+/* ================================================================ materials */
+const M={};
+function mat(id,hex,rough=0.9,metal=0,extra={}){ M[id]=new THREE.MeshStandardMaterial({color:hex,roughness:rough,metalness:metal,...extra}); return M[id]; }
+mat('wall',0x5c6360,0.95); mat('ceil',0x9a958e,0.95); mat('floor',0x4a3526,0.62);
+mat('trim',0xb9b4aa,0.6); mat('curtain',0xa8848a,0.9); mat('brass',0x8a6a34,0.35,0.85);
+mat('wood',0x4d3420,0.65); mat('darkwood',0x2a1c12,0.65); mat('rug',0x6b4f46,0.96);
+mat('rug2',0x4d5058,0.96); mat('velvet',0x3a4a40,0.92); mat('boucle',0x7a7772,0.95);
+mat('black',0x0a0a0b,0.75); mat('metal',0x73767a,0.35,0.8); mat('mirror',0xd8dae0,0.06,1.0);
+mat('paper',0xd8cfb4,0.92); mat('leather',0x4d2418,0.55); mat('plant',0x24461f,0.8);
+mat('pot',0x8a5a42,0.85); mat('white',0xdcdad4,0.55); mat('candle',0xe8e0cc,0.45);
+mat('radiator',0xc8c6c0,0.5); mat('throw',0x96784c,0.95); mat('leopard',0xb08a3c,0.9);
+mat('tvframe',0x0a0a0b,0.35); mat('bin',0x27462d,0.7);
+M.glass=new THREE.MeshPhysicalMaterial({color:0xcfe0ff,roughness:0.04,metalness:0,transmission:0,opacity:0.14,transparent:true,depthWrite:false});
+M.night=new THREE.MeshBasicMaterial({color:0x9fbdf0});
+M.screen=new THREE.MeshStandardMaterial({color:0x05060a,roughness:0.15,metalness:0.4});
+M.maskShell=new THREE.MeshStandardMaterial({color:0xc9c9c4,roughness:0.62,metalness:0});
+M.maskGrey=new THREE.MeshStandardMaterial({color:0x6e7074,roughness:0.5});
+M.led=new THREE.MeshStandardMaterial({color:0x140302,roughness:0.75,emissive:new THREE.Color(0xff0d08),emissiveIntensity:0});
+M.remote=new THREE.MeshStandardMaterial({color:0x0b0b0c,roughness:0.92,metalness:0});
+M.remoteBtn=new THREE.MeshStandardMaterial({color:0x2a2a2d,roughness:0.8});
+M.remoteRed=new THREE.MeshStandardMaterial({color:0x5a0a06,roughness:0.7});
+M.sel=new THREE.MeshBasicMaterial({color:0xeb008c,wireframe:true});
+M.colbox=new THREE.MeshBasicMaterial({color:0x44ddff,wireframe:true,transparent:true,opacity:0.5});
+
+/* ---- tiny builders. `box` places the BASE of the box at z, like the Blender lib */
+function box(w,d,h,x,y,z,m,parent){
+  const me=new THREE.Mesh(new THREE.BoxGeometry(w,d,h),m);
+  me.position.set(x,y,z+h/2); me.castShadow=true; me.receiveShadow=true;
+  (parent||W).add(me); return me;
+}
+function cyl(r,h,x,y,z,m,parent,seg=20,rot=null){
+  const me=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg),m);
+  me.rotation.x=Math.PI/2;                       // three cylinders run +Y; stand it on Z
+  me.position.set(x,y,z+h/2);
+  if(rot) me.rotation.set(rot[0],rot[1],rot[2]);
+  me.castShadow=true; me.receiveShadow=true; (parent||W).add(me); return me;
+}
+function sph(r,x,y,z,m,parent){
+  const me=new THREE.Mesh(new THREE.SphereGeometry(r,20,12),m);
+  me.position.set(x,y,z); me.castShadow=true; me.receiveShadow=true; (parent||W).add(me); return me;
+}
+
+/* ================================================================ the room */
+const ROOM=new THREE.Group(); W.add(ROOM);
+let curtainL=null,curtainR=null,outsideCard=null,shaft=null,winGroup=null;
+
+function foldPanel(x0,x1,yFront,z0,z1,m,amp=0.05,period=0.17){
+  const nx=Math.max(10,Math.round((x1-x0)/0.025)), nz=24;
+  const g=new THREE.BufferGeometry(); const pos=[],idx=[];
+  for(let j=0;j<=nz;j++){
+    const t=j/nz, z=z1-(z1-z0)*t;
+    for(let i=0;i<=nx;i++){
+      const u=i/nx, x=x0+(x1-x0)*u;
+      const fold=amp*Math.sin(2*Math.PI*(x-x0)/period)*(0.35+0.65*t);
+      let brk=0; if(z<z0+0.13) brk=Math.pow(1-(z-z0)/0.13,2)*0.07*(1+0.4*Math.sin(9*x));
+      pos.push(x, yFront+fold-brk, Math.max(z0+0.004,z));
+    }
+  }
+  for(let j=0;j<nz;j++) for(let i=0;i<nx;i++){
+    const a=j*(nx+1)+i,b=a+1,c=a+nx+1,d=c+1;
+    idx.push(a,b,d, a,d,c);
+  }
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); g.setIndex(idx); g.computeVertexNormals();
+  const me=new THREE.Mesh(g,m); me.castShadow=true; me.receiveShadow=true; me.material.side=THREE.DoubleSide;
+  ROOM.add(me); return me;
+}
+
+function buildRoom(){
+  while(ROOM.children.length) ROOM.remove(ROOM.children[0]);
+  const r=L.room, w=r.w, d=r.d, h=r.h, t=r.wall, win=r.window, cur=r.curtain, dr=r.door;
+  box(w+2*t, d+2*t, 0.05, w/2, d/2, -0.05, M.floor, ROOM);
+  box(w+2*t, d+2*t, 0.05, w/2, d/2, h, M.ceil, ROOM);
+  box(w+2*t, t, h, w/2, -t/2, 0, M.wall, ROOM);                                    // near wall
+  box(t, dr.y0+t, h, -t/2, (dr.y0-t)/2, 0, M.wall, ROOM);                          // left, before the door
+  box(t, d+t-dr.y1, h, -t/2, (dr.y1+d+t)/2, 0, M.wall, ROOM);                      // left, after
+  box(t, dr.y1-dr.y0, h-dr.h, -t/2, (dr.y0+dr.y1)/2, dr.h, M.wall, ROOM);          // over the door
+  box(t, d+2*t, h, w+t/2, d/2, 0, M.wall, ROOM);                                   // right
+  // far wall, around the window
+  box(win.x0+t, t, h, (win.x0-t)/2, d+t/2, 0, M.wall, ROOM);
+  box(w+t-win.x1, t, h, (win.x1+w+t)/2, d+t/2, 0, M.wall, ROOM);
+  box(win.x1-win.x0, t, win.sill, (win.x0+win.x1)/2, d+t/2, 0, M.wall, ROOM);
+  box(win.x1-win.x0, t, h-win.head, (win.x0+win.x1)/2, d+t/2, win.head, M.wall, ROOM);
+  // the window itself
+  winGroup=new THREE.Group(); ROOM.add(winGroup);
+  const wc=(win.x0+win.x1)/2, ww=win.x1-win.x0, wh=win.head-win.sill;
+  box(ww-0.04, 0.012, wh-0.04, wc, d+0.06, win.sill+0.02, M.glass, winGroup);
+  for(const x of [win.x0+0.025, win.x1-0.025]) box(0.05,0.09,wh,x,d+0.05,win.sill,M.trim,winGroup);
+  box(ww,0.09,0.05,wc,d+0.05,win.head-0.05,M.trim,winGroup);
+  box(ww+0.16,0.20,0.04,wc,d-0.05,win.sill-0.04,M.trim,winGroup);
+  box(ww-0.04,0.05,0.05,wc,d+0.04,(win.sill+win.head)/2,M.trim,winGroup);
+  for(let k=1;k<=3;k++) box(0.03,0.03,wh,win.x0+ww*k/4,d+0.04,win.sill,M.trim,winGroup);
+  // the night outside — an emissive card, so the opening reads as a glowing panel
+  outsideCard=new THREE.Mesh(new THREE.PlaneGeometry(14,9),M.night);
+  outsideCard.rotation.x=Math.PI/2; outsideCard.position.set(wc,d+2.6,1.0); ROOM.add(outsideCard);
+  // curtains: heavy panels bunched either side of the opening
+  const yF=d-0.17, top=cur.top;
+  curtainL=foldPanel(cur.open0-cur.bunch, cur.open0, yF, 0, top, M.curtain);
+  curtainR=foldPanel(cur.open1, cur.open1+cur.bunch, yF, 0, top, M.curtain);
+  const pole=cyl(0.018, (cur.open1-cur.open0)+2*cur.bunch+0.5, wc, yF+0.01, top+0.06, M.brass, ROOM);
+  pole.rotation.set(0,0,Math.PI/2); pole.position.set(wc,yF+0.01,top+0.06);
+  for(const x of [cur.open0-cur.bunch-0.22, cur.open1+cur.bunch+0.22]) sph(0.035,x,yF+0.01,top+0.06,M.brass,ROOM);
+  for(let i=0;i<9;i++){ const x=cur.open0-cur.bunch+0.05+i*(cur.bunch-0.1)/8;
+    const rg=new THREE.Mesh(new THREE.TorusGeometry(0.026,0.004,6,14),M.brass); rg.rotation.y=Math.PI/2; rg.position.set(x,yF+0.01,top+0.06); ROOM.add(rg);
+    const rg2=rg.clone(); rg2.position.x=cur.open1+0.05+i*(cur.bunch-0.1)/8; ROOM.add(rg2); }
+  // skirting, picture rail
+  for(const [sw,sd,sx,sy] of [[w,0.018,w/2,0.009],[w,0.018,w/2,d-0.009]]) box(sw,sd,r.skirt,sx,sy,0,M.trim,ROOM);
+  for(const [sd2,sy2] of [[d,d/2]]) { box(0.018,sd2,r.skirt,0.009,sy2,0,M.trim,ROOM); box(0.018,sd2,r.skirt,w-0.009,sy2,0,M.trim,ROOM); }
+  box(w,0.03,0.04,w/2,0.015,r.rail,M.trim,ROOM); box(w,0.03,0.04,w/2,d-0.015,r.rail,M.trim,ROOM);
+  box(0.03,d,0.04,0.015,d/2,r.rail,M.trim,ROOM); box(0.03,d,0.04,w-0.015,d/2,r.rail,M.trim,ROOM);
+  // hall door, ajar, black beyond
+  box(1.7,1.7,h,-0.95,(dr.y0+dr.y1)/2,0,new THREE.MeshBasicMaterial({color:0x000000}),ROOM);
+  for(const y of [dr.y0,dr.y1]) box(t+0.02,0.05,dr.h,-t/2,y+(y<3?0.025:-0.025),0,M.trim,ROOM);
+  box(t+0.02,dr.y1-dr.y0,0.05,-t/2,(dr.y0+dr.y1)/2,dr.h,M.trim,ROOM);
+  const leaf=new THREE.Group(); leaf.position.set(0.02,dr.y1,0.015); leaf.rotation.z=dr.swing*D2R; ROOM.add(leaf);
+  box(0.04,0.76,2.00,0,-0.38,0,M.trim,leaf);
+  cyl(0.012,0.11,0.06,-0.66,0.985,M.brass,leaf,10,[0,Math.PI/2,0]);
+  box(0.02,0.086,0.086,0.01,3.90,1.157,M.white,ROOM);                               // the switch he can't reach
+  // chimney breast + fire on the right wall, at the far end
+  const by0=d-1.80, by1=d-0.60;
+  box(0.30,0.30,h,w-0.15,by0+0.15,0,M.wall,ROOM); box(0.30,0.30,h,w-0.15,by1-0.15,0,M.wall,ROOM);
+  box(0.30,by1-by0-0.60,h-0.95,w-0.15,(by0+by1)/2,0.95,M.wall,ROOM);
+  box(0.06,0.60,0.95,w-0.025,(by0+by1)/2,0,M.black,ROOM);
+  box(0.22,0.50,0.12,w-0.16,(by0+by1)/2,0,M.black,ROOM);
+  box(0.24,1.30,0.06,w-0.38,(by0+by1)/2,1.12,M.darkwood,ROOM);
+  box(0.03,0.83,1.13,w-0.315,(by0+by1)/2,1.28,M.brass,ROOM);
+  box(0.012,0.75,1.05,w-0.325,(by0+by1)/2,1.32,M.mirror,ROOM);
+  box(0.45,1.20,0.02,w-0.525,(by0+by1)/2,0,M.black,ROOM);
+  cyl(0.14,0.30,w-0.65,by1-0.22,0.02,M.brass,ROOM,14);
+  // ceiling rose + pendant, deliberately just out of shot 1's frame
+  cyl(0.22,0.03,r.pendant.x,r.pendant.y,h-0.03,M.ceil,ROOM,18);
+  cyl(0.005,0.55,r.pendant.x,r.pendant.y,h-0.58,M.black,ROOM,6);
+  cyl(0.16,0.20,r.pendant.x,r.pendant.y,h-0.78,M.paper,ROOM,16);
+  buildShaft();
+}
+
+/* the moon shaft — a cheap additive wedge from the window opening into the room */
+function buildShaft(){
+  if(shaft){ ROOM.remove(shaft); shaft.geometry.dispose(); }
+  const r=L.room, cur=r.curtain, win=r.window, el=L.light.moonElev*D2R;
+  const x0=Math.max(win.x0,cur.open0), x1=Math.min(win.x1,cur.open1);
+  const zTop=Math.min(win.head,cur.top), zBot=win.sill;
+  const reachTop=zTop/Math.tan(el), reachBot=zBot/Math.tan(el);
+  const g=new THREE.BufferGeometry();
+  const yG=r.d-0.18;
+  const p=[ x0,yG,zTop,  x1,yG,zTop,  x1,yG-reachTop,0.002, x0,yG-reachTop,0.002,
+            x0,yG,zBot,  x1,yG,zBot,  x1,yG-reachBot,0.002, x0,yG-reachBot,0.002 ];
+  g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
+  g.setIndex([0,1,2, 0,2,3, 4,5,6, 4,6,7, 0,4,7, 0,7,3, 1,5,6, 1,6,2]);
+  g.computeVertexNormals();
+  const m=new THREE.MeshBasicMaterial({color:0x9fc0ff,transparent:true,opacity:0.055,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide});
+  shaft=new THREE.Mesh(g,m); shaft.renderOrder=3; ROOM.add(shaft);
+  shaft.visible=document.getElementById('shaftBox').checked;
+}
+
+/* ================================================================ furniture */
+const OBJ={};   // id -> {group, spec, aabb}
+function buildObjects(){
+  for(const id in OBJ){ W.remove(OBJ[id].group); delete OBJ[id]; }
+  for(const s of L.objects){
+    const g=new THREE.Group(); W.add(g);
+    BUILD[s.type](g,s);
+    g.position.set(s.x,s.y,s.z||0); g.rotation.z=(s.yaw||0)*D2R;
+    g.traverse(o=>{ if(o.isMesh) o.userData.pickId=s.id; });
+    OBJ[s.id]={group:g,spec:s};
+  }
+  refreshColliders(); fillPicker();
+}
+const BUILD={
+  bookcase(g,s){ const w=s.w,d=s.d,h=s.h;
+    box(w,d,h,0,0,0,M.darkwood,g);
+    let seed=1; const rnd=()=>{seed=(seed*16807)%2147483647; return seed/2147483647;};
+    for(let sh=0; sh<5; sh++){ const z=0.12+sh*(h-0.24)/4; let p=-w/2+0.04;
+      while(p<w/2-0.06){ const bw=0.022+rnd()*0.028, bh=0.17+rnd()*0.10;
+        box(bw,d-0.10,bh,p+bw/2,0,z,[M.leather,M.paper,M.velvet,M.rug2][Math.floor(rnd()*4)],g); p+=bw+0.004;
+        if(rnd()<0.1) p+=0.07; } } },
+  armchair(g,s){ const w=s.w,d=s.d;
+    box(w,d,0.42,0,0,0,M.velvet,g); box(w*0.7,d*0.7,0.10,0,0.05,0.42,M.velvet,g);
+    box(w,0.20,0.85,0,-d/2+0.10,0,M.velvet,g);                       // back: local -y
+    box(0.14,d*0.88,0.62,-w/2+0.07,0.03,0,M.velvet,g); box(0.14,d*0.88,0.62,w/2-0.07,0.03,0,M.velvet,g);
+    const th=box(0.55,0.26,0.06,0.04,-d/2+0.13,0.86,M.throw,g); th.rotation.set(-8*D2R,6*D2R,0);
+    box(0.40,0.06,0.50,0.14,-d/2+0.22,0.36,M.throw,g); },
+  floorlamp(g,s){ cyl(0.14,0.02,0,0,0,M.brass,g,16); cyl(0.012,s.h-0.20,0,0,0.02,M.brass,g,8);
+    cyl(0.15,0.19,0,0,s.h-0.19,M.paper,g,18); },
+  rug(g,s){ box(s.w,s.d,0.012,0,0,0,s.id==='rugA'?M.rug:M.rug2,g); },
+  bookstack(g,s){ let z=0.012; for(const [w,d,h,r] of [[0.22,0.15,0.035,4],[0.20,0.14,0.03,-9],[0.24,0.16,0.04,13],[0.19,0.13,0.028,-3]]){
+      const b=box(w,d,h,0,0,z,[M.leather,M.paper,M.velvet][z<0.05?0:1],g); b.rotation.z=r*D2R; z+=h; }
+    const ob=box(0.30,0.20,0.025,0.26,-0.14,0.012,M.paper,g); ob.rotation.set(0,6*D2R,-20*D2R); },
+  plant(g,s){ cyl(0.16,0.32,0,0,0,M.pot,g,16);
+    for(let i=0;i<7;i++){ const a=i*0.9; const sp=sph(0.22,0.13*Math.cos(a),0.11*Math.sin(a),0.55+0.12*(i%3),M.plant,g); sp.scale.z=0.55; }
+    sph(0.26,-0.03,-0.04,0.85,M.plant,g).scale.z=0.7; },
+  radiator(g,s){ box(s.w,0.06,s.h,0,0,0,M.radiator,g);
+    for(let i=0;i<19;i++) box(0.04,0.03,s.h-0.04,-s.w/2+0.05+i*(s.w-0.1)/18,-0.045,0.02,M.radiator,g); },
+  shoes(g,s){ const a=box(0.27,0.10,0.09,-0.09,0,0,M.darkwood,g); a.rotation.z=25*D2R;
+    const b=box(0.27,0.10,0.09,0.11,0.06,0,M.darkwood,g); b.rotation.z=-40*D2R; },
+  picture(g,s){ box(0.03,s.w,s.h,0,0,0,M.darkwood,g); box(0.008,s.w-0.08,s.h-0.08,-0.02,0,0.04,M.rug2,g); },
+  sofa(g,s){ const len=s.w, dep=s.d;   // local +x is the length, local -y is the front
+    box(dep,len,0.20,0,0,0,M.boucle,g);
+    box(dep*0.74,len*0.41,0.25,-0.14,-len*0.255,0.20,M.boucle,g); box(dep*0.74,len*0.41,0.25,-0.14,len*0.255,0.20,M.boucle,g);
+    box(0.22,len,0.85,dep/2-0.11,0,0,M.boucle,g);
+    box(0.14,len*0.42,0.45,dep/2-0.29,-len*0.25,0.42,M.boucle,g); box(0.14,len*0.42,0.45,dep/2-0.29,len*0.25,0.42,M.boucle,g);
+    box(dep,0.16,0.62,0,-len/2+0.08,0,M.boucle,g); box(dep,0.16,0.62,0,len/2-0.08,0,M.boucle,g);
+    const c=box(0.10,0.42,0.42,0.01,len/2-0.36,0.45,M.leopard,g); c.rotation.set(-12*D2R,0,-12*D2R); },
+  tv(g,s){ box(0.03,s.w,s.h,0,0,0,M.tvframe,g); const sc=box(0.006,s.w-0.04,s.h-0.04,0.018,0,0.02,M.screen,g); sc.userData.isScreen=true;
+    box(0.05,0.30,0.20,-0.02,0,0.12,M.metal,g); },
+  cabinet(g,s){ box(s.d,s.w,s.h,0,0,0,M.darkwood,g); box(0.22,0.30,0.05,0.04,-0.26,s.h,M.black,g); box(0.20,0.40,0.12,0.04,0.33,s.h,M.paper,g); },
+  coffee(g,s){ const w=s.w,d=s.d,h=s.h;    // w across (toward the telly), d along the sofa
+    box(w,d,0.035,0,0,h-0.035,M.wood,g);
+    for(const dx of [-w/2+0.04,w/2-0.04]) for(const dy of [-d/2+0.05,d/2-0.05]) box(0.04,0.04,h-0.035,dx,dy,0,M.wood,g);
+    cyl(0.035,0.16,-0.10,-0.40,h,M.candle,g,12); cyl(0.035,0.12,-0.02,-0.33,h,M.candle,g,12);
+    cyl(0.037,0.26,0.10,0.30,h,M.leather,g,12); cyl(0.036,0.09,0.02,0.44,h+0.08,M.glass,g,14);
+    box(0.20,0.16,0.03,-0.12,0.16,h,M.darkwood,g);
+    cyl(0.03,0.10,0.14,-0.14,h,M.glass,g,10);
+    const ph=box(0.07,0.15,0.008,0.16,-0.05,h,M.black,g); ph.rotation.z=22*D2R;
+    const cw=box(0.28,0.20,0.004,-0.02,0.04,h,M.paper,g); cw.rotation.z=-15*D2R; },
+  sidetable(g,s){ box(s.w,s.d,0.03,0,0,s.h-0.03,M.wood,g);
+    for(const dx of [-s.w/2+0.03,s.w/2-0.03]) for(const dy of [-s.d/2+0.03,s.d/2-0.03]) box(0.03,0.03,s.h-0.03,dx,dy,0,M.wood,g);
+    const rt=box(0.18,0.05,0.12,-0.05,0.03,s.h,M.white,g); rt.rotation.z=-15*D2R;
+    const led=box(0.012,0.008,0.012,-0.05,-0.005,s.h+0.05,new THREE.MeshStandardMaterial({color:0x0d3315,emissive:new THREE.Color(0x19e03c),emissiveIntensity:2})); g.add(led); led.userData.isRouter=true;
+    cyl(0.05,0.006,0.17,-0.10,s.h,M.leather,g,12); cyl(0.04,0.095,0.17,-0.10,s.h+0.006,M.white,g,14); },
+  shelves(g,s){ for(const z of [1.30,1.72]){ box(s.w,s.d,0.03,0,0,z-0.03,M.darkwood,g);
+      for(const dx of [-s.w/2+0.15,s.w/2-0.15]) box(0.03,0.18,0.12,dx,-0.01,z-0.15,M.metal,g); }
+    const cd=[[-0.75,1.30,0.18],[-0.15,1.30,0.14],[0.45,1.30,0.20],[-0.45,1.72,0.16],[0.75,1.72,0.13]];
+    for(const [dx,z,hh] of cd){ const c=cyl(0.032,hh,dx,0,z,M.candle,g,10); c.userData.isCandle=true; }
+    let seed=7; const rnd=()=>{seed=(seed*16807)%2147483647; return seed/2147483647;};
+    let p=0.62; for(let i=0;i<6;i++){ const bw=0.02+rnd()*0.02; box(bw,0.16,0.17+rnd()*0.07,p+bw/2,0,1.30,[M.leather,M.paper,M.velvet][i%3],g); p+=bw+0.003; }
+    box(0.15,0.02,0.19,0.05,-0.03,1.72,M.brass,g); cyl(0.05,0.09,0.30,0,1.72,M.pot,g,10); sph(0.09,0.30,0,1.86,M.plant,g); },
+  trolley(g,s){ for(const dx of [-0.20,0.20]) for(const dy of [-0.20,0.20]) cyl(0.008,s.h,dx,dy,0,M.brass,g,6);
+    for(const z of [0.22,s.h-0.02]) box(0.45,0.45,0.008,0,0,z,M.glass,g);
+    cyl(0.07,0.16,-0.02,-0.02,s.h-0.01,M.pot,g,10); cyl(0.03,0.22,0.13,-0.10,0.23,M.leather,g,10); },
+};
+
+/* ================================================================ colliders */
+let colliders=[];       // {id, min:Vector3, max:Vector3}
+let colHelpers=new THREE.Group(); W.add(colHelpers);
+function refreshColliders(){
+  colliders=[];
+  while(colHelpers.children.length) colHelpers.remove(colHelpers.children[0]);
+  const r=L.room;
+  // the room shell: four walls as thick slabs the footprint cannot cross
+  const T=0.4;
+  colliders.push({id:'wall_near',min:new THREE.Vector3(-T,-T,0),max:new THREE.Vector3(r.w+T,0,r.h)});
+  colliders.push({id:'wall_far', min:new THREE.Vector3(-T,r.d,0),max:new THREE.Vector3(r.w+T,r.d+T,r.h)});
+  colliders.push({id:'wall_left_a',min:new THREE.Vector3(-T,-T,0),max:new THREE.Vector3(0,r.door.y0,r.h)});
+  colliders.push({id:'wall_left_b',min:new THREE.Vector3(-T,r.door.y1,0),max:new THREE.Vector3(0,r.d+T,r.h)});
+  colliders.push({id:'wall_right',min:new THREE.Vector3(r.w,-T,0),max:new THREE.Vector3(r.w+T,r.d+T,r.h)});
+  const bb=new THREE.Box3();
+  for(const s of L.objects){
+    if(!s.collide) continue;
+    const o=OBJ[s.id]; if(!o) continue;
+    o.group.updateMatrixWorld(true);
+    bb.makeEmpty();
+    o.group.traverse(m=>{ if(m.isMesh){ m.geometry.computeBoundingBox(); const b=m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld); bb.union(b); }});
+    // back out of three-world into Blender coords (the root is a single -90° x rotation)
+    const min=new THREE.Vector3(bb.min.x, -bb.max.z, bb.min.y), max=new THREE.Vector3(bb.max.x, -bb.min.z, bb.max.y);
+    colliders.push({id:s.id,min,max});
+  }
+  if(document.getElementById('showCol').checked)
+    for(const c of colliders){
+      const g=new THREE.BoxGeometry(c.max.x-c.min.x, c.max.y-c.min.y, c.max.z-c.min.z);
+      const m=new THREE.Mesh(g,M.colbox); m.position.set((c.min.x+c.max.x)/2,(c.min.y+c.max.y)/2,(c.min.z+c.max.z)/2);
+      colHelpers.add(m);
+    }
+}
+/* His real plan: 1.155 m across the lobes, 0.48 m deep. Three circles along the
+   width axis, so head-on he is properly wide and sideways he is properly thin. */
+const FOOT_R=0.242, FOOT_OFF=[-0.335,0,0.335], HEIGHT=1.46;
+function resolveFootprint(p, yawDeg){
+  const yaw=yawDeg*D2R, wx=Math.cos(yaw), wy=Math.sin(yaw);   // his width axis in world xy
+  let hit=null;
+  for(let pass=0;pass<2;pass++)
+    for(const c of colliders){
+      if(c.max.z<=0.18) continue;                              // rugs and steps are not walls
+      if(p.z+HEIGHT<=c.min.z) continue;
+      for(const off of FOOT_OFF){
+        const px=p.x+wx*off, py=p.y+wy*off;
+        const cx=clamp(px,c.min.x,c.max.x), cy=clamp(py,c.min.y,c.max.y);
+        const dx=px-cx, dy=py-cy, d2=dx*dx+dy*dy;
+        if(d2<FOOT_R*FOOT_R){
+          hit=c.id;
+          const dist=Math.sqrt(d2)||1e-4, push=(FOOT_R-dist)/dist;
+          if(dist<5e-4){ p.y+=FOOT_R; } else { p.x+=dx*push; p.y+=dy*push; }
+        }
+      }
+    }
+  return hit;
+}
+
+/* ================================================================ Plusso */
+const PL=new THREE.Group(); W.add(PL);          // his root, in Blender coords
+let rig=null, bones={}, rest={}, furShell=null, maskGroup=null, remoteGroup=null, ledMeshes=[];
+let plussoReady=false;
+
+function maskHW(t){
+  const s=(a,b,x)=>{const k=clamp((x-a)/(b-a),0,1); return k*k*(3-2*k);};
+  const base=0.13+0.08*s(0,0.5,t)-0.06*s(0.72,1.0,t);
+  return base*Math.sqrt(Math.max(0,1-Math.pow((t-0.5)*2,10)))+0.012;
+}
+function maskSurf(u,t,out){
+  const z=0.66+0.46*t, hw=maskHW(t);
+  out.set(u*hw, -(0.31-0.045*u*u-0.035*Math.pow((t-0.5)*2,2)), z); return out;
+}
+function buildMask(){
+  const g=new THREE.Group();
+  const nu=36,nt=44, pos=[],idx=[], v=new THREE.Vector3();
+  for(let j=0;j<=nt;j++) for(let i=0;i<=nu;i++){ maskSurf(-1+2*i/nu, j/nt, v); pos.push(v.x,v.y,v.z); }
+  for(let j=0;j<nt;j++) for(let i=0;i<nu;i++){ const a=j*(nu+1)+i,b=a+1,c=a+nu+1,d=c+1; idx.push(a,b,d,a,d,c); }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); geo.setIndex(idx); geo.computeVertexNormals();
+  const shell=new THREE.Mesh(geo,M.maskShell); shell.material.side=THREE.DoubleSide; shell.castShadow=true; g.add(shell);
+  // the LED features sit on the shell surface: dead dark unlit, red when it's on
+  ledMeshes=[];
+  const feature=(cx,cz,rx,rz,shape)=>{
+    const t=(cz-0.66)/0.46, hw=maskHW(t);
+    maskSurf(clamp(cx/hw,-1,1),t,v);
+    let geom;
+    if(shape==='slot') geom=new THREE.PlaneGeometry(rx*2,rz*2);
+    else { geom=new THREE.CircleGeometry(1,28); geom.scale(rx,rz,1); }
+    const m=new THREE.Mesh(geom,M.led); m.position.set(cx, v.y-0.006, cz); m.rotation.x=-Math.PI/2; m.rotation.z=0;
+    m.rotation.set(Math.PI/2,0,0); m.position.set(cx, v.y-0.006, cz);
+    g.add(m); ledMeshes.push(m); return m;
+  };
+  feature(-0.09,0.86,0.040,0.024); feature(0.09,0.86,0.040,0.024);
+  const nl=feature(-0.026,0.816,0.0075,0.036,'slot'); nl.rotation.y=-7*D2R;
+  const nr=feature( 0.026,0.816,0.0075,0.036,'slot'); nr.rotation.y= 7*D2R;
+  feature(0,0.786,0.038,0.008,'slot');
+  feature(0,0.738,0.035,0.012);
+  // grey rims and the strap clips + band
+  for(const [cx,cz,rx,rz] of [[-0.09,0.86,0.046,0.029],[0.09,0.86,0.046,0.029],[0,0.738,0.041,0.017]]){
+    const t=(cz-0.66)/0.46, hw=maskHW(t); maskSurf(clamp(cx/hw,-1,1),t,v);
+    const tor=new THREE.Mesh(new THREE.TorusGeometry(1,0.13,6,26),M.maskGrey);
+    tor.scale.set(rx,rz,0.016); tor.position.set(cx,v.y-0.004,cz); tor.rotation.x=Math.PI/2; g.add(tor);
+  }
+  for(const sgn of [-1,1]){
+    maskSurf(sgn,(0.92-0.66)/0.46,v);
+    box(0.035,0.045,0.055, v.x+sgn*0.006, v.y+0.012, 0.895, M.maskGrey, g);
+  }
+  const band=new THREE.Mesh(new THREE.TorusGeometry(0.255,0.012,6,30,Math.PI*1.05),M.maskGrey);
+  band.rotation.x=Math.PI/2; band.rotation.y=Math.PI/2; band.position.set(0,0.02,1.0); g.add(band);
+  return g;
+}
+function buildRemote(){
+  const g=new THREE.Group();
+  box(0.055,0.022,0.21, 0,0,-0.21, M.remote, g);
+  for(let r=0;r<7;r++) for(let c=0;c<3;c++){
+    if(r===0&&c!==0) continue;
+    const m=new THREE.Mesh(new THREE.CylinderGeometry(0.0045,0.0045,0.004,8), r===0?M.remoteRed:M.remoteBtn);
+    m.rotation.x=Math.PI/2; m.position.set((c-1)*0.016, -0.012, -0.03-r*0.026); g.add(m);
+  }
+  box(0.03,0.005,0.03, 0,-0.0135,-0.14, M.remoteBtn, g);
+  return g;
+}
+
+const loader=new GLTFLoader(); loader.setMeshoptDecoder(MeshoptDecoder);
+function b64ToBuf(b64){const bin=atob(b64),n=bin.length,u=new Uint8Array(n);for(let i=0;i<n;i++)u[i]=bin.charCodeAt(i);return u.buffer;}
+
+loader.parse(b64ToBuf(window.PLUSSO_GLB_B64),'',gltf=>{
+  const model=gltf.scene;
+  /* the glb is Y-up; one container puts him back into Blender's Z-up frame */
+  const holder=new THREE.Group(); holder.rotation.x=Math.PI/2; holder.add(model); PL.add(holder);
+  model.traverse(o=>{
+    if(o.isBone){ bones[o.name]=o; rest[o.name]=o.quaternion.clone(); }
+    if(o.isMesh){
+      const tris=o.geometry.index?o.geometry.index.count/3:0;
+      if(tris>100000){ furShell=o; o.visible=false; }
+      o.castShadow=true; o.receiveShadow=true; o.frustumCulled=false;
+      const ms=Array.isArray(o.material)?o.material:[o.material];
+      ms.forEach(m=>{ if(m){ m.roughness=0.9; m.metalness=0; }});
+      o.userData.pickId='plusso';
+    }
+  });
+  rig=model;
+  model.updateMatrixWorld(true);
+  // mask on the face bone, remote in mitt_L — bone _L is his anatomical RIGHT
+  maskGroup=buildMask(); attachToBone(maskGroup,'face');
+  remoteGroup=buildRemote(); attachToBone(remoteGroup,'mitt_L', new THREE.Vector3(-0.2785,-0.034,0.2985));
+  plussoReady=true;
+  document.getElementById('loading').classList.add('gone');
+  setFrame(1); toast('ready — Space plays, click anything to move it');
+}, e=>{ console.error(e); document.getElementById('loading').textContent='could not load Plusso'; });
+
+/* put a group built in RIG-LOCAL Blender coordinates onto a bone */
+function attachToBone(grp,boneName,offset){
+  const bone=bones[boneName]; if(!bone){ console.warn('no bone',boneName); return; }
+  PL.updateMatrixWorld(true);
+  if(offset) grp.position.copy(offset);
+  /* m below already takes the bone's frame to PL's frame, and PL's frame IS
+     Blender rig-local, so no extra axis swap here — one used to be, and it laid
+     the mask flat on its back and hung the remote horizontally at ankle height. */
+  const holder=new THREE.Group(); holder.add(grp);
+  const want=new THREE.Matrix4().copy(PL.matrixWorld);
+  const m=new THREE.Matrix4().copy(bone.matrixWorld).invert().multiply(want);
+  holder.applyMatrix4(m); bone.add(holder);
+  grp.userData.holder=holder;
+}
+
+/* ================================================================ the acting
+   Frames are the brief's beat sheet. Yaw here is the brief's: 0 = facing +y,
+   away from camera 1; he turns clockwise seen from above, 0 -> -180 -> -270. */
+const B={ standEnd:46, turn0:47, turn1:104, lookEnd:124, rise0:125, rise1:138,
+          contact0:139, contact1:140, sw0:141, sw1:143, holdEnd:172,
+          lower0:173, lower1:180, q0:181, q1:188, walk0:189, end:192 };
+
+function turnYaw(f){
+  if(f<=B.standEnd) return 0;
+  if(f>=B.turn1) return -180;
+  const n=4, dur=(B.turn1-B.turn0)/n, i=Math.min(n-1,Math.floor((f-B.turn0)/dur));
+  const u=clamp((f-B.turn0-i*dur)/dur,0,1);
+  return -45*(i+smoother(0.04,0.74,u));
+}
+function stepPhase(f){        // which foot is swinging, and how much
+  if(f<B.turn0||f>B.turn1) return {side:null,lift:0,u:0};
+  const n=4, dur=(B.turn1-B.turn0)/n, i=Math.min(n-1,Math.floor((f-B.turn0)/dur));
+  const u=clamp((f-B.turn0-i*dur)/dur,0,1);
+  const lift=Math.sin(Math.PI*clamp((u-0.02)/0.72,0,1));
+  return {side:(i%2===0)?'R':'L', lift, u, i};
+}
+function briefYaw(f){
+  if(f<=B.turn1) return turnYaw(f);
+  if(f<B.q0) return -180;
+  if(f<=B.q1) return lerp(-180,-270,smoother(0,1,(f-B.q0)/(B.q1-B.q0)));
+  return -270;
+}
+function setBone(name,x,y,z){
+  const b=bones[name]; if(!b) return;
+  b.quaternion.copy(rest[name]).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(x*D2R,y*D2R,z*D2R,'XYZ')));
+}
+let lastWarn='';
+function poseAt(f){
+  if(!plussoReady) return;
+  for(const n in bones){ bones[n].quaternion.copy(rest[n]); bones[n].position.copy(bones[n].userData.restPos||bones[n].position); }
+  // ---- root
+  const yaw=briefYaw(f);
+  const p=new THREE.Vector3(L.plusso.x, L.plusso.y, 0);
+  if(f>=B.walk0) p.x-=1.20*(f-B.walk0)/L.meta.fps;        // he only just starts to leave; the edit cuts here
+  const yawWorld=yaw+(L.plusso.yaw||0)+180;      // rig faces -y, so +180 turns his back to camera 1
+  const hitId=document.getElementById('colBox').checked ? resolveFootprint(p, yawWorld+90) : null;
+  PL.position.set(p.x,p.y,0); PL.rotation.z=yawWorld*D2R;
+  if(hitId) warn(`Plusso is walking into ${hitId}`);
+  // ---- breathing
+  const breathe=0.0075*(1-Math.cos(2*Math.PI*f/72));
+  const bd=bones['body'];
+  if(bd){ if(!bd.userData.restPos) bd.userData.restPos=bd.position.clone();
+          bd.position.copy(bd.userData.restPos); bd.position.y+=breathe; }
+  // ---- the stepping turn: the swinging foot lifts, the body dips and shifts
+  const st=stepPhase(f);
+  if(st.side){
+    const s=st.side, o=s==='R'?'L':'R';
+    setBone('leg_'+s, -16*st.lift, 0, 0);
+    setBone('leg_'+s+'_2', 30*st.lift, 0, 0);
+    setBone('leg_'+s+'_3', -10*st.lift, 0, 0);
+    setBone('foot_'+s, 14*st.lift, 0, 0);
+    setBone('leg_'+o, 4*st.lift, 0, 0);
+    if(bd){ bd.position.y-=0.012*st.lift; bd.position.x+=(s==='R'?-1:1)*0.022*st.lift; }
+  }
+  // ---- arms. bone _L = his anatomical RIGHT: that is the remote hand.
+  const armOut=26;
+  let swing=0;
+  if(f>=B.walk0) swing=12*Math.sin((f-B.walk0)*0.5);
+  setBone('arm_upper_L', swing, 0, armOut);
+  setBone('arm_fore_L', 0,0,0);
+  // his LEFT (bone _R) goes to the mask
+  let rise=0;
+  if(f>=B.rise0 && f<B.rise1) rise=smoother(0,1,(f-B.rise0)/(B.rise1-B.rise0));
+  else if(f>=B.rise1 && f<B.lower0) rise=1;
+  else if(f>=B.lower0 && f<=B.lower1) rise=1-smoother(0,1,(f-B.lower0)/(B.lower1-B.lower0));
+  else if(f>B.lower1) rise=0;
+  const press=(f>=B.contact0&&f<=B.contact1)?1:0;
+  setBone('arm_upper_R', -90*rise, 0, -(15*rise) - swing*0.4);
+  setBone('arm_fore_R', -(60+2*press)*rise, 0, 0);
+  // ---- the switch
+  let led=0;
+  if(f>=B.sw1) led=1; else if(f===B.sw0+1) led=0.60; else if(f===B.sw0) led=0.15;
+  setLED(led);
+}
+function setLED(v){
+  M.led.emissiveIntensity=v*2.6;                 // the cut-outs glow; they must not flare into one blob
+  M.led.color.setHex(v>0?0x2a0503:0x0d0202);
+  maskLight.intensity=v*L.light.maskRed;         // wraps his own fur and the curtains behind him
+  maskThrow.intensity=v*L.light.maskRed*0.45;
+}
+
+/* ================================================================ lights */
+const moon=new THREE.DirectionalLight(0x9fc2ff,2.0);
+moon.castShadow=true; moon.shadow.mapSize.set(2048,2048);
+moon.shadow.camera.near=0.5; moon.shadow.camera.far=30;
+const sd=6.5; Object.assign(moon.shadow.camera,{left:-sd,right:sd,top:sd,bottom:-sd});
+moon.shadow.bias=-0.0006; moon.shadow.normalBias=0.03;
+W.add(moon); W.add(moon.target);
+const fill=new THREE.RectAreaLight?new THREE.PointLight(0x8caee8,0,14,1.8):new THREE.PointLight(0x8caee8,0,14,1.8);
+fill.position.set(0.5,1.4,1.7); W.add(fill);
+const amb=new THREE.HemisphereLight(0x22304a,0x0a0810,0.12); scene.add(amb);
+const work=new THREE.HemisphereLight(0xffffff,0xccc0c4,0.0); scene.add(work);
+const maskLight=new THREE.PointLight(0xff1a0c,0,3.4,2.0); PL.add(maskLight);
+const maskThrow=new THREE.SpotLight(0xff3a22,0,4.2,0.75,0.75,2.0); PL.add(maskThrow); PL.add(maskThrow.target);
+function placeLights(){
+  const r=L.room, el=L.light.moonElev*D2R;
+  const cx=(r.curtain.open0+r.curtain.open1)/2;
+  moon.position.set(cx, r.d+Math.cos(el)*12, Math.sin(el)*12);
+  moon.target.position.set(cx, r.d-Math.cos(el)*4, Math.sin(el)*0);
+  moon.target.position.set(cx, L.plusso.y, 0.6);
+  moon.intensity=L.light.moon;
+  fill.intensity=L.light.fill*0.06;
+  scene.background.setHex(0x05070c);
+}
+function updateMaskLights(){
+  // rig-local: just in front of the shell at eye height
+  maskLight.position.set(0,-0.345,0.86);
+  maskThrow.position.set(0,-0.33,0.86);
+  maskThrow.target.position.set(0,-3.0,0.60);
+}
+
+/* ================================================================ cameras */
+let mode='shot';
+const free={pos:new THREE.Vector3(2.8,1.2,1.5), yaw:0, pitch:0};
+function shotCamAt(f){
+  const c=L.cam1;
+  const t=smooth(c.pushStart,c.pushEnd,f);
+  const y=lerp(c.y0,c.y1,t);
+  camera.position.set(c.x,y,c.z);
+  const base=new THREE.Euler((90+c.tilt)*D2R,0,0,'XYZ');
+  const bm=new THREE.Matrix4().makeRotationFromEuler(base);
+  const axis=new THREE.Vector3(0,0,-1).applyMatrix4(new THREE.Matrix4().extractRotation(bm)).normalize();
+  const roll=new THREE.Matrix4().makeRotationAxis(axis,c.dutch*D2R);
+  camera.quaternion.setFromRotationMatrix(roll.multiply(bm));
+  camera.setFocalLength(c.lens); camera.updateProjectionMatrix();
+}
+function applyFree(dt){
+  const sp=(keys.ShiftLeft||keys.ShiftRight?7:2.6)*dt;
+  const fw=new THREE.Vector3(Math.sin(free.yaw)*Math.cos(free.pitch), Math.cos(free.yaw)*Math.cos(free.pitch), Math.sin(free.pitch));
+  const rt=new THREE.Vector3(Math.cos(free.yaw),-Math.sin(free.yaw),0);
+  if(keys.KeyW) free.pos.addScaledVector(fw,sp); if(keys.KeyS) free.pos.addScaledVector(fw,-sp);
+  if(keys.KeyD) free.pos.addScaledVector(rt,sp); if(keys.KeyA) free.pos.addScaledVector(rt,-sp);
+  if(keys.KeyE||keys.Space) free.pos.z+=sp; if(keys.KeyQ) free.pos.z-=sp;
+  camera.position.copy(free.pos);
+  const e=new THREE.Euler((90-free.pitch*R2D)*D2R,0,free.yaw,'ZXY');
+  camera.quaternion.setFromEuler(new THREE.Euler(Math.PI/2+ -free.pitch, 0, -free.yaw, 'ZYX'));
+  const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(0,0,-free.yaw,'XYZ'));
+  const q2=new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI/2-free.pitch,0,0,'XYZ'));
+  camera.quaternion.copy(q).multiply(q2);
+  camera.setFocalLength(L.cam1.lens); camera.updateProjectionMatrix();
+}
+function topCam(){
+  camera.position.set(L.room.w/2, L.room.d/2, 13.5);
+  camera.quaternion.setFromEuler(new THREE.Euler(0,0,0,'XYZ'));
+  camera.setFocalLength(24); camera.updateProjectionMatrix();
+}
+function setMode(m){
+  mode=m; document.getElementById('modeTag').textContent=m;
+  document.querySelectorAll('#bar [data-act^="m:"]').forEach(b=>b.classList.toggle('on',b.dataset.act==='m:'+m));
+  if(m==='free'){ free.pos.copy(camera.position); }
+  toast(m==='shot'?`shot camera — ${L.cam1.lens} mm`:m==='free'?'free camera — WASD to fly':'plan view');
+}
+
+/* ================================================================ timeline */
+let frame=1, playing=false;
+function setFrame(f){
+  frame=clamp(Math.round(f),1,L.meta.frames);
+  poseAt(frame);
+  const sc=document.getElementById('scrub'); if(+sc.value!==frame) sc.value=frame;
+  document.getElementById('fnum').textContent=`f${String(frame).padStart(3,'0')} / ${L.meta.frames} · ${(frame/L.meta.fps).toFixed(2)} s`;
+  const b=L.beats.find(b=>frame>=b.f&&frame<=b.to);
+  document.getElementById('beat').textContent=b?b.name:'—';
+}
+
+/* ================================================================ picking */
+let selId=null, selBox=null, dragging=false;
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2(), plane=new THREE.Plane(new THREE.Vector3(0,0,1),0);
+function pickAt(e){
+  ndc.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+  ray.setFromCamera(ndc,camera);
+  const hits=ray.intersectObject(scene,true);
+  for(const h of hits){
+    let o=h.object, id=null;
+    while(o){ if(o.userData&&o.userData.pickId){ id=o.userData.pickId; break; } o=o.parent; }
+    if(id) return id;
+  }
+  return null;
+}
+function select(id){
+  selId=id;
+  if(selBox){ W.remove(selBox); selBox=null; }
+  const panel=document.getElementById('sel');
+  if(!id){ panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  const spec=id==='plusso'?null:L.objects.find(o=>o.id===id);
+  document.getElementById('selName').textContent=id==='plusso'?'Plusso':spec.label;
+  document.getElementById('selDims').textContent=id==='plusso'
+    ? '1.46 m tall · 1.155 m across the lobes · 0.48 m deep'
+    : `${spec.w.toFixed(2)} × ${spec.d.toFixed(2)} × ${spec.h.toFixed(2)} m · ${spec.zone} zone${spec.collide?' · solid':''}`;
+  const g=id==='plusso'?PL:OBJ[id].group;
+  const bb=new THREE.Box3().setFromObject(g);
+  const bx=new THREE.Mesh(new THREE.BoxGeometry(bb.max.x-bb.min.x, bb.max.y-bb.min.y, bb.max.z-bb.min.z), M.sel);
+  bx.position.copy(bb.getCenter(new THREE.Vector3())); scene.add(bx); selBox=bx; selBox.userData.isSel=true;
+  syncSelFields();
+  document.getElementById('pickSel').value=id;
+}
+function syncSelFields(){
+  if(!selId) return;
+  const s=selId==='plusso'?{x:L.plusso.x,y:L.plusso.y,z:0,yaw:L.plusso.yaw}:L.objects.find(o=>o.id===selId);
+  document.getElementById('selX').value=s.x.toFixed(2);
+  document.getElementById('selY').value=s.y.toFixed(2);
+  document.getElementById('selZ').value=(s.z||0).toFixed(2);
+  document.getElementById('selR').value=(s.yaw||0).toFixed(0);
+}
+function moveSel(dx,dy,dz,dr){
+  if(!selId) return;
+  if(selId==='plusso'){ L.plusso.x+=dx; L.plusso.y+=dy; L.plusso.yaw=(L.plusso.yaw||0)+(dr||0); }
+  else{ const s=L.objects.find(o=>o.id===selId); s.x+=dx; s.y+=dy; s.z=(s.z||0)+(dz||0); s.yaw=(s.yaw||0)+(dr||0);
+        const g=OBJ[selId].group; g.position.set(s.x,s.y,s.z||0); g.rotation.z=s.yaw*D2R; refreshColliders(); }
+  syncSelFields(); checkZones(); select(selId); poseAt(frame); updateReadouts();
+}
+function setSel(x,y,z,r){
+  if(!selId) return;
+  if(selId==='plusso'){ L.plusso.x=x; L.plusso.y=y; L.plusso.yaw=r; }
+  else{ const s=L.objects.find(o=>o.id===selId); s.x=x; s.y=y; s.z=z; s.yaw=r;
+        const g=OBJ[selId].group; g.position.set(x,y,z); g.rotation.z=r*D2R; refreshColliders(); }
+  checkZones(); select(selId); poseAt(frame); updateReadouts();
+}
+
+/* ---- the one rule: nothing from the seating zone may cross y = 3.30 */
+function checkZones(){
+  const bad=[];
+  for(const s of L.objects){
+    if(s.zone!=='near') continue;
+    const o=OBJ[s.id]; if(!o) continue;
+    o.group.updateMatrixWorld(true);
+    const bb=new THREE.Box3().setFromObject(o.group);
+    const yMax=-bb.min.z;                    // back to Blender y
+    if(yMax>3.30) bad.push(s.label);
+  }
+  if(L.cam1.y0<3.25) bad.push('camera 1 starts in front of y 3.30');
+  warn(bad.length?`in shot 1's frustum: ${bad.join(', ')}`:'');
+}
+function warn(msg){
+  const el=document.getElementById('warn');
+  if(msg===lastWarn) return; lastWarn=msg;
+  el.textContent=msg; el.style.display=msg?'block':'none';
+}
+
+/* ================================================================ frame guide */
+const frameRect={x:0,y:0,w:1,h:1};
+function layoutGuide(){
+  const on=document.getElementById('guideBox').checked && mode==='shot';
+  const W_=innerWidth,H_=innerHeight, ar=16/9;
+  let w=W_,h=w/ar; if(h>H_){h=H_;w=h*ar;}
+  Object.assign(frameRect,{x:(W_-w)/2,y:(H_-h)/2,w,h});
+  const s=(id,l,t,ww,hh)=>{const e=document.getElementById(id); e.style.display=on?'block':'none';
+    e.style.left=l+'px';e.style.top=t+'px';e.style.width=ww+'px';e.style.height=hh+'px';};
+  s('barT',0,0,W_,frameRect.y); s('barB',0,frameRect.y+h,W_,H_-frameRect.y-h);
+  s('barL',0,frameRect.y,frameRect.x,h); s('barR',frameRect.x+w,frameRect.y,W_-frameRect.x-w,h);
+  const ret=document.getElementById('reticle');
+  ret.style.display=on?'block':'none';
+  ret.style.left=frameRect.x+'px';ret.style.top=frameRect.y+'px';ret.style.width=w+'px';ret.style.height=h+'px';
+  camera.aspect=on?ar:W_/H_; camera.updateProjectionMatrix();
+}
+
+/* ================================================================ input */
+const keys={};
+let drag=false,lx=0,ly=0,downX=0,downY=0,downT=0;
+canvas.addEventListener('mousedown',e=>{ drag=true;lx=e.clientX;ly=e.clientY;downX=e.clientX;downY=e.clientY;downT=Date.now();
+  if(mode!=='shot'){ const id=pickAt(e); if(id){ select(id); dragging=true; } } });
+addEventListener('mouseup',()=>{ drag=false; dragging=false; });
+canvas.addEventListener('click',e=>{
+  if(Math.hypot(e.clientX-downX,e.clientY-downY)>4) return;
+  const id=pickAt(e); select(id);
+});
+addEventListener('mousemove',e=>{
+  const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  if(!drag) return;
+  if(dragging&&selId){
+    ndc.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    ray.setFromCamera(ndc,camera);
+    const g=selId==='plusso'?PL:OBJ[selId].group;
+    plane.constant=-(selId==='plusso'?0:(L.objects.find(o=>o.id===selId).z||0));
+    const hit=new THREE.Vector3();
+    // the drag plane lives in three-world; convert the hit back to Blender xy
+    const p3=new THREE.Plane(new THREE.Vector3(0,1,0), -0.001);
+    if(ray.ray.intersectPlane(p3,hit)){
+      const bx=hit.x, by=-hit.z;
+      if(selId==='plusso'){ L.plusso.x=bx; L.plusso.y=by; }
+      else{ const s=L.objects.find(o=>o.id===selId); s.x=bx; s.y=by; OBJ[selId].group.position.set(bx,by,s.z||0); refreshColliders(); }
+      syncSelFields(); checkZones(); poseAt(frame); updateReadouts();
+    }
+    return;
+  }
+  if(mode==='free'){ free.yaw-=dx*0.004; free.pitch=clamp(free.pitch-dy*0.004,-1.45,1.45); }
+});
+addEventListener('wheel',e=>{
+  if(e.target.closest&&e.target.closest('#bar,#help,#transport,#sel')) return;
+  const n=Math.sign(e.deltaY);
+  if(mode==='free'){ const fw=new THREE.Vector3(); camera.getWorldDirection(fw); free.pos.addScaledVector(new THREE.Vector3(fw.x,-fw.z,fw.y),-n*0.45); }
+  else if(mode==='top'){ camera.position.z=clamp(camera.position.z*(1+n*0.12),3,40); }
+},{passive:true});
+
+addEventListener('keydown',e=>{
+  if(/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)){ if(e.code==='Escape') e.target.blur(); return; }
+  keys[e.code]=true;
+  const step=e.shiftKey?0.25:0.05;
+  switch(e.code){
+    case 'Digit1': setMode('shot'); break;
+    case 'Digit2': setMode('free'); break;
+    case 'Digit3': setMode('top'); break;
+    case 'Tab': e.preventDefault(); setMode(mode==='shot'?'free':mode==='free'?'top':'shot'); break;
+    case 'Space': e.preventDefault(); playing=!playing; document.getElementById('playBtn').textContent=playing?'❚❚':'▶'; break;
+    case 'Comma': setFrame(frame-1); break;
+    case 'Period': setFrame(frame+1); break;
+    case 'Home': setFrame(1); break;
+    case 'End': setFrame(L.meta.frames); break;
+    case 'Digit0': select('plusso'); break;
+    case 'Escape': select(null); break;
+    case 'KeyL': { const c=document.getElementById('workBox'); c.checked=!c.checked; work.intensity=c.checked?0.9:0; break; }
+    case 'KeyG': { const c=document.getElementById('guideBox'); c.checked=!c.checked; layoutGuide(); break; }
+    case 'KeyC': { const c=document.getElementById('showCol'); c.checked=!c.checked; refreshColliders(); break; }
+    case 'KeyP': takePicture(); break;
+    case 'KeyX': exportLayout(); break;
+    case 'BracketLeft': moveSel(0,0,0,-5); break;
+    case 'BracketRight': moveSel(0,0,0,5); break;
+    case 'PageUp': moveSel(0,0,step,0); break;
+    case 'PageDown': moveSel(0,0,-step,0); break;
+    case 'ArrowUp': e.preventDefault(); moveSel(0,step,0,0); break;
+    case 'ArrowDown': e.preventDefault(); moveSel(0,-step,0,0); break;
+    case 'ArrowLeft': e.preventDefault(); moveSel(-step,0,0,0); break;
+    case 'ArrowRight': e.preventDefault(); moveSel(step,0,0,0); break;
+  }
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+
+/* ================================================================ picture */
+function takePicture(){
+  const w=1920,h=1080;
+  const rt=new THREE.WebGLRenderTarget(w,h,{samples:4,colorSpace:THREE.SRGBColorSpace});
+  const pr=renderer.getPixelRatio(), sz=renderer.getSize(new THREE.Vector2());
+  renderer.setPixelRatio(1); renderer.setScissorTest(false); renderer.setViewport(0,0,w,h);
+  const keepSel=selBox?selBox.visible:false; if(selBox) selBox.visible=false;
+  colHelpers.visible=false;
+  camera.aspect=16/9; camera.updateProjectionMatrix();
+  renderer.setRenderTarget(rt); renderer.render(scene,camera); renderer.setRenderTarget(null);
+  const px=new Uint8Array(w*h*4); renderer.readRenderTargetPixels(rt,0,0,w,h,px); rt.dispose();
+  const c2=document.createElement('canvas'); c2.width=w; c2.height=h;
+  const ctx=c2.getContext('2d'), img=ctx.createImageData(w,h);
+  for(let y=0;y<h;y++) img.data.set(px.subarray((h-1-y)*w*4,(h-y)*w*4), y*w*4);
+  ctx.putImageData(img,0,0);
+  if(selBox) selBox.visible=keepSel; colHelpers.visible=true;
+  renderer.setPixelRatio(pr); renderer.setSize(sz.x,sz.y,false); layoutGuide();
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  const name=`mask_sh01_${L.cam1.lens}mm_f${String(frame).padStart(3,'0')}_${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.png`;
+  c2.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);},'image/png');
+  const fl=document.getElementById('flash'); fl.style.opacity=0.85; setTimeout(()=>fl.style.opacity=0,60);
+  toast('saved '+name);
+}
+function exportLayout(){
+  const out=JSON.parse(JSON.stringify(L));
+  out.meta.exported=new Date().toISOString();
+  const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='mask_layout.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  toast('mask_layout.json — send it back and I put it into Blender');
+}
+
+/* ================================================================ UI */
+function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on'); clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove('on'),2200); }
+const menus=[...document.querySelectorAll('#bar .menu')];
+function closeMenus(){ menus.forEach(m=>m.classList.remove('open')); }
+menus.forEach(m=>m.querySelector('.mbtn').addEventListener('click',e=>{const was=m.classList.contains('open');closeMenus();if(!was)m.classList.add('open');e.stopPropagation();}));
+document.addEventListener('click',e=>{ if(!e.target.closest('#bar .menu')) closeMenus(); });
+const ACT={
+  'm:shot':()=>setMode('shot'), 'm:free':()=>setMode('free'), 'm:top':()=>setMode('top'),
+  selPlusso:()=>select('plusso'),
+  dropAll:()=>{ for(const s of L.objects){ s.z=0; OBJ[s.id].group.position.z=0; } refreshColliders(); toast('everything on the floor'); },
+  reset:()=>{ Object.assign(L,JSON.parse(JSON.stringify(DEF))); buildRoom(); buildObjects(); placeLights(); syncUI(); select(null); poseAt(frame); toast('layout reset'); },
+};
+document.querySelectorAll('#bar [data-act]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();ACT[b.dataset.act]();closeMenus();b.blur();}));
+document.getElementById('bar').addEventListener('mousedown',e=>e.stopPropagation());
+document.getElementById('helpBtn').addEventListener('click',()=>document.getElementById('help').classList.toggle('hidden'));
+document.getElementById('shotBtn').addEventListener('click',takePicture);
+document.getElementById('exportBtn').addEventListener('click',exportLayout);
+document.getElementById('playBtn').addEventListener('click',()=>{playing=!playing;document.getElementById('playBtn').textContent=playing?'❚❚':'▶';});
+document.getElementById('scrub').addEventListener('input',e=>{playing=false;document.getElementById('playBtn').textContent='▶';setFrame(+e.target.value);});
+for(const [id,f] of [['selX',()=>1],['selY',()=>1],['selZ',()=>1],['selR',()=>1]])
+  document.getElementById(id).addEventListener('change',()=>setSel(+document.getElementById('selX').value,+document.getElementById('selY').value,+document.getElementById('selZ').value,+document.getElementById('selR').value));
+const pickSel=document.getElementById('pickSel');
+function fillPicker(){
+  pickSel.innerHTML='';
+  const add=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;pickSel.appendChild(o);};
+  add('plusso','Plusso');
+  for(const s of L.objects) add(s.id, `${s.label}  (${s.zone})`);
+}
+pickSel.addEventListener('change',()=>select(pickSel.value));
+const lensSel=document.getElementById('lensSel');
+LENSES.forEach(mm=>{const o=document.createElement('option');o.value=mm;o.textContent=`${mm} mm${mm===18?'  ·  this shot':''}`;lensSel.appendChild(o);});
+lensSel.addEventListener('change',()=>{L.cam1.lens=+lensSel.value;updateReadouts();toast(L.cam1.lens+' mm');});
+function bindRange(id,vid,get,set,fmt){
+  const r=document.getElementById(id), v=document.getElementById(vid);
+  const sync=()=>{r.value=get(); v.textContent=fmt(get());};
+  r.addEventListener('input',()=>{set(+r.value); v.textContent=fmt(+r.value); updateReadouts();});
+  r._sync=sync; return sync;
+}
+const syncers=[
+  bindRange('y0r','y0v',()=>L.cam1.y0,v=>{L.cam1.y0=v;checkZones();},v=>v.toFixed(2)+' m'),
+  bindRange('y1r','y1v',()=>L.cam1.y1,v=>L.cam1.y1=v,v=>v.toFixed(2)+' m'),
+  bindRange('czr','czv',()=>L.cam1.z,v=>L.cam1.z=v,v=>v.toFixed(2)+' m'),
+  bindRange('ctr','ctv',()=>L.cam1.tilt,v=>L.cam1.tilt=v,v=>v.toFixed(1)+'°'),
+  bindRange('cdr','cdv',()=>L.cam1.dutch,v=>L.cam1.dutch=v,v=>v.toFixed(1)+'°'),
+  bindRange('mnr','mnv',()=>L.light.moon,v=>{L.light.moon=v;placeLights();},v=>v.toFixed(1)),
+  bindRange('mer','mev',()=>L.light.moonElev,v=>{L.light.moonElev=v;placeLights();buildShaft();},v=>v.toFixed(1)+'°'),
+  bindRange('flr','flv',()=>L.light.fill,v=>{L.light.fill=v;placeLights();},v=>v.toFixed(0)),
+  bindRange('mkr','mkv',()=>L.light.maskRed,v=>{L.light.maskRed=v;poseAt(frame);},v=>v.toFixed(1)),
+  bindRange('cor','cov',()=>L.room.curtain.open1-L.room.curtain.open0,v=>{
+      const c=(L.room.window.x0+L.room.window.x1)/2; L.room.curtain.open0=c-v/2; L.room.curtain.open1=c+v/2;
+      buildRoom(); placeLights();},v=>v.toFixed(2)+' m'),
+];
+for(const [id,fn] of [['shaftBox',()=>{shaft.visible=document.getElementById('shaftBox').checked;}],
+                      ['workBox',()=>{work.intensity=document.getElementById('workBox').checked?0.9:0;}],
+                      ['guideBox',layoutGuide],
+                      ['showCol',refreshColliders],
+                      ['colBox',()=>poseAt(frame)],
+                      ['furBox',()=>{ if(furShell) furShell.visible=document.getElementById('furBox').checked; }],
+                      ['maskBox',()=>{ if(maskGroup) maskGroup.userData.holder.visible=document.getElementById('maskBox').checked; }],
+                      ['remBox',()=>{ if(remoteGroup) remoteGroup.userData.holder.visible=document.getElementById('remBox').checked; }]])
+  document.getElementById(id).addEventListener('change',fn);
+for(const [id,key] of [['pxN','x'],['pyN','y'],['pyawN','yaw']])
+  document.getElementById(id).addEventListener('change',e=>{ L.plusso[key]=+e.target.value; poseAt(frame); updateReadouts(); if(selId==='plusso') select('plusso'); });
+function syncUI(){
+  syncers.forEach(s=>s());
+  lensSel.value=L.cam1.lens;
+  document.getElementById('pxN').value=L.plusso.x.toFixed(2);
+  document.getElementById('pyN').value=L.plusso.y.toFixed(2);
+  document.getElementById('pyawN').value=L.plusso.yaw;
+  updateReadouts();
+}
+function updateReadouts(){
+  document.getElementById('glassD').textContent=(L.room.d-L.plusso.y).toFixed(2)+' m';
+  document.getElementById('lensD').textContent=(L.plusso.y-L.cam1.y0).toFixed(2)+' m';
+  document.getElementById('pxN').value=L.plusso.x.toFixed(2);
+  document.getElementById('pyN').value=L.plusso.y.toFixed(2);
+}
+
+/* ================================================================ loop */
+const clock=new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const dt=Math.min(clock.getDelta(),0.05);
+  if(playing){ frame+=dt*L.meta.fps; if(frame>L.meta.frames) frame=1; setFrame(frame); }
+  if(mode==='shot') shotCamAt(frame);
+  else if(mode==='free') applyFree(dt);
+  else topCam();
+  updateMaskLights();
+  if(selBox&&selId){ const g=selId==='plusso'?PL:OBJ[selId].group; const bb=new THREE.Box3().setFromObject(g);
+    selBox.position.copy(bb.getCenter(new THREE.Vector3()));
+    const sz=bb.getSize(new THREE.Vector3()); selBox.scale.set(sz.x/ (selBox.geometry.parameters.width||1), sz.y/(selBox.geometry.parameters.height||1), sz.z/(selBox.geometry.parameters.depth||1)); }
+  const g=document.getElementById('guideBox').checked && mode==='shot';
+  if(g){ renderer.setScissorTest(true);
+    renderer.setViewport(frameRect.x, innerHeight-frameRect.y-frameRect.h, frameRect.w, frameRect.h);
+    renderer.setScissor(frameRect.x, innerHeight-frameRect.y-frameRect.h, frameRect.w, frameRect.h);
+  } else { renderer.setScissorTest(false); renderer.setViewport(0,0,innerWidth,innerHeight); }
+  renderer.render(scene,camera);
+  const c=camera.position;
+  document.getElementById('hud').textContent=
+    `${mode.toUpperCase()}   ${L.cam1.lens} mm   f${String(Math.round(frame)).padStart(3,'0')}\n`+
+    `camera  x ${c.x.toFixed(2)}  y ${c.y.toFixed(2)}  z ${c.z.toFixed(2)}\n`+
+    `Plusso  x ${L.plusso.x.toFixed(2)}  y ${L.plusso.y.toFixed(2)}  facing ${Math.round(briefYaw(Math.round(frame)))}°`+
+    (selId?`\nselected  ${selId}`:'');
+}
+
+buildRoom(); buildObjects(); placeLights(); syncUI(); layoutGuide(); setMode('shot'); tick();
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);layoutGuide();});
+window.__dbg={L,OBJ,colliders:()=>colliders,PL,bones,camera,scene,setFrame,select,poseAt,resolveFootprint,THREE,briefYaw,checkZones};
+</script>
+</body>
+</html>
