@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>BEBIKES · Classifica di oggi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root{ --eco:#3ddc6f; --cyan:#1ce0c4; --gold:#ffd23f; --turbo:#ff5a4d;
+         --panel:#142019; --line:#2f5c3f; --pix:'Press Start 2P','Courier New',monospace; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;min-height:100%;background:radial-gradient(circle at 50% 15%,#11271b,#060c09);
+    color:#eafff2;font-family:var(--pix);}
+  #wrap{max-width:640px;margin:0 auto;padding:20px 14px 40px;display:flex;flex-direction:column;align-items:center;gap:14px;}
+  .logo{font-size:clamp(18px,6vw,30px);color:var(--eco);text-shadow:2px 2px 0 #0a3a1d;letter-spacing:2px;text-align:center;}
+  .logo span{color:var(--cyan);text-shadow:2px 2px 0 #073f39;}
+  .sub{font-size:clamp(7px,2.2vw,10px);color:var(--gold);letter-spacing:2px;text-align:center;line-height:1.9;}
+  .date{font-size:clamp(6.5px,2vw,9px);color:#7fb89a;text-align:center;}
+  #status{width:100%;padding:12px 14px;border:2px solid var(--line);background:#0c150f;text-align:center;
+    font-size:clamp(7.5px,2.3vw,11px);line-height:2;color:#cdeede;}
+  #status.open b{color:var(--gold);font-size:1.3em;}
+  #status.closed{border-color:var(--gold);color:var(--gold);}
+  #board{width:100%;background:var(--panel);border:3px solid var(--line);box-shadow:0 0 0 4px rgba(61,220,111,.14);padding:12px 14px;}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 2px;font-size:clamp(8px,2.6vw,13px);
+    line-height:1.5;border-bottom:1px solid #1d2e24;}
+  .row:last-child{border-bottom:none;}
+  .pos{width:26px;text-align:right;color:var(--gold);flex:none;}
+  .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sc{flex:none;color:var(--cyan);}
+  .row.pro .nm,.row.pro .sc,.row.pro .pos{color:#5f8d74;}
+  .row.pro .nm::after{content:'PRO';font-size:.55em;color:#5f8d74;border:1px solid #3e6a50;padding:1px 3px;margin-left:6px;vertical-align:middle;}
+  .row.r1:not(.pro) .pos,.row.r1:not(.pro) .nm,.row.r1:not(.pro) .sc{color:var(--gold);}
+  .row.r1:not(.pro) .nm::before{content:'👑 ';}
+  .row.me{background:rgba(255,210,63,.10);outline:2px solid var(--gold);}
+  .row.me .nm::after{content:' ◀ TU';color:var(--eco);font-size:.7em;}
+  .empty{font-size:clamp(8px,2.4vw,11px);color:#7fb89a;text-align:center;line-height:2.2;padding:22px 0;}
+  #winner{display:none;width:100%;border:3px solid var(--gold);background:#1b1a0c;padding:16px;text-align:center;}
+  #winner .wt{font-size:clamp(7px,2.2vw,10px);color:var(--gold);letter-spacing:2px;}
+  #winner .wn{font-size:clamp(15px,5vw,26px);color:#fff;margin:8px 0;text-shadow:2px 2px 0 #7a5e00;}
+  #winner .ws{font-size:clamp(8px,2.4vw,12px);color:var(--gold);}
+  .note{font-size:clamp(6.5px,2vw,9px);color:#7fb89a;line-height:2.1;text-align:center;}
+  .note b{color:var(--gold);}
+  .btn{display:inline-block;background:var(--eco);color:#0d1411;font-family:var(--pix);font-size:clamp(8px,2.5vw,11px);
+    padding:14px 18px;text-decoration:none;box-shadow:0 5px 0 #0a3a1d;margin-top:4px;}
+  .err{font-size:clamp(6.5px,2vw,9px);color:var(--turbo);min-height:14px;text-align:center;}
+  .upd{font-size:clamp(6px,1.8vw,8px);color:#4d7660;text-align:center;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="logo">Be<span>Bikes</span></div>
+  <div class="sub">E-BIKE CHALLENGE<br>CLASSIFICA DI OGGI</div>
+  <div class="date" id="today"></div>
+  <div id="status"></div>
+  <div id="winner"><div class="wt">🏆 VINCE IL CASCO BEBIKES</div><div class="wn" id="wName"></div><div class="ws" id="wScore"></div></div>
+  <div id="board"><div class="empty">CARICAMENTO…</div></div>
+  <div class="note" id="note">I punteggi <b>PRO</b> sono riferimenti da battere: non partecipano al premio.</div>
+  <a class="btn" href="index.html">🚲&nbsp; GIOCA ANCORA</a>
+  <div class="err" id="err"></div>
+  <div class="upd" id="upd">si aggiorna da sola ogni 15 secondi</div>
+</div>
+<script>
+"use strict";
+/* Pagina PUBBLICA: il link arriva nell'email di chi si registra, così può seguire
+   la classifica dopo la partita. Nessun comando da operatore qui dentro. */
+const LB_CONFIG={
+  URL:'https://bbeciqfzgnpylnfbakgb.supabase.co',
+  KEY:'sb_publishable_xWNWQBQJWFf_UXw0NAAStg_0TzT8Guj'
+};
+const REFRESH_MS=15000;
+const $=id=>document.getElementById(id);
+// ?io=Mario%20R. -> evidenzia la riga di chi arriva dall'email
+const IO=(new URLSearchParams(location.search).get('io')||'').trim();
+let contest=null, winner=null;
+
+$('today').textContent=new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long',timeZone:'Europe/Rome'}).toUpperCase();
+
+async function api(path,body){
+  const r=await fetch(LB_CONFIG.URL+path,{method:'POST',
+    headers:{'apikey':LB_CONFIG.KEY,'Authorization':'Bearer '+LB_CONFIG.KEY,'Content-Type':'application/json'},
+    body:JSON.stringify(body||{})});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const t=await r.text(); return t?JSON.parse(t):null;
+}
+/* orologio del SERVER: il conto alla rovescia non dipende dall'ora del telefono */
+let off=0;
+function syncClock(c){
+  if(!c||!c.now) return;
+  const [h,m]=c.now.split(':').map(Number);
+  const loc=new Date(new Date().toLocaleString('en-US',{timeZone:'Europe/Rome'}));
+  const srv=new Date(loc); srv.setHours(h,m,0,0);
+  const d=srv-loc; off=Math.abs(d)>90*1000?d:0;
+}
+function nowRome(){ return new Date(new Date(Date.now()+off).toLocaleString('en-US',{timeZone:'Europe/Rome'})); }
+function renderStatus(){
+  const s=$('status'); if(!contest) return;
+  if(!contest.contest_day){ s.className=''; s.textContent='CLASSIFICA DI PROVA · OGGI NESSUN CONCORSO'; return; }
+  const [ch,cm]=contest.close_at.split(':').map(Number), [oh,om]=contest.open_at.split(':').map(Number);
+  const n=nowRome(), close=new Date(n), open=new Date(n);
+  close.setHours(ch,cm,0,0); open.setHours(oh,om,0,0);
+  if(n<open){ s.className=''; s.textContent='IL CONCORSO APRE ALLE '+contest.open_at; return; }
+  if(n<close){
+    const sec=Math.max(0,Math.floor((close-n)/1000)), hh=Math.floor(sec/3600), mm=Math.floor(sec%3600/60), ss=sec%60;
+    s.className='open';
+    s.innerHTML='LA CLASSIFICA È ANCORA APERTA<br>chiude alle '+contest.close_at+' · mancano <b>'+(hh?hh+'h ':'')+String(mm).padStart(2,'0')+':'+String(ss).padStart(2,'0')+'</b>';
+    return;
+  }
+  s.className='closed';
+  s.innerHTML='CLASSIFICA UFFICIALE CHIUSA ALLE '+contest.close_at+(winner?'':'<br>proclamazione in corso allo stand');
+}
+setInterval(renderStatus,1000);
+
+function render(rows){
+  const b=$('board');
+  if(!rows||!rows.length){ b.innerHTML='<div class="empty">NESSUN PUNTEGGIO ANCORA</div>'; return; }
+  b.innerHTML='';
+  rows.forEach(x=>{
+    const d=document.createElement('div');
+    const me=IO && !x.pro && x.display.toLowerCase()===IO.toLowerCase();
+    d.className='row'+(x.pos===1?' r1':'')+(x.pro?' pro':'')+(me?' me':'');
+    d.innerHTML='<span class="pos">'+x.pos+'.</span><span class="nm"></span><span class="sc">'+x.score.toLocaleString('it-IT')+' g</span>';
+    d.querySelector('.nm').textContent=x.display;
+    b.appendChild(d);
+  });
+}
+async function load(){
+  try{
+    const [c,rows,w]=await Promise.all([
+      api('/rest/v1/rpc/get_contest_status'),
+      api('/rest/v1/rpc/get_leaderboard',{p_official:false}),
+      api('/rest/v1/rpc/get_winner').catch(()=>null)
+    ]);
+    contest=c; winner=w; syncClock(c); render(rows); renderStatus();
+    if(w && !w.no_winner){ $('winner').style.display='block'; $('wName').textContent=w.display;
+      $('wScore').textContent=w.score.toLocaleString('it-IT')+' g di CO₂'; }
+    else $('winner').style.display='none';
+    $('err').textContent='';
+  }catch(e){ $('err').textContent='Classifica non raggiungibile, riprovo…'; }
+}
+load(); setInterval(load,REFRESH_MS);
+</script>
+</body>
+</html>
